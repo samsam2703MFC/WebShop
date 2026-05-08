@@ -80,6 +80,8 @@ Returned by `GET /catalog/products` and `GET /catalog/products/:id`.
 | `available_bundles` | array | no | Meal-deal plans. See [§ 4](#4-bundle-plan). **Required when `has_menu_options: true`** |
 | `has_menu_options` | boolean | no | `true` → renders the bundle carousel in the detail modal |
 | `portionUnits` | object | no | Override the default `{quart:1, demi:2, entier:4}` unit mapping. Needed if product slices differently (e.g. 6-piece cake vs 4-piece tart) |
+| `no_delivery` | boolean | no | `true` → product is collect-only. Delivery mode shows "Retrait seulement" badge, add button disabled, CTA blocked in detail modal |
+| `delivery_stock` | integer \| null | no | Maximum units available for delivery per ordering window. `null`/absent = unlimited. UI shows remaining count; add button and qty spinner capped at this value |
 | `stock.available` | boolean | no | Reserved for future low-stock / sold-out state (not currently rendered) |
 
 ### Offer

@@ -135,6 +135,8 @@
 .ws-mode__lbl-mob { display: none; }      /* mobile-only short label, kept for legacy */
 .ws-mode--collect.is-active   { background: var(--color-primary);   border-color: var(--color-primary);   color: #fff; }
 .ws-mode--delivery.is-active  { background: var(--color-secondary); border-color: var(--color-collection-border); color: var(--color-on-abricot); }
+.ws-mode:disabled, .ws-mode.is-disabled { opacity: 0.45; cursor: not-allowed; }
+.ws-mode__cutoff { font-size: 10px; opacity: 0.8; }
 
 /* Right-side icons */
 .ws-nav__icon {
@@ -1375,6 +1377,14 @@
   letter-spacing: 0.06em; text-transform: uppercase;
   padding: 3px 7px; border-radius: 999px;
 }
+.ws-card__badge--nodeliv { background: #888; letter-spacing: 0; }
+.ws-card--unavail { opacity: 0.75; }
+.ws-card--unavail .ws-add { background: #bbb; cursor: not-allowed; }
+.ws-card__stock {
+  font-size: 10px; font-weight: 600;
+  color: var(--color-secondary);
+}
+.ws-card__stock--out { color: #b00; }
 .ws-card__body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
 
 /* Compact "portions available" hint shown on the product card. */

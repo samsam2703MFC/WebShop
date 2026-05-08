@@ -109,8 +109,10 @@ const W_PRODUCTS = [
   { id: 2,  cat: 'tarts',   name: 'Tarte aux fruits frais',              price: 28.0, allergens: ['gluten','milk','egg'],            portions: true,  badge: '4+1', img: 'img/p-tarte-fruits.png',
     crossPortion: true,
     offer: { type: 'buy_x_get_y_free', x: 4, y: 1, unit: 'portion' } },
-  { id: 3,  cat: 'plats',   name: 'Chou farci, crème & champignons',     price: 14.5, allergens: ['milk','egg'],                     portions: false, badge: 'Du jour', img: 'img/p-chou-farci.png' },
-  { id: 4,  cat: 'salades', name: 'Bowl chèvre, figues & légumes rôtis', price: 13.5, allergens: ['milk'],                           portions: false, badge: null,      img: 'img/p-bowl-veggie.png' },
+  { id: 3,  cat: 'plats',   name: 'Chou farci, crème & champignons',     price: 14.5, allergens: ['milk','egg'],                     portions: false, badge: 'Du jour', img: 'img/p-chou-farci.png',
+    no_delivery: true },
+  { id: 4,  cat: 'salades', name: 'Bowl chèvre, figues & légumes rôtis', price: 13.5, allergens: ['milk'],                           portions: false, badge: null,      img: 'img/p-bowl-veggie.png',
+    delivery_stock: 3 },
   { id: 5,  cat: 'salades', name: 'Salade fêta, fruits rouges & olives', price: 12.5, allergens: ['milk','almond'],                  portions: false, badge: null,      img: 'img/p-salade-feta.png' },
   { id: 6,  cat: 'salades', name: 'Salade de bœuf, bleu & pignons',      price: 15.5, allergens: ['milk'],                           portions: false, badge: null,      img: 'img/p-salade-boeuf.png' },
   { id: 36, cat: 'salades', name: 'Salade chef saumon fumé & pommes grenailles',
@@ -341,7 +343,7 @@ const W_DAYS_SHORT3 = ['Lun.','Mar.','Mer.','Jeu.','Ven.','Sam.','Dim.'];
 function wsFormatPill(d) {
   return `${W_DAYS_SHORT3[(d.getDay()+6)%7]} ${d.getDate()} ${W_MONTHS[d.getMonth()].slice(0,3)}.`;
 }
-function DatePill({ mode, value, onChange }) {
+function DatePill({ mode, value, onChange, deliveryCutoffPassed }) {
   const [open, setOpen] = React.useState(false);
   const [view, setView] = React.useState(() => new Date(value.getFullYear(), value.getMonth(), 1));
   const wrapRef = React.useRef(null);
@@ -386,12 +388,14 @@ function DatePill({ mode, value, onChange }) {
               const isPast = d < today;
               const isToday = sameDay(d, today);
               const isSel = sameDay(d, value);
+              const isCutoffBlocked = mode === 'delivery' && isToday && deliveryCutoffPassed;
               const cls = ['ws-datepop__cell'];
-              if (isPast) cls.push('is-past');
+              if (isPast || isCutoffBlocked) cls.push('is-past');
               if (isToday) cls.push('is-today');
               if (isSel) cls.push('is-sel');
               return (
-                <button key={i} className={cls.join(' ')} disabled={isPast}
+                <button key={i} className={cls.join(' ')} disabled={isPast || isCutoffBlocked}
+                  title={isCutoffBlocked ? 'Livraison fermée après 10h00' : undefined}
                   onClick={() => { onChange(d); setOpen(false); }}>
                   {d.getDate()}
                 </button>
@@ -400,7 +404,10 @@ function DatePill({ mode, value, onChange }) {
           </div>
           <div className="ws-datepop__foot">
             <span>{mode === 'delivery' ? 'Livraison au bureau' : 'Collecte en magasin'}</span>
-            <button className="ws-datepop__today" onClick={() => { onChange(today); setOpen(false); }}>Aujourd'hui</button>
+            <button className="ws-datepop__today"
+              disabled={mode === 'delivery' && deliveryCutoffPassed}
+              title={mode === 'delivery' && deliveryCutoffPassed ? 'Livraison fermée après 10h00' : undefined}
+              onClick={() => { onChange(today); setOpen(false); }}>Aujourd'hui</button>
           </div>
         </div>
       )}
@@ -409,17 +416,21 @@ function DatePill({ mode, value, onChange }) {
 }
 
 // Mode pill — Ruby (collect) / Abricot (delivery)
-function ModePills({ mode, onChange }) {
+function ModePills({ mode, onChange, deliveryCutoffPassed }) {
   return (
     <div className="ws-modes" role="tablist" aria-label="Mode boutique">
-      <span className="ws-modes__indicator" data-mode={mode} aria-hidden="true"/>
+      <span className="ws-modes__indicator" data-mode={deliveryCutoffPassed && mode === 'delivery' ? 'collect' : mode} aria-hidden="true"/>
       <button className={`ws-mode ws-mode--collect${mode === 'collect' ? ' is-active' : ''}`} onClick={() => onChange('collect')} role="tab" aria-selected={mode === 'collect'} aria-label="Click & Collect">
         <Pict d={ICONS.bag} s={14}/>
         <span className="ws-mode__lbl-full">Click &amp; Collect</span>
       </button>
-      <button className={`ws-mode ws-mode--delivery${mode === 'delivery' ? ' is-active' : ''}`} onClick={() => onChange('delivery')} role="tab" aria-selected={mode === 'delivery'} aria-label="Livraison au bureau">
+      <button className={`ws-mode ws-mode--delivery${mode === 'delivery' ? ' is-active' : ''}${deliveryCutoffPassed ? ' is-disabled' : ''}`}
+        onClick={() => onChange('delivery')} role="tab" aria-selected={mode === 'delivery'} aria-label="Livraison au bureau"
+        disabled={deliveryCutoffPassed}
+        title={deliveryCutoffPassed ? 'Livraison non disponible pour aujourd\'hui après 10h00' : undefined}>
         <Pict d={ICONS.truck} s={14}/>
         <span className="ws-mode__lbl-full">Livraison au bureau</span>
+        {deliveryCutoffPassed && <span className="ws-mode__cutoff"> · Fermé</span>}
       </button>
     </div>
   );
@@ -715,6 +726,9 @@ function ProductDetail({ open, product, mode, onClose, onAdd }) {
 
   // ── Derived (after hooks) ─────────────────────────────────────────────
   const accentVar = mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)';
+  const deliveryBlocked = mode === 'delivery' && !!product?.no_delivery;
+  const deliveryStockLeft = mode === 'delivery' && typeof product?.delivery_stock === 'number'
+    ? Math.max(0, product.delivery_stock) : null;
 
   let unit = product?.price || 0;
   // Apply portion factor for portionable products (1/4 ≈ 0.27, 1/2 ≈ 0.52)
@@ -1120,13 +1134,23 @@ function ProductDetail({ open, product, mode, onClose, onAdd }) {
 
           {/* STICKY FOOTER */}
           <div className="pdm-foot">
+            {deliveryBlocked && (
+              <div className="pdm-delivery-notice pdm-delivery-notice--blocked">
+                Ce produit n'est pas disponible en livraison · Retrait en boutique uniquement
+              </div>
+            )}
+            {!deliveryBlocked && deliveryStockLeft !== null && (
+              <div className="pdm-delivery-notice">
+                Livraison · {deliveryStockLeft > 0 ? `${deliveryStockLeft} unité${deliveryStockLeft > 1 ? 's' : ''} disponible${deliveryStockLeft > 1 ? 's' : ''}` : 'Stock épuisé'}
+              </div>
+            )}
             <div className="pdm-qty">
               <button className="pdm-qty__btn" onClick={() => setQty((q) => Math.max(1, q - 1))} disabled={qty <= 1} aria-label="Diminuer">−</button>
               <span className="pdm-qty__val">{qty}</span>
-              <button className="pdm-qty__btn" onClick={() => setQty((q) => q + 1)} aria-label="Augmenter">+</button>
+              <button className="pdm-qty__btn" onClick={() => setQty((q) => Math.min(q + 1, deliveryStockLeft ?? 99))} aria-label="Augmenter" disabled={deliveryStockLeft !== null && qty >= deliveryStockLeft}>+</button>
             </div>
-            <button className="pdm-cta" disabled={!valid} onClick={handleConfirm}>
-              <span>{valid ? 'Ajouter au panier' : 'Choisissez vos options'}</span>
+            <button className="pdm-cta" disabled={!valid || deliveryBlocked || (deliveryStockLeft !== null && deliveryStockLeft === 0)} onClick={handleConfirm}>
+              <span>{deliveryBlocked ? 'Non disponible en livraison' : (deliveryStockLeft === 0 ? 'Stock épuisé' : (valid ? 'Ajouter au panier' : 'Choisissez vos options'))}</span>
               <span className="pdm-cta__total" key={pulse}>
                 {offerDiscount > 0 && (
                   <span className="pdm-cta__strike">€{grossTotal.toFixed(2)}</span>
@@ -1144,24 +1168,30 @@ function ProductDetail({ open, product, mode, onClose, onAdd }) {
 // =========================================================================
 // PRODUCT CARD
 // =========================================================================
-const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen }) {
+const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, basketQty }) {
   const price = p.price;
   const hasOptions = !!(p.options || p.bundle || p.upsells);
-  // Card click (photo + body) is navigation-only: always opens the product
-  // detail modal. Basket actions are NEVER fired from the card itself.
-  function handleCardClick() { onOpen(p); }
-  // The "+" icon on the card is also navigation: it opens the modal where
-  // the customer confirms portion/options/bundles before clicking the
-  // "Ajouter au panier" CTA. This centralises every basket action through
-  // a single, intentional confirmation step.
+  const isDelivery = mode === 'delivery';
+  // no_delivery: product cannot be ordered in delivery mode
+  const deliveryBlocked = isDelivery && !!p.no_delivery;
+  // delivery_stock: maximum qty available for delivery (null/undefined = unlimited)
+  const deliveryStockLeft = isDelivery && typeof p.delivery_stock === 'number'
+    ? Math.max(0, p.delivery_stock - (basketQty || 0))
+    : null;
+  const stockExhausted = deliveryStockLeft !== null && deliveryStockLeft === 0;
+  const addDisabled = deliveryBlocked || stockExhausted;
+
+  function handleCardClick() { if (!deliveryBlocked) onOpen(p); }
   function handleAddClick(e) {
     e.stopPropagation();
-    onOpen(p);
+    if (!addDisabled) onOpen(p);
   }
   return (
-    <article className="ws-card" onClick={handleCardClick} role="button" tabIndex={0}>
+    <article className={`ws-card${addDisabled ? ' ws-card--unavail' : ''}`} onClick={handleCardClick} role="button" tabIndex={0}>
       <div className="ws-card__photo">
-        {p.badge && <span className="ws-card__badge">{p.badge}</span>}
+        {deliveryBlocked
+          ? <span className="ws-card__badge ws-card__badge--nodeliv">Retrait seulement</span>
+          : p.badge && <span className="ws-card__badge">{p.badge}</span>}
         <img
           className={p.img ? 'ws-card__photo-img' : 'ws-card__photo-img ws-card__photo-img--lineart'}
           src={p.img || getPlaceholder(p)}
@@ -1173,7 +1203,10 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen }) {
         <Allergens list={p.allergens}/>
         <div className="ws-card__icons">
           <button className="ws-iconcircle" aria-label="Infos" onClick={(e) => { e.stopPropagation(); onOpen(p); }}><Pict d={ICONS.info} s={11}/></button>
-          <button className="ws-add" onClick={handleAddClick} aria-label="Ajouter au panier">+</button>
+          <button className="ws-add" onClick={handleAddClick} aria-label="Ajouter au panier"
+            disabled={addDisabled} title={deliveryBlocked ? 'Non disponible en livraison' : stockExhausted ? 'Stock épuisé pour la livraison' : undefined}>
+            {stockExhausted ? '✕' : '+'}
+          </button>
         </div>
       </div>
       <div className="ws-card__body" onClick={(e) => e.stopPropagation()}>
@@ -1186,6 +1219,10 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen }) {
         <div className="ws-card__name">{p.name}</div>
         <div className="ws-card__meta">
           <span className="ws-card__price">€{price.toFixed(2)}{hasOptions && <span className="ws-card__from"> · à partir de</span>}</span>
+          {isDelivery && deliveryStockLeft !== null && !stockExhausted && (
+            <span className="ws-card__stock">{deliveryStockLeft} dispo</span>
+          )}
+          {stockExhausted && <span className="ws-card__stock ws-card__stock--out">Épuisé livraison</span>}
         </div>
       </div>
     </article>
@@ -1498,7 +1535,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, accent, tint, categor
 // =========================================================================
 
 // Variant A — Subtle: small shop chip after brand
-function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, user, onAccount, onAllergens }) {
+function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, user, onAccount, onAllergens, deliveryCutoffPassed }) {
   return (
     <header className="ws-nav ws-nav--A">
       <div className="ws-nav__left">
@@ -1507,8 +1544,8 @@ function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, us
           <span>{shop.name}</span>
           <Pict d={ICONS.chev} s={10}/>
         </button>
-        <DatePill mode={mode} value={date} onChange={onDate}/>
-        <ModePills mode={mode} onChange={onMode}/>
+        <DatePill mode={mode} value={date} onChange={onDate} deliveryCutoffPassed={deliveryCutoffPassed}/>
+        <ModePills mode={mode} onChange={onMode} deliveryCutoffPassed={deliveryCutoffPassed}/>
       </div>
       <div className="ws-nav__right">
         {window.LangChip && <window.LangChip />}
@@ -1528,7 +1565,7 @@ function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, us
 }
 
 // Variant B — Medium: full colored brand bar above navbar
-function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens }) {
+function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens, deliveryCutoffPassed }) {
   return (
     <>
       <div className="ws-shopbar" style={{ background: 'var(--color-primary)' }}>
@@ -1544,8 +1581,8 @@ function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
       <header className="ws-nav ws-nav--B">
         <div className="ws-nav__left">
           <span className="ws-nav__brand">L'Atelier By</span>
-          <DatePill mode={mode} value={date} onChange={onDate}/>
-          <ModePills mode={mode} onChange={onMode}/>
+          <DatePill mode={mode} value={date} onChange={onDate} deliveryCutoffPassed={deliveryCutoffPassed}/>
+          <ModePills mode={mode} onChange={onMode} deliveryCutoffPassed={deliveryCutoffPassed}/>
         </div>
         <div className="ws-nav__right">
           {window.LangChip && <window.LangChip />}
@@ -1562,7 +1599,7 @@ function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
 }
 
 // Variant C — Strong: full per-shop accent. Brand wordmark, navbar background, CTA, focus rings all picked up.
-function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens }) {
+function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens, deliveryCutoffPassed }) {
   return (
     <header className="ws-nav ws-nav--C" style={{ '--shop-accent': shop.accent }}>
       <div className="ws-nav__left">
@@ -1575,8 +1612,8 @@ function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
             <Pict d={ICONS.chev} s={10}/>
           </button>
         </div>
-        <DatePill mode={mode} value={date} onChange={onDate}/>
-        <ModePills mode={mode} onChange={onMode}/>
+        <DatePill mode={mode} value={date} onChange={onDate} deliveryCutoffPassed={deliveryCutoffPassed}/>
+        <ModePills mode={mode} onChange={onMode} deliveryCutoffPassed={deliveryCutoffPassed}/>
       </div>
       <div className="ws-nav__right">
         {window.LangChip && <window.LangChip />}
@@ -2876,6 +2913,16 @@ function ShopFrame({ variant }) {
   );
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [date, setDate] = useState(() => { const t = new Date(); t.setHours(0,0,0,0); return t; });
+  // Delivery cutoff: no same-day delivery after 10:00. Re-evaluated every minute.
+  const [nowHour, setNowHour] = React.useState(() => new Date().getHours() * 60 + new Date().getMinutes());
+  React.useEffect(() => {
+    const id = setInterval(() => setNowHour(new Date().getHours() * 60 + new Date().getMinutes()), 60000);
+    return () => clearInterval(id);
+  }, []);
+  const todayMidnight = React.useMemo(() => { const t = new Date(); t.setHours(0,0,0,0); return t; }, []);
+  const isToday = (d) => d && d.toDateString() === todayMidnight.toDateString();
+  const DELIVERY_CUTOFF_MINUTES = 10 * 60; // 10:00
+  const deliveryCutoffPassed = isToday(date) && nowHour >= DELIVERY_CUTOFF_MINUTES;
   const [user, setUser] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -3008,6 +3055,13 @@ function ShopFrame({ variant }) {
 
   const Nav = variant === 'A' ? NavbarA : variant === 'B' ? NavbarB : NavbarC;
 
+  // Auto-switch back to collect if delivery cutoff passes while already in delivery mode.
+  React.useEffect(() => {
+    if (mode === 'delivery' && deliveryCutoffPassed) {
+      setMode('collect');
+    }
+  }, [deliveryCutoffPassed, mode]);
+
   // Design system rule: changing mode OR date clears the basket instantly.
   function handleMode(next) {
     if (next === mode) return;
@@ -3017,6 +3071,8 @@ function ShopFrame({ variant }) {
       setAccountOpen(true);
       return;
     }
+    // Gating: no same-day delivery after 10:00
+    if (next === 'delivery' && deliveryCutoffPassed) return;
     setMode(next);
     setBasket([]);
   }
@@ -3026,6 +3082,10 @@ function ShopFrame({ variant }) {
     if (a === b) return;
     setDate(next);
     setBasket([]);
+    // If switching to today in delivery mode and cutoff has passed, revert to collect
+    if (mode === 'delivery' && isToday(next) && nowHour >= DELIVERY_CUTOFF_MINUTES) {
+      setMode('collect');
+    }
   }
   function handleAccount() {
     if (user) setAccountOpen(true);
@@ -3048,7 +3108,7 @@ function ShopFrame({ variant }) {
 
   return (
     <div className={`ws ws--${variant}`} data-mode={mode}>
-      <Nav shop={shop} mode={mode} onMode={handleMode} onSwitchShop={() => setSwitcherOpen(true)} cartCount={cartCount} date={date} onDate={handleDate} user={user} onAccount={handleAccount} onAllergens={() => setAllergensOpen(true)}/>
+      <Nav shop={shop} mode={mode} onMode={handleMode} onSwitchShop={() => setSwitcherOpen(true)} cartCount={cartCount} date={date} onDate={handleDate} user={user} onAccount={handleAccount} onAllergens={() => setAllergensOpen(true)} deliveryCutoffPassed={deliveryCutoffPassed}/>
 
       <div className="ws-body">
         <main className="ws-main" ref={mainScrollRef} onScroll={updateScrollState}>
@@ -3071,7 +3131,10 @@ function ShopFrame({ variant }) {
           <CategoryRow active={cat} sub={subCat} onSelect={(c) => { setCat(c); setSubCat(null); }} onSelectSub={setSubCat} accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'} tint={mode === 'delivery' ? 'invert(45%) sepia(60%) saturate(600%) hue-rotate(5deg)' : 'invert(15%) sepia(85%) saturate(2400%) hue-rotate(335deg)'} categories={categories} assortments={assortments}/>
 
           <div className="ws-grid">
-            {products.map((p) => <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpen={setDetailProduct}/>)}
+            {products.map((p) => {
+              const bqty = basket.filter((l) => l.productId === p.id).reduce((t, l) => t + l.qty, 0);
+              return <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpen={setDetailProduct} mode={mode} basketQty={bqty}/>;
+            })}
           </div>
         </main>
 

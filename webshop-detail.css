@@ -622,9 +622,26 @@
 .pdm-imgchip__delta { font-size: 11px; opacity: .85; font-weight: 600; margin-left: auto; }
 
 /* STICKY FOOTER --------------------------------------------------- */
+.pdm-delivery-notice {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px; font-weight: 500;
+  background: #fff8ee;
+  color: #a05a00;
+  border: 1px solid #f0d9a8;
+  line-height: 1.4;
+  order: -1;
+}
+.pdm-delivery-notice--blocked {
+  background: #fff2f2;
+  color: #a00020;
+  border-color: #f5c6c6;
+}
 .pdm-foot {
   flex: 0 0 auto;
   display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap;
   padding: 10px 14px 11px;
   background: var(--color-surface, #fff);
   border-top: 1px solid rgba(0,0,0,.06);
