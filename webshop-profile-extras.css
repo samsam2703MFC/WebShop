@@ -1,0 +1,213 @@
+/* webshop-profile-extras.css
+   Styles for: Fidelity QR modal, preferred-shop dropdown row,
+   preferred-shop nudge after manual switch.
+*/
+
+/* =========================================================================
+   Account: setting rows (toggle row that's not the business one)
+   Reuses .ws-acc__toggle visuals; adds a one-line "row with helper" style.
+   ======================================================================= */
+
+.ws-acc__row {
+  display: flex; align-items: flex-start;
+  gap: 14px; padding: 14px 0;
+  border-top: 1px solid color-mix(in oklab, var(--color-text, #1a1a1a) 8%, transparent);
+}
+.ws-acc__row:first-of-type { border-top: 0; }
+.ws-acc__row-body { flex: 1; min-width: 0; }
+.ws-acc__row-title {
+  font-family: var(--font-display);
+  font-size: 18px; font-weight: 600;
+  color: var(--color-text, #1a1a1a);
+  line-height: 1.25;
+}
+.ws-acc__row-sub {
+  font-size: 13px;
+  color: color-mix(in oklab, var(--color-text, #1a1a1a) 65%, transparent);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.ws-acc__row-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600;
+  margin-top: 6px;
+  color: #1f6e3a;
+}
+.ws-acc__row-status::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%;
+  background: #1f6e3a;
+}
+.ws-acc__row-status--off { color: color-mix(in oklab, var(--color-text, #1a1a1a) 50%, transparent); }
+.ws-acc__row-status--off::before { background: color-mix(in oklab, var(--color-text, #1a1a1a) 30%, transparent); }
+
+/* The toggle on the right side of a row */
+.ws-acc__row .ws-acc__toggle {
+  margin-top: 0;
+  flex-shrink: 0;
+  flex-direction: row;
+}
+
+/* Preferred-shop select styled like the other inputs */
+.ws-acc__select-row {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 10px;
+}
+.ws-acc__select-row select.ws-acc__input {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 18px) center, calc(100% - 13px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 36px;
+}
+
+/* =========================================================================
+   Fidelity QR modal
+   ======================================================================= */
+
+.ws-fid {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 18px;
+  padding-top: 6px;
+}
+.ws-fid__qrwrap {
+  position: relative;
+  padding: 14px;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 1px 0 color-mix(in oklab, var(--color-text, #1a1a1a) 10%, transparent),
+              0 12px 28px color-mix(in oklab, var(--color-text, #1a1a1a) 12%, transparent);
+}
+.ws-fid__qr { display: block; border-radius: 6px; }
+.ws-fid__corners {
+  position: absolute; inset: 6px;
+  pointer-events: none;
+}
+.ws-fid__corners span {
+  position: absolute; width: 18px; height: 18px;
+  border-color: var(--color-primary, #8d1d2c);
+  border-style: solid; border-width: 0;
+}
+.ws-fid__corners span:nth-child(1) { top: 0;     left: 0;     border-top-width: 2px;    border-left-width: 2px;    border-top-left-radius: 6px; }
+.ws-fid__corners span:nth-child(2) { top: 0;     right: 0;    border-top-width: 2px;    border-right-width: 2px;   border-top-right-radius: 6px; }
+.ws-fid__corners span:nth-child(3) { bottom: 0;  left: 0;     border-bottom-width: 2px; border-left-width: 2px;    border-bottom-left-radius: 6px; }
+.ws-fid__corners span:nth-child(4) { bottom: 0;  right: 0;    border-bottom-width: 2px; border-right-width: 2px;   border-bottom-right-radius: 6px; }
+
+.ws-fid__steps {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 10px;
+  max-width: 380px; width: 100%;
+}
+.ws-fid__steps li {
+  display: flex; align-items: flex-start; gap: 10px;
+  font-size: 14px; line-height: 1.45;
+  color: color-mix(in oklab, var(--color-text, #1a1a1a) 80%, transparent);
+}
+.ws-fid__step-n {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--color-primary, #8d1d2c);
+  color: #fff;
+  font-size: 12px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-top: 1px;
+}
+.ws-fid__hint {
+  font-size: 12px;
+  color: color-mix(in oklab, var(--color-text, #1a1a1a) 55%, transparent);
+  text-align: center;
+}
+
+.ws-fid__foot {
+  display: flex; gap: 10px;
+  width: 100%;
+  margin-top: 4px;
+}
+.ws-fid__cancel {
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  background: transparent;
+  border: 1px solid color-mix(in oklab, var(--color-text, #1a1a1a) 18%, transparent);
+  border-radius: 999px;
+  font-size: 14px; font-weight: 500;
+  cursor: pointer;
+  color: color-mix(in oklab, var(--color-text, #1a1a1a) 75%, transparent);
+}
+.ws-fid__cancel:hover { background: color-mix(in oklab, var(--color-text, #1a1a1a) 4%, transparent); }
+.ws-fid__confirm { flex: 1; }
+
+/* Success state */
+.ws-fid--ok {
+  align-items: center; text-align: center;
+  padding: 18px 0 6px;
+}
+.ws-fid__ok {
+  width: 96px; height: 96px;
+  border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #1f6e3a;
+  background: color-mix(in oklab, #1f6e3a 12%, transparent);
+}
+.ws-fid--ok.is-pulse .ws-fid__ok { animation: wsFidPulse 600ms ease-out; }
+@keyframes wsFidPulse {
+  0%   { transform: scale(.7); opacity: 0; }
+  60%  { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.ws-fid__ok-title {
+  font-family: var(--font-display);
+  font-size: 28px; font-weight: 600;
+  margin: 14px 0 6px;
+  color: var(--color-text, #1a1a1a);
+}
+.ws-fid__ok-sub {
+  font-size: 14px; line-height: 1.5;
+  color: color-mix(in oklab, var(--color-text, #1a1a1a) 65%, transparent);
+  max-width: 380px;
+}
+
+/* =========================================================================
+   Preferred-shop nudge — appears after a manual shop switch
+   ======================================================================= */
+
+.ws-pref-nudge {
+  position: fixed;
+  left: 50%; bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 90;
+  background: #1a1a1a;
+  color: #fff;
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.22);
+  display: flex; align-items: center; gap: 14px;
+  max-width: calc(100vw - 24px);
+  animation: wsPrefIn 240ms cubic-bezier(.2,.8,.2,1);
+}
+@keyframes wsPrefIn {
+  from { opacity: 0; transform: translate(-50%, 14px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+.ws-pref-nudge__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ws-pref-nudge__title { font-size: 14px; font-weight: 600; }
+.ws-pref-nudge__sub { font-size: 12px; opacity: .72; line-height: 1.35; }
+.ws-pref-nudge__sub em { font-style: normal; font-weight: 600; opacity: 1; }
+.ws-pref-nudge__btns { display: flex; gap: 8px; flex-shrink: 0; }
+.ws-pref-nudge__yes,
+.ws-pref-nudge__no {
+  border: 0; border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px; font-weight: 600;
+  cursor: pointer;
+}
+.ws-pref-nudge__yes { background: #fff; color: #1a1a1a; }
+.ws-pref-nudge__yes:hover { background: #f1ede5; }
+.ws-pref-nudge__no { background: transparent; color: #fff; opacity: .7; }
+.ws-pref-nudge__no:hover { opacity: 1; }
+
+@media (max-width: 540px) {
+  .ws-pref-nudge { flex-direction: column; align-items: stretch; gap: 10px; }
+  .ws-pref-nudge__btns { justify-content: flex-end; }
+}

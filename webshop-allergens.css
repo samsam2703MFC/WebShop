@@ -1,0 +1,236 @@
+/* =========================================================================
+   ALLERGEN ICONS + MODAL
+   Used in navbar (info trigger) and in product cards (replacing the dots).
+   ========================================================================= */
+
+/* Inline icon row on product cards */
+.al-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-muted);
+}
+.al-row .al-icon { display: inline-block; flex: 0 0 auto; }
+.al-row__more {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: var(--color-text-muted);
+  margin-left: 2px;
+  letter-spacing: 0.02em;
+}
+
+/* On the metaStrip variant the icons can be slightly stronger */
+.ws-card__metaStrip .al-row { gap: 6px; }
+
+/* =========================================================================
+   Navbar trigger button
+   ========================================================================= */
+.ws-nav__allergens-btn {
+  /* inherits .ws-nav__icon — only the hover treatment differs slightly */
+  position: relative;
+}
+.ws-nav__allergens-btn:hover { color: var(--color-primary); }
+
+/* =========================================================================
+   Modal
+   ========================================================================= */
+.al-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: color-mix(in oklab, #1a1411 55%, transparent);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: alFade 180ms ease;
+}
+@keyframes alFade { from { opacity: 0; } to { opacity: 1; } }
+
+.al-modal__panel {
+  width: min(640px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: var(--color-surface, #fff);
+  color: var(--color-text);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 24px 64px -16px rgba(20, 12, 8, 0.35), 0 6px 16px -8px rgba(20, 12, 8, 0.18);
+  padding: 24px 26px 20px;
+  animation: alRise 220ms cubic-bezier(.2,.8,.2,1);
+}
+@keyframes alRise {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
+
+.al-modal__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+  border-bottom: 0.5px solid var(--color-border-tertiary);
+}
+
+.al-modal__eyebrow {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+  margin: 0 0 8px;
+}
+.al-modal__title {
+  font-family: var(--font-display, var(--font-ui));
+  font-size: 24px;
+  line-height: 1.1;
+  font-weight: 400;
+  margin: 0 0 8px;
+  letter-spacing: -0.005em;
+  color: var(--color-text);
+}
+.al-modal__title em {
+  color: var(--color-primary);
+  font-style: italic;
+}
+.al-modal__lede {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin: 0;
+  max-width: 420px;
+  line-height: 1.5;
+}
+
+.al-modal__close {
+  flex: 0 0 auto;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  border: 0.5px solid var(--color-border-secondary);
+  background: transparent;
+  color: var(--color-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.al-modal__close:hover {
+  background: var(--color-background-secondary, #f6f1ea);
+  color: var(--color-primary);
+}
+
+/* Grid of 14 allergen cards */
+.al-modal__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--radius-md, 10px);
+  overflow: hidden;
+  background: var(--color-bg, #faf7f2);
+}
+
+.al-card {
+  position: relative;
+  padding: 16px 10px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  border-right: 0.5px solid var(--color-border-tertiary);
+  border-bottom: 0.5px solid var(--color-border-tertiary);
+  background: var(--color-surface, #fff);
+  transition: background 160ms ease;
+}
+.al-card:hover { background: var(--color-background-secondary, #f6f1ea); }
+.al-card:nth-child(4n) { border-right: none; }
+.al-card:nth-last-child(-n+2) { border-bottom: none; }
+.al-card:nth-last-child(2):nth-child(4n+1),
+.al-card:nth-last-child(2):nth-child(4n+3) { /* nothing — keep border on staggered tails */ }
+
+.al-card__num {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+  opacity: 0.55;
+}
+.al-card__icon {
+  color: var(--color-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+}
+.al-card__icon svg { width: 28px !important; height: 28px !important; }
+.al-card__name {
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: var(--color-text);
+}
+
+.al-modal__foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-top: 14px;
+  margin-top: 18px;
+  border-top: 0.5px solid var(--color-border-tertiary);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: var(--color-text-muted);
+  letter-spacing: 0.02em;
+}
+.al-modal__brand {
+  font-family: var(--font-display, var(--font-ui));
+  color: var(--color-primary);
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+/* ============================ Mobile ============================ */
+@media (max-width: 720px) {
+  .al-modal { padding: 0; align-items: stretch; }
+  .al-modal__panel {
+    width: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+    padding: 22px 18px 18px;
+  }
+  .al-modal__head {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 12px;
+    padding-bottom: 16px;
+    margin-bottom: 18px;
+  }
+  .al-modal__title { font-size: 24px; }
+  .al-modal__lede { font-size: 12px; }
+  .al-modal__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .al-card { padding: 18px 10px 14px; gap: 10px; }
+  .al-card__icon { width: 36px; height: 36px; }
+  .al-card__icon svg { width: 30px !important; height: 30px !important; }
+  .al-card:nth-child(4n) { border-right: 0.5px solid var(--color-border-tertiary); }
+  .al-card:nth-child(2n) { border-right: none; }
+  .al-card:nth-last-child(-n+2) { border-bottom: none; }
+  .al-modal__foot { flex-direction: column; align-items: flex-start; gap: 8px; }
+}
+
+/* Hide the legacy dot styles whenever the new icon row is present on the same card */
+.ws-card .al-row + .ws-allergens,
+.ws-card .ws-allergens:has(+ .al-row) { display: none; }

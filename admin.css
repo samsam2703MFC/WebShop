@@ -1,0 +1,730 @@
+/* =========================================================================
+   L'Atelier By — Admin (Tournées)
+   Tokens lifted from /projects/8504a4e3-... global.css
+   ========================================================================= */
+
+@font-face {
+  font-family: 'Gotham';
+  src: url('fonts/Gotham_Light.otf') format('opentype');
+  font-weight: 300; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Gotham';
+  src: url('fonts/Gotham_Book.otf') format('opentype');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Gotham';
+  src: url('fonts/Gotham_Regular.otf') format('opentype');
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Gotham';
+  src: url('fonts/Gotham_Medium.otf') format('opentype');
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Gotham';
+  src: url('fonts/Gotham_Medium.otf') format('opentype');
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Vank';
+  src: url('fonts/GC_Vank.ttf') format('truetype');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+
+:root {
+  /* L'Atelier By tokens */
+  --color-primary:           #8D1D2C;
+  --color-secondary:         #F2C9A0;
+  --color-bg:                #EAE4DC;
+  --color-surface:           #FFFFFF;
+  --color-text:              #222222;
+  --color-text-muted:        #666666;
+  --color-bg-secondary:      #F4EFE8;
+  --color-border-secondary:  rgba(34, 34, 34, 0.18);
+  --color-border-tertiary:   rgba(34, 34, 34, 0.10);
+  --color-on-abricot:        #6b4420;
+  --color-collection-border: #c17a2a;
+
+  /* Status colors — semantic, derived from brand */
+  --status-planned:   #6b6b6b;      /* draft / planned (neutral) */
+  --status-confirmed: var(--color-secondary);
+  --status-rolling:   var(--color-primary);   /* in progress */
+  --status-done:      #2d7a3e;
+  --status-late:      #c93434;
+
+  --font-display: 'Vank';
+  --font-ui: 'Gotham';
+
+  /* Per-shop palette — one stable color per shop, design-system tokens.
+     Used as the SHOP BADGE color across the admin so franchisees recognize
+     their tournées at a glance. Earthy, on-brand, distinct from one another. */
+  --shop-chatelain: #8D1D2C;   /* Ruby */
+  --shop-sablon:    #1F4F6B;   /* Encre */
+  --shop-carre:     #6B3D0A;   /* Brun (collection icon) */
+  --shop-zuid:      #2D5A3D;   /* Vert atelier */
+  --shop-grognon:   #C17A2A;   /* Ambre */
+  --shop-brugge:    #5C4A8A;   /* Aubergine */
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: #d8d2c8;            /* canvas backdrop, slightly darker than --color-bg */
+  font-family: var(--font-ui);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button { font-family: inherit; cursor: pointer; }
+input, select, textarea { font-family: inherit; color: inherit; }
+
+/* =========================================================================
+   ADMIN SHELL — repeating chrome inside each artboard
+   ========================================================================= */
+.admin {
+  width: 100%;
+  height: 100%;
+  background: var(--color-bg);
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  font-size: 13px;
+}
+
+/* Sidebar */
+.admin__side {
+  background: #1d1815;
+  color: #d6cfc6;
+  padding: 22px 0 28px;
+  display: flex;
+  flex-direction: column;
+}
+.admin__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 22px 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.admin__brand-mark {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  display: grid; place-items: center;
+  font-family: var(--font-display);
+  color: #fff;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+.admin__brand-name {
+  font-family: var(--font-display);
+  font-size: 16px;
+  color: #fff;
+  letter-spacing: 0.04em;
+}
+.admin__brand-sub {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+  margin-top: 2px;
+}
+
+.admin__nav-group {
+  padding: 18px 14px 4px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+}
+.admin__nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 22px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  border-left: 2px solid transparent;
+}
+.admin__nav-item svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.6; }
+.admin__nav-item--active {
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  border-left-color: var(--color-primary);
+}
+.admin__nav-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Topbar + main */
+.admin__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+.admin__topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 28px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border-tertiary);
+  min-height: 60px;
+}
+.admin__breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  letter-spacing: 0.04em;
+}
+.admin__breadcrumb strong {
+  color: var(--color-text);
+  font-weight: 500;
+}
+.admin__breadcrumb svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+.admin__topbar-spacer { flex: 1; }
+.admin__topbar-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-secondary);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border-tertiary);
+}
+.admin__topbar-pill svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.6; }
+.admin__topbar-user {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  background: var(--color-secondary);
+  color: var(--color-on-abricot);
+  display: grid; place-items: center;
+  font-size: 11px; font-weight: 600;
+}
+
+/* Page header */
+.page-head {
+  padding: 24px 28px 6px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+.page-head__title {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 400;
+  margin: 0 0 4px;
+  letter-spacing: 0.01em;
+}
+.page-head__sub {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+.page-head__actions { display: flex; gap: 8px; align-items: center; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--color-border-secondary);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.btn svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+.btn--primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.btn--ghost { background: transparent; border-color: transparent; color: var(--color-text-muted); }
+
+/* Toolbar — filters + view switcher */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 28px;
+  flex-wrap: wrap;
+}
+.toolbar__group {
+  display: flex; align-items: center; gap: 6px;
+}
+.toolbar__chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 11px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-tertiary);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.toolbar__chip svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+.toolbar__chip--active {
+  background: var(--color-text);
+  color: #fff;
+  border-color: var(--color-text);
+}
+.toolbar__chip--shop {
+  padding-left: 7px;
+  gap: 6px;
+}
+.toolbar__chip-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.toolbar__search {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 11px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-tertiary);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  min-width: 200px;
+}
+.toolbar__search svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+.toolbar__search input {
+  border: 0; background: transparent; outline: 0;
+  font-size: 11px;
+  flex: 1;
+}
+
+.toolbar__date {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-tertiary);
+  font-size: 11px;
+  color: var(--color-text);
+  font-weight: 500;
+}
+.toolbar__date svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+.toolbar__view {
+  margin-left: auto;
+  display: inline-flex;
+  border-radius: 8px;
+  padding: 2px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-tertiary);
+}
+.toolbar__view button {
+  border: 0; background: transparent;
+  padding: 5px 10px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border-radius: 6px;
+}
+.toolbar__view button[aria-pressed="true"] {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.toolbar__view svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.7; vertical-align: -2px; }
+
+/* List wrapper */
+.tournee-list {
+  padding: 6px 28px 28px;
+  display: grid;
+  gap: 12px;
+}
+
+/* Stats strip above the list — give the shop split context */
+.split-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  padding: 0 28px 4px;
+}
+.split-strip__cell {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 10px;
+  padding: 12px 14px;
+  position: relative;
+  overflow: hidden;
+}
+.split-strip__cell::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--shop-color, var(--color-primary));
+}
+.split-strip__shop {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+.split-strip__count {
+  font-family: var(--font-display);
+  font-size: 22px;
+  margin-top: 2px;
+  line-height: 1;
+}
+.split-strip__sub {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+}
+
+/* =========================================================================
+   TOURNÉE TILE — base structure shared across variants
+   ========================================================================= */
+.tile {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: var(--radius-lg);
+  display: grid;
+  grid-template-columns: 100px 1.4fr 1fr 1fr auto;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 18px;
+  position: relative;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.tile:hover {
+  border-color: var(--color-border-secondary);
+  box-shadow: 0 6px 20px -10px rgba(0, 0, 0, 0.18);
+}
+
+.tile__time {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tile__time-window {
+  font-family: var(--font-display);
+  font-size: 22px;
+  line-height: 1;
+}
+.tile__time-date {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tile__core {
+  min-width: 0;
+}
+.tile__core-id {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+.tile__core-name {
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 1px;
+  letter-spacing: 0.005em;
+}
+
+.tile__driver {
+  display: flex; align-items: center; gap: 9px;
+  min-width: 0;
+}
+.tile__driver-avatar {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-muted);
+  display: grid; place-items: center;
+  font-size: 10px; font-weight: 600;
+  flex-shrink: 0;
+}
+.tile__driver-info { min-width: 0; }
+.tile__driver-label {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.tile__driver-name {
+  font-size: 12px;
+  color: var(--color-text);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile__stops {
+  display: flex; align-items: center; gap: 14px;
+}
+.tile__stat-num {
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 1;
+}
+.tile__stat-lbl {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-top: 3px;
+}
+
+.tile__progress {
+  width: 100%;
+  height: 4px;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  margin-top: 6px;
+}
+.tile__progress-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: inherit;
+}
+
+.tile__right {
+  display: flex; align-items: center; gap: 10px;
+}
+.tile__status {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-muted);
+}
+.tile__status-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor;
+}
+.tile__status--planned   { color: var(--status-planned); }
+.tile__status--confirmed { color: var(--color-on-abricot); background: var(--color-secondary); }
+.tile__status--rolling   { color: var(--color-primary); background: rgba(141, 29, 44, 0.10); }
+.tile__status--done      { color: var(--status-done); background: rgba(45, 122, 62, 0.10); }
+.tile__status--late      { color: var(--status-late); background: rgba(201, 52, 52, 0.10); }
+
+.tile__rolling-pulse {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  box-shadow: 0 0 0 0 rgba(141, 29, 44, 0.6);
+  animation: pulse 1.6s ease-out infinite;
+}
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(141, 29, 44, 0.55); }
+  70%  { box-shadow: 0 0 0 7px rgba(141, 29, 44, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(141, 29, 44, 0); }
+}
+
+.tile__menu {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-muted);
+  display: grid; place-items: center;
+}
+.tile__menu:hover {
+  border-color: var(--color-border-secondary);
+}
+.tile__menu svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; }
+
+/* =========================================================================
+   VARIANT A — RIBBON BADGE (left vertical bar + colored shop strip)
+   ========================================================================= */
+.tile--A {
+  padding-left: 0;
+  overflow: hidden;
+}
+.tile--A .tile__shop-rail {
+  align-self: stretch;
+  width: 84px;
+  background: var(--shop-color, var(--color-primary));
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 14px 12px;
+  margin: -14px 0;     /* bleed into tile padding */
+  position: relative;
+  flex-shrink: 0;
+}
+.tile--A .tile__shop-rail::after {
+  /* paper-edge flourish — subtle deckle */
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; right: -6px;
+  width: 6px;
+  background:
+    radial-gradient(circle at 0 50%, var(--shop-color, var(--color-primary)) 6px, transparent 6.5px) 0 0/6px 14px repeat-y;
+}
+.tile--A .tile__shop-name {
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  line-height: 1.1;
+  text-transform: none;
+}
+.tile--A .tile__shop-city {
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 500;
+  opacity: 0.78;
+  margin-top: 2px;
+}
+.tile--A .tile__shop-icon {
+  width: 18px; height: 18px;
+  align-self: flex-end;
+  opacity: 0.85;
+}
+.tile--A .tile__shop-icon svg { width: 100%; height: 100%; stroke: #fff; fill: none; stroke-width: 1.6; }
+
+.tile--A {
+  grid-template-columns: auto 90px 1.4fr 1fr 1fr auto;
+  padding-left: 0;
+}
+
+/* =========================================================================
+   VARIANT B — INLINE SHOP CHIP (compact pill in the meta row)
+   ========================================================================= */
+.tile--B {
+  /* same base, with chip living in the ID/name block */
+}
+.tile--B .tile__core-meta {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 6px;
+}
+.tile--B .shop-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px 3px 4px;
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-secondary);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--color-text);
+  border: 1px solid var(--color-border-tertiary);
+  letter-spacing: 0.005em;
+}
+.tile--B .shop-chip__avatar {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--shop-color);
+  color: #fff;
+  display: grid; place-items: center;
+  font-family: var(--font-display);
+  font-size: 9px;
+  letter-spacing: 0;
+}
+.tile--B .shop-chip__city {
+  font-weight: 400;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  margin-left: 2px;
+}
+.tile--B .meta-dot {
+  width: 3px; height: 3px;
+  border-radius: 50%;
+  background: var(--color-border-secondary);
+}
+.tile--B .meta-text {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+
+/* =========================================================================
+   VARIANT C — STAMPED CORNER BADGE (color-bordered card + stamp)
+   Shop identity is signaled by a thin colored top border AND a top-right
+   stamp-style label that reads like a delivery tag.
+   ========================================================================= */
+.tile--C {
+  border-top: 3px solid var(--shop-color, var(--color-primary));
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  padding-top: 16px;
+}
+.tile--C .tile__stamp {
+  position: absolute;
+  top: -3px;            /* sit on the colored band */
+  right: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 8px;
+  background: var(--shop-color);
+  color: #fff;
+  border-radius: 0 0 8px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.tile--C .tile__stamp-pin {
+  width: 12px; height: 12px;
+  flex-shrink: 0;
+}
+.tile--C .tile__stamp-pin svg { width: 100%; height: 100%; stroke: #fff; fill: none; stroke-width: 1.7; }
+.tile--C .tile__stamp-divider {
+  width: 1px; height: 11px;
+  background: rgba(255,255,255,0.4);
+}
+.tile--C .tile__stamp-city {
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+/* =========================================================================
+   ARTBOARD CONTEXT — DCArtboard wraps each variant
+   ========================================================================= */
+.artboard-note {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin: 14px 28px 0;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.artboard-note strong {
+  color: var(--color-text);
+  font-weight: 600;
+  display: block;
+  margin-bottom: 2px;
+  font-size: 12px;
+}
+.artboard-note__icon {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-tertiary);
+  flex-shrink: 0;
+  display: grid; place-items: center;
+}
+.artboard-note__icon svg { width: 13px; height: 13px; stroke: var(--color-primary); fill: none; stroke-width: 1.7; }
