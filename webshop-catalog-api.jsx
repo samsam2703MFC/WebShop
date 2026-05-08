@@ -10,6 +10,9 @@
      GET  {endpoint}/products/:id              -> Product
      GET  {endpoint}/bundles?productId=        -> [Bundle]
      GET  {endpoint}/assortments?shopId=       -> [Assortment]
+     GET  {endpoint}/categories?shopId=        -> [Category]
+     GET  {endpoint}/stock?shopId=&date=&mode= -> [StockEntry]
+          StockEntry: { productId, qty_total, qty_reserved, qty_sold, qty_available }
    ===================================================================== */
 (function () {
   const api = {
@@ -62,6 +65,40 @@
         } catch (_) {}
       }
       return (window._CATALOG_SEED && window._CATALOG_SEED.assortments) || [];
+    },
+    // Returns a map of productId -> { qty_total, qty_reserved, qty_sold, qty_available }
+    // Falls back to delivery_stock on the product seed when no endpoint is configured.
+    async getStock({ shopId, date, mode } = {}) {
+      if (api.endpoint) {
+        try {
+          const iso = date instanceof Date ? date.toISOString().slice(0, 10) : (date || '');
+          const r = await fetch(
+            `${api.endpoint}/stock?shopId=${encodeURIComponent(shopId||'')}&date=${encodeURIComponent(iso)}&mode=${encodeURIComponent(mode||'')}`,
+            { credentials: 'include' }
+          );
+          if (r.ok) {
+            const rows = await r.json();
+            const map = {};
+            for (const row of rows) map[row.productId] = row;
+            return map;
+          }
+        } catch (_) {}
+      }
+      // Seed fallback: build map from delivery_stock on each product
+      const seed = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
+      const map = {};
+      for (const p of seed) {
+        if (typeof p.delivery_stock === 'number') {
+          map[p.id] = {
+            productId: p.id,
+            qty_total: p.delivery_stock,
+            qty_reserved: 0,
+            qty_sold: 0,
+            qty_available: p.delivery_stock,
+          };
+        }
+      }
+      return map;
     },
   };
   window.WSCatalog = api;

@@ -655,7 +655,7 @@ function PortionOptions({ value, onChange, basePrice }) {
 // =========================================================================
 // PRODUCT DETAIL MODAL — options, upsells, bundles
 // =========================================================================
-function ProductDetail({ open, product, mode, onClose, onAdd }) {
+function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   // ── Hooks (must run unconditionally; never gate behind early-return) ──
   const initSelections = React.useMemo(() => {
     const out = {};
@@ -727,8 +727,9 @@ function ProductDetail({ open, product, mode, onClose, onAdd }) {
   // ── Derived (after hooks) ─────────────────────────────────────────────
   const accentVar = mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)';
   const deliveryBlocked = mode === 'delivery' && !!product?.no_delivery;
-  const deliveryStockLeft = mode === 'delivery' && typeof product?.delivery_stock === 'number'
-    ? Math.max(0, product.delivery_stock) : null;
+  // qty_available from ws_product_stock API; falls back to delivery_stock on product seed
+  const qtyAvailable = stock ? stock.qty_available : (typeof product?.delivery_stock === 'number' ? product.delivery_stock : null);
+  const deliveryStockLeft = mode === 'delivery' && qtyAvailable !== null ? Math.max(0, qtyAvailable) : null;
 
   let unit = product?.price || 0;
   // Apply portion factor for portionable products (1/4 ≈ 0.27, 1/2 ≈ 0.52)
@@ -1168,15 +1169,15 @@ function ProductDetail({ open, product, mode, onClose, onAdd }) {
 // =========================================================================
 // PRODUCT CARD
 // =========================================================================
-const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, basketQty }) {
+const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, basketQty, stock }) {
   const price = p.price;
   const hasOptions = !!(p.options || p.bundle || p.upsells);
   const isDelivery = mode === 'delivery';
-  // no_delivery: product cannot be ordered in delivery mode
   const deliveryBlocked = isDelivery && !!p.no_delivery;
-  // delivery_stock: maximum qty available for delivery (null/undefined = unlimited)
-  const deliveryStockLeft = isDelivery && typeof p.delivery_stock === 'number'
-    ? Math.max(0, p.delivery_stock - (basketQty || 0))
+  // qty_available from ws_product_stock API; falls back to delivery_stock on product seed
+  const qtyAvailable = stock ? stock.qty_available : (typeof p.delivery_stock === 'number' ? p.delivery_stock : null);
+  const deliveryStockLeft = isDelivery && qtyAvailable !== null
+    ? Math.max(0, qtyAvailable - (basketQty || 0))
     : null;
   const stockExhausted = deliveryStockLeft !== null && deliveryStockLeft === 0;
   const addDisabled = deliveryBlocked || stockExhausted;
@@ -3045,6 +3046,20 @@ function ShopFrame({ variant }) {
     }
     return src.filter((p) => p.cat === cat);
   }, [cat, isAssortment, allProducts]);
+
+  // Stock map: productId -> { qty_total, qty_reserved, qty_sold, qty_available }
+  // Reloaded whenever shop, date or mode changes.
+  const [productStock, setProductStock] = React.useState({});
+  React.useEffect(() => {
+    let alive = true;
+    if (window.WSCatalog && typeof window.WSCatalog.getStock === 'function') {
+      window.WSCatalog.getStock({ shopId, date, mode })
+        .then((map) => { if (alive) setProductStock(map || {}); })
+        .catch(() => {});
+    }
+    return () => { alive = false; };
+  }, [shopId, date, mode]);
+
   const cartCount = basket.reduce((t, l) => t + l.qty, 0);
   const userCanDeliver = !!(userOffice && userOffice.status === 'validated' && userTour);
 
@@ -3142,7 +3157,8 @@ function ShopFrame({ variant }) {
           <div className="ws-grid">
             {products.map((p) => {
               const bqty = basket.filter((l) => l.productId === p.id).reduce((t, l) => t + l.qty, 0);
-              return <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpen={setDetailProduct} mode={mode} basketQty={bqty}/>;
+              const stock = productStock[p.id] || null;
+              return <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpen={setDetailProduct} mode={mode} basketQty={bqty} stock={stock}/>;
             })}
           </div>
         </main>
@@ -3232,7 +3248,7 @@ function ShopFrame({ variant }) {
         office={userOffice}
         tour={userTour}
       />
-      <ProductDetail open={!!detailProduct} product={detailProduct} mode={mode} onClose={() => setDetailProduct(null)} onAdd={handleAddConfigured}/>
+      <ProductDetail open={!!detailProduct} product={detailProduct} mode={mode} onClose={() => setDetailProduct(null)} onAdd={handleAddConfigured} stock={detailProduct ? (productStock[detailProduct.id] || null) : null}/>
       {window.AllergensModal && <window.AllergensModal open={allergensOpen} onClose={() => setAllergensOpen(false)}/>}
       <CheckoutWizard open={checkoutOpen} onClose={() => setCheckoutOpen(false)} shop={shop} mode={mode} basket={basket} user={user} onLogin={() => setAuthOpen(true)} onPlaced={handlePlaced}
         voucherInput={voucherInput} setVoucherInput={setVoucherInput}
