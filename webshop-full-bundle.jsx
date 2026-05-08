@@ -244,14 +244,9 @@ const W_PRODUCTS = [
 ];
 
 if (typeof window !== 'undefined') {
-  window._CATALOG_SEED = { products: W_PRODUCTS, assortments: W_ASSORTMENTS };
+  window._CATALOG_SEED = { products: W_PRODUCTS, assortments: W_ASSORTMENTS, categories: W_CATEGORIES };
 }
 
-const W_BASKET_DEFAULT = [
-  { line: 1, productId: 1,  name: 'Tarte aux fraises — 1/2',          qty: 1, price: 12.0, options: [{ label: 'Sans sucre ajouté' }] },
-  { line: 2, productId: 4,  name: 'Bowl chèvre, figues & légumes rôtis', qty: 2, price: 13.5, options: [] },
-  { line: 3, productId: 11, name: 'Croissant au beurre AOP',           qty: 4, price: 1.90, options: [] },
-];
 
 // =========================================================================
 // CLIENTS / OFFICES / DELIVERY TOURS
@@ -299,11 +294,6 @@ function authRegister({ email, password, firstName, lastName }) {
 }
 function getOffice(id) { return id ? _AUTH_STORE.offices[id] : null; }
 function getTour(id)   { return id ? W_TOURS[id] : null; }
-function canDeliver(u) {
-  if (!u) return false;
-  const o = getOffice(u.officeId);
-  return !!(o && o.status === 'validated' && getTour(o.tourId));
-}
 function submitOfficeRequest({ user, companyName, contactName, phone, email }) {
   const id = 'off-req-' + Date.now();
   const office = {
@@ -1211,20 +1201,13 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen }) {
 // Scans the basket for any line marked `crossPortion: true` and totals its
 // portion-units (quart=1, demi=2, entier=4). Every X portion-units earns Y
 // free quarter-equivalents, valued at the cheapest line's basePrice × 0.27.
-// TODO[BACKEND]: this rule must come from `WSPricing.getCrossPortionRule()`
-// and the whole calculation must move behind `WSPricing.quote()`. The
-// constant + function below are kept ONLY as a synchronous fallback so the
-// basket UI can render an offer strip while the async quote is in flight.
-// Treat as legacy — do not extend.
-// Group of (x+y) eligible portions = x paid + y free. With x:4, y:1 →
-// 4 paid portions earns 1 free (the cheapest). Basket of 10 → 2 free, 15 → 3.
-const CROSS_PORTION_OFFER = { x: 4, y: 1, threshold: 4, label: '4 quarts achetés, 1 offert' };
+// Fallback rule used only when WSPricing.getCrossPortionRule() is unavailable.
+// x paid + y free per group; threshold = portions needed before first freebie.
+const _CROSS_PORTION_FALLBACK = { x: 4, y: 1, threshold: 4, label: '4 quarts achetés, 1 offert' };
 
-function computeCrossPortionOffer(basket) {
+function computeCrossPortionOffer(basket, rule) {
+  const r = rule || _CROSS_PORTION_FALLBACK;
   if (!Array.isArray(basket) || basket.length === 0) return null;
-  // Expand every portion-unit across eligible lines into an array of
-  // {price, name} — price is the quarter-equivalent (basePrice × 0.27)
-  // because the freebie is always awarded as a quarter.
   const items = [];
   for (const l of basket) {
     if (!l.crossPortion) continue;
@@ -1239,11 +1222,10 @@ function computeCrossPortionOffer(basket) {
   }
   const eligibleCount = items.length;
   if (eligibleCount === 0) return null;
-  const groupSize = CROSS_PORTION_OFFER.x + CROSS_PORTION_OFFER.y;
-  // Sort ascending by price → cheapest first (we'll free those).
+  const groupSize = r.x + r.y;
   items.sort((a, b) => a.price - b.price);
   const cycles = Math.floor(eligibleCount / groupSize);
-  const freeCount = cycles * CROSS_PORTION_OFFER.y;
+  const freeCount = cycles * r.y;
   let savings = 0;
   const freeNames = [];
   for (let i = 0; i < freeCount; i++) {
@@ -1261,7 +1243,7 @@ function computeCrossPortionOffer(basket) {
     freeNames,
     toNext: cycles >= 1 && remainder === 0 ? 0 : toNext,
     status: cycles >= 1 ? (cycles >= 2 ? 'boosted' : 'active') : 'dormant',
-    threshold: CROSS_PORTION_OFFER.x,
+    threshold: r.x,
   };
 }
 
@@ -1310,7 +1292,7 @@ function CrossPortionStrip({ calc }) {
         <div className="ws-cross__dots" aria-hidden="true">
           {Array.from({ length: groupSize }).map((_, i) => {
             let cls = 'ws-cross__dot';
-            if (i < CROSS_PORTION_OFFER.x) cls += ' is-buy';
+            if (i < threshold) cls += ' is-buy';
             else cls += ' is-free';
             if (i < inCycle) cls += ' is-on';
             return <span key={i} className={cls}/>;
@@ -1337,8 +1319,16 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove }) {
   // computation below is a fallback so the demo basket still totals correctly
   // before the API is wired. The 5% pickup promo is a hardcoded business rule
   // and MUST disappear once /quote returns it as a discount line.
+  const [crossPortionRule, setCrossPortionRule] = React.useState(null);
+  React.useEffect(() => {
+    if (window.WSPricing && typeof window.WSPricing.getCrossPortionRule === 'function') {
+      window.WSPricing.getCrossPortionRule()
+        .then((r) => { if (r) setCrossPortionRule(r); })
+        .catch(() => {});
+    }
+  }, []);
   const subtotal = basket.reduce((t, l) => t + l.price * l.qty, 0);
-  const crossOffer = computeCrossPortionOffer(basket);
+  const crossOffer = computeCrossPortionOffer(basket, crossPortionRule);
   const crossSavings = crossOffer?.savings || 0;
   const promo = mode === 'collect' ? subtotal * 0.05 : 0;
   const total = Math.max(0, subtotal - promo - crossSavings);
@@ -1435,9 +1425,11 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove }) {
 // =========================================================================
 // CATEGORY ROW + SUBCATEGORIES + SEASONAL ASSORTMENTS
 // =========================================================================
-function CategoryRow({ active, sub, onSelect, onSelectSub, accent, tint }) {
+function CategoryRow({ active, sub, onSelect, onSelectSub, accent, tint, categories, assortments }) {
   const ALL = { id: 'all', label: 'Tout', img: 'img/cat-all.png' };
-  const activeCat = W_CATEGORIES.find((c) => c.id === active);
+  const cats = categories || W_CATEGORIES;
+  const assorts = assortments || W_ASSORTMENTS;
+  const activeCat = cats.find((c) => c.id === active);
   const subs = activeCat?.subs || [];
   const visibleCount = 5;
   const [showAllSubs, setShowAllSubs] = React.useState(false);
@@ -1449,7 +1441,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, accent, tint }) {
   return (
     <div className="ws-cats-wrap">
       <div className="ws-cats">
-        {[ALL, ...W_CATEGORIES].map((c) => {
+        {[ALL, ...cats].map((c) => {
           const isOn = active === c.id;
           return (
             <button key={c.id} className={`ws-cat${isOn ? ' is-active' : ''}`} onClick={() => onSelect(c.id)} style={isOn ? { '--cat-accent': accent, '--cat-tint': tint } : {}}>
@@ -1461,7 +1453,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, accent, tint }) {
 
         {/* Seasonal assortments — same badge style, but distinct shape (notched corner) */}
         <div className="ws-cats__sep" aria-hidden="true"/>
-        {W_ASSORTMENTS.map((a) => {
+        {assorts.map((a) => {
           const isOn = active === `season:${a.id}`;
           return (
             <button key={a.id} className={`ws-cat ws-cat--season${isOn ? ' is-active' : ''}`} onClick={() => onSelect(`season:${a.id}`)} style={isOn ? { '--cat-accent': accent, '--cat-tint': tint } : {}}>
@@ -1748,7 +1740,7 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
   );
 }
 
-function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdateUser, shops, currentShopId, onChangePreferredShop }) {
+function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdateUser, shops, currentShopId, onChangePreferredShop, office, tour }) {
   const [form, setForm] = useState({
     firstName: user?.firstName || '',
     lastName: user?.lastName || '',
@@ -1774,6 +1766,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   // Office unplug/reconnect flow: 'idle' | 'confirm' | 'ask' | 'pick' | 'add'
   const [officeStep, setOfficeStep] = useState('idle');
   const [approvedOffices, setApprovedOffices] = useState([]);
+  const [approvedOfficeTours, setApprovedOfficeTours] = useState({});
   const [pickedOfficeId, setPickedOfficeId] = useState('');
   const [newOffice, setNewOffice] = useState({
     name: '', vat: '', address: '', postalCode: '', city: '',
@@ -1808,8 +1801,6 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   }, [user]);
 
   if (!open || !user) return null;
-  const office = getOffice(user.officeId);
-  const tour = office && getTour(office.tourId);
   const status = !office ? 'unlinked' : (office.status === 'validated' && tour) ? 'active' : 'pending';
 
   function setField(k, v) { setForm((f) => ({ ...f, [k]: v })); }
@@ -1850,9 +1841,15 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     setOfficeBusy(true);
     try {
       const list = await window.WSOffices.listApproved();
-      // Exclude the office the customer just left, if any
       const filtered = (list || []).filter((o) => o && o.id !== user.officeId);
       setApprovedOffices(filtered);
+      if (window.WSTours && filtered.length) {
+        const tourIds = [...new Set(filtered.map((o) => o.tourId).filter(Boolean))];
+        const tourEntries = await Promise.all(
+          tourIds.map((id) => window.WSTours.get(id).then((t) => [id, t]).catch(() => [id, null]))
+        );
+        setApprovedOfficeTours(Object.fromEntries(tourEntries));
+      }
     } finally { setOfficeBusy(false); }
   }
   function startUnplug() { setOfficeStep('confirm'); setOfficeErr(''); }
@@ -2147,8 +2144,8 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           <div className="ws-acc__card ws-acc__card--ok">
             <div className="ws-acc__card-row"><span className="ws-acc__k">Bureau</span><span className="ws-acc__v">{office.name}</span></div>
             {office.address && <div className="ws-acc__card-row"><span className="ws-acc__k">Adresse</span><span className="ws-acc__v">{office.address}</span></div>}
-            {tour && tour.shopId && W_SHOPS[tour.shopId] && (
-              <div className="ws-acc__card-row"><span className="ws-acc__k">Boutique</span><span className="ws-acc__v">{W_SHOPS[tour.shopId].name}</span></div>
+            {tour && tour.shopId && (shops || []).find((s) => s.id === tour.shopId) && (
+              <div className="ws-acc__card-row"><span className="ws-acc__k">Boutique</span><span className="ws-acc__v">{(shops || []).find((s) => s.id === tour.shopId).name}</span></div>
             )}
             <div className="ws-acc__card-row"><span className="ws-acc__k">Tournée</span><span className="ws-acc__v">{tour.name} · {tour.window}</span></div>
             <div className="ws-acc__btnrow">
@@ -2206,9 +2203,9 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
               <select className="ws-acc__input" value={pickedOfficeId} onChange={(e) => { setPickedOfficeId(e.target.value); setOfficeErr(''); }}>
                 <option value="">— Sélectionnez un bureau —</option>
                 {approvedOffices.map((o) => {
-                  const t = getTour(o.tourId);
-                  const shop = t && W_SHOPS[t.shopId];
-                  return <option key={o.id} value={o.id}>{o.name}{shop ? ` · ${shop.name}` : ''}</option>;
+                  const t = approvedOfficeTours[o.tourId] || null;
+                  const shopForTour = t && (shops || []).find((s) => s.id === t.shopId);
+                  return <option key={o.id} value={o.id}>{o.name}{shopForTour ? ` · ${shopForTour.name}` : ''}</option>;
                 })}
               </select>
             )}
@@ -2416,7 +2413,8 @@ function usePaymentMethods(shopId, mode) {
 }
 
 function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPlaced,
-                          voucherInput, setVoucherInput, voucherApplied, setVoucherApplied }) {
+                          voucherInput, setVoucherInput, voucherApplied, setVoucherApplied,
+                          office, tour }) {
   const [step, setStep] = useState(1);
   const [forceAuth, setForceAuth] = useState(false);
   const [paying, setPaying] = useState(false);
@@ -2446,8 +2444,6 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const voucherDiscount = voucherApplied && voucherApplied.ok ? voucherApplied.discount : 0;
   const total = Math.max(0, subtotal - promo - voucherDiscount);
 
-  const office = user ? getOffice(user.officeId) : null;
-  const tour = office && getTour(office.tourId);
   const isOffice = mode === 'delivery' && user && office;
   const isGuest = !user;
 
@@ -2822,7 +2818,7 @@ function ReadRow({ k, v }) {
 function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
   const swPanelRef = useSwipeDownToClose(onClose);
   if (!open) return null;
-  const list = shops && shops.length ? shops : Object.values(W_SHOPS);
+  const list = shops || [];
   return (
     <div className="ws-modal ws-modal--switcher" onClick={onClose}>
       <div ref={swPanelRef} className="ws-modal__panel ws-modal__panel--switcher" onClick={(e) => e.stopPropagation()}>
@@ -2861,7 +2857,7 @@ function ShopFrame({ variant }) {
   // Deep-link: read URL params once at mount so admin direct links
   // (?shop=&mode=&voucher=&category=) preload the storefront state.
   const _deep = typeof parseDeepLink === 'function' ? parseDeepLink() : {};
-  const [shopId, setShopId] = useState(_deep.shopId && W_SHOPS[_deep.shopId] ? _deep.shopId : 'chatelain');
+  const [shopId, setShopId] = useState(_deep.shopId || 'chatelain');
   React.useEffect(() => {
     if (window.WSBrand && typeof window.WSBrand.apply === 'function') {
       window.WSBrand.apply(shopId);
@@ -2870,7 +2866,7 @@ function ShopFrame({ variant }) {
   const [mode, setMode] = useState(_deep.mode === 'delivery' ? 'collect' : (_deep.mode || 'collect')); // gate delivery via existing flow
   const [cat, setCat] = useState(_deep.cat || 'all');
   const [subCat, setSubCat] = useState(null);
-  const [basket, setBasket] = useState(W_BASKET_DEFAULT);
+  const [basket, setBasket] = useState([]);
   const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
   // Voucher state — may be pre-filled by deep link
   const [voucherInput, setVoucherInput] = useState(_deep.voucher || '');
@@ -2888,7 +2884,7 @@ function ShopFrame({ variant }) {
   const [orderToast, setOrderToast] = useState(null);
 
   // Shops directory — sourced from API stub (or remote endpoint when wired).
-  const [shops, setShops] = useState(() => (window.WSShops ? window.WSShops.getCacheSync() : Object.values(W_SHOPS)));
+  const [shops, setShops] = useState(() => (window.WSShops ? window.WSShops.getCacheSync() : Object.values(W_SHOPS || {})));
   React.useEffect(() => {
     let alive = true;
     if (window.WSShops) {
@@ -2896,6 +2892,51 @@ function ShopFrame({ variant }) {
     }
     return () => { alive = false; };
   }, []);
+
+  // Categories — loaded from API, seed used as instant fallback.
+  const [categories, setCategories] = React.useState((window._CATALOG_SEED && window._CATALOG_SEED.categories) || []);
+  React.useEffect(() => {
+    let alive = true;
+    if (window.WSCatalog && typeof window.WSCatalog.listCategories === 'function') {
+      window.WSCatalog.listCategories({ shopId })
+        .then((c) => { if (alive && c && c.length) setCategories(c); })
+        .catch(() => {});
+    }
+    return () => { alive = false; };
+  }, [shopId]);
+
+  // Assortments — loaded from API, seed used as instant fallback.
+  const [assortments, setAssortments] = React.useState((window._CATALOG_SEED && window._CATALOG_SEED.assortments) || []);
+  React.useEffect(() => {
+    let alive = true;
+    if (window.WSCatalog) {
+      window.WSCatalog.listAssortments({ shopId })
+        .then((a) => { if (alive) setAssortments(a || []); })
+        .catch(() => {});
+    }
+    return () => { alive = false; };
+  }, [shopId]);
+
+  // Logged-in user's office + tour — loaded async whenever officeId changes.
+  const [userOffice, setUserOffice] = React.useState(null);
+  const [userTour, setUserTour] = React.useState(null);
+  React.useEffect(() => {
+    let alive = true;
+    async function load() {
+      if (!user || !user.officeId) { setUserOffice(null); setUserTour(null); return; }
+      const office = window.WSOffices
+        ? await window.WSOffices.get(user.officeId).catch(() => null)
+        : getOffice(user.officeId);
+      if (!alive || !office) { setUserOffice(null); setUserTour(null); return; }
+      setUserOffice(office);
+      const tour = window.WSTours
+        ? await window.WSTours.get(office.tourId).catch(() => null)
+        : getTour(office.tourId);
+      if (alive) setUserTour(tour || null);
+    }
+    load();
+    return () => { alive = false; };
+  }, [user?.officeId]);
 
   // After a manual shop switch we may prompt the user to make it their preferred shop.
   const [prefNudge, setPrefNudge] = useState(null); // { shopId, shopName } | null
@@ -2925,22 +2966,23 @@ function ShopFrame({ variant }) {
     setTimeout(() => setOrderToast(null), 4500);
   }
 
-  const shop = W_SHOPS[shopId];
+  const shop = shops.find((s) => s.id === shopId) || shops[0] || null;
   const isAssortment = typeof cat === 'string' && cat.startsWith('season:');
   const assortmentId = isAssortment ? cat.slice('season:'.length) : null;
-  const assortment = assortmentId ? W_ASSORTMENTS.find((a) => a.id === assortmentId) : null;
-  const [allProducts, setAllProducts] = React.useState([]);
+  const assortment = assortmentId ? assortments.find((a) => a.id === assortmentId) : null;
+  const seedProducts = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
+  const [allProducts, setAllProducts] = React.useState(seedProducts);
   React.useEffect(() => {
     let alive = true;
     (async () => {
-      if (!window.WSCatalog) { setAllProducts(W_PRODUCTS); return; }
+      if (!window.WSCatalog) return;
       const list = await window.WSCatalog.listProducts({ shopId });
-      if (alive) setAllProducts(list || []);
+      if (alive && list && list.length) setAllProducts(list);
     })();
     return () => { alive = false; };
   }, [shopId]);
   const products = useMemo(() => {
-    const src = allProducts.length ? allProducts : W_PRODUCTS;
+    const src = allProducts;
     if (cat === 'all') return src;
     if (isAssortment) {
       return src.slice(0, 8);
@@ -2948,7 +2990,7 @@ function ShopFrame({ variant }) {
     return src.filter((p) => p.cat === cat);
   }, [cat, isAssortment, allProducts]);
   const cartCount = basket.reduce((t, l) => t + l.qty, 0);
-  const userCanDeliver = canDeliver(user);
+  const userCanDeliver = !!(userOffice && userOffice.status === 'validated' && userTour);
 
   function handleAdd(p, portion) {
     setBasket((b) => [...b, { line: Date.now(), productId: p.id, name: p.name + (portion === 'demi' ? ' — 1/2' : portion === 'quart' ? ' — 1/4' : ''), qty: 1, price: p.price, options: [], portion: portion || null, cat: p.cat, crossPortion: !!p.crossPortion }]);
@@ -3026,7 +3068,7 @@ function ShopFrame({ variant }) {
 
           {/* page head removed */}
 
-          <CategoryRow active={cat} sub={subCat} onSelect={(c) => { setCat(c); setSubCat(null); }} onSelectSub={setSubCat} accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'} tint={mode === 'delivery' ? 'invert(45%) sepia(60%) saturate(600%) hue-rotate(5deg)' : 'invert(15%) sepia(85%) saturate(2400%) hue-rotate(335deg)'}/>
+          <CategoryRow active={cat} sub={subCat} onSelect={(c) => { setCat(c); setSubCat(null); }} onSelectSub={setSubCat} accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'} tint={mode === 'delivery' ? 'invert(45%) sepia(60%) saturate(600%) hue-rotate(5deg)' : 'invert(15%) sepia(85%) saturate(2400%) hue-rotate(335deg)'} categories={categories} assortments={assortments}/>
 
           <div className="ws-grid">
             {products.map((p) => <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpen={setDetailProduct}/>)}
@@ -3104,20 +3146,23 @@ function ShopFrame({ variant }) {
         onLogout={handleLogout}
         onRequestOffice={() => setAccountOpen(true)}
         onUpdateUser={(u) => setUser(u)}
+        office={userOffice}
+        tour={userTour}
       />
       <ProductDetail open={!!detailProduct} product={detailProduct} mode={mode} onClose={() => setDetailProduct(null)} onAdd={handleAddConfigured}/>
       {window.AllergensModal && <window.AllergensModal open={allergensOpen} onClose={() => setAllergensOpen(false)}/>}
       <CheckoutWizard open={checkoutOpen} onClose={() => setCheckoutOpen(false)} shop={shop} mode={mode} basket={basket} user={user} onLogin={() => setAuthOpen(true)} onPlaced={handlePlaced}
         voucherInput={voucherInput} setVoucherInput={setVoucherInput}
         voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
+        office={userOffice} tour={userTour}
       />
       {deepLinkBanner && (
         <div className="ws-deeplink" role="status">
           <div className="ws-deeplink__copy">
             <strong>Lien direct reçu</strong>
             <span>
-              {deepLinkBanner.shopId && W_SHOPS[deepLinkBanner.shopId] && (
-                <>Boutique · <em>{W_SHOPS[deepLinkBanner.shopId].name}</em></>
+              {deepLinkBanner.shopId && shops.find((s) => s.id === deepLinkBanner.shopId) && (
+                <>Boutique · <em>{shops.find((s) => s.id === deepLinkBanner.shopId).name}</em></>
               )}
               {deepLinkBanner.cat && deepLinkBanner.cat !== 'all' && (
                 <> · Catégorie <em>{deepLinkBanner.cat}</em></>

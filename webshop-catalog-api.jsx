@@ -14,6 +14,15 @@
 (function () {
   const api = {
     endpoint: null,
+    async listCategories({ shopId } = {}) {
+      if (api.endpoint) {
+        try {
+          const r = await fetch(`${api.endpoint}/categories?shopId=${encodeURIComponent(shopId||'')}`, { credentials: 'include' });
+          if (r.ok) return await r.json();
+        } catch (_) {}
+      }
+      return (window._CATALOG_SEED && window._CATALOG_SEED.categories) || [];
+    },
     async listProducts({ shopId, cat } = {}) {
       if (api.endpoint) {
         try {
