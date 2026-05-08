@@ -857,3 +857,89 @@ unitPrice = product.price × portionFactor + sum(selected option deltas) + bundl
 ```
 
 where `portionFactor` is `0.27`, `0.52`, or `1.00` depending on the chosen portion.
+
+---
+
+## Per-shop Pricing & Availability
+
+### SQL Tables
+
+**`ws_product_prices`** — price override per product per shop:
+```sql
+CREATE TABLE ws_product_prices (
+  product_id  INT REFERENCES ws_products(id),
+  shop_id     VARCHAR(50) REFERENCES ws_shops(id),
+  price       DECIMAL(10,2) NOT NULL,
+  active      BOOLEAN DEFAULT TRUE,
+  PRIMARY KEY (product_id, shop_id)
+);
+```
+`ws_products.price` is the global default. When a row exists in `ws_product_prices` for the active shop, that price is used instead.
+
+**`ws_product_shops`** — which products are carried per shop:
+```sql
+CREATE TABLE ws_product_shops (
+  product_id  INT REFERENCES ws_products(id),
+  shop_id     VARCHAR(50) REFERENCES ws_shops(id),
+  active      BOOLEAN DEFAULT TRUE,
+  no_delivery BOOLEAN DEFAULT FALSE,
+  PRIMARY KEY (product_id, shop_id)
+);
+```
+If no row exists for a `(product_id, shop_id)` pair, the product is considered available at that shop (backward-compatible default).
+
+**`ws_product_stock`** — daily qty per product per shop per mode:
+```sql
+CREATE TABLE ws_product_stock (
+  product_id   INT REFERENCES ws_products(id),
+  shop_id      VARCHAR(50) REFERENCES ws_shops(id),
+  date         DATE NOT NULL,
+  mode         VARCHAR(20),        -- collect | delivery | NULL = both
+  qty_total    INT NOT NULL,
+  qty_reserved INT DEFAULT 0,
+  qty_sold     INT DEFAULT 0,
+  active       BOOLEAN DEFAULT TRUE,
+  UNIQUE (product_id, shop_id, date, mode)
+);
+-- qty_available = qty_total - qty_reserved - qty_sold (computed by API)
+```
+
+**`ws_stock_reservations`** — 15-min basket holds (logged-in users only):
+```sql
+CREATE TABLE ws_stock_reservations (
+  id           VARCHAR(50) PRIMARY KEY,
+  product_id   INT REFERENCES ws_products(id),
+  shop_id      VARCHAR(50) REFERENCES ws_shops(id),
+  date         DATE NOT NULL,
+  mode         VARCHAR(20) NOT NULL,
+  qty          INT NOT NULL,
+  customer_id  VARCHAR(50) REFERENCES ws_customers(id),
+  expires_at   TIMESTAMP NOT NULL,
+  released     BOOLEAN DEFAULT FALSE,
+  created_at   TIMESTAMP DEFAULT NOW()
+);
+```
+
+### API Query (backend reference)
+
+```sql
+SELECT
+  p.*,
+  COALESCE(pp.price, p.price)   AS price,
+  COALESCE(ps.no_delivery, FALSE) AS no_delivery,
+  COALESCE(ps.active, TRUE)      AS shop_active
+FROM ws_products p
+LEFT JOIN ws_product_shops ps
+  ON ps.product_id = p.id AND ps.shop_id = :shopId
+LEFT JOIN ws_product_prices pp
+  ON pp.product_id = p.id AND pp.shop_id = :shopId AND pp.active = TRUE
+WHERE p.active = TRUE
+  AND COALESCE(ps.active, TRUE) = TRUE;
+```
+
+### Seed keys (demo mode)
+
+| Key on `window._CATALOG_SEED` | Format | Purpose |
+|---|---|---|
+| `prices` | `{ shopId: { productId: price } }` | Price overrides per shop |
+| `shopProducts` | `{ shopId: [productId, ...] }` | Restrict products per shop (absent = all) |

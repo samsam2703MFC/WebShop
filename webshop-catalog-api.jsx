@@ -6,15 +6,40 @@
    real backend:
      window.WSCatalog.endpoint = 'https://your-host/catalog';
    Endpoints expected:
-     GET  {endpoint}/products?shopId=&cat=     -> [Product]
-     GET  {endpoint}/products/:id              -> Product
+     GET  {endpoint}/products?shopId=&cat=     -> [Product]  (price already shop-specific)
+     GET  {endpoint}/products/:id?shopId=      -> Product
      GET  {endpoint}/bundles?productId=        -> [Bundle]
      GET  {endpoint}/assortments?shopId=       -> [Assortment]
      GET  {endpoint}/categories?shopId=        -> [Category]
      GET  {endpoint}/stock?shopId=&date=&mode= -> [StockEntry]
           StockEntry: { productId, qty_total, qty_reserved, qty_sold, qty_available }
+     POST {endpoint}/stock/reserve             -> { ok, reservationId, expiresAt }
+     POST {endpoint}/stock/release             -> { ok }
+
+   Per-shop pricing + availability (seed):
+     window._CATALOG_SEED.prices  = { shopId: { productId: price } }
+     window._CATALOG_SEED.shopProducts = { shopId: [productId, ...] }
+       absent shopId key = all products available at that shop
    ===================================================================== */
 (function () {
+
+  // Apply shop-specific price override and availability filter to a product list.
+  function applyShopOverrides(products, shopId) {
+    const seed = window._CATALOG_SEED || {};
+    // Availability: if shopProducts defined for this shop, filter to that list
+    const allowed = seed.shopProducts && seed.shopProducts[shopId];
+    let list = allowed
+      ? products.filter((p) => allowed.includes(p.id))
+      : products;
+    // Price: apply per-shop override if defined
+    const prices = seed.prices && seed.prices[shopId];
+    if (!prices) return list;
+    return list.map((p) => {
+      const override = prices[p.id];
+      return override !== undefined ? { ...p, price: override } : p;
+    });
+  }
+
   const api = {
     endpoint: null,
     async listCategories({ shopId } = {}) {
@@ -34,18 +59,21 @@
         } catch (_) {}
       }
       const seed = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
-      if (!cat || cat === 'all') return seed;
-      return seed.filter((p) => p.cat === cat);
+      const filtered = !cat || cat === 'all' ? seed : seed.filter((p) => p.cat === cat);
+      return applyShopOverrides(filtered, shopId);
     },
-    async getProduct(id) {
+    async getProduct(id, shopId) {
       if (api.endpoint) {
         try {
-          const r = await fetch(`${api.endpoint}/products/${encodeURIComponent(id)}`, { credentials: 'include' });
+          const qs = shopId ? `?shopId=${encodeURIComponent(shopId)}` : '';
+          const r = await fetch(`${api.endpoint}/products/${encodeURIComponent(id)}${qs}`, { credentials: 'include' });
           if (r.ok) return await r.json();
         } catch (_) {}
       }
       const seed = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
-      return seed.find((p) => String(p.id) === String(id)) || null;
+      const p = seed.find((p) => String(p.id) === String(id)) || null;
+      if (!p || !shopId) return p;
+      return applyShopOverrides([p], shopId)[0] || null;
     },
     async listBundles({ productId } = {}) {
       if (api.endpoint) {

@@ -245,8 +245,29 @@ const W_PRODUCTS = [
   },
 ];
 
+// Per-shop price overrides (ws_product_prices table).
+// Format: { shopId: { productId: price } }
+// Absent = use default price from ws_products.price
+const W_PRODUCT_PRICES = {
+  'chatelain': {},            // default prices at Châtelain
+  'ixelles':   { 4: 14.00 }, // bowl chèvre is €14.00 at Ixelles (vs €13.50 default)
+};
+
+// Per-shop product availability (ws_product_shops table).
+// Format: { shopId: [productId, ...] }
+// Absent shopId key = all products available at that shop
+const W_SHOP_PRODUCTS = {
+  // 'ixelles': [1,2,4,5,6,7,8,9,10,11,12], // example: no plats at Ixelles
+};
+
 if (typeof window !== 'undefined') {
-  window._CATALOG_SEED = { products: W_PRODUCTS, assortments: W_ASSORTMENTS, categories: W_CATEGORIES };
+  window._CATALOG_SEED = {
+    products: W_PRODUCTS,
+    assortments: W_ASSORTMENTS,
+    categories: W_CATEGORIES,
+    prices: W_PRODUCT_PRICES,
+    shopProducts: W_SHOP_PRODUCTS,
+  };
 }
 
 
