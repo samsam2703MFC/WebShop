@@ -219,7 +219,6 @@
 .ws-scrollcue {
   position: absolute;
   right: calc(360px + 14px);   /* basket column width + gutter */
-  bottom: 18px;
   width: 30px; height: 30px;
   border-radius: 999px;
   background: rgba(255,255,255,0.85);
@@ -232,22 +231,28 @@
   padding: 0;
   opacity: 0; transform: translateY(4px);
   transition: opacity .35s ease, transform .35s ease, color .25s ease, background .2s ease;
-  animation: ws-cue-bob 2.6s ease-in-out infinite;
   z-index: 5;
   pointer-events: none;        /* hidden state isn't clickable */
 }
-.ws-main[data-can-scroll="1"] ~ .ws-scrollcue { pointer-events: auto; }
+.ws-scrollcue--down { bottom: 18px; animation: ws-cue-bob 2.6s ease-in-out infinite; }
+.ws-scrollcue--up   { bottom: 56px; animation: ws-cue-bob-up 2.6s ease-in-out infinite; }
+.ws-main[data-can-scroll="1"]    ~ .ws-scrollcue--down { pointer-events: auto; opacity: 1; transform: translateY(0); }
+.ws-main[data-can-scroll-up="1"] ~ .ws-scrollcue--up   { pointer-events: auto; opacity: 1; transform: translateY(0); }
 .ws-scrollcue:hover { background: #fff; }
 .ws-scrollcue:active { transform: translateY(1px) scale(.96); }
 .ws[data-mode="delivery"] .ws-scrollcue { color: var(--color-primary); }
-.ws-main[data-can-scroll="1"] ~ .ws-scrollcue { opacity: 1; transform: translateY(0); }
 
 @media (max-width: 1024px) {
-  .ws-scrollcue { right: 10px; bottom: 84px; } /* above the floating cart bar */
+  .ws-scrollcue--down { right: 10px; bottom: 84px; }
+  .ws-scrollcue--up   { right: 10px; bottom: 122px; }
 }
 @keyframes ws-cue-bob {
   0%,100% { translate: 0 0; }
   50%     { translate: 0 3px; }
+}
+@keyframes ws-cue-bob-up {
+  0%,100% { translate: 0 0; }
+  50%     { translate: 0 -3px; }
 }
 
 /* Horizontal cue on category strip — tiny chevron right, fades when at end. */

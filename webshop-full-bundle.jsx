@@ -3000,7 +3000,9 @@ function ShopFrame({ variant }) {
     const el = mainScrollRef.current;
     if (!el) return;
     const canScroll = el.scrollHeight - el.clientHeight - el.scrollTop > 24;
+    const canScrollUp = el.scrollTop > 24;
     el.dataset.canScroll = canScroll ? '1' : '0';
+    el.dataset.canScrollUp = canScrollUp ? '1' : '0';
   }
   React.useEffect(() => {
     updateScrollState();
@@ -3147,12 +3149,23 @@ function ShopFrame({ variant }) {
 
         <button
           type="button"
-          className="ws-scrollcue"
+          className="ws-scrollcue ws-scrollcue--up"
+          aria-label="Scroll up"
+          onClick={() => {
+            const main = document.querySelector('.ws-main');
+            if (!main) return;
+            main.scrollBy({ top: -main.clientHeight * 0.85, behavior: 'smooth' });
+          }}
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 15l6-6 6 6"/></svg>
+        </button>
+        <button
+          type="button"
+          className="ws-scrollcue ws-scrollcue--down"
           aria-label="Scroll down"
           onClick={() => {
             const main = document.querySelector('.ws-main');
             if (!main) return;
-            // If already near the bottom, jump back to top; otherwise advance one viewport.
             const atBottom = main.scrollTop + main.clientHeight >= main.scrollHeight - 24;
             main.scrollBy({ top: atBottom ? -main.scrollHeight : main.clientHeight * 0.85, behavior: 'smooth' });
           }}
