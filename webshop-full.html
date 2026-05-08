@@ -24,6 +24,8 @@
 
 <div id="root"></div>
 
+<!-- API stubs — plain JS, must run before React. Each exposes window.WSXxx.
+     To switch from demo fixtures to live HTTP, set BASE_URL in api-config.js -->
 <script src="webshop-vouchers.jsx"></script>
 <script src="webshop-i18n.jsx"></script>
 <script src="webshop-vies.jsx"></script>
@@ -33,6 +35,12 @@
 <script src="webshop-catalog-api.jsx"></script>
 <script src="webshop-brand-api.jsx"></script>
 <script src="webshop-pricing-api.jsx"></script>
+<script src="webshop-auth-api.jsx"></script>
+<script src="webshop-tours-api.jsx"></script>
+<script src="webshop-orders-api.jsx"></script>
+<!-- Central config — edit api-config.js to point at your backend -->
+<script src="api-config.js"></script>
+<!-- React components -->
 <script type="text/babel" data-presets="react" src="webshop-i18n-react.jsx"></script>
 <script type="text/babel" data-presets="react" src="webshop-allergens.jsx"></script>
 <script type="text/babel" data-presets="react" src="webshop-full-bundle.jsx"></script>

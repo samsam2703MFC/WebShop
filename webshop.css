@@ -2700,6 +2700,14 @@
 .ws-checkout__foot-k { font-size: 11px; color: var(--color-text-muted); letter-spacing: 0.06em; text-transform: uppercase; }
 .ws-checkout__foot-v { font-family: var(--font-display); font-size: 22px; color: var(--color-primary); }
 .ws-checkout__foot-actions { display: flex; gap: 8px; }
+.ws-checkout__pay-err {
+  font-size: 12px;
+  color: #c93434;
+  background: rgba(201,52,52,0.08);
+  border: 1px solid rgba(201,52,52,0.25);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
 .ws-btn-ghost {
   background: transparent;
   border: 1px solid var(--color-border-tertiary);

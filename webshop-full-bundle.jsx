@@ -1694,20 +1694,32 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
   const [tab, setTab] = useState('login');
   const [form, setForm] = useState({ email: '', password: '', firstName: '', lastName: '' });
   const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(false);
   if (!open) return null;
   function set(k, v) { setForm((f) => ({ ...f, [k]: v })); setErr(''); }
-  function submit(e) {
+  async function submit(e) {
     e.preventDefault();
-    if (tab === 'login') {
-      const r = authLogin(form.email, form.password);
-      if (!r.ok) return setErr(r.error);
-      onLogin(r.user); onClose();
-    } else {
-      if (!form.firstName || !form.lastName) return setErr('Prénom et nom requis.');
-      if (!form.email || !form.password) return setErr('Email et mot de passe requis.');
-      const r = authRegister(form);
-      if (!r.ok) return setErr(r.error);
-      onRegister(r.user); onClose();
+    setLoading(true); setErr('');
+    try {
+      if (tab === 'login') {
+        const r = window.WSAuth
+          ? await window.WSAuth.login({ email: form.email, password: form.password })
+          : authLogin(form.email, form.password);
+        if (!r.ok) { setErr(r.error || 'Identifiants incorrects.'); return; }
+        onLogin(r.user); onClose();
+      } else {
+        if (!form.firstName || !form.lastName) { setErr('Prénom et nom requis.'); return; }
+        if (!form.email || !form.password) { setErr('Email et mot de passe requis.'); return; }
+        const r = window.WSAuth
+          ? await window.WSAuth.register(form)
+          : authRegister(form);
+        if (!r.ok) { setErr(r.error || "Erreur lors de l'inscription."); return; }
+        onRegister(r.user); onClose();
+      }
+    } catch (_) {
+      setErr('Erreur réseau. Veuillez réessayer.');
+    } finally {
+      setLoading(false);
     }
   }
   return (
@@ -1730,7 +1742,7 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
         <label className="ws-field"><span>Mot de passe</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete={tab === 'login' ? 'current-password' : 'new-password'}/></label>
         {err && <p className="ws-form__err">{err}</p>}
         {tab === 'login' && <p className="ws-form__hint">Démo : <strong>marie@acme.be</strong> · <strong>lou@borderline.be</strong> · <strong>jules@indep.be</strong> — mdp <strong>demo</strong></p>}
-        <button type="submit" className="ws-cta ws-cta--block">{tab === 'login' ? 'Se connecter' : 'Créer mon compte'}</button>
+        <button type="submit" className="ws-cta ws-cta--block" disabled={loading}>{loading ? 'Chargement…' : (tab === 'login' ? 'Se connecter' : 'Créer mon compte')}</button>
       </form>
     </ModalShell>
   );
@@ -2380,20 +2392,35 @@ function FidelityLinkPanel({ open, user, onConfirmed, onClose }) {
 // =========================================================================
 // Slots now come from WSCalendar.listSlots(). The deprecated stub was removed.
 //
-// TODO[BACKEND]: payment methods should be fetched via
-// `WSPricing.listPaymentMethods({ shopId, mode })`. The W_PAYMENTS array
-// below is the legacy hardcoded list — kept temporarily so existing render
-// paths work; replace with an effect that calls the API on shop/mode change.
-const W_PAYMENTS = [
-  { id: 'bancontact', label: 'Bancontact', sub: 'Paiement instantané' },
+// Payment methods are loaded async from WSPricing.listPaymentMethods().
+// The FALLBACK array is used only during the first render before the
+// async call resolves, or when no endpoint is configured.
+const W_PAYMENTS_FALLBACK = [
+  { id: 'bancontact', label: 'Bancontact',   sub: 'Paiement instantané' },
   { id: 'visa',       label: 'Carte bancaire', sub: 'Visa · Mastercard · Amex' },
-  { id: 'apple',      label: 'Apple Pay',  sub: 'Touch ID / Face ID' },
+  { id: 'apple',      label: 'Apple Pay',    sub: 'Touch ID / Face ID' },
 ];
+
+function usePaymentMethods(shopId, mode) {
+  const [methods, setMethods] = React.useState(W_PAYMENTS_FALLBACK);
+  React.useEffect(() => {
+    let alive = true;
+    if (window.WSPricing && typeof window.WSPricing.listPaymentMethods === 'function') {
+      window.WSPricing.listPaymentMethods({ shopId, mode })
+        .then((m) => { if (alive && m && m.length) setMethods(m); })
+        .catch(() => {});
+    }
+    return () => { alive = false; };
+  }, [shopId, mode]);
+  return methods;
+}
 
 function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPlaced,
                           voucherInput, setVoucherInput, voucherApplied, setVoucherApplied }) {
   const [step, setStep] = useState(1);
   const [forceAuth, setForceAuth] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const [payErr, setPayErr] = useState(null);
 
   // Guest contact (collect only)
   const [contact, setContact] = useState({ firstName: '', lastName: '', email: '', phone: '' });
@@ -2409,7 +2436,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const [payment, setPayment] = useState('bancontact');
 
   // Reset when reopened
-  useEffect(() => { if (open) { setStep(1); setSlot(null); setInvoice(false); setVat(''); setPayment('bancontact'); setForceAuth(false); } }, [open]);
+  useEffect(() => { if (open) { setStep(1); setSlot(null); setInvoice(false); setVat(''); setPayment('bancontact'); setForceAuth(false); setPaying(false); setPayErr(null); } }, [open]);
 
   if (!open) return null;
 
@@ -2432,6 +2459,32 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   }
   function step2Valid() { return Boolean(slot); }
 
+  async function handlePay() {
+    setPaying(true); setPayErr(null);
+    try {
+      const payload = {
+        shopId: shop && shop.id,
+        mode,
+        slot: { slotId: slot, label: slot },
+        basket: basket.map((l) => ({ productId: l.productId, qty: l.qty, portion: l.portion || null, options: l.options || [], bundleId: l.bundleId || null, bundleSlots: l.bundleSlots || {} })),
+        voucher: voucherApplied && voucherApplied.ok ? voucherApplied.voucher.code : null,
+        customer: user ? { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, phone: user.phone || null, officeId: user.officeId || null } : { ...contact },
+        payment: { method: payment },
+        delivery: mode === 'delivery' && office ? { officeId: office.id, tourId: office.tourId, address: office.address } : null,
+        total,
+        invoice: invoice ? { requested: true, vat } : null,
+      };
+      const result = window.WSOrders
+        ? await window.WSOrders.place(payload)
+        : { ok: true, orderId: 'ord-demo', total, slot, payment };
+      onPlaced({ ...result, slot, payment, total });
+    } catch (ex) {
+      setPayErr(ex.message || 'Erreur lors du paiement. Veuillez réessayer.');
+    } finally {
+      setPaying(false);
+    }
+  }
+
   function next() {
     if (step === 1) {
       if (!step1Valid()) return;
@@ -2442,7 +2495,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       if (!step2Valid()) return;
       setStep(3);
     } else {
-      onPlaced({ slot, payment, total, invoice, vat });
+      handlePay();
     }
   }
 
@@ -2484,7 +2537,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             mode={mode} basket={basket} subtotal={subtotal} promo={promo} total={total}
             payment={payment} setPayment={setPayment}
             isOffice={isOffice} invoice={invoice} setInvoice={setInvoice} vat={vat} setVat={setVat}
-            shopId={shop && shop.id}
+            shopId={shop && shop.id} mode={mode}
             voucherInput={voucherInput} setVoucherInput={setVoucherInput}
             voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
             voucherDiscount={voucherDiscount}
@@ -2493,19 +2546,20 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       </div>
 
       <footer className="ws-checkout__foot">
+        {payErr && <div className="ws-checkout__pay-err" role="alert">{payErr}</div>}
         <div className="ws-checkout__foot-total">
           <span className="ws-checkout__foot-k">Total TTC</span>
           <span className="ws-checkout__foot-v">€{total.toFixed(2)}</span>
         </div>
         <div className="ws-checkout__foot-actions">
-          {step > 1 && <button className="ws-btn-ghost" onClick={() => setStep((s) => s - 1)}>Précédent</button>}
+          {step > 1 && <button className="ws-btn-ghost" onClick={() => setStep((s) => s - 1)} disabled={paying}>Précédent</button>}
           <button
             className="ws-cta ws-cta--block"
-            disabled={(step === 1 && !step1Valid()) || (step === 2 && !step2Valid())}
+            disabled={paying || (step === 1 && !step1Valid()) || (step === 2 && !step2Valid())}
             onClick={next}
           >
-            {step === 3 ? `Payer · €${total.toFixed(2)}` : (step === 1 && isGuest && !forceAuth ? 'Continuer · se connecter' : 'Continuer')}
-            {step < 3 && <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>}
+            {paying ? 'Traitement…' : step === 3 ? `Payer · €${total.toFixed(2)}` : (step === 1 && isGuest && !forceAuth ? 'Continuer · se connecter' : 'Continuer')}
+            {!paying && step < 3 && <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>}
           </button>
         </div>
       </footer>
@@ -2620,24 +2674,41 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot }) {
 }
 
 function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, isOffice, invoice, setInvoice, vat, setVat,
-                         shopId, voucherInput, setVoucherInput, voucherApplied, setVoucherApplied, voucherDiscount }) {
+                         shopId, mode, voucherInput, setVoucherInput, voucherApplied, setVoucherApplied, voucherDiscount }) {
   const [voucherErr, setVoucherErr] = useState(null);
+  const [voucherLoading, setVoucherLoading] = useState(false);
+  const paymentMethods = usePaymentMethods(shopId, mode);
+
   // Re-validate whenever subtotal changes (e.g. minOrder boundary)
   useEffect(() => {
     if (voucherApplied && voucherApplied.ok) {
-      const r = validateVoucher(voucherApplied.voucher.code, { subtotal, shopId });
-      if (!r.ok) { setVoucherApplied(null); setVoucherErr(r.message); }
-      else setVoucherApplied(r);
+      const code = voucherApplied.voucher.code;
+      const validate = window.WSVouchers
+        ? () => window.WSVouchers.redeem({ code, shopId, subtotal, basket })
+        : () => Promise.resolve(validateVoucher(code, { subtotal, shopId }));
+      validate().then((r) => {
+        if (!r.ok) { setVoucherApplied(null); setVoucherErr(r.message); }
+        else setVoucherApplied(r);
+      }).catch(() => {});
     }
   }, [subtotal, shopId]);
 
-  function applyVoucher() {
+  async function applyVoucher() {
     setVoucherErr(null);
     const code = (voucherInput || '').trim();
     if (!code) return;
-    const r = validateVoucher(code, { subtotal, shopId });
-    if (r.ok) { setVoucherApplied(r); setVoucherErr(null); }
-    else { setVoucherApplied(null); setVoucherErr(r.message || 'Code invalide'); }
+    setVoucherLoading(true);
+    try {
+      const r = window.WSVouchers
+        ? await window.WSVouchers.redeem({ code, shopId, subtotal, basket })
+        : validateVoucher(code, { subtotal, shopId });
+      if (r.ok) { setVoucherApplied(r); setVoucherErr(null); }
+      else { setVoucherApplied(null); setVoucherErr(r.message || 'Code invalide'); }
+    } catch (_) {
+      setVoucherErr('Erreur réseau lors de la validation du code.');
+    } finally {
+      setVoucherLoading(false);
+    }
   }
   function removeVoucher() {
     setVoucherApplied(null);
@@ -2677,7 +2748,7 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
               autoComplete="off"
               spellCheck={false}
             />
-            <button type="button" className="ws-co-voucher__apply" onClick={applyVoucher} disabled={!voucherInput.trim()}>Appliquer</button>
+            <button type="button" className="ws-co-voucher__apply" onClick={applyVoucher} disabled={!voucherInput.trim() || voucherLoading}>{voucherLoading ? '…' : 'Appliquer'}</button>
           </div>
         )}
         {voucherErr && <div className="ws-co-voucher__err">{voucherErr}</div>}
@@ -2706,7 +2777,7 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
       </div>
 
       <div className="ws-pay">
-        {W_PAYMENTS.map((p) => (
+        {paymentMethods.map((p) => (
           <label key={p.id} className={`ws-pay__opt${payment === p.id ? ' is-active' : ''}`}>
             <input type="radio" name="payment" value={p.id} checked={payment === p.id} onChange={() => setPayment(p.id)}/>
             <span className="ws-pay__radio"/>

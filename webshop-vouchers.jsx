@@ -95,5 +95,52 @@
     } catch (e) { return {}; }
   }
 
-  Object.assign(window, { loadVouchers, validateVoucher, parseDeepLink });
+  // ─────────────────────────────────────────────────────────────────────────
+  // WSVouchers — API stub for voucher redemption.
+  // The admin app reads/writes localStorage.atelier_vouchers directly while
+  // there is no backend. The storefront always goes through WSVouchers.redeem()
+  // at checkout so the seam is clean for production.
+  //
+  // To wire a real backend, set:
+  //   window.WSVouchers.endpoint = 'https://your-host/vouchers';
+  // Endpoints expected:
+  //   POST {endpoint}/redeem             -> { ok, voucher, discount, message } or { ok:false, reason, message }
+  //   GET  {endpoint}                    -> Voucher[]  (admin only)
+  // ─────────────────────────────────────────────────────────────────────────
+  const WSVouchers = {
+    endpoint: null,
+
+    /* Validate + redeem a voucher code server-side.
+       Returns { ok, voucher, discount, message } on success,
+       or { ok:false, reason, message } on failure. */
+    async redeem({ code, shopId, subtotal, basket } = {}) {
+      if (WSVouchers.endpoint) {
+        try {
+          const r = await fetch(`${WSVouchers.endpoint}/redeem`, {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, shopId, subtotal, basket }),
+          });
+          const j = await r.json();
+          return j; // server returns { ok, voucher, discount, message } or { ok:false, reason, message }
+        } catch (_) {}
+      }
+      // Fallback: client-side validation from localStorage / seed.
+      // TODO[BACKEND]: remove once POST /vouchers/redeem is live.
+      return validateVoucher(code, { shopId, subtotal });
+    },
+
+    /* List all vouchers — admin use only. */
+    async list() {
+      if (WSVouchers.endpoint) {
+        try {
+          const r = await fetch(WSVouchers.endpoint, { credentials: 'include' });
+          if (r.ok) return await r.json();
+        } catch (_) {}
+      }
+      return loadVouchers();
+    },
+  };
+
+  Object.assign(window, { loadVouchers, validateVoucher, parseDeepLink, WSVouchers });
 })();
