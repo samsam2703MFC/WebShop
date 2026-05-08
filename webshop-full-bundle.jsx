@@ -3020,6 +3020,7 @@ function ShopFrame({ variant }) {
     setCheckoutOpen(false);
     setOrderToast({ ...payload, ts: Date.now() });
     setBasket([]);
+    stockReleaseAll(); // reservations converted to qty_sold by the order endpoint
     setTimeout(() => setOrderToast(null), 4500);
   }
 
@@ -3063,18 +3064,42 @@ function ShopFrame({ variant }) {
   const cartCount = basket.reduce((t, l) => t + l.qty, 0);
   const userCanDeliver = !!(userOffice && userOffice.status === 'validated' && userTour);
 
+  // Stock reservation helpers — only called for logged-in users (15-min hold).
+  // No-op when WSCatalog has no endpoint configured (demo/seed mode).
+  function stockReserve(productId, qty = 1) {
+    if (!user || !window.WSCatalog || !window.WSCatalog.reserve) return;
+    const iso = date instanceof Date ? date.toISOString().slice(0, 10) : '';
+    window.WSCatalog.reserve({ productId, shopId, date: iso, mode, qty, customerId: user.id })
+      .then(() => window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {})))
+      .catch(() => {});
+  }
+  function stockRelease(productId, qty = 1) {
+    if (!user || !window.WSCatalog || !window.WSCatalog.release) return;
+    window.WSCatalog.release({ customerId: user.id })
+      .then(() => window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {})))
+      .catch(() => {});
+  }
+  function stockReleaseAll() {
+    if (!user || !window.WSCatalog || !window.WSCatalog.release) return;
+    window.WSCatalog.release({ customerId: user.id }).catch(() => {});
+  }
+
   function handleAdd(p, portion) {
     setBasket((b) => [...b, { line: Date.now(), productId: p.id, name: p.name + (portion === 'demi' ? ' — 1/2' : portion === 'quart' ? ' — 1/4' : ''), qty: 1, price: p.price, options: [], portion: portion || null, cat: p.cat, crossPortion: !!p.crossPortion }]);
+    stockReserve(p.id, 1);
   }
 
   // Configurable-product detail
   function handleRemove(lineId) {
+    const line = basket.find((l) => l.line === lineId);
     setBasket((b) => b.filter((l) => l.line !== lineId));
+    if (line) stockRelease(line.productId, line.qty);
   }
 
   const [detailProduct, setDetailProduct] = useState(null);
   function handleAddConfigured(line) {
     setBasket((b) => [...b, { line: Date.now(), ...line }]);
+    stockReserve(line.productId, line.qty || 1);
   }
 
   const Nav = variant === 'A' ? NavbarA : variant === 'B' ? NavbarB : NavbarC;
@@ -3097,6 +3122,7 @@ function ShopFrame({ variant }) {
     }
     // Gating: no same-day delivery after 10:00
     if (next === 'delivery' && deliveryCutoffPassed) return;
+    stockReleaseAll();
     setMode(next);
     setBasket([]);
   }
@@ -3104,6 +3130,7 @@ function ShopFrame({ variant }) {
     const a = date instanceof Date ? date.toDateString() : String(date);
     const b = next instanceof Date ? next.toDateString() : String(next);
     if (a === b) return;
+    stockReleaseAll();
     setDate(next);
     setBasket([]);
     // If switching to today in delivery mode and cutoff has passed, revert to collect
@@ -3126,6 +3153,7 @@ function ShopFrame({ variant }) {
     // If freshly logged-in user already has delivery enabled & was on collect, leave mode alone (don't surprise the user).
   }
   function handleLogout() {
+    stockReleaseAll(); // release before clearing user reference
     setUser(null);
     if (mode === 'delivery') { setMode('collect'); setBasket([]); }
   }

@@ -100,6 +100,38 @@
       }
       return map;
     },
+    // Reserve qty for a logged-in user's basket (15-min hold).
+    // Only called when user is authenticated. No-op when no endpoint is set.
+    // POST {endpoint}/stock/reserve { productId, shopId, date, mode, qty, customerId }
+    // -> { ok, reservationId, expiresAt }
+    async reserve({ productId, shopId, date, mode, qty, customerId } = {}) {
+      if (!api.endpoint) return null;
+      try {
+        const iso = date instanceof Date ? date.toISOString().slice(0, 10) : (date || '');
+        const r = await fetch(`${api.endpoint}/stock/reserve`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ productId, shopId, date: iso, mode, qty, customerId }),
+        });
+        if (r.ok) return await r.json();
+      } catch (_) {}
+      return null;
+    },
+    // Release one or all reservations for a customer.
+    // POST {endpoint}/stock/release { customerId, reservationIds? }
+    // reservationIds absent = release all for that customer.
+    async release({ customerId, reservationIds } = {}) {
+      if (!api.endpoint) return;
+      try {
+        await fetch(`${api.endpoint}/stock/release`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customerId, reservationIds: reservationIds || null }),
+        });
+      } catch (_) {}
+    },
   };
   window.WSCatalog = api;
 })();
