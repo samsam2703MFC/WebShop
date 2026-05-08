@@ -2921,8 +2921,15 @@ function ShopFrame({ variant }) {
   }, []);
   const todayMidnight = React.useMemo(() => { const t = new Date(); t.setHours(0,0,0,0); return t; }, []);
   const isToday = (d) => d && d.toDateString() === todayMidnight.toDateString();
-  const DELIVERY_CUTOFF_MINUTES = 10 * 60; // 10:00
-  const deliveryCutoffPassed = isToday(date) && nowHour >= DELIVERY_CUTOFF_MINUTES;
+  // Delivery cutoff time loaded from WSCalendar per shop — defaults to 11:00 until API responds.
+  const [deliveryCutoffMinutes, setDeliveryCutoffMinutes] = React.useState(11 * 60);
+  React.useEffect(() => {
+    if (!window.WSCalendar) return;
+    window.WSCalendar.getCutoff({ shopId, mode: 'delivery' })
+      .then((r) => { if (r && typeof r.hour === 'number') setDeliveryCutoffMinutes(r.hour * 60 + (r.minutes || 0)); })
+      .catch(() => {});
+  }, [shopId]);
+  const deliveryCutoffPassed = isToday(date) && nowHour >= deliveryCutoffMinutes;
   const [user, setUser] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -3083,7 +3090,7 @@ function ShopFrame({ variant }) {
     setDate(next);
     setBasket([]);
     // If switching to today in delivery mode and cutoff has passed, revert to collect
-    if (mode === 'delivery' && isToday(next) && nowHour >= DELIVERY_CUTOFF_MINUTES) {
+    if (mode === 'delivery' && isToday(next) && nowHour >= deliveryCutoffMinutes) {
       setMode('collect');
     }
   }
