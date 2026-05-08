@@ -1519,7 +1519,7 @@ function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, us
         <ModePills mode={mode} onChange={onMode}/>
       </div>
       <div className="ws-nav__right">
-        {window.LangChip && <LangChip />}
+        {window.LangChip && <window.LangChip />}
         {window.AllergenNavButton && <window.AllergenNavButton onClick={onAllergens}/>}
         <button className="ws-nav__icon" aria-label="Compte" onClick={onAccount}>
           {user
@@ -1556,7 +1556,7 @@ function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
           <ModePills mode={mode} onChange={onMode}/>
         </div>
         <div className="ws-nav__right">
-          {window.LangChip && <LangChip />}
+          {window.LangChip && <window.LangChip />}
           {window.AllergenNavButton && <window.AllergenNavButton onClick={onAllergens}/>}
           <button className="ws-nav__icon" aria-label="Compte"><Pict d={ICONS.user} s={15}/></button>
           <button className="ws-nav__icon ws-nav__cart" aria-label="Panier">
@@ -1587,7 +1587,7 @@ function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
         <ModePills mode={mode} onChange={onMode}/>
       </div>
       <div className="ws-nav__right">
-        {window.LangChip && <LangChip />}
+        {window.LangChip && <window.LangChip />}
         {window.AllergenNavButton && <window.AllergenNavButton onClick={onAllergens}/>}
         <button className="ws-nav__icon" aria-label="Compte"><Pict d={ICONS.user} s={15}/></button>
         <button className="ws-nav__icon ws-nav__cart" aria-label="Panier">
@@ -2266,7 +2266,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       {window.LangMenu && (
         <div className="ws-acc__section">
           <div className="ws-acc__section-h">Langue</div>
-          <LangMenu />
+          <window.LangMenu />
         </div>
       )}
 
