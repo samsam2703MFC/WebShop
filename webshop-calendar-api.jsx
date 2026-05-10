@@ -26,10 +26,18 @@
     cutoff:   { collect: { hour: 16, minutes: 0, leadHours: 2 },
                 delivery: { hour: 11, minutes: 0, leadHours: 20 } },
     slots: {
-      collect:  [{id:'s-08', label:'08:00–09:00'},{id:'s-09', label:'09:00–10:00'},
-                 {id:'s-10', label:'10:00–11:00'},{id:'s-12', label:'12:00–13:00'},
-                 {id:'s-14', label:'14:00–15:00'},{id:'s-16', label:'16:00–17:00'}],
-      delivery: [{id:'d-am', label:'08:30–10:30'},{id:'d-mid', label:'11:30–13:30'}],
+      collect:  [
+        {id:'s-08', label:'08:00–09:00', capacity:15, current_orders:0},
+        {id:'s-09', label:'09:00–10:00', capacity:15, current_orders:3},
+        {id:'s-10', label:'10:00–11:00', capacity:15, current_orders:8},
+        {id:'s-12', label:'12:00–13:00', capacity:15, current_orders:15},
+        {id:'s-14', label:'14:00–15:00', capacity:15, current_orders:2},
+        {id:'s-16', label:'16:00–17:00', capacity:15, current_orders:0},
+      ],
+      delivery: [
+        {id:'d-am',  label:'08:30–10:30', capacity:30, current_orders:12},
+        {id:'d-mid', label:'11:30–13:30', capacity:30, current_orders:5},
+      ],
     },
   };
 
@@ -61,7 +69,11 @@
           if (r.ok) return await r.json();
         } catch (_) {}
       }
-      return FALLBACK_RULES.slots[mode] || FALLBACK_RULES.slots.collect;
+      const raw = FALLBACK_RULES.slots[mode] || FALLBACK_RULES.slots.collect;
+      return raw.map((s) => {
+        const full = s.current_orders >= s.capacity;
+        return { ...s, available: !full, reason: full ? 'full' : null };
+      });
     },
     async getCutoff({ shopId, mode }) {
       if (api.endpoint) {

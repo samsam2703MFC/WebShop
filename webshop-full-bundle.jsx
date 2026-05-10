@@ -119,9 +119,9 @@ const W_PRODUCTS = [
     description: 'Saumon fumé, poulet effiloché, pommes grenailles rôties, olives noires, oignon rouge, roquette et cresson.',
     price: 14.50, allergens: ['fish','egg'],                               portions: false, badge: 'Nouveau', img: 'img/p-salade-chef-saumon.png' },
   { id: 7,  cat: 'sweet',   name: 'Yaourt, granola & fruits rouges',     price: 5.80, allergens: ['gluten','milk'],                  portions: false, badge: null,      img: 'img/p-parfait.png' },
-  { id: 8,  cat: 'breads',  name: 'Pain de campagne au levain',          price: 4.80, allergens: ['gluten'],                         portions: false, badge: null,      img: null },
+  { id: 8,  cat: 'breads',  name: 'Pain de campagne au levain',          price: 4.80, allergens: ['gluten'],                         portions: false, badge: null,      img: null, lead_time: 1 },
   { id: 9,  cat: 'breads',  name: 'Baguette tradition',                  price: 2.40, allergens: ['gluten'],                         portions: false, badge: null,      img: null },
-  { id: 10, cat: 'breads',  name: 'Pain aux céréales',                   price: 5.20, allergens: ['gluten','sesame'],                portions: false, badge: null,      img: null },
+  { id: 10, cat: 'breads',  name: 'Pain aux céréales',                   price: 5.20, allergens: ['gluten','sesame'],                portions: false, badge: null,      img: null, lead_time: 1 },
   { id: 11, cat: 'vienn',   name: 'Croissant au beurre AOP',             price: 1.90, allergens: ['gluten','milk','egg'],            portions: false, badge: 'Du jour', img: null },
   { id: 12, cat: 'vienn',   name: 'Pain au chocolat',                    price: 2.20, allergens: ['gluten','milk','egg'],            portions: false, badge: null,      img: null },
   { id: 13, cat: 'vienn',   name: 'Brioche feuilletée',                  price: 3.40, allergens: ['gluten','milk','egg'],            portions: false, badge: null,      img: null },
@@ -129,7 +129,7 @@ const W_PRODUCTS = [
     offer: { type: 'second_at_pct', pct: 50, unit: 'piece' } },
   { id: 15, cat: 'sweet',   name: 'Madeleines (×6)',                     price: 7.20, allergens: ['gluten','milk','egg'],            portions: false, badge: null,      img: null },
   { id: 16, cat: 'sweet',   name: 'Cannelés (×6)',                       price: 9.00, allergens: ['gluten','milk','egg'],            portions: false, badge: null,      img: null },
-  { id: 17, cat: 'sweet',   name: 'Macarons (×8)',                       price: 14.5, allergens: ['gluten','milk','egg','almond'],   portions: false, badge: null,      img: null },
+  { id: 17, cat: 'sweet',   name: 'Macarons (×8)',                       price: 14.5, allergens: ['gluten','milk','egg','almond'],   portions: false, badge: null,      img: null, lead_time: 2 },
 
   // -------- Configurable products (test fixtures) --------
   // Sandwich Club — options (bread, sauce) + multiple bundle plans
@@ -364,10 +364,18 @@ const W_DAYS_SHORT3 = ['Lun.','Mar.','Mer.','Jeu.','Ven.','Sam.','Dim.'];
 function wsFormatPill(d) {
   return `${W_DAYS_SHORT3[(d.getDay()+6)%7]} ${d.getDate()} ${W_MONTHS[d.getMonth()].slice(0,3)}.`;
 }
-function DatePill({ mode, value, onChange, deliveryCutoffPassed }) {
+function DatePill({ mode, value, onChange, shopId,
+                    collectCutoffPassed, collectCutoffLabel,
+                    deliveryCutoffPassed, deliveryCutoffLabel,
+                    minLeadDays }) {
   const [open, setOpen] = React.useState(false);
   const [view, setView] = React.useState(() => new Date(value.getFullYear(), value.getMonth(), 1));
+  // dayMap: { 'YYYY-MM-DD': { available, reason } } — populated per visible month
+  const [dayMap, setDayMap] = React.useState({});
+  const [loadingDays, setLoadingDays] = React.useState(false);
   const wrapRef = React.useRef(null);
+
+  // Close on outside click / Escape
   React.useEffect(() => {
     if (!open) return;
     const off = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
@@ -376,29 +384,94 @@ function DatePill({ mode, value, onChange, deliveryCutoffPassed }) {
     document.addEventListener('keydown', esc);
     return () => { document.removeEventListener('pointerdown', off, true); document.removeEventListener('keydown', esc); };
   }, [open]);
-  const today = new Date(); today.setHours(0,0,0,0);
-  const firstDow = (new Date(view.getFullYear(), view.getMonth(), 1).getDay() + 6) % 7; // Mon-first
+
+  // Fetch available days for the visible month whenever view/shop/mode changes
+  React.useEffect(() => {
+    const api = window.WSAvailability || window.WSCalendar;
+    if (!api || typeof api.listAvailableDays !== 'function') return;
+    let alive = true;
+    const from = `${view.getFullYear()}-${String(view.getMonth()+1).padStart(2,'0')}-01`;
+    const lastDay = new Date(view.getFullYear(), view.getMonth()+1, 0).getDate();
+    const to = `${view.getFullYear()}-${String(view.getMonth()+1).padStart(2,'0')}-${lastDay}`;
+    setLoadingDays(true);
+    api.listAvailableDays({ shopId, mode, from, to })
+      .then((rows) => {
+        if (!alive) return;
+        const map = {};
+        for (const row of (rows || [])) map[row.iso] = row;
+        setDayMap((prev) => ({ ...prev, ...map }));
+      })
+      .catch(() => {})
+      .finally(() => { if (alive) setLoadingDays(false); });
+    return () => { alive = false; };
+  }, [view.getFullYear(), view.getMonth(), shopId, mode]);
+
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function isoOf(d) { return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const firstDow = (new Date(view.getFullYear(), view.getMonth(), 1).getDay() + 6) % 7;
   const daysInMonth = new Date(view.getFullYear(), view.getMonth()+1, 0).getDate();
   const cells = [];
   for (let i = 0; i < firstDow; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(view.getFullYear(), view.getMonth(), d));
   while (cells.length % 7) cells.push(null);
-  const sameDay = (a,b) => a && b && a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+
+  const sameDay = (a, b) => a && b &&
+    a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
   const shift = (n) => setView(new Date(view.getFullYear(), view.getMonth()+n, 1));
+
+  // Cutoff for the active mode
+  const cutoffPassed = mode === 'delivery' ? deliveryCutoffPassed : collectCutoffPassed;
+  const cutoffLabel  = mode === 'delivery' ? deliveryCutoffLabel  : collectCutoffLabel;
+  const cutoffTitle  = cutoffLabel ? `Fermé après ${cutoffLabel}` : 'Fermé (heure de commande dépassée)';
+
+  // Today is blocked for the active mode if its cutoff passed
+  const todayBlocked = cutoffPassed;
+
+  function isCellDisabled(d) {
+    const isPast = d < today;
+    if (isPast) return { disabled: true, reason: 'past' };
+    const isItToday = sameDay(d, today);
+    if (isItToday && todayBlocked) return { disabled: true, reason: 'cutoff' };
+    // Lead time: days too close to today for products in basket
+    const daysDiff = Math.floor((d - today) / 86400000);
+    if ((minLeadDays || 0) > 0 && daysDiff < minLeadDays)
+      return { disabled: true, reason: 'lead_time' };
+    // API-driven: shop closed, holiday, etc.
+    const info = dayMap[isoOf(d)];
+    if (info && !info.available) return { disabled: true, reason: info.reason || 'closed' };
+    return { disabled: false, reason: null };
+  }
+
+  function cellTitle(d, reason) {
+    if (reason === 'cutoff')     return cutoffTitle;
+    if (reason === 'lead_time')  return `Commande requise ${minLeadDays} jour${minLeadDays > 1 ? 's' : ''} avant`;
+    if (reason === 'closed')     return 'Boutique fermée';
+    if (reason === 'holiday')    return 'Jour férié';
+    if (reason === 'exception')  return dayMap[isoOf(d)]?.reason || 'Fermeture exceptionnelle';
+    return undefined;
+  }
+
+  const todayOk = !todayBlocked && !isCellDisabled(today).disabled;
+
   return (
     <div ref={wrapRef} className="ws-datepill">
-      <button className="ws-nav__date" onClick={() => setOpen((o)=>!o)} aria-expanded={open}>
+      <button className="ws-nav__date" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <Pict d={ICONS.cal} s={12}/>
         <span>Date de {mode === 'delivery' ? 'livraison' : 'retrait'}</span>
         <strong>· {wsFormatPill(value)}</strong>
         <Pict d={ICONS.chev} s={10}/>
       </button>
       {open && (
-        <div className={`ws-datepop ws-datepop--${mode}`} onClick={(e)=>e.stopPropagation()}>
+        <div className={`ws-datepop ws-datepop--${mode}`} onClick={(e) => e.stopPropagation()}>
           <div className="ws-datepop__head">
-            <button className="ws-datepop__nav" onClick={()=>shift(-1)} aria-label="Mois précédent">‹</button>
-            <span className="ws-datepop__title">{W_MONTHS[view.getMonth()]} {view.getFullYear()}</span>
-            <button className="ws-datepop__nav" onClick={()=>shift(1)} aria-label="Mois suivant">›</button>
+            <button className="ws-datepop__nav" onClick={() => shift(-1)} aria-label="Mois précédent">‹</button>
+            <span className="ws-datepop__title">
+              {W_MONTHS[view.getMonth()]} {view.getFullYear()}
+              {loadingDays && <span style={{fontSize:9,opacity:.5,marginLeft:4}}>…</span>}
+            </span>
+            <button className="ws-datepop__nav" onClick={() => shift(1)} aria-label="Mois suivant">›</button>
           </div>
           <div className="ws-datepop__dow">
             {W_DAYS.map((d) => <span key={d}>{d}</span>)}
@@ -406,17 +479,17 @@ function DatePill({ mode, value, onChange, deliveryCutoffPassed }) {
           <div className="ws-datepop__grid">
             {cells.map((d, i) => {
               if (!d) return <span key={i} className="ws-datepop__cell ws-datepop__cell--empty"/>;
-              const isPast = d < today;
-              const isToday = sameDay(d, today);
+              const { disabled, reason } = isCellDisabled(d);
+              const isItToday = sameDay(d, today);
               const isSel = sameDay(d, value);
-              const isCutoffBlocked = mode === 'delivery' && isToday && deliveryCutoffPassed;
               const cls = ['ws-datepop__cell'];
-              if (isPast || isCutoffBlocked) cls.push('is-past');
-              if (isToday) cls.push('is-today');
+              if (disabled) cls.push('is-past');
+              if (isItToday) cls.push('is-today');
               if (isSel) cls.push('is-sel');
+              if (!disabled && dayMap[isoOf(d)]?.available === false) cls.push('is-closed');
               return (
-                <button key={i} className={cls.join(' ')} disabled={isPast || isCutoffBlocked}
-                  title={isCutoffBlocked ? 'Livraison fermée après 10h00' : undefined}
+                <button key={i} className={cls.join(' ')} disabled={disabled}
+                  title={cellTitle(d, reason)}
                   onClick={() => { onChange(d); setOpen(false); }}>
                   {d.getDate()}
                 </button>
@@ -426,9 +499,11 @@ function DatePill({ mode, value, onChange, deliveryCutoffPassed }) {
           <div className="ws-datepop__foot">
             <span>{mode === 'delivery' ? 'Livraison au bureau' : 'Collecte en magasin'}</span>
             <button className="ws-datepop__today"
-              disabled={mode === 'delivery' && deliveryCutoffPassed}
-              title={mode === 'delivery' && deliveryCutoffPassed ? 'Livraison fermée après 10h00' : undefined}
-              onClick={() => { onChange(today); setOpen(false); }}>Aujourd'hui</button>
+              disabled={!todayOk}
+              title={!todayOk && todayBlocked ? cutoffTitle : undefined}
+              onClick={() => { onChange(today); setOpen(false); }}>
+              Aujourd'hui
+            </button>
           </div>
         </div>
       )}
@@ -437,18 +512,28 @@ function DatePill({ mode, value, onChange, deliveryCutoffPassed }) {
 }
 
 // Mode pill — Ruby (collect) / Abricot (delivery)
-function ModePills({ mode, onChange, deliveryCutoffPassed }) {
+function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel }) {
+  const delivTitle = deliveryCutoffPassed
+    ? `Livraison non disponible après ${deliveryCutoffLabel || '11h00'}`
+    : undefined;
+  const collTitle = collectCutoffPassed
+    ? `Collecte non disponible après ${collectCutoffLabel || '16h00'}`
+    : undefined;
+  const effMode = deliveryCutoffPassed && mode === 'delivery' ? 'collect' : mode;
   return (
     <div className="ws-modes" role="tablist" aria-label="Mode boutique">
-      <span className="ws-modes__indicator" data-mode={deliveryCutoffPassed && mode === 'delivery' ? 'collect' : mode} aria-hidden="true"/>
-      <button className={`ws-mode ws-mode--collect${mode === 'collect' ? ' is-active' : ''}`} onClick={() => onChange('collect')} role="tab" aria-selected={mode === 'collect'} aria-label="Click & Collect">
+      <span className="ws-modes__indicator" data-mode={effMode} aria-hidden="true"/>
+      <button className={`ws-mode ws-mode--collect${mode === 'collect' ? ' is-active' : ''}${collectCutoffPassed ? ' is-disabled' : ''}`}
+        onClick={() => onChange('collect')} role="tab" aria-selected={mode === 'collect'} aria-label="Click & Collect"
+        title={collTitle}>
         <Pict d={ICONS.bag} s={14}/>
         <span className="ws-mode__lbl-full">Click &amp; Collect</span>
+        {collectCutoffPassed && <span className="ws-mode__cutoff"> · Fermé</span>}
       </button>
       <button className={`ws-mode ws-mode--delivery${mode === 'delivery' ? ' is-active' : ''}${deliveryCutoffPassed ? ' is-disabled' : ''}`}
         onClick={() => onChange('delivery')} role="tab" aria-selected={mode === 'delivery'} aria-label="Livraison au bureau"
         disabled={deliveryCutoffPassed}
-        title={deliveryCutoffPassed ? 'Livraison non disponible pour aujourd\'hui après 10h00' : undefined}>
+        title={delivTitle}>
         <Pict d={ICONS.truck} s={14}/>
         <span className="ws-mode__lbl-full">Livraison au bureau</span>
         {deliveryCutoffPassed && <span className="ws-mode__cutoff"> · Fermé</span>}
@@ -1238,6 +1323,11 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
             <span>Portions disponibles</span>
           </div>
         )}
+        {p.lead_time > 0 && (
+          <div className="ws-card__leadtime" title={`Commander ${p.lead_time} jour${p.lead_time > 1 ? 's' : ''} avant`}>
+            {`J+${p.lead_time}`}
+          </div>
+        )}
         <div className="ws-card__name">{p.name}</div>
         <div className="ws-card__meta">
           <span className="ws-card__price">€{price.toFixed(2)}{hasOptions && <span className="ws-card__from"> · à partir de</span>}</span>
@@ -1557,7 +1647,8 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, accent, tint, categor
 // =========================================================================
 
 // Variant A — Subtle: small shop chip after brand
-function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, user, onAccount, onAllergens, deliveryCutoffPassed }) {
+function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, user, onAccount, onAllergens,
+                   collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays }) {
   return (
     <header className="ws-nav ws-nav--A">
       <div className="ws-nav__left">
@@ -1566,8 +1657,13 @@ function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, us
           <span>{shop.name}</span>
           <Pict d={ICONS.chev} s={10}/>
         </button>
-        <DatePill mode={mode} value={date} onChange={onDate} deliveryCutoffPassed={deliveryCutoffPassed}/>
-        <ModePills mode={mode} onChange={onMode} deliveryCutoffPassed={deliveryCutoffPassed}/>
+        <DatePill mode={mode} value={date} onChange={onDate} shopId={shop.id}
+          collectCutoffPassed={collectCutoffPassed} collectCutoffLabel={collectCutoffLabel}
+          deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}
+          minLeadDays={minLeadDays}/>
+        <ModePills mode={mode} onChange={onMode}
+          collectCutoffPassed={collectCutoffPassed} collectCutoffLabel={collectCutoffLabel}
+          deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}/>
       </div>
       <div className="ws-nav__right">
         {window.LangChip && <window.LangChip />}
@@ -1587,7 +1683,8 @@ function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, us
 }
 
 // Variant B — Medium: full colored brand bar above navbar
-function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens, deliveryCutoffPassed }) {
+function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens,
+                   collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays }) {
   return (
     <>
       <div className="ws-shopbar" style={{ background: 'var(--color-primary)' }}>
@@ -1603,8 +1700,13 @@ function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
       <header className="ws-nav ws-nav--B">
         <div className="ws-nav__left">
           <span className="ws-nav__brand">L'Atelier By</span>
-          <DatePill mode={mode} value={date} onChange={onDate} deliveryCutoffPassed={deliveryCutoffPassed}/>
-          <ModePills mode={mode} onChange={onMode} deliveryCutoffPassed={deliveryCutoffPassed}/>
+          <DatePill mode={mode} value={date} onChange={onDate} shopId={shop.id}
+            collectCutoffPassed={collectCutoffPassed} collectCutoffLabel={collectCutoffLabel}
+            deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}
+            minLeadDays={minLeadDays}/>
+          <ModePills mode={mode} onChange={onMode}
+            collectCutoffPassed={collectCutoffPassed} collectCutoffLabel={collectCutoffLabel}
+            deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}/>
         </div>
         <div className="ws-nav__right">
           {window.LangChip && <window.LangChip />}
@@ -1621,7 +1723,8 @@ function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
 }
 
 // Variant C — Strong: full per-shop accent. Brand wordmark, navbar background, CTA, focus rings all picked up.
-function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens, deliveryCutoffPassed }) {
+function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens,
+                   collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays }) {
   return (
     <header className="ws-nav ws-nav--C" style={{ '--shop-accent': shop.accent }}>
       <div className="ws-nav__left">
@@ -1634,8 +1737,13 @@ function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
             <Pict d={ICONS.chev} s={10}/>
           </button>
         </div>
-        <DatePill mode={mode} value={date} onChange={onDate} deliveryCutoffPassed={deliveryCutoffPassed}/>
-        <ModePills mode={mode} onChange={onMode} deliveryCutoffPassed={deliveryCutoffPassed}/>
+        <DatePill mode={mode} value={date} onChange={onDate} shopId={shop.id}
+          collectCutoffPassed={collectCutoffPassed} collectCutoffLabel={collectCutoffLabel}
+          deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}
+          minLeadDays={minLeadDays}/>
+        <ModePills mode={mode} onChange={onMode}
+          collectCutoffPassed={collectCutoffPassed} collectCutoffLabel={collectCutoffLabel}
+          deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}/>
       </div>
       <div className="ws-nav__right">
         {window.LangChip && <window.LangChip />}
@@ -2473,7 +2581,7 @@ function usePaymentMethods(shopId, mode) {
 
 function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPlaced,
                           voucherInput, setVoucherInput, voucherApplied, setVoucherApplied,
-                          office, tour }) {
+                          office, tour, date }) {
   const [step, setStep] = useState(1);
   const [forceAuth, setForceAuth] = useState(false);
   const [paying, setPaying] = useState(false);
@@ -2520,7 +2628,9 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       const payload = {
         shopId: shop && shop.id,
         mode,
-        slot: { slotId: slot, label: slot },
+        slot: typeof slot === 'object' && slot
+          ? { slotId: slot.id, label: slot.label }
+          : { slotId: slot, label: slot },
         basket: basket.map((l) => ({ productId: l.productId, qty: l.qty, portion: l.portion || null, options: l.options || [], bundleId: l.bundleId || null, bundleSlots: l.bundleSlots || {} })),
         voucher: voucherApplied && voucherApplied.ok ? voucherApplied.voucher.code : null,
         customer: user ? { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, phone: user.phone || null, officeId: user.officeId || null } : { ...contact },
@@ -2585,7 +2695,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           />
         )}
         {step === 2 && (
-          <CheckoutStep2 mode={mode} shop={shop} office={office} tour={tour} slot={slot} setSlot={setSlot}/>
+          <CheckoutStep2 mode={mode} shop={shop} office={office} tour={tour} slot={slot} setSlot={setSlot} date={date}/>
         )}
         {step === 3 && (
           <CheckoutStep3
@@ -2688,22 +2798,27 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
   );
 }
 
-function CheckoutStep2({ mode, shop, office, tour, slot, setSlot }) {
+function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
   const [slots, setSlots] = React.useState([]);
   const [dateLabel, setDateLabel] = React.useState('');
   React.useEffect(() => {
     let alive = true;
     (async () => {
-      const today = new Date(); today.setHours(0,0,0,0);
-      setDateLabel(today.toLocaleDateString('fr-BE', { weekday: 'long', day: 'numeric', month: 'long' }));
-      if (!window.WSCalendar) { setSlots([]); return; }
-      const list = await window.WSCalendar.listSlots({
-        shopId: shop?.id, mode, date: window.WSCalendar.isoOf(today),
-      });
-      if (alive) setSlots((list || []).map((s) => s.label || s));
+      // Use the parent-selected date, not hardcoded today
+      const d = date instanceof Date ? date : new Date();
+      setDateLabel(d.toLocaleDateString('fr-BE', { weekday: 'long', day: 'numeric', month: 'long' }));
+      const isoFn = (window.WSAvailability || window.WSCalendar)?.isoOf || ((x) => x.toISOString().slice(0,10));
+      const isoDate = isoFn(d);
+      const api = window.WSAvailability || window.WSCalendar;
+      if (!api) { setSlots([]); return; }
+      const list = await api.listSlots({ shopId: shop?.id, mode, date: isoDate });
+      if (alive) setSlots(list || []);
     })();
     return () => { alive = false; };
-  }, [mode, shop?.id]);
+  }, [mode, shop?.id, date]);
+
+  const selectedId = typeof slot === 'object' && slot ? slot.id : slot;
+
   return (
     <div className="ws-co-step">
       <h3 className="ws-co-step__title">{mode === 'delivery' ? 'Créneau de livraison' : 'Créneau de collecte'}</h3>
@@ -2717,11 +2832,24 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot }) {
         <Pict d={ICONS.cal} s={13}/> <span>{dateLabel}</span>
       </div>
       <div className="ws-slots">
-        {slots.map((s) => (
-          <button key={s} className={`ws-slot${slot === s ? ' is-active' : ''}`} onClick={() => setSlot(s)}>
-            {s}
-          </button>
-        ))}
+        {slots.map((s) => {
+          const id    = typeof s === 'object' ? s.id    : s;
+          const label = typeof s === 'object' ? s.label : s;
+          const full  = typeof s === 'object' && (s.available === false || s.current_orders >= s.capacity);
+          const remaining = (s.capacity && !full) ? s.capacity - (s.current_orders || 0) : null;
+          const nearFull  = remaining !== null && remaining <= 3 && remaining > 0;
+          return (
+            <button key={id}
+              className={`ws-slot${selectedId === id ? ' is-active' : ''}${full ? ' is-full' : ''}`}
+              disabled={full}
+              title={full ? 'Créneau complet' : undefined}
+              onClick={() => !full && setSlot({ id, label })}>
+              <span className="ws-slot__lbl">{label}</span>
+              {full     && <span className="ws-slot__cap ws-slot__cap--full">Complet</span>}
+              {nearFull && <span className="ws-slot__cap ws-slot__cap--low">{remaining} restant{remaining > 1 ? 's' : ''}</span>}
+            </button>
+          );
+        })}
       </div>
       {mode === 'delivery' && <p className="ws-co-step__hint">Livraison incluse pour les bureaux desservis par votre tournée.</p>}
     </div>
@@ -2943,15 +3071,37 @@ function ShopFrame({ variant }) {
   }, []);
   const todayMidnight = React.useMemo(() => { const t = new Date(); t.setHours(0,0,0,0); return t; }, []);
   const isToday = (d) => d && d.toDateString() === todayMidnight.toDateString();
-  // Delivery cutoff time loaded from WSCalendar per shop — defaults to 11:00 until API responds.
-  const [deliveryCutoffMinutes, setDeliveryCutoffMinutes] = React.useState(11 * 60);
+  // Cutoff times loaded from API per shop — defaults until API responds.
+  const [deliveryCutoffMinutes, setDeliveryCutoffMinutes] = React.useState(11 * 60); // 11:00
+  const [collectCutoffMinutes,  setCollectCutoffMinutes]  = React.useState(16 * 60); // 16:00
   React.useEffect(() => {
-    if (!window.WSCalendar) return;
-    window.WSCalendar.getCutoff({ shopId, mode: 'delivery' })
+    const calApi = window.WSAvailability || window.WSCalendar;
+    if (!calApi) return;
+    // Delivery cutoff
+    (calApi.getCutoff || (() => calApi.getShopSettings({ shopId }).then((s) => s.delivery_cutoff)))
+      .call(calApi, { shopId, mode: 'delivery' })
       .then((r) => { if (r && typeof r.hour === 'number') setDeliveryCutoffMinutes(r.hour * 60 + (r.minutes || 0)); })
+      .catch(() => {});
+    // Collect cutoff
+    (calApi.getCutoff || (() => calApi.getShopSettings({ shopId }).then((s) => s.collect_cutoff)))
+      .call(calApi, { shopId, mode: 'collect' })
+      .then((r) => { if (r && typeof r.hour === 'number') setCollectCutoffMinutes(r.hour * 60 + (r.minutes || 0)); })
       .catch(() => {});
   }, [shopId]);
   const deliveryCutoffPassed = isToday(date) && nowHour >= deliveryCutoffMinutes;
+  const collectCutoffPassed  = isToday(date) && nowHour >= collectCutoffMinutes;
+  // Human-readable cutoff labels for tooltips (e.g. "11h00", "16h00")
+  function fmtCutoff(mins) {
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return `${h}h${m > 0 ? String(m).padStart(2,'0') : ''}`;
+  }
+  const deliveryCutoffLabel = fmtCutoff(deliveryCutoffMinutes);
+  const collectCutoffLabel  = fmtCutoff(collectCutoffMinutes);
+  // Minimum lead days required by any item currently in basket
+  const minLeadDays = useMemo(
+    () => basket.reduce((m, l) => Math.max(m, l.lead_time || 0), 0),
+    [basket]
+  );
   const [user, setUser] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -3106,7 +3256,13 @@ function ShopFrame({ variant }) {
   }
 
   function handleAdd(p, portion) {
-    setBasket((b) => [...b, { line: Date.now(), productId: p.id, name: p.name + (portion === 'demi' ? ' — 1/2' : portion === 'quart' ? ' — 1/4' : ''), qty: 1, price: p.price, options: [], portion: portion || null, cat: p.cat, crossPortion: !!p.crossPortion }]);
+    setBasket((b) => [...b, {
+      line: Date.now(), productId: p.id,
+      name: p.name + (portion === 'demi' ? ' — 1/2' : portion === 'quart' ? ' — 1/4' : ''),
+      qty: 1, price: p.price, options: [],
+      portion: portion || null, cat: p.cat, crossPortion: !!p.crossPortion,
+      lead_time: p.lead_time || 0, no_delivery: !!p.no_delivery,
+    }]);
     stockReserve(p.id, 1);
   }
 
@@ -3119,7 +3275,12 @@ function ShopFrame({ variant }) {
 
   const [detailProduct, setDetailProduct] = useState(null);
   function handleAddConfigured(line) {
-    setBasket((b) => [...b, { line: Date.now(), ...line }]);
+    const product = allProducts.find((p) => p.id === line.productId);
+    setBasket((b) => [...b, {
+      line: Date.now(), ...line,
+      lead_time: line.lead_time ?? product?.lead_time ?? 0,
+      no_delivery: line.no_delivery ?? !!product?.no_delivery,
+    }]);
     stockReserve(line.productId, line.qty || 1);
   }
 
@@ -3181,7 +3342,12 @@ function ShopFrame({ variant }) {
 
   return (
     <div className={`ws ws--${variant}`} data-mode={mode}>
-      <Nav shop={shop} mode={mode} onMode={handleMode} onSwitchShop={() => setSwitcherOpen(true)} cartCount={cartCount} date={date} onDate={handleDate} user={user} onAccount={handleAccount} onAllergens={() => setAllergensOpen(true)} deliveryCutoffPassed={deliveryCutoffPassed}/>
+      <Nav shop={shop} mode={mode} onMode={handleMode} onSwitchShop={() => setSwitcherOpen(true)}
+           cartCount={cartCount} date={date} onDate={handleDate} user={user} onAccount={handleAccount}
+           onAllergens={() => setAllergensOpen(true)}
+           collectCutoffPassed={collectCutoffPassed} collectCutoffLabel={collectCutoffLabel}
+           deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}
+           minLeadDays={minLeadDays}/>
 
       <div className="ws-body">
         <main className="ws-main" ref={mainScrollRef} onScroll={updateScrollState}>
@@ -3302,7 +3468,7 @@ function ShopFrame({ variant }) {
       <CheckoutWizard open={checkoutOpen} onClose={() => setCheckoutOpen(false)} shop={shop} mode={mode} basket={basket} user={user} onLogin={() => setAuthOpen(true)} onPlaced={handlePlaced}
         voucherInput={voucherInput} setVoucherInput={setVoucherInput}
         voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
-        office={userOffice} tour={userTour}
+        office={userOffice} tour={userTour} date={date}
       />
       {deepLinkBanner && (
         <div className="ws-deeplink" role="status">
@@ -3350,7 +3516,7 @@ function ShopFrame({ variant }) {
           <span className="ws-toast__check"><Pict d={<path d="M5 12l4 4 10-10"/>} s={14}/></span>
           <div>
             <div className="ws-toast__title">Commande confirmée</div>
-            <div className="ws-toast__sub">Créneau {orderToast.slot} · {orderToast.payment === 'visa' ? 'Carte' : orderToast.payment === 'apple' ? 'Apple Pay' : 'Bancontact'} · €{orderToast.total.toFixed(2)}</div>
+            <div className="ws-toast__sub">Créneau {typeof orderToast.slot === 'object' ? orderToast.slot?.label : orderToast.slot} · {orderToast.payment === 'visa' ? 'Carte' : orderToast.payment === 'apple' ? 'Apple Pay' : 'Bancontact'} · €{orderToast.total.toFixed(2)}</div>
           </div>
         </div>
       )}

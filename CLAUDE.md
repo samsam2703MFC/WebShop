@@ -21,6 +21,7 @@ These files contain business logic, API integration, and seed data.
 | `webshop-auth-api.jsx` | `window.WSAuth` — login, register, session |
 | `webshop-catalog-api.jsx` | `window.WSCatalog` — products, categories, bundles, assortments |
 | `webshop-calendar-api.jsx` | `window.WSCalendar` — slots, open days, delivery cutoff per shop |
+| `webshop-availability-api.jsx` | `window.WSAvailability` — central availability engine (days, slots, validation) |
 | `webshop-pricing-api.jsx` | `window.WSPricing` — quote, vouchers, cross-portion rule |
 | `webshop-shops-api.jsx` | `window.WSShops` — shop directory |
 | `webshop-offices-api.jsx` | `window.WSOffices` — delivery offices |
@@ -103,7 +104,8 @@ window.WSShops.endpoint     = BASE_URL + '/shops';
 window.WSOffices.endpoint   = BASE_URL + '/offices';
 window.WSTours.endpoint     = BASE_URL + '/tours';
 window.WSOrders.endpoint    = BASE_URL + '/orders';
-window.WSBrand.endpoint     = BASE_URL + '/brand';
+window.WSBrand.endpoint         = BASE_URL + '/brand';
+window.WSAvailability.endpoint  = BASE_URL + '/availability';
 ```
 
 All stubs automatically switch from seed data to live HTTP. No other changes needed.

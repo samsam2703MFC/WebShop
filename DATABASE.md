@@ -865,4 +865,266 @@ products with the correct shop price and availability.
 
 ---
 
+---
+
+## 9. Availability System Tables
+
+Added to support the central availability engine (`WSAvailability`). These tables
+are the database source for `GET /availability/settings`, `GET /availability/days`,
+`GET /availability/slots`, and `POST /availability/validate`.
+
+---
+
+### ws_shop_availability
+
+Per-shop availability configuration. One row per shop. Replaces the hardcoded
+`FALLBACK_RULES` seed in `webshop-calendar-api.jsx` and `webshop-availability-api.jsx`.
+
+```sql
+CREATE TABLE ws_shop_availability (
+  shop_id                    VARCHAR(50) PRIMARY KEY REFERENCES ws_shops(id),
+  collect_enabled            BOOLEAN DEFAULT TRUE,
+  delivery_enabled           BOOLEAN DEFAULT TRUE,
+  collect_open_days          JSONB    DEFAULT '[1,2,3,4,5,6]',  -- ISO weekdays Mon=1..Sun=7
+  delivery_open_days         JSONB    DEFAULT '[1,2,3,4,5]',
+  collect_hours_start        TIME     DEFAULT '08:00',
+  collect_hours_end          TIME     DEFAULT '19:00',
+  delivery_hours_start       TIME     DEFAULT '08:30',
+  delivery_hours_end         TIME     DEFAULT '13:30',
+  collect_slot_duration_min  INT      DEFAULT 60,   -- minutes per slot
+  delivery_slot_duration_min INT      DEFAULT 120,
+  collect_cutoff_hour        SMALLINT DEFAULT 16,   -- no same-day collect after 16:00
+  collect_cutoff_minute      SMALLINT DEFAULT 0,
+  collect_lead_hours         SMALLINT DEFAULT 2,
+  delivery_cutoff_hour       SMALLINT DEFAULT 11,   -- no same-day delivery after 11:00
+  delivery_cutoff_minute     SMALLINT DEFAULT 0,
+  delivery_lead_hours        SMALLINT DEFAULT 20,
+  collect_capacity_per_slot  INT      DEFAULT 15,
+  delivery_capacity_per_slot INT      DEFAULT 30,
+  timezone                   VARCHAR(50) DEFAULT 'Europe/Brussels',
+  updated_at                 TIMESTAMP DEFAULT NOW()
+);
+```
+
+**Notes:**
+- `collect_open_days` / `delivery_open_days` — JSON array of ISO weekday integers (1=Mon…7=Sun).
+- Cutoff = latest time a customer can order for *today*. Orders after cutoff must choose tomorrow or later.
+- `lead_hours` = backend processing time before a slot can be fulfilled. Used by the
+  availability engine to validate `next_available_date`.
+
+---
+
+### ws_shop_exceptions
+
+Holiday and exceptional closure calendar. Overrides `ws_shop_availability.collect_open_days`
+and `delivery_open_days` for specific dates.
+
+```sql
+CREATE TABLE ws_shop_exceptions (
+  id                       SERIAL PRIMARY KEY,
+  shop_id                  VARCHAR(50) NOT NULL REFERENCES ws_shops(id),
+  exception_date           DATE        NOT NULL,
+  type                     VARCHAR(20) NOT NULL CHECK (type IN ('closed','modified')),
+  reason                   VARCHAR(200),                   -- shown as tooltip in date picker
+  collect_hours_start      TIME,                           -- only for type='modified'
+  collect_hours_end        TIME,
+  delivery_hours_start     TIME,
+  delivery_hours_end       TIME,
+  collect_enabled          BOOLEAN,                        -- NULL = inherit from shop_availability
+  delivery_enabled         BOOLEAN,
+  created_by               INT REFERENCES ws_customers(id),
+  created_at               TIMESTAMP DEFAULT NOW(),
+  UNIQUE (shop_id, exception_date)
+);
+```
+
+**Examples:**
+```sql
+-- National holiday: all modes closed
+INSERT INTO ws_shop_exceptions (shop_id, exception_date, type, reason)
+  VALUES ('chatelain', '2026-07-21', 'closed', 'Fête nationale belge');
+
+-- Modified hours on Christmas Eve
+INSERT INTO ws_shop_exceptions (shop_id, exception_date, type, reason,
+  collect_hours_start, collect_hours_end, delivery_enabled)
+  VALUES ('chatelain', '2026-12-24', 'modified', 'Veille de Noël — fermeture anticipée',
+          '08:00', '14:00', FALSE);
+```
+
+---
+
+### ws_product_availability
+
+Per-product, per-shop availability override for lead times and channel restrictions.
+When absent for a product+shop combination, defaults from the product's global
+`no_delivery` flag and `ws_shop_availability` cutoffs apply.
+
+```sql
+CREATE TABLE ws_product_availability (
+  id                       SERIAL PRIMARY KEY,
+  product_id               INT         NOT NULL REFERENCES ws_products(id),
+  shop_id                  VARCHAR(50) NOT NULL REFERENCES ws_shops(id),
+  collect_enabled          BOOLEAN DEFAULT TRUE,
+  delivery_enabled         BOOLEAN DEFAULT TRUE,
+  collect_lead_time        SMALLINT DEFAULT 0,    -- days needed before collect date (D+0=same day)
+  delivery_lead_time       SMALLINT DEFAULT 0,    -- days needed before delivery date
+  collect_cutoff_override  TIME,                  -- NULL = use shop default
+  delivery_cutoff_override TIME,                  -- NULL = use shop default
+  max_qty_per_day          INT,                   -- NULL = unlimited
+  max_qty_per_slot         INT,                   -- NULL = unlimited
+  active                   BOOLEAN DEFAULT TRUE,
+  UNIQUE (product_id, shop_id)
+);
+CREATE INDEX idx_prod_avail_shop ON ws_product_availability(shop_id);
+```
+
+**Lead time logic (backend):**
+If `collect_lead_time = 2`, the earliest available collect date is `today + 2 days`.
+The availability engine greys out dates in the date picker and shows `next_available_date`.
+
+---
+
+### ws_category_availability
+
+Category-level availability defaults. Applied when `ws_product_availability` has no
+row for a product. More specific product rows always win.
+
+```sql
+CREATE TABLE ws_category_availability (
+  id                       SERIAL PRIMARY KEY,
+  category_id              VARCHAR(50) NOT NULL REFERENCES ws_categories(id),
+  shop_id                  VARCHAR(50) NOT NULL REFERENCES ws_shops(id),
+  collect_enabled          BOOLEAN DEFAULT TRUE,
+  delivery_enabled         BOOLEAN DEFAULT TRUE,
+  collect_lead_time        SMALLINT DEFAULT 0,
+  delivery_lead_time       SMALLINT DEFAULT 0,
+  collect_cutoff_override  TIME,
+  delivery_cutoff_override TIME,
+  active                   BOOLEAN DEFAULT TRUE,
+  UNIQUE (category_id, shop_id)
+);
+```
+
+---
+
+### ws_slot_capacity
+
+Real-time slot utilisation. One row per shop + mode + date + slot window.
+Created on demand when a customer books a slot; updated by the order pipeline.
+
+```sql
+CREATE TABLE ws_slot_capacity (
+  id               SERIAL PRIMARY KEY,
+  shop_id          VARCHAR(50) NOT NULL REFERENCES ws_shops(id),
+  mode             VARCHAR(20) NOT NULL CHECK (mode IN ('collect','delivery')),
+  slot_date        DATE        NOT NULL,
+  slot_start       TIME        NOT NULL,
+  slot_end         TIME        NOT NULL,
+  max_orders       INT         NOT NULL,
+  max_items        INT,
+  current_orders   INT         NOT NULL DEFAULT 0,
+  current_items    INT         NOT NULL DEFAULT 0,
+  updated_at       TIMESTAMP DEFAULT NOW(),
+  UNIQUE (shop_id, mode, slot_date, slot_start)
+);
+CREATE INDEX idx_slot_cap_date ON ws_slot_capacity(shop_id, slot_date, mode);
+```
+
+**Backend logic:**
+- `GET /availability/slots` returns rows from `ws_slot_capacity` where `current_orders < max_orders`.
+- Slots with `current_orders >= max_orders` are returned with `available: false, reason: 'full'`.
+- If no `ws_slot_capacity` row exists for the date, the backend generates slots from
+  `ws_slots` + `ws_shop_availability.collect/delivery_slot_duration_min` and inserts them.
+
+---
+
+### ws_tour_availability
+
+Delivery schedule for each tournée — which days it runs, its cutoff, and capacity.
+
+```sql
+CREATE TABLE ws_tour_availability (
+  id               SERIAL PRIMARY KEY,
+  tour_id          VARCHAR(50) NOT NULL REFERENCES ws_tours(id),
+  shop_id          VARCHAR(50) NOT NULL REFERENCES ws_shops(id),
+  delivery_day     SMALLINT    NOT NULL CHECK (delivery_day BETWEEN 1 AND 7), -- ISO weekday
+  delivery_start   TIME        NOT NULL,
+  delivery_end     TIME        NOT NULL,
+  cutoff_time      TIME        NOT NULL,  -- last order time for this day's delivery
+  max_orders       INT,                   -- NULL = unlimited
+  max_items        INT,
+  active           BOOLEAN DEFAULT TRUE,
+  UNIQUE (tour_id, shop_id, delivery_day)
+);
+```
+
+---
+
+### ws_office_delivery_settings
+
+Per-office delivery configuration. Defines which days an office is served and its
+specific cutoff, overriding the tour's default where necessary.
+
+```sql
+CREATE TABLE ws_office_delivery_settings (
+  id                  SERIAL PRIMARY KEY,
+  office_id           VARCHAR(50) NOT NULL REFERENCES ws_offices(id),
+  shop_id             VARCHAR(50) NOT NULL REFERENCES ws_shops(id),
+  tour_id             VARCHAR(50) REFERENCES ws_tours(id),
+  allowed_days        JSONB,              -- [1,2,3,4,5] — NULL = inherit from tour
+  delivery_cutoff     TIME,               -- NULL = inherit from tour_availability
+  delivery_notes      VARCHAR(500),       -- shown to customer at checkout
+  active              BOOLEAN DEFAULT TRUE,
+  UNIQUE (office_id, shop_id)
+);
+```
+
+---
+
+### Availability Resolution Priority
+
+When the backend computes availability for a product + shop + date + mode:
+
+```
+1. ws_product_availability  (most specific — product + shop)
+   ↓ if no row
+2. ws_category_availability (category + shop)
+   ↓ if no row
+3. ws_shop_availability     (shop defaults)
+   ↓ merged with
+4. ws_shop_exceptions       (date overrides)
+```
+
+Lead time: `effective_lead_time = MAX(product_lead_time, category_lead_time)`
+Cutoff: first non-null of `product_cutoff_override → category_cutoff_override → shop_cutoff`
+
+---
+
+### Updated Activation Checklist
+
+In addition to the existing steps, populate the new tables:
+
+```sql
+-- Shop availability (one per shop)
+INSERT INTO ws_shop_availability (shop_id, collect_cutoff_hour, delivery_cutoff_hour, ...)
+  VALUES ('chatelain', 16, 11, ...);
+
+-- Public holidays (Belgium)
+INSERT INTO ws_shop_exceptions (shop_id, exception_date, type, reason)
+  VALUES ('chatelain', '2026-07-21', 'closed', 'Fête nationale belge'),
+         ('chatelain', '2026-11-11', 'closed', 'Armistice'),
+         ('chatelain', '2026-12-25', 'closed', 'Noël');
+
+-- Tour schedules
+INSERT INTO ws_tour_availability (tour_id, shop_id, delivery_day, delivery_start, delivery_end, cutoff_time)
+  VALUES ('tour-bxl-mid', 'chatelain', 1, '11:30', '13:30', '11:00'),  -- Monday
+         ('tour-bxl-mid', 'chatelain', 2, '11:30', '13:30', '11:00'),  -- Tuesday
+         ...;
+
+-- Wire WSAvailability endpoint
+window.WSAvailability.endpoint = BASE_URL + '/availability';
+```
+
+---
+
 *See also: `API.md` for endpoint contracts · `DATA_SHAPES.md` for frontend field reference · `CLAUDE.md` for file ownership rules*

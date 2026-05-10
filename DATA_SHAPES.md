@@ -943,3 +943,132 @@ WHERE p.active = TRUE
 |---|---|---|
 | `prices` | `{ shopId: { productId: price } }` | Price overrides per shop |
 | `shopProducts` | `{ shopId: [productId, ...] }` | Restrict products per shop (absent = all) |
+
+---
+
+## WSAvailability API (`window.WSAvailability`)
+
+Central availability engine. The frontend must call these — never compute availability itself.
+
+### ShopAvailabilitySettings
+
+Returned by `GET /availability/settings?shopId=`
+
+```ts
+{
+  shop_id:                    string,
+  collect_enabled:            boolean,
+  delivery_enabled:           boolean,
+  collect_open_days:          number[],   // ISO weekdays 1=Mon..7=Sun
+  delivery_open_days:         number[],
+  collect_hours:              { start: 'HH:MM', end: 'HH:MM' },
+  delivery_hours:             { start: 'HH:MM', end: 'HH:MM' },
+  collect_slot_duration:      number,     // minutes
+  delivery_slot_duration:     number,
+  collect_cutoff:             { hour: number, minutes: number, lead_hours: number },
+  delivery_cutoff:            { hour: number, minutes: number, lead_hours: number },
+  collect_capacity_per_slot:  number,
+  delivery_capacity_per_slot: number,
+  timezone:                   string,     // e.g. 'Europe/Brussels'
+}
+```
+
+### DayAvailability
+
+One entry per day — returned by `GET /availability/days?shopId=&mode=&from=&to=`
+
+```ts
+{
+  iso:       string,           // 'YYYY-MM-DD'
+  available: boolean,
+  reason:    string | null,    // 'closed' | 'holiday' | 'exception' | null
+  type:      string | null,    // 'weekday' | 'exception' | null
+}
+```
+
+**Frontend usage:** DatePill loads one month at a time and disables unavailable cells.
+
+### SlotWithCapacity
+
+Returned by `GET /availability/slots?shopId=&mode=&date=`
+
+```ts
+{
+  id:             string,      // e.g. 's-08', 'd-am'
+  label:          string,      // e.g. '08:00–09:00'
+  capacity:       number,      // max orders for this slot
+  current_orders: number,      // orders already placed
+  available:      boolean,     // false when current_orders >= capacity
+  reason:         string | null, // 'full' | 'cutoff_passed' | null
+}
+```
+
+**Frontend usage:** CheckoutStep2 displays slots with capacity indicators.
+Full slots are shown but disabled (`is-full` CSS class).
+
+### CartValidationResult
+
+Returned by `POST /availability/validate`  
+Body: `{ shopId, mode, date, basket: [{ productId, qty, lead_time?, no_delivery? }] }`
+
+```ts
+{
+  valid:  boolean,
+  issues: Array<{
+    productId:           number | string,
+    reason:              string,    // 'lead_time' | 'no_delivery' | 'stock_empty' | 'shop_closed'
+    lead_days_required?: number,
+    next_available_date?: string,  // 'YYYY-MM-DD' — earliest valid date for this product
+  }>
+}
+```
+
+### AvailabilityContext
+
+Returned by `POST /availability/context`  
+Body: `{ shopId, mode, date, basket? }`
+
+```ts
+{
+  shop_open:        boolean,
+  shop_reason:      string | null,
+  collect_enabled:  boolean,
+  delivery_enabled: boolean,
+  collect_cutoff: {
+    hour:    number,
+    minutes: number,
+    passed:  boolean,    // true if today and time has passed
+    label:   string,     // e.g. '16h00'
+  },
+  delivery_cutoff: {
+    hour:    number,
+    minutes: number,
+    passed:  boolean,
+    label:   string,
+  },
+  cart_valid:   boolean,
+  cart_issues:  CartValidationResult['issues'],
+}
+```
+
+### Product fields added for availability
+
+| Field | Type | Source table | Effect |
+|---|---|---|---|
+| `lead_time` | `int` (default 0) | `ws_product_availability.collect_lead_time` or `delivery_lead_time` | Days required before chosen date. D+0 = same day, D+2 = order 2 days ahead. DatePill disables dates within lead_time. Badge `J+N` shown on ProductCard. |
+| `no_delivery` | `boolean` | `ws_product_shops.no_delivery` | Hides "add" button in delivery mode. Already implemented. |
+| `delivery_stock` | `int` | `ws_product_stock.qty_available` | Delivery qty cap per day. Already implemented. |
+
+### Reason codes
+
+| Code | Context | Meaning |
+|---|---|---|
+| `closed` | DayAvailability | Regular closed day (weekend/weekday off) |
+| `holiday` | DayAvailability | Public holiday |
+| `exception` | DayAvailability | Exceptional closure (see `ws_shop_exceptions`) |
+| `full` | SlotWithCapacity | Slot at capacity |
+| `cutoff_passed` | SlotWithCapacity | Order time for this slot has passed |
+| `lead_time` | CartValidationResult | Product requires D+N advance ordering |
+| `no_delivery` | CartValidationResult | Product not available in delivery mode |
+| `stock_empty` | CartValidationResult | Delivery stock exhausted for the date |
+| `shop_closed` | CartValidationResult | Shop closed on selected date |
