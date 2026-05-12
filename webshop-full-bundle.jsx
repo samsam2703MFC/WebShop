@@ -289,8 +289,11 @@ const W_TOURS = {
 // This seed only feeds window._AUTH_STORE so the API stub has data to return
 // when no remote endpoint is configured. Remove once /offices is live.
 const W_OFFICES_SEED = {
-  'off-acme':     { id: 'off-acme',     name: 'ACME Avocats',     contact: 'Marie Dubois',  phone: '+32 472 11 22 33', email: 'marie@acme.be',     address: 'Rue de la Loi 120, 1040 Bxl',  tourId: 'tour-bxl-mid', status: 'validated' },
-  'off-pendingA': { id: 'off-pendingA', name: 'Borderline & Co.', contact: 'Lou Mercier',   phone: '+32 470 12 34 56', email: 'lou@borderline.be', address: 'Place Stéphanie 4, 1050 Bxl',  tourId: null,           status: 'pending' },
+  'off-acme':     { id: 'off-acme',     name: 'ACME Avocats',     contact: 'Marie Dubois',  phone: '+32 472 11 22 33', email: 'marie@acme.be',     address: 'Rue de la Loi 120, 1040 Bxl',  tourId: 'tour-bxl-mid', status: 'validated',
+                    /* default site shown pre-selection — user picks in checkout */
+                    defaultSiteId: 'site-acme-loi' },
+  'off-pendingA': { id: 'off-pendingA', name: 'Borderline & Co.', contact: 'Lou Mercier',   phone: '+32 470 12 34 56', email: 'lou@borderline.be', address: 'Place Stéphanie 4, 1050 Bxl',  tourId: null,           status: 'pending',
+                    defaultSiteId: null },
 };
 // TODO[BACKEND]: users / auth must move behind a real Auth API
 // (`POST /auth/login`, `GET /me`, `PATCH /me`). This seed is demo-only and
@@ -1462,7 +1465,7 @@ function CrossPortionStrip({ calc }) {
   );
 }
 
-function Basket({ shop, mode, basket, onClose, onCheckout, onRemove }) {
+function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, deliveryFeeResult }) {
   // TODO[BACKEND]: replace with `await WSPricing.quote({ shopId, mode, basket })`
   // and render the returned subtotal / discounts / total. The synchronous
   // computation below is a fallback so the demo basket still totals correctly
@@ -1480,7 +1483,8 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove }) {
   const crossOffer = computeCrossPortionOffer(basket, crossPortionRule);
   const crossSavings = crossOffer?.savings || 0;
   const promo = mode === 'collect' ? subtotal * 0.05 : 0;
-  const total = Math.max(0, subtotal - promo - crossSavings);
+  const deliveryFee = (mode === 'delivery' && deliveryFeeResult) ? (deliveryFeeResult.fee_amount || 0) : 0;
+  const total = Math.max(0, subtotal - promo - crossSavings + deliveryFee);
   return (
     <aside className="ws-basket">
       <div className="ws-basket__head">
@@ -1550,6 +1554,18 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove }) {
           <div className="ws-basket__row ws-basket__row--promo">
             <span>Réduction Webshop · 5%</span>
             <span>−€{promo.toFixed(2)}</span>
+          </div>
+        )}
+
+        {deliveryFeeResult && mode === 'delivery' && (
+          <div className={`ws-basket__row${deliveryFee === 0 ? ' ws-basket__row--free' : ''}`}>
+            <span>Frais de livraison{deliveryFee === 0 && deliveryFeeResult.free_delivery_minimum > 0 ? ` · offerts dès €${deliveryFeeResult.free_delivery_minimum.toFixed(2)}` : ''}</span>
+            <span>{deliveryFee === 0 ? 'Offerts' : `+€${deliveryFee.toFixed(2)}`}</span>
+          </div>
+        )}
+        {deliveryFeeResult && mode === 'delivery' && deliveryFee > 0 && deliveryFeeResult.free_delivery_minimum > 0 && deliveryFeeResult.amount_remaining_for_free > 0 && (
+          <div className="ws-basket__row ws-basket__row--fee-nudge">
+            <span>Encore €{deliveryFeeResult.amount_remaining_for_free.toFixed(2)} pour la livraison gratuite</span>
           </div>
         )}
 
@@ -2565,23 +2581,35 @@ const W_PAYMENTS_FALLBACK = [
   { id: 'apple',      label: 'Apple Pay',    sub: 'Touch ID / Face ID' },
 ];
 
-function usePaymentMethods(shopId, mode) {
+const W_PAYMENTS_DEFERRED = [
+  { id: 'deferred', label: 'Paiement différé', sub: 'Facturation mensuelle · paiement sur facture' },
+];
+
+function usePaymentMethods(shopId, mode, deliveryFeeResult) {
   const [methods, setMethods] = React.useState(W_PAYMENTS_FALLBACK);
   React.useEffect(() => {
     let alive = true;
+    // Delivery mode with deferred payment_type → only show "Paiement différé".
+    if (mode === 'delivery' && deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') {
+      setMethods(W_PAYMENTS_DEFERRED);
+      return () => { alive = false; };
+    }
     if (window.WSPricing && typeof window.WSPricing.listPaymentMethods === 'function') {
       window.WSPricing.listPaymentMethods({ shopId, mode })
         .then((m) => { if (alive && m && m.length) setMethods(m); })
         .catch(() => {});
+    } else {
+      setMethods(W_PAYMENTS_FALLBACK);
     }
     return () => { alive = false; };
-  }, [shopId, mode]);
+  }, [shopId, mode, deliveryFeeResult && deliveryFeeResult.payment_type]);
   return methods;
 }
 
 function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPlaced,
                           voucherInput, setVoucherInput, voucherApplied, setVoucherApplied,
-                          office, tour, date }) {
+                          office, tour, date,
+                          deliveryFeeResult, officeSites, selectedSiteId, setSelectedSiteId }) {
   const [step, setStep] = useState(1);
   const [forceAuth, setForceAuth] = useState(false);
   const [paying, setPaying] = useState(false);
@@ -2597,11 +2625,17 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const [invoice, setInvoice] = useState(false);
   const [vat, setVat] = useState('');
 
-  // Payment
-  const [payment, setPayment] = useState('bancontact');
+  // Payment — reset to 'deferred' for deferred sites, 'bancontact' otherwise
+  const defaultPayment = (deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : 'bancontact';
+  const [payment, setPayment] = useState(defaultPayment);
 
   // Reset when reopened
-  useEffect(() => { if (open) { setStep(1); setSlot(null); setInvoice(false); setVat(''); setPayment('bancontact'); setForceAuth(false); setPaying(false); setPayErr(null); } }, [open]);
+  useEffect(() => {
+    if (open) {
+      setStep(1); setSlot(null); setInvoice(false); setVat(''); setForceAuth(false); setPaying(false); setPayErr(null);
+      setPayment((deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : 'bancontact');
+    }
+  }, [open]);
 
   if (!open) return null;
 
@@ -2609,7 +2643,8 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const subtotal = basket.reduce((t, l) => t + l.price * l.qty, 0);
   const promo = mode === 'collect' ? subtotal * 0.05 : 0;
   const voucherDiscount = voucherApplied && voucherApplied.ok ? voucherApplied.discount : 0;
-  const total = Math.max(0, subtotal - promo - voucherDiscount);
+  const deliveryFee = (mode === 'delivery' && deliveryFeeResult) ? (deliveryFeeResult.fee_amount || 0) : 0;
+  const total = Math.max(0, subtotal - promo - voucherDiscount + deliveryFee);
 
   const isOffice = mode === 'delivery' && user && office;
   const isGuest = !user;
@@ -2635,7 +2670,19 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         voucher: voucherApplied && voucherApplied.ok ? voucherApplied.voucher.code : null,
         customer: user ? { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, phone: user.phone || null, officeId: user.officeId || null } : { ...contact },
         payment: { method: payment },
-        delivery: mode === 'delivery' && office ? { officeId: office.id, tourId: office.tourId, address: office.address } : null,
+        delivery: mode === 'delivery' && office ? {
+          office_client_id:            office.id,
+          office_delivery_site_id:     selectedSiteId || null,
+          office_delivery_site_name:   deliveryFeeResult && deliveryFeeResult.site ? deliveryFeeResult.site.name : (office.address || null),
+          address:                     deliveryFeeResult && deliveryFeeResult.site ? deliveryFeeResult.site.address : office.address,
+          tournee_id:                  deliveryFeeResult && deliveryFeeResult.site ? deliveryFeeResult.site.tournee_id  : (office.tourId || null),
+          tournee_stop_id:             deliveryFeeResult && deliveryFeeResult.site ? deliveryFeeResult.site.tournee_stop_id : null,
+          payment_type:                deliveryFeeResult ? deliveryFeeResult.payment_type : 'immediate',
+          delivery_fee_applied:        deliveryFee > 0,
+          delivery_fee_amount:         deliveryFee,
+          free_delivery_minimum:       deliveryFeeResult ? (deliveryFeeResult.free_delivery_minimum || 0) : 0,
+          delivery_mode:               'office_delivery',
+        } : null,
         total,
         invoice: invoice ? { requested: true, vat } : null,
       };
@@ -2692,6 +2739,8 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             mode={mode} shop={shop} user={user} office={office} tour={tour}
             contact={contact} setContact={setContact}
             forceAuth={forceAuth} onLoginNow={() => onLogin()}
+            officeSites={officeSites} selectedSiteId={selectedSiteId} setSelectedSiteId={setSelectedSiteId}
+            deliveryFeeResult={deliveryFeeResult}
           />
         )}
         {step === 2 && (
@@ -2700,6 +2749,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         {step === 3 && (
           <CheckoutStep3
             mode={mode} basket={basket} subtotal={subtotal} promo={promo} total={total}
+            deliveryFee={deliveryFee} deliveryFeeResult={deliveryFeeResult}
             payment={payment} setPayment={setPayment}
             isOffice={isOffice} invoice={invoice} setInvoice={setInvoice} vat={vat} setVat={setVat}
             shopId={shop && shop.id} mode={mode}
@@ -2732,20 +2782,51 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   );
 }
 
-function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, forceAuth, onLoginNow }) {
-  // Office Shop: all read-only
+function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, forceAuth, onLoginNow,
+                         officeSites, selectedSiteId, setSelectedSiteId, deliveryFeeResult }) {
+  // Office Shop: site selector + read-only delivery info
   if (mode === 'delivery' && user && office) {
+    const activeSite = (officeSites || []).find((s) => s.id === selectedSiteId) || null;
+    const feeResult = deliveryFeeResult;
     return (
       <div className="ws-co-step">
-        <h3 className="ws-co-step__title">Coordonnées de livraison</h3>
-        <p className="ws-co-step__lede">Vos informations sont rattachées à votre bureau et déjà validées par L'Atelier By.</p>
+        <h3 className="ws-co-step__title">Adresse de livraison</h3>
+        <p className="ws-co-step__lede">Sélectionnez le site de livraison pour cette commande.</p>
+
+        {officeSites && officeSites.length > 1 && (
+          <div className="ws-co-site-select">
+            {officeSites.map((site) => (
+              <label key={site.id} className={`ws-co-site-opt${selectedSiteId === site.id ? ' is-active' : ''}`}>
+                <input type="radio" name="delivery-site" value={site.id} checked={selectedSiteId === site.id}
+                  onChange={() => setSelectedSiteId(site.id)}/>
+                <span className="ws-co-site-opt__radio"/>
+                <span className="ws-co-site-opt__body">
+                  <span className="ws-co-site-opt__name">{site.name}</span>
+                  <span className="ws-co-site-opt__addr">{site.address}{site.floor_room ? ' · ' + site.floor_room : ''}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
+
         <div className="ws-co-readbox">
           <ReadRow k="Entreprise" v={office.name}/>
-          <ReadRow k="Contact"    v={user.firstName + ' ' + user.lastName}/>
+          <ReadRow k="Contact"    v={activeSite ? activeSite.contact_name : (user.firstName + ' ' + user.lastName)}/>
           <ReadRow k="Email"      v={user.email}/>
-          <ReadRow k="Téléphone"  v={office.phone}/>
-          <ReadRow k="Adresse"    v={office.address || '—'}/>
+          <ReadRow k="Téléphone"  v={activeSite ? activeSite.contact_phone : (office.phone || '—')}/>
+          <ReadRow k="Adresse"    v={activeSite ? (activeSite.address + (activeSite.floor_room ? ' · ' + activeSite.floor_room : '')) : (office.address || '—')}/>
           <ReadRow k="Tournée"    v={tour ? tour.name + ' · ' + tour.window : '—'}/>
+          {feeResult && (
+            <ReadRow k="Livraison"
+              v={feeResult.free_delivery
+                ? 'Gratuite'
+                : feeResult.fee_amount > 0
+                  ? `€${feeResult.fee_amount.toFixed(2)}${feeResult.free_delivery_minimum > 0 ? ` (offerte dès €${feeResult.free_delivery_minimum.toFixed(2)})` : ''}`
+                  : 'Gratuite'}/>
+          )}
+          {feeResult && feeResult.payment_type === 'deferred' && (
+            <ReadRow k="Paiement" v="Différé · facturation mensuelle"/>
+          )}
         </div>
         <p className="ws-co-step__locknote"><Pict d={<><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></>} s={12}/> Modifier ces informations depuis Mon compte.</p>
       </div>
@@ -2857,10 +2938,11 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
 }
 
 function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, isOffice, invoice, setInvoice, vat, setVat,
-                         shopId, mode, voucherInput, setVoucherInput, voucherApplied, setVoucherApplied, voucherDiscount }) {
+                         shopId, mode, voucherInput, setVoucherInput, voucherApplied, setVoucherApplied, voucherDiscount,
+                         deliveryFee, deliveryFeeResult }) {
   const [voucherErr, setVoucherErr] = useState(null);
   const [voucherLoading, setVoucherLoading] = useState(false);
-  const paymentMethods = usePaymentMethods(shopId, mode);
+  const paymentMethods = usePaymentMethods(shopId, mode, deliveryFeeResult);
 
   // Re-validate whenever subtotal changes (e.g. minOrder boundary)
   useEffect(() => {
@@ -2954,6 +3036,16 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
           <div className="ws-co-summary__row ws-co-summary__row--promo">
             <span>Code <strong>{voucherApplied.voucher.code}</strong></span>
             <span>−€{voucherDiscount.toFixed(2)}</span>
+          </div>
+        )}
+        {deliveryFeeResult && mode === 'delivery' && (
+          <div className={`ws-co-summary__row${deliveryFee === 0 ? ' ws-co-summary__row--free' : ''}`}>
+            <span>Frais de livraison
+              {deliveryFee === 0 && deliveryFeeResult.free_delivery_minimum > 0 && (
+                <span className="ws-co-summary__row-note"> · offerts dès €{deliveryFeeResult.free_delivery_minimum.toFixed(2)}</span>
+              )}
+            </span>
+            <span>{deliveryFee === 0 ? 'Offerts' : `€${deliveryFee.toFixed(2)}`}</span>
           </div>
         )}
         <div className="ws-co-summary__row ws-co-summary__row--total"><span>Total TTC</span><span>€{total.toFixed(2)}</span></div>
@@ -3163,6 +3255,50 @@ function ShopFrame({ variant }) {
     load();
     return () => { alive = false; };
   }, [user?.officeId]);
+
+  // Delivery sites for the logged-in office client, and the site selected in checkout.
+  const [officeSites, setOfficeSites] = React.useState([]);
+  const [selectedSiteId, setSelectedSiteId] = React.useState(null);
+  React.useEffect(() => {
+    let alive = true;
+    async function loadSites() {
+      if (!userOffice) { setOfficeSites([]); setSelectedSiteId(null); return; }
+      const sites = window.WSDeliveryFees
+        ? await window.WSDeliveryFees.listSites({ officeClientId: userOffice.id }).catch(() => [])
+        : [];
+      if (!alive) return;
+      setOfficeSites(sites);
+      // Pre-select the office's default site (or the first active site).
+      const def = userOffice.defaultSiteId || null;
+      const picked = (def && sites.find((s) => s.id === def)) ? def : (sites[0] ? sites[0].id : null);
+      setSelectedSiteId(picked);
+    }
+    loadSites();
+    return () => { alive = false; };
+  }, [userOffice?.id]);
+
+  // Active delivery site object (resolved from selection or first site).
+  const selectedSite = React.useMemo(
+    () => officeSites.find((s) => s.id === selectedSiteId) || null,
+    [officeSites, selectedSiteId]
+  );
+
+  // Delivery fee — recomputed whenever basket subtotal or selected site changes.
+  const subtotalForFee = basket.reduce((t, l) => t + l.price * l.qty, 0);
+  const [deliveryFeeResult, setDeliveryFeeResult] = React.useState(null);
+  React.useEffect(() => {
+    let alive = true;
+    if (mode !== 'delivery' || !userOffice) { setDeliveryFeeResult(null); return; }
+    if (!window.WSDeliveryFees) { setDeliveryFeeResult(null); return; }
+    window.WSDeliveryFees.quote({
+      siteId:          selectedSite ? selectedSite.id          : null,
+      officeClientId:  userOffice.id,
+      tourneeId:       selectedSite ? selectedSite.tournee_id  : (userOffice.tourId || null),
+      shopId:          shop ? shop.id : shopId,
+      subtotal:        subtotalForFee,
+    }).then((r) => { if (alive) setDeliveryFeeResult(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, [mode, userOffice?.id, selectedSite?.id, subtotalForFee, shopId]);
 
   // After a manual shop switch we may prompt the user to make it their preferred shop.
   const [prefNudge, setPrefNudge] = useState(null); // { shopId, shopName } | null
@@ -3404,7 +3540,7 @@ function ShopFrame({ variant }) {
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
         </button>
 
-        <Basket shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove}/>
+        <Basket shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} deliveryFeeResult={deliveryFeeResult}/>
       </div>
 
       {/* Mobile bottom tab bar — 2 buttons, 50/50 split */}
@@ -3469,6 +3605,8 @@ function ShopFrame({ variant }) {
         voucherInput={voucherInput} setVoucherInput={setVoucherInput}
         voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
         office={userOffice} tour={userTour} date={date}
+        deliveryFeeResult={deliveryFeeResult}
+        officeSites={officeSites} selectedSiteId={selectedSiteId} setSelectedSiteId={setSelectedSiteId}
       />
       {deepLinkBanner && (
         <div className="ws-deeplink" role="status">

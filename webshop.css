@@ -1689,6 +1689,8 @@
 .ws-basket__row > span:first-child { color: var(--color-text-muted); }
 .ws-basket__row--promo { color: var(--color-collection-border); }
 .ws-basket__row--promo > span:last-child { color: var(--color-collection-border); font-weight: 500; }
+.ws-basket__row--free > span:last-child { color: #2d7a4f; font-weight: 500; }
+.ws-basket__row--fee-nudge { font-size: 11px; color: var(--color-text-muted); font-style: italic; border: none !important; padding-top: 2px; }
 .ws-basket__promo {
   display: flex; justify-content: space-between;
   font-size: 11px; color: var(--color-collection-border);
@@ -2623,6 +2625,36 @@
 /* Auth wall */
 .ws-co-authwall { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 
+/* Delivery site selector */
+.ws-co-site-select { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.ws-co-site-opt {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 12px;
+  cursor: pointer;
+  background: var(--color-surface);
+  transition: border-color .15s, background .15s;
+}
+.ws-co-site-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.ws-co-site-opt__radio {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--color-border-tertiary);
+  flex-shrink: 0; margin-top: 2px;
+  transition: border-color .15s;
+}
+.ws-co-site-opt.is-active {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
+}
+.ws-co-site-opt.is-active .ws-co-site-opt__radio {
+  border-color: var(--color-primary);
+  box-shadow: inset 0 0 0 3px var(--color-primary);
+}
+.ws-co-site-opt__body { display: flex; flex-direction: column; gap: 2px; }
+.ws-co-site-opt__name { font-size: 13px; font-weight: 600; color: var(--color-text); }
+.ws-co-site-opt__addr { font-size: 11.5px; color: var(--color-text-muted); }
+
 /* Slot picker */
 .ws-co-day {
   display: inline-flex; align-items: center; gap: 6px;
@@ -2672,6 +2704,8 @@
 .ws-co-summary__amt { color: var(--color-text); font-weight: 500; }
 .ws-co-summary__row { display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-top: 1px dashed var(--color-border-tertiary); }
 .ws-co-summary__row--promo { color: var(--color-collection-border); }
+.ws-co-summary__row--free > span:last-child { color: #2d7a4f; font-weight: 500; }
+.ws-co-summary__row-note { font-size: 11px; color: var(--color-text-muted); }
 .ws-co-summary__row--total { font-size: 14px; font-weight: 600; color: var(--color-primary); border-top: 1px solid var(--color-border-tertiary); padding-top: 8px; margin-top: 4px; }
 
 /* Payment radios */

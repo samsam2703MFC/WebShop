@@ -22,7 +22,8 @@
   if (window.WSShops)    window.WSShops.endpoint    = BASE_URL + '/shops';
   if (window.WSCatalog)  window.WSCatalog.endpoint  = BASE_URL + '/catalog';
   if (window.WSCalendar)      window.WSCalendar.endpoint      = BASE_URL + '/calendar';
-  if (window.WSAvailability)  window.WSAvailability.endpoint  = BASE_URL + '/availability';
+  if (window.WSAvailability)    window.WSAvailability.endpoint    = BASE_URL + '/availability';
+  if (window.WSDeliveryFees)    window.WSDeliveryFees.endpoint    = BASE_URL + '/delivery-fees';
   if (window.WSOffices)       window.WSOffices.endpoint       = BASE_URL + '/offices';
   if (window.WSBrand)    window.WSBrand.endpoint    = BASE_URL + '/brand';
 

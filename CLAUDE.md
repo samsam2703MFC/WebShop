@@ -31,6 +31,7 @@ These files contain business logic, API integration, and seed data.
 | `webshop-vouchers.jsx` | `window.WSVouchers` — voucher validation |
 | `webshop-vies.jsx` | `window.WSVies` — VAT number lookup |
 | `webshop-i18n.jsx` | `window.WSI18n` — translations (fr/nl/en/de) |
+| `webshop-delivery-fees-api.jsx` | `window.WSDeliveryFees` — delivery fee resolution per site/office/tour/shop |
 | `api-config.js` | Sets `BASE_URL` to activate live HTTP endpoints |
 
 ### 🟡 MERGE carefully — React logic + visual components

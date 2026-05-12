@@ -1127,4 +1127,107 @@ window.WSAvailability.endpoint = BASE_URL + '/availability';
 
 ---
 
+## 10. Delivery Fee System Tables
+
+Delivery fees are resolved per **delivery site** (not per office client). One office client can have multiple delivery addresses, each with its own fee rules, payment type, and tournée stop.
+
+### Fee resolution priority
+
+```
+delivery site rule → office client rule → tournée rule → shop rule → global rule
+```
+
+### ws_office_delivery_sites
+
+One row per physical delivery address for a B2B office client.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | `VARCHAR(36) PK` | UUID |
+| `office_client_id` | `VARCHAR(36) FK → ws_offices.id` | The office company this site belongs to |
+| `name` | `VARCHAR(120)` | Display name, e.g. "ACME — Rue de la Loi" |
+| `address` | `VARCHAR(250)` | Street address |
+| `floor_room` | `VARCHAR(120)` | Floor / room / door code (optional) |
+| `contact_name` | `VARCHAR(120)` | On-site contact name |
+| `contact_phone` | `VARCHAR(30)` | On-site contact phone |
+| `tournee_id` | `VARCHAR(36) FK → ws_tours.id` | Tournée that serves this site |
+| `tournee_stop_id` | `VARCHAR(36)` | Stop ID within the tournée route |
+| `shop_id` | `VARCHAR(36) FK → ws_shops.id` | Shop this site is attached to |
+| `active` | `BOOLEAN DEFAULT TRUE` | Soft-delete / deactivate |
+| `created_at` | `TIMESTAMPTZ DEFAULT now()` | |
+| `updated_at` | `TIMESTAMPTZ DEFAULT now()` | |
+
+**Constraints:** Each office client must have at least one active delivery site before delivery orders are permitted.
+
+### ws_delivery_fee_rules
+
+Stores fee rules at each priority level. The `level` column determines which entity the rule applies to.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | `VARCHAR(36) PK` | UUID |
+| `level` | `ENUM('site','office','tour','shop','global')` | Resolution level |
+| `site_id` | `VARCHAR(36) NULL FK → ws_office_delivery_sites.id` | Set when level = 'site' |
+| `office_client_id` | `VARCHAR(36) NULL FK → ws_offices.id` | Set when level = 'office' |
+| `tour_id` | `VARCHAR(36) NULL FK → ws_tours.id` | Set when level = 'tour' |
+| `shop_id` | `VARCHAR(36) NULL FK → ws_shops.id` | Set when level = 'shop' |
+| `free_delivery` | `BOOLEAN DEFAULT FALSE` | No fee regardless of order amount |
+| `always_charge` | `BOOLEAN DEFAULT FALSE` | Fee applies even above the free threshold |
+| `fee_amount` | `DECIMAL(8,2) DEFAULT 0` | Fee in EUR |
+| `free_delivery_minimum` | `DECIMAL(8,2) DEFAULT 0` | Order amount above which fee is waived |
+| `payment_type` | `ENUM('immediate','deferred') DEFAULT 'immediate'` | Payment flow for the checkout |
+| `active` | `BOOLEAN DEFAULT TRUE` | |
+| `created_at` | `TIMESTAMPTZ DEFAULT now()` | |
+
+**Constraint:** At most one active rule per `(level, site_id/office_client_id/tour_id/shop_id)` combination. Global rule: enforce `level = 'global'` with a partial unique index.
+
+**Fee computation (backend pseudo-code):**
+```
+if rule.free_delivery → fee = 0
+elif rule.always_charge → fee = rule.fee_amount
+elif subtotal >= rule.free_delivery_minimum → fee = 0
+else → fee = rule.fee_amount
+```
+
+### Order metadata fields (ws_orders)
+
+Add these columns to `ws_orders` to record the delivery site resolution:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `office_client_id` | `VARCHAR(36) NULL` | Office client reference |
+| `office_delivery_site_id` | `VARCHAR(36) NULL` | Specific site reference |
+| `office_delivery_site_name` | `VARCHAR(120) NULL` | Snapshot of site name at order time |
+| `payment_type` | `ENUM('immediate','deferred') DEFAULT 'immediate'` | Determines invoicing flow |
+| `delivery_fee_applied` | `BOOLEAN DEFAULT FALSE` | Whether a fee was charged |
+| `delivery_fee_amount` | `DECIMAL(8,2) DEFAULT 0` | Actual fee charged |
+| `free_delivery_minimum` | `DECIMAL(8,2) DEFAULT 0` | Threshold in effect at order time |
+| `tournee_stop_id` | `VARCHAR(36) NULL` | Tournée stop within the route |
+| `delivery_mode` | `ENUM('office_delivery','collect') DEFAULT 'collect'` | |
+
+### Sample data
+
+```sql
+-- Delivery sites for ACME Avocats
+INSERT INTO ws_office_delivery_sites (id, office_client_id, name, address, floor_room, contact_name, contact_phone, tournee_id, tournee_stop_id, shop_id)
+VALUES
+  ('site-acme-loi',  'off-acme', 'ACME Avocats — Rue de la Loi',  'Rue de la Loi 120, 1040 Bxl',    '4e étage, salle Themis',  'Marie Dubois',   '+32 472 11 22 33', 'tour-bxl-mid', 'stop-acme-loi',  'chatelain'),
+  ('site-acme-arts', 'off-acme', 'ACME Avocats — Place des Arts', 'Place des Arts 7, 1210 Saint-Josse', 'Réception',             'Pierre Fontaine', '+32 472 33 44 55', 'tour-bxl-am',  'stop-acme-arts', 'sablon');
+
+-- Fee rules
+INSERT INTO ws_delivery_fee_rules (id, level, site_id, free_delivery, always_charge, fee_amount, free_delivery_minimum, payment_type)
+VALUES
+  ('rule-site-loi',  'site', 'site-acme-loi',  FALSE, FALSE, 4.50, 40.00, 'deferred'),
+  ('rule-site-arts', 'site', 'site-acme-arts', TRUE,  FALSE, 0,    0,     'immediate');
+
+-- Global fallback rule
+INSERT INTO ws_delivery_fee_rules (id, level, free_delivery, always_charge, fee_amount, free_delivery_minimum, payment_type)
+VALUES ('rule-global', 'global', FALSE, FALSE, 7.00, 50.00, 'immediate');
+
+-- Wire WSDeliveryFees endpoint
+-- window.WSDeliveryFees.endpoint = BASE_URL + '/delivery-fees';
+```
+
+---
+
 *See also: `API.md` for endpoint contracts · `DATA_SHAPES.md` for frontend field reference · `CLAUDE.md` for file ownership rules*

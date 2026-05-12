@@ -1072,3 +1072,84 @@ Body: `{ shopId, mode, date, basket? }`
 | `no_delivery` | CartValidationResult | Product not available in delivery mode |
 | `stock_empty` | CartValidationResult | Delivery stock exhausted for the date |
 | `shop_closed` | CartValidationResult | Shop closed on selected date |
+
+---
+
+## WSDeliveryFees
+
+### DeliverySite
+
+Returned by `WSDeliveryFees.listSites({ officeClientId })` and `WSDeliveryFees.getSite({ siteId })`.
+
+```ts
+interface DeliverySite {
+  id:                    string;         // 'site-acme-loi'
+  office_client_id:      string;         // 'off-acme'
+  name:                  string;         // Display name, e.g. "ACME — Rue de la Loi"
+  address:               string;         // Full street address
+  floor_room:            string | null;
+  contact_name:          string;
+  contact_phone:         string;
+  tournee_id:            string;
+  tournee_stop_id:       string | null;
+  shop_id:               string;
+  free_delivery:         boolean;
+  always_charge:         boolean;
+  fee_amount:            number;
+  free_delivery_minimum: number;
+  payment_type:          'immediate' | 'deferred';
+  active:                boolean;
+}
+```
+
+### DeliveryFeeResult
+
+Returned by `WSDeliveryFees.quote({ siteId, officeClientId, tourneeId, shopId, subtotal })`.
+
+```ts
+interface DeliveryFeeResult {
+  fee_amount:                number;    // Fee in EUR (0 if free)
+  free_delivery:             boolean;
+  always_charge:             boolean;
+  free_delivery_minimum:     number;    // 0 = no threshold
+  amount_remaining_for_free: number;    // EUR still needed to unlock free delivery
+  payment_type:              'immediate' | 'deferred';
+  resolved_level:            'site' | 'office' | 'tour' | 'shop' | 'global';
+  site:                      DeliverySite | null;
+}
+```
+
+### Fee priority
+
+```
+1. Delivery site rule   (siteId match)
+2. Office client rule   (officeClientId match)
+3. Tournée rule         (tourneeId match)
+4. Shop rule            (shopId match)
+5. Global rule          (always present as final fallback)
+```
+
+### Payment type behaviour
+
+| `payment_type` | Checkout effect |
+|---|---|
+| `'immediate'` | Normal methods shown: Bancontact, Visa, Apple Pay |
+| `'deferred'` | Only "Paiement différé" (monthly invoice) |
+
+### Order payload — delivery block
+
+Fields sent to `WSOrders.place()` inside `delivery` when `mode === 'delivery'`:
+
+| Field | Type | Description |
+|---|---|---|
+| `office_client_id` | `string` | Office company |
+| `office_delivery_site_id` | `string \| null` | Specific site |
+| `office_delivery_site_name` | `string \| null` | Snapshot of site name |
+| `address` | `string` | Delivery address |
+| `tournee_id` | `string \| null` | Tournée |
+| `tournee_stop_id` | `string \| null` | Stop within the route |
+| `payment_type` | `'immediate' \| 'deferred'` | |
+| `delivery_fee_applied` | `boolean` | |
+| `delivery_fee_amount` | `number` | |
+| `free_delivery_minimum` | `number` | Threshold at order time |
+| `delivery_mode` | `'office_delivery'` | |
