@@ -10,7 +10,7 @@
     "sync:full": "node sync/full-sync.js",
     "sync:worker": "node sync/worker.js",
     "sync:reconcile": "node sync/reconcile.js",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.js"
   },
   "license": "UNLICENSED",
   "dependencies": {

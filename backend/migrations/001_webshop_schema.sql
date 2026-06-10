@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS ws_vouchers (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS ws_orders (
-  id            VARCHAR(36)   NOT NULL PRIMARY KEY,
+  id            VARCHAR(40)   NOT NULL PRIMARY KEY,
   shop_id       VARCHAR(36)   NOT NULL,
   mode          ENUM('collect','delivery') NOT NULL,
   status        ENUM('pending_payment','paid','deferred_billing','preparing','ready','delivered','canceled','payment_failed') NOT NULL DEFAULT 'pending_payment',
@@ -234,7 +234,7 @@ CREATE TABLE IF NOT EXISTS ws_orders (
 
 CREATE TABLE IF NOT EXISTS ws_order_lines (
   id            INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  order_id      VARCHAR(36)   NOT NULL,
+  order_id      VARCHAR(40)   NOT NULL,
   product_id    INT           NOT NULL,
   name          VARCHAR(200)  NOT NULL,   -- snapshot at order time
   qty           INT           NOT NULL,
@@ -255,7 +255,7 @@ CREATE TABLE IF NOT EXISTS ws_order_lines (
 CREATE TABLE IF NOT EXISTS ws_stripe_events (
   event_id      VARCHAR(80)   NOT NULL PRIMARY KEY,
   type          VARCHAR(80)   NOT NULL,
-  order_id      VARCHAR(36)   NULL,
+  order_id      VARCHAR(40)   NULL,
   processed_at  TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

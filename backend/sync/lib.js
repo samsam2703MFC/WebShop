@@ -77,21 +77,28 @@ async function fetchSourceRow(entity, refId) {
   return row || null;
 }
 
-/* Upsert one mapped row into the target table. Returns inserted|updated. */
+/* Upsert one mapped row into the target table. Returns inserted|updated.
+   Existence is checked first because mysql2's FOUND_ROWS flag makes
+   affectedRows indistinguishable between insert and no-op update —
+   and accurate stats are what reconcile uses to measure drift. */
 async function upsertTarget(entity, mapped) {
   const m = MAPPING[entity];
   const tCols = Object.keys(mapped);
   const kCols = keyCols(m.target.key);
+  const where = kCols.map((c) => `\`${c}\` = ?`).join(' AND ');
+  const [[existing]] = await webshopDb.query(
+    `SELECT 1 AS x FROM ${m.target.table} WHERE ${where}`,
+    kCols.map((c) => mapped[c])
+  );
   const insertCols = tCols.map((c) => `\`${c}\``).join(', ');
   const placeholders = tCols.map(() => '?').join(', ');
   const updates = tCols.filter((c) => !kCols.includes(c)).map((c) => `\`${c}\` = VALUES(\`${c}\`)`).join(', ');
-  const [r] = await webshopDb.query(
+  await webshopDb.query(
     `INSERT INTO ${m.target.table} (${insertCols}) VALUES (${placeholders})
      ON DUPLICATE KEY UPDATE ${updates}`,
     tCols.map((c) => mapped[c])
   );
-  // mysql: affectedRows 1 = insert, 2 = update, 0 = no-op update
-  return r.affectedRows === 1 ? 'inserted' : 'updated';
+  return existing ? 'updated' : 'inserted';
 }
 
 /* Deactivate target row(s) for a source ref that disappeared/disabled. */
