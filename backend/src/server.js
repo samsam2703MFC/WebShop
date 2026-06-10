@@ -46,6 +46,9 @@ app.post('/stripe/webhook', express.raw({ type: 'application/json' }), async (re
 
 app.use(express.json());
 
+/* Minimal ops dashboard (HTML view of /sync/status + /health). */
+app.use('/status', express.static(new URL('../public', import.meta.url).pathname, { index: 'status.html' }));
+
 const wrap = (fn) => (req, res) => fn(req, res).catch((e) => {
   if (e && e.status) return res.status(e.status).json({ error: e.message });
   console.error(e);
