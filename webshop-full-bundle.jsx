@@ -2689,6 +2689,12 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       const result = window.WSOrders
         ? await window.WSOrders.place(payload)
         : { ok: true, orderId: 'ord-demo', total, slot, payment };
+      // Live backend + immediate payment → Stripe hosted Checkout
+      // (cards + Bancontact). The webhook marks the order paid.
+      if (result && result.checkoutUrl) {
+        window.location.href = result.checkoutUrl;
+        return;
+      }
       onPlaced({ ...result, slot, payment, total });
     } catch (ex) {
       setPayErr(ex.message || 'Erreur lors du paiement. Veuillez réessayer.');

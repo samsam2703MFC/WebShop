@@ -2,10 +2,12 @@
 
 ## Stack
 
-- **Frontend only** — no build step. React 18 UMD + Babel Standalone loaded from CDN.
+- **Frontend** — no build step. React 18 UMD + Babel Standalone loaded from CDN.
 - **Entry point** — `index.html` redirects to `webshop-full.html`.
 - **Deployment** — GitHub Pages (`https://samsam2703MFC.github.io/WebShop/`).
-- **Backend** — not wired yet. All API stubs fall back to in-memory seed data.
+- **Backend** — `backend/` (Node 22 + Express + MySQL): API per `API.md`,
+  near-real-time ERP sync (outbox), Stripe hosted Checkout. See `backend/README.md`
+  and `GO_LIVE.md`. Frontend stays in demo mode until `BASE_URL` is set in `api-config.js`.
 
 ---
 
