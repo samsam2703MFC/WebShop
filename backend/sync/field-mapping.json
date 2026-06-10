@@ -1,0 +1,80 @@
+{
+  "$comment": "Explicit ERP→webshop field mapping. source = Franchise Buddy table/columns, target = webshop table/columns. 'key' is the stable sync key (SKU / code). Transforms are named functions implemented in sync/lib.js — keep logic out of this file.",
+
+  "article": {
+    "source": { "table": "fb_articles", "key": "sku", "activeFlag": "actif" },
+    "target": { "table": "ws_products", "key": "external_id", "activeFlag": "active" },
+    "fields": {
+      "sku":           { "to": "external_id" },
+      "famille_code":  { "to": "cat", "transform": "categoryRef" },
+      "designation":   { "to": "name" },
+      "descriptif":    { "to": "description" },
+      "prix_ttc":      { "to": "price" },
+      "taux_tva":      { "to": "vat_rate" },
+      "image":         { "to": "img" },
+      "allergenes":    { "to": "allergens" },
+      "portions":      { "to": "portions" },
+      "promo_croisee": { "to": "cross_portion" },
+      "options_menu":  { "to": "has_menu_options" },
+      "retrait_seul":  { "to": "no_delivery" },
+      "delai_jours":   { "to": "lead_time" },
+      "actif":         { "to": "active" }
+    }
+  },
+
+  "famille": {
+    "source": { "table": "fb_familles", "key": "code", "activeFlag": "actif" },
+    "target": { "table": "ws_categories", "key": "external_id", "activeFlag": "active" },
+    "fields": {
+      "code":    { "to": "external_id" },
+      "code#id": { "to": "id" },
+      "libelle": { "to": "label" },
+      "image":   { "to": "img" },
+      "ordre":   { "to": "sort_order" },
+      "actif":   { "to": "active" }
+    }
+  },
+
+  "boutique": {
+    "source": { "table": "fb_boutiques", "key": "code", "activeFlag": "actif" },
+    "target": { "table": "ws_shops", "key": "external_id", "activeFlag": "active" },
+    "fields": {
+      "code":          { "to": "external_id" },
+      "code#id":       { "to": "id" },
+      "enseigne":      { "to": "name" },
+      "adresse":       { "to": "address" },
+      "couleur":       { "to": "accent" },
+      "horaires":      { "to": "opening_hours" },
+      "click_collect": { "to": "click_collect" },
+      "actif":         { "to": "active" }
+    }
+  },
+
+  "stock": {
+    "source": { "table": "fb_stock", "key": ["sku", "boutique_code"], "activeFlag": "dispo" },
+    "target": { "table": "ws_product_shops", "key": ["product_id", "shop_id"], "activeFlag": "available" },
+    "fields": {
+      "sku":             { "to": "product_id", "transform": "productRef" },
+      "boutique_code":   { "to": "shop_id", "transform": "shopRef" },
+      "prix_boutique":   { "to": "price_override" },
+      "dispo":           { "to": "available" },
+      "stock_livraison": { "to": "delivery_stock" }
+    }
+  },
+
+  "promo": {
+    "source": { "table": "fb_promos", "key": "code", "activeFlag": "actif" },
+    "target": { "table": "ws_promotions", "key": "external_id", "activeFlag": "active" },
+    "fields": {
+      "code":          { "to": "external_id" },
+      "code#id":       { "to": "id" },
+      "libelle":       { "to": "label" },
+      "type_promo":    { "to": "kind", "transform": "promoKind" },
+      "valeur":        { "to": "value" },
+      "boutique_code": { "to": "shop_id" },
+      "debut":         { "to": "starts_at" },
+      "fin":           { "to": "ends_at" },
+      "actif":         { "to": "active" }
+    }
+  }
+}

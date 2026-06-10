@@ -1,0 +1,22 @@
+{
+  "name": "webshop-backend",
+  "version": "1.0.0",
+  "description": "L'Atelier By webshop API — serves the contracts in ../API.md from the webshop MySQL DB",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "migrate": "node migrations/run.js",
+    "sync:full": "node sync/full-sync.js",
+    "sync:worker": "node sync/worker.js",
+    "sync:reconcile": "node sync/reconcile.js",
+    "test": "node --test test/"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mysql2": "^3.22.5",
+    "stripe": "^22.2.0"
+  }
+}
