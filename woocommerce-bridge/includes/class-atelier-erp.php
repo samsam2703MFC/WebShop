@@ -55,6 +55,20 @@ class Atelier_ERP {
         return array_is_list($data) ? $data : [$data];
     }
 
+    /* Compose the display address from Franchise Buddy's split fields:
+       street + street_num, city (e.g. "Rue du Page 33, Ixelles").
+       Falls back to a single address-like field when the split ones are absent. */
+    private static function shop_address(array $s): string {
+        $street = trim((string) self::pick($s, ['street', 'rue'], ''));
+        $num    = trim((string) self::pick($s, ['street_num', 'street_number', 'num'], ''));
+        $city   = trim((string) self::pick($s, ['city', 'ville', 'commune'], ''));
+        $line   = trim($street . ' ' . $num);
+        if ($line !== '' || $city !== '') {
+            return $line !== '' && $city !== '' ? $line . ', ' . $city : ($line !== '' ? $line : $city);
+        }
+        return (string) self::pick($s, ['address', 'adresse', 'full_address', 'location'], '');
+    }
+
     /* Map one ERP shop → the storefront shop shape (WSShops). */
     public static function map_shop($s): ?array {
         if (!is_array($s)) return null;
@@ -63,7 +77,7 @@ class Atelier_ERP {
         return [
             'id'            => (string) $id,
             'name'          => (string) self::pick($s, ['representative_name', 'name', 'enseigne', 'nom', 'title', 'label'], 'Boutique'),
-            'address'       => (string) self::pick($s, ['address', 'adresse', 'full_address', 'location', 'rue'], ''),
+            'address'       => self::shop_address($s),
             'accent'        => (string) self::pick($s, ['accent', 'color', 'couleur', 'brand_color'], '#8D1D2C'),
             'click_collect' => (bool)   self::pick($s, ['click_collect', 'click_and_collect', 'collect', 'pickup'], true),
         ];
