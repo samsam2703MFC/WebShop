@@ -49,47 +49,27 @@ class Atelier_Install {
             KEY idx_level (level)
         ) $charset;");
 
-        self::seed($sites, $rules);
+        self::cleanup_demo($sites, $rules);
+        self::seed_defaults($rules);
     }
 
-    /* Demo seed so the B2B flow is testable out of the box.
-       NOTE: explicit $format arrays are required — $wpdb->insert() without
-       them infers formats and silently casts VARCHAR keys like
-       'site-acme-loi' to 0, which breaks fee resolution. */
-    private static function seed($sites, $rules) {
+    /* Remove the ACME demo B2B rows shipped by earlier versions. Idempotent. */
+    private static function cleanup_demo($sites, $rules) {
         global $wpdb;
-        $site_fmt = ['%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%d'];
-        if ((int) $wpdb->get_var("SELECT COUNT(*) FROM $sites") === 0) {
-            $wpdb->insert($sites, [
-                'id' => 'site-acme-loi', 'office_client_id' => 'off-acme',
-                'name' => 'ACME Avocats — Rue de la Loi', 'address' => 'Rue de la Loi 120, 1040 Bruxelles',
-                'floor_room' => '4e étage, salle Themis', 'contact_name' => 'Marie Dubois',
-                'contact_phone' => '+32 472 11 22 33', 'tournee_id' => 'tour-bxl-mid',
-                'tournee_stop_id' => 'stop-acme-loi', 'shop_id' => 'chatelain', 'active' => 1,
-            ], $site_fmt);
-            $wpdb->insert($sites, [
-                'id' => 'site-acme-arts', 'office_client_id' => 'off-acme',
-                'name' => 'ACME Avocats — Place des Arts', 'address' => 'Place des Arts 7, 1210 Saint-Josse',
-                'floor_room' => 'Réception', 'contact_name' => 'Pierre Fontaine',
-                'contact_phone' => '+32 472 33 44 55', 'tournee_id' => 'tour-bxl-am',
-                'tournee_stop_id' => 'stop-acme-arts', 'shop_id' => 'sablon', 'active' => 1,
-            ], $site_fmt);
-        }
-        if ((int) $wpdb->get_var("SELECT COUNT(*) FROM $rules") === 0) {
-            $rule_fmt = ['%s','%s','%s','%s','%s','%s','%d','%d','%f','%f','%s','%d'];
-            $rows = [
-                ['rule-site-loi', 'site', 'site-acme-loi', null, null, null, 0, 0, 4.50, 40.00, 'deferred'],
-                ['rule-site-arts', 'site', 'site-acme-arts', null, null, null, 1, 0, 0, 0, 'immediate'],
-                ['rule-off-acme', 'office', null, 'off-acme', null, null, 0, 0, 5.00, 50.00, 'deferred'],
-                ['rule-global', 'global', null, null, null, null, 0, 0, 7.00, 50.00, 'immediate'],
-            ];
-            foreach ($rows as $r) {
-                $wpdb->insert($rules, [
-                    'id' => $r[0], 'level' => $r[1], 'site_id' => $r[2], 'office_client_id' => $r[3],
-                    'tour_id' => $r[4], 'shop_id' => $r[5], 'free_delivery' => $r[6], 'always_charge' => $r[7],
-                    'fee_amount' => $r[8], 'free_delivery_minimum' => $r[9], 'payment_type' => $r[10], 'active' => 1,
-                ], $rule_fmt);
-            }
+        $wpdb->query("DELETE FROM $sites WHERE id IN ('site-acme-loi','site-acme-arts')");
+        $wpdb->query("DELETE FROM $rules WHERE id IN ('rule-site-loi','rule-site-arts','rule-off-acme')");
+    }
+
+    /* Seed only the GLOBAL fallback delivery-fee rule — a real default, not
+       demo data. Real delivery sites/fees are added by the shop later. */
+    private static function seed_defaults($rules) {
+        global $wpdb;
+        if ((int) $wpdb->get_var("SELECT COUNT(*) FROM $rules WHERE level = 'global'") === 0) {
+            $wpdb->insert($rules, [
+                'id' => 'rule-global', 'level' => 'global', 'site_id' => null, 'office_client_id' => null,
+                'tour_id' => null, 'shop_id' => null, 'free_delivery' => 0, 'always_charge' => 0,
+                'fee_amount' => 7.00, 'free_delivery_minimum' => 50.00, 'payment_type' => 'immediate', 'active' => 1,
+            ], ['%s','%s','%s','%s','%s','%s','%d','%d','%f','%f','%s','%d']);
         }
     }
 }

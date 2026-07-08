@@ -38,6 +38,23 @@ class Atelier_REST {
 
         register_rest_route(self::NS, '/orders', $post([self::class, 'place_order']));
         register_rest_route(self::NS, '/orders/(?P<id>[\w-]+)', $get([self::class, 'get_order']));
+
+        // Auth — real WordPress/WooCommerce customer accounts + bearer tokens.
+        register_rest_route(self::NS, '/auth/register', $post(['Atelier_Auth', 'register']));
+        register_rest_route(self::NS, '/auth/login', $post(['Atelier_Auth', 'login']));
+        register_rest_route(self::NS, '/auth/logout', $post(['Atelier_Auth', 'logout']));
+        register_rest_route(self::NS, '/auth/me', $get(['Atelier_Auth', 'me']));
+        register_rest_route(self::NS, '/auth/me', ['methods' => 'PATCH', 'callback' => ['Atelier_Auth', 'update_me'], 'permission_callback' => '__return_true']);
+        register_rest_route(self::NS, '/auth/password-reset', $post(['Atelier_Auth', 'password_reset']));
+
+        // Availability — real pickup days/slots from the shop's opening hours.
+        register_rest_route(self::NS, '/availability/settings', $get(['Atelier_Availability', 'settings']));
+        register_rest_route(self::NS, '/availability/days', $get(['Atelier_Availability', 'days']));
+        register_rest_route(self::NS, '/availability/slots', $get(['Atelier_Availability', 'slots']));
+        // WSCalendar compatibility (older stub paths).
+        register_rest_route(self::NS, '/calendar/days', $get(['Atelier_Availability', 'days']));
+        register_rest_route(self::NS, '/calendar/slots', $get(['Atelier_Availability', 'slots']));
+        register_rest_route(self::NS, '/calendar/cutoff', $get(['Atelier_Availability', 'cutoff_endpoint']));
     }
 
     /* ── Catalog ─────────────────────────────────────────────────── */
@@ -177,6 +194,14 @@ class Atelier_REST {
             $order->set_billing_email($b['customer']['email']);
             $order->set_billing_first_name($b['customer']['firstName'] ?? '');
             $order->set_billing_last_name($b['customer']['lastName'] ?? '');
+        }
+        // Link to the authenticated WooCommerce customer (from bearer token),
+        // so the order appears in their account and order history.
+        $authUid = Atelier_Auth::user_from_request($req);
+        if ($authUid) {
+            $order->set_customer_id($authUid);
+            $u = get_userdata($authUid);
+            if ($u && !$order->get_billing_email()) $order->set_billing_email($u->user_email);
         }
         if ($q['voucher']) $order->apply_coupon($q['voucher']['code']);
 

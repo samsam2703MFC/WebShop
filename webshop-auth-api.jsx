@@ -6,14 +6,24 @@
    To wire a real backend, set:
      window.WSAuth.endpoint = 'https://your-host/auth';
    Endpoints expected:
-     POST {endpoint}/login               -> { user }
-     POST {endpoint}/register            -> { user }
-     POST {endpoint}/logout              -> 200
+     POST {endpoint}/register            -> { user, token }
+     POST {endpoint}/login               -> { user, token }
+     POST {endpoint}/logout              -> { ok }
      GET  {endpoint}/me                  -> { user }
      PATCH {endpoint}/me                 -> { user }
-     POST {endpoint}/password-reset      -> 200
+     POST {endpoint}/password-reset      -> { ok }
+
+   Session: the storefront and API may live on different domains, so
+   auth is by BEARER TOKEN (not cookies). login/register return a token
+   which is stored in localStorage and sent as `Authorization: Bearer …`
+   on authenticated calls.
    ===================================================================== */
 (function () {
+  const TOKEN_KEY = 'ws_auth_token';
+  const getToken = () => { try { return localStorage.getItem(TOKEN_KEY); } catch (_) { return null; } };
+  const setToken = (t) => { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (_) {} };
+  const authHeaders = () => { const t = getToken(); return t ? { 'Authorization': 'Bearer ' + t } : {}; };
+
   const api = {
     endpoint: null,
 
@@ -27,12 +37,11 @@
             body: JSON.stringify({ email, password }),
           });
           const j = await r.json();
-          if (r.ok) return { ok: true, user: j.user };
-          return { ok: false, error: j.error?.message || 'Identifiants incorrects.' };
+          if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
+          return { ok: false, error: j.message || j.error?.message || 'Identifiants incorrects.' };
         } catch (_) {}
       }
       // Fallback: in-memory _AUTH_STORE (seeded by webshop-full-bundle.jsx).
-      // TODO[BACKEND]: remove once POST /auth/login is live.
       const store = window._AUTH_STORE;
       if (!store) return { ok: false, error: 'Store unavailable.' };
       const u = store.users && store.users[String(email).trim().toLowerCase()];
@@ -50,12 +59,11 @@
             body: JSON.stringify({ email, password, firstName, lastName }),
           });
           const j = await r.json();
-          if (r.ok) return { ok: true, user: j.user };
-          return { ok: false, error: j.error?.message || "Erreur lors de l'inscription." };
+          if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
+          return { ok: false, error: j.message || j.error?.message || "Erreur lors de l'inscription." };
         } catch (_) {}
       }
       // Fallback.
-      // TODO[BACKEND]: remove once POST /auth/register is live.
       const store = window._AUTH_STORE;
       if (!store) return { ok: false, error: 'Store unavailable.' };
       const k = String(email).trim().toLowerCase();
@@ -68,23 +76,24 @@
     /* ── Logout ─────────────────────────────────────────────────────── */
     async logout() {
       if (api.endpoint) {
-        try { await fetch(`${api.endpoint}/logout`, { method: 'POST', credentials: 'include' }); } catch (_) {}
+        try { await fetch(`${api.endpoint}/logout`, { method: 'POST', credentials: 'include', headers: authHeaders() }); } catch (_) {}
       }
+      setToken(null);
       return { ok: true };
     },
 
     /* ── Session check (GET /me) ─────────────────────────────────────── */
     async me() {
       if (api.endpoint) {
+        if (!getToken()) return null; // no session → don't bother the server
         try {
-          const r = await fetch(`${api.endpoint}/me`, { credentials: 'include' });
-          if (r.ok) {
-            const j = await r.json();
-            return j.user || j || null;
-          }
+          const r = await fetch(`${api.endpoint}/me`, { credentials: 'include', headers: authHeaders() });
+          if (r.ok) { const j = await r.json(); return j.user || j || null; }
+          if (r.status === 401) setToken(null); // stale/expired token
         } catch (_) {}
+        return null;
       }
-      return null; // No session cookie in demo mode
+      return null; // No session in demo mode
     },
 
     /* ── Profile update (PATCH /me) ──────────────────────────────────── */
@@ -93,13 +102,10 @@
         try {
           const r = await fetch(`${api.endpoint}/me`, {
             method: 'PATCH', credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(patch),
           });
-          if (r.ok) {
-            const j = await r.json();
-            return { ok: true, user: j.user || j };
-          }
+          if (r.ok) { const j = await r.json(); return { ok: true, user: j.user || j }; }
         } catch (_) {}
       }
       // Fallback: mutate in-memory store.

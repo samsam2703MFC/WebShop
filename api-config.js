@@ -31,9 +31,12 @@
   if (window.WSOffices)      window.WSOffices.endpoint      = BASE_URL + '/offices';
   if (window.WSTours)        window.WSTours.endpoint        = BASE_URL + '/tours';
   if (window.WSOrders)       window.WSOrders.endpoint       = BASE_URL + '/orders';
+  if (window.WSAuth)         window.WSAuth.endpoint         = BASE_URL + '/auth';
+  if (window.WSAvailability) window.WSAvailability.endpoint = BASE_URL + '/availability';
+  if (window.WSCalendar)     window.WSCalendar.endpoint     = BASE_URL + '/calendar';
 
   /* Not yet implemented by the bridge → these stay on demo fallback:
-     WSAuth, WSCalendar, WSAvailability, WSBrand, WSVies. */
+     WSBrand, WSVies. */
 
   /* Optional: CSRF token for mutations (set by your auth endpoint) */
   // document.addEventListener('wsauth:login', function (e) {

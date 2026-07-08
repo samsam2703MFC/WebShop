@@ -43,7 +43,7 @@ class Atelier_CORS {
             // the origin is restricted to the allow-list above.
             header('Access-Control-Allow-Credentials: true');
             header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-            header('Access-Control-Allow-Headers: Content-Type, X-WP-Nonce');
+            header('Access-Control-Allow-Headers: Content-Type, Authorization, X-WP-Nonce');
             header('Vary: Origin', false);
         }
         return $served;

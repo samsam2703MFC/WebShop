@@ -28,9 +28,13 @@
     /* Place an order. Throws on network / server error. */
     async place(payload) {
       if (api.endpoint) {
+        // Forward the bearer token (if logged in) so the backend links the
+        // order to the customer's account.
+        let authHeader = {};
+        try { const t = localStorage.getItem('ws_auth_token'); if (t) authHeader = { 'Authorization': 'Bearer ' + t }; } catch (_) {}
         const r = await fetch(api.endpoint, {
           method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeader },
           body: JSON.stringify(payload),
         });
         const j = await r.json();
