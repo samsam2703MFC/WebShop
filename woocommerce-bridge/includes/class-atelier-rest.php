@@ -183,7 +183,10 @@ class Atelier_REST {
         }
         $shopId = sanitize_text_field($b['shopId'] ?? '');
         $by     = sanitize_text_field($b['requestedBy'] ?? '');
-        $to     = get_option('atelier_franchise_email') ?: get_option('admin_email');
+        // Route to the shop's own email (from the ERP shop record), e.g.
+        // corbais@atelierby.be; fall back to the franchise/admin email.
+        $to = Atelier_ERP::shop_email($shopId);
+        if (!$to) $to = get_option('atelier_franchise_email') ?: get_option('admin_email');
         $subject = 'Demande de contact bureau — ' . $name;
         $body = "Un client souhaite que la franchise contacte son bureau.\n\n"
               . "Bureau / Société : $name\n"

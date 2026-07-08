@@ -129,6 +129,24 @@ class Atelier_ERP {
         return $offices;
     }
 
+    /* The contact email of a shop, read from the ERP shop record (server-side
+       only — NOT exposed in the public /shops payload). Used to route office
+       contact requests to the right shop (corbais@…, sombreffe@…). */
+    public static function shop_email(?string $shopId): string {
+        if (!$shopId) return '';
+        $data = self::get('shops/');
+        if ($data === null) return '';
+        foreach (self::as_list($data) as $s) {
+            if (!is_array($s)) continue;
+            $id = self::pick($s, ['id', 'code', 'slug', 'shop_id', 'uuid', 'reference']);
+            if ((string) $id === (string) $shopId) {
+                $email = sanitize_email((string) self::pick($s, ['email', 'mail', 'contact_email', 'e_mail'], ''));
+                return is_email($email) ? $email : '';
+            }
+        }
+        return '';
+    }
+
     public static function flush_cache(): void {
         delete_transient('atelier_erp_shops');
     }
