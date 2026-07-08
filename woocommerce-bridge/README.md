@@ -28,7 +28,30 @@ priority (site → office → tournée → shop → global), deferred/monthly bi
 tournées — and has no WooCommerce equivalent, so the plugin owns those tables
 and serves them itself.
 
-## Install
+## Automated install (one command)
+
+On the host where WordPress + WP-CLI live:
+
+```bash
+WP_CLI_FLAGS="--path=/var/www/html" bash woocommerce-bridge/install.sh
+```
+
+Idempotent — installs/activates WooCommerce, configures Belgium + EUR + 6 %/21 %
+tax, installs the bridge plugin + WooCommerce Stripe Gateway, seeds a demo
+catalog + coupon (only if empty), sets permalinks + the CORS origin. It never
+asks for passwords or Stripe keys — you add those in WooCommerce → Payments.
+
+## Deploy from GitHub
+
+Pick the pattern that matches your host:
+
+| Host capability | How to deploy |
+|---|---|
+| **SSH access** (VPS, o2switch, Kinsta…) | `.github/workflows/deploy-woocommerce.yml` — uploads the plugin and runs `install.sh` remotely. Set secrets `SSH_HOST/SSH_USER/SSH_PRIVATE_KEY/WP_PATH` in GitHub → **never in chat**. |
+| **SFTP only** (cheap shared hosting) | A GitHub Action that SFTP-uploads `woocommerce-bridge/` to `wp-content/plugins/atelier-webshop-bridge/`, then activate from the Plugins screen once. |
+| **Pull-based** (WP Pusher / Git Updater plugin on WP) | Point that plugin at this repo, subfolder `woocommerce-bridge/`; it pulls on push. |
+
+## Manual install
 
 1. Install & activate **WooCommerce** (≥ 8.0).
 2. Install & activate the official **WooCommerce Stripe Gateway**, enable
