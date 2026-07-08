@@ -34,9 +34,11 @@
   if (window.WSAuth)         window.WSAuth.endpoint         = BASE_URL + '/auth';
   if (window.WSAvailability) window.WSAvailability.endpoint = BASE_URL + '/availability';
   if (window.WSCalendar)     window.WSCalendar.endpoint     = BASE_URL + '/calendar';
+  /* VIES: template endpoint — the stub fills {country}/{vat}. */
+  if (window.WSVies)         window.WSVies.endpoint         = BASE_URL + '/vies/{country}/{vat}';
 
   /* Not yet implemented by the bridge → these stay on demo fallback:
-     WSBrand, WSVies. */
+     WSBrand. */
 
   /* Optional: CSRF token for mutations (set by your auth endpoint) */
   // document.addEventListener('wsauth:login', function (e) {

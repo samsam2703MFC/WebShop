@@ -30,6 +30,9 @@ class Atelier_REST {
 
         register_rest_route(self::NS, '/vouchers/redeem', $post([self::class, 'redeem_voucher']));
 
+        // VIES VAT validation (server-side call to the EU service).
+        register_rest_route(self::NS, '/vies/(?P<country>[A-Za-z]{2})/(?P<vat>[A-Za-z0-9]+)', $get(['Atelier_Vies', 'check']));
+
         register_rest_route(self::NS, '/delivery-fees/quote', $post([self::class, 'fee_quote']));
         register_rest_route(self::NS, '/delivery-fees/sites', $post([self::class, 'fee_sites']));
 

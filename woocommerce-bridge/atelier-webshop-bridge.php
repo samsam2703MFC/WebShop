@@ -26,6 +26,7 @@ require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-mapper.php';
 require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-pricing.php';
 require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-erp.php';
 require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-auth.php';
+require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-vies.php';
 require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-availability.php';
 require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-rest.php';
 require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-cors.php';
