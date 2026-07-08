@@ -2829,7 +2829,7 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
           <ReadRow k="Entreprise" v={office.name}/>
           <ReadRow k="Contact"    v={activeSite ? activeSite.contact_name : (user.firstName + ' ' + user.lastName)}/>
           <ReadRow k="Email"      v={user.email}/>
-          <ReadRow k="Téléphone"  v={activeSite ? activeSite.contact_phone : (office.phone || '—')}/>
+          <ReadRow k="Téléphone"  v={(activeSite ? activeSite.contact_phone : office.phone) || user.phone || '—'}/>
           <ReadRow k="Adresse"    v={activeSite ? (activeSite.address + (activeSite.floor_room ? ' · ' + activeSite.floor_room : '')) : (office.address || '—')}/>
           <ReadRow k="Tournée"    v={tour ? tour.name + ' · ' + tour.window : '—'}/>
           {feeResult && (
@@ -2858,7 +2858,7 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
         <div className="ws-co-readbox">
           <ReadRow k="Nom"       v={user.firstName + ' ' + user.lastName}/>
           <ReadRow k="Email"     v={user.email}/>
-          <ReadRow k="Téléphone" v={office?.phone || '—'}/>
+          <ReadRow k="Téléphone" v={user.phone || office?.phone || '—'}/>
           <ReadRow k="Boutique"  v={shop.name + ' · ' + shop.address}/>
         </div>
       </div>
