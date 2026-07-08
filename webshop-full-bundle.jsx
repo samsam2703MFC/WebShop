@@ -2109,13 +2109,24 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       setVies({ status: r.error?.code || 'invalid', message: r.error?.message || 'Échec de validation' });
     }
   }
-  function saveProfile(e) {
+  async function saveProfile(e) {
     e.preventDefault();
     const updated = { ...user, ...form };
     if (typeof onUpdateUser === 'function') onUpdateUser(updated);
     if (window.WSI18n && window.WSI18n.setCustomer) {
       const existing = window.WSI18n.getCustomer() || {};
       window.WSI18n.setCustomer({ ...existing, ...updated });
+    }
+    // Persist to the backend (WooCommerce customer) when the API is wired.
+    if (window.WSAuth && typeof window.WSAuth.updateMe === 'function') {
+      try {
+        const r = await window.WSAuth.updateMe({
+          firstName: form.firstName, lastName: form.lastName,
+          phone: form.phone, company: form.company,
+          postalCode: form.postalCode, isBusiness: !!form.isBusiness,
+        });
+        if (r && r.ok && r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
+      } catch (_) {}
     }
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 1800);

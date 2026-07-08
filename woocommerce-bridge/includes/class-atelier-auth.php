@@ -52,6 +52,9 @@ class Atelier_Auth {
             'firstName'       => $c->get_first_name() ?: get_user_meta($uid, 'first_name', true),
             'lastName'        => $c->get_last_name()  ?: get_user_meta($uid, 'last_name', true),
             'phone'           => $c->get_billing_phone() ?: null,
+            'company'         => $c->get_billing_company() ?: null,
+            'postalCode'      => $c->get_billing_postcode() ?: null,
+            'isBusiness'      => (bool) get_user_meta($uid, '_atelier_is_business', true),
             'officeId'        => get_user_meta($uid, '_atelier_office_id', true) ?: null,
             'preferredShopId' => get_user_meta($uid, self::PREF_SHOP_META, true) ?: null,
         ];
@@ -101,7 +104,10 @@ class Atelier_Auth {
         if (isset($b['firstName'])) $c->set_first_name(sanitize_text_field($b['firstName']));
         if (isset($b['lastName']))  $c->set_last_name(sanitize_text_field($b['lastName']));
         if (isset($b['phone']))     $c->set_billing_phone(sanitize_text_field($b['phone']));
+        if (isset($b['company']))   $c->set_billing_company(sanitize_text_field($b['company']));
+        if (isset($b['postalCode'])) $c->set_billing_postcode(sanitize_text_field($b['postalCode']));
         $c->save();
+        if (isset($b['isBusiness']))      update_user_meta($uid, '_atelier_is_business', $b['isBusiness'] ? 1 : 0);
         if (isset($b['preferredShopId'])) update_user_meta($uid, self::PREF_SHOP_META, sanitize_text_field($b['preferredShopId']));
         return ['user' => self::user_payload($uid)];
     }
