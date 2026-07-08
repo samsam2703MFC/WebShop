@@ -37,8 +37,13 @@ class Atelier_CORS {
         $origin = get_http_origin();
         if ($origin && in_array($origin, self::allowed_origins(), true)) {
             header('Access-Control-Allow-Origin: ' . $origin);
+            // The storefront fetches with credentials:'include'; the browser then
+            // requires an explicit Allow-Credentials + a specific (non-*) origin,
+            // else it blocks the response ("Failed to fetch"). Safe here because
+            // the origin is restricted to the allow-list above.
+            header('Access-Control-Allow-Credentials: true');
             header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-            header('Access-Control-Allow-Headers: Content-Type');
+            header('Access-Control-Allow-Headers: Content-Type, X-WP-Nonce');
             header('Vary: Origin', false);
         }
         return $served;
