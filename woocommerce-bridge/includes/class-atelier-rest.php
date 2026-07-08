@@ -81,10 +81,15 @@ class Atelier_REST {
                     'id' => 'deferred', 'label' => 'Paiement différé', 'sub' => 'Facturation mensuelle · paiement sur facture']]);
             }
         }
-        return rest_ensure_response([
-            ['id' => 'bancontact', 'label' => 'Bancontact', 'sub' => 'Paiement instantané'],
-            ['id' => 'visa', 'label' => 'Carte bancaire', 'sub' => 'Visa · Mastercard · Amex'],
-        ]);
+        $methods = [];
+        // Click & Collect → cash paid in store at pickup.
+        if ($mode === 'collect') {
+            $methods[] = ['id' => 'especes', 'label' => 'Espèces en boutique', 'sub' => 'Paiement au retrait'];
+        }
+        // Online card / Bancontact via WooCommerce Stripe (when configured).
+        $methods[] = ['id' => 'bancontact', 'label' => 'Bancontact', 'sub' => 'Paiement en ligne'];
+        $methods[] = ['id' => 'visa', 'label' => 'Carte bancaire', 'sub' => 'Visa · Mastercard · Amex'];
+        return rest_ensure_response($methods);
     }
 
     /* ── Vouchers (WooCommerce coupons) ──────────────────────────── */
@@ -121,10 +126,8 @@ class Atelier_REST {
     }
 
     public static function tours() {
-        return rest_ensure_response([
-            ['id' => 'tour-bxl-mid', 'name' => 'Bruxelles Midi', 'shopId' => 'chatelain', 'window' => '11:30–13:30', 'days' => 'lun-ven'],
-            ['id' => 'tour-bxl-am', 'name' => 'Bruxelles Matin', 'shopId' => 'sablon', 'window' => '08:30–10:30', 'days' => 'lun-ven'],
-        ]);
+        // No demo data — B2B delivery tours come from real configuration (none yet).
+        return rest_ensure_response([]);
     }
 
     /* ── Orders → WooCommerce order + Stripe ─────────────────────── */
@@ -192,6 +195,8 @@ class Atelier_REST {
         if (!empty($b['slot'])) $order->update_meta_data('_atelier_slot', $b['slot']['label'] ?? '');
         $order->calculate_totals();
 
+        $paymentMethod = $b['payment']['method'] ?? '';
+
         // 3a. Deferred B2B — no online payment.
         if ($paymentType === 'deferred') {
             $order->update_status('on-hold', 'Paiement différé — facturation mensuelle');
@@ -202,7 +207,20 @@ class Atelier_REST {
             ]);
         }
 
-        // 3b. Immediate — hand off to WooCommerce Stripe (cards + Bancontact).
+        // 3b. Cash in store (Click & Collect) — paid at pickup, no online payment.
+        if (in_array($paymentMethod, ['especes', 'cash', 'cod'], true)) {
+            $order->update_meta_data('_atelier_payment_type', 'cash');
+            $order->set_payment_method('cod');
+            $order->set_payment_method_title('Espèces en boutique');
+            $order->update_status('on-hold', 'Paiement en espèces au retrait en boutique');
+            $order->save();
+            return rest_ensure_response([
+                'ok' => true, 'orderId' => (string) $order->get_id(),
+                'status' => 'awaiting_pickup_payment', 'total' => $q['total_ttc'], 'payment' => 'especes',
+            ]);
+        }
+
+        // 3c. Immediate — hand off to WooCommerce Stripe (cards + Bancontact).
         $order->update_status('pending', 'En attente de paiement');
         $order->save();
         $checkoutUrl = self::stripe_checkout_url($order);
@@ -240,7 +258,7 @@ class Atelier_REST {
     private static function map_status(string $wc, string $paymentType): string {
         return match ($wc) {
             'processing', 'completed' => 'paid',
-            'on-hold' => $paymentType === 'deferred' ? 'deferred_billing' : 'pending_payment',
+            'on-hold' => $paymentType === 'deferred' ? 'deferred_billing' : ($paymentType === 'cash' ? 'awaiting_pickup_payment' : 'pending_payment'),
             'pending' => 'pending_payment',
             'failed' => 'payment_failed',
             'cancelled' => 'canceled',
