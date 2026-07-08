@@ -59,6 +59,10 @@ class Atelier_REST {
 
     /* ── Catalog ─────────────────────────────────────────────────── */
     public static function shops() {
+        // Real shops from Franchise Buddy (ERP); fall back to the WooCommerce
+        // store settings if the ERP is unreachable.
+        $erp = Atelier_ERP::shops();
+        if (is_array($erp) && count($erp)) return rest_ensure_response($erp);
         return rest_ensure_response(Atelier_Mapper::shops());
     }
 

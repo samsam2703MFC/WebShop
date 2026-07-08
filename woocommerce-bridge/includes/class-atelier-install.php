@@ -51,6 +51,7 @@ class Atelier_Install {
 
         self::cleanup_demo($sites, $rules);
         self::seed_defaults($rules);
+        if (class_exists('Atelier_ERP')) Atelier_ERP::flush_cache(); // refetch shops on upgrade
     }
 
     /* Remove the ACME demo B2B rows shipped by earlier versions. Idempotent. */
