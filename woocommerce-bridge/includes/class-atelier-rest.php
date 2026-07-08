@@ -37,7 +37,9 @@ class Atelier_REST {
         register_rest_route(self::NS, '/delivery-fees/sites', $post([self::class, 'fee_sites']));
 
         register_rest_route(self::NS, '/tours', $get([self::class, 'tours']));
-        register_rest_route(self::NS, '/offices', $get(fn() => rest_ensure_response([])));
+        register_rest_route(self::NS, '/offices', $get([self::class, 'offices']));
+        register_rest_route(self::NS, '/offices/contact', $post([self::class, 'office_contact']));
+        register_rest_route(self::NS, '/offices/(?P<id>[\w-]+)', $get([self::class, 'office_get']));
 
         register_rest_route(self::NS, '/orders', $post([self::class, 'place_order']));
         register_rest_route(self::NS, '/orders/(?P<id>[\w-]+)', $get([self::class, 'get_order']));
@@ -152,6 +154,47 @@ class Atelier_REST {
     public static function tours() {
         // No demo data — B2B delivery tours come from real configuration (none yet).
         return rest_ensure_response([]);
+    }
+
+    /* Validated offices for the selected (preferred) shop — from the ERP. */
+    public static function offices(\WP_REST_Request $req) {
+        $shopId = $req->get_param('shopId');
+        return rest_ensure_response(Atelier_ERP::offices($shopId ?: null));
+    }
+
+    public static function office_get(\WP_REST_Request $req) {
+        foreach (Atelier_ERP::offices() as $o) {
+            if ($o['id'] === (string) $req['id']) return rest_ensure_response($o);
+        }
+        return new \WP_Error('not_found', 'Bureau introuvable', ['status' => 404]);
+    }
+
+    /* "My office isn't listed" — ask the franchise to contact it. Sends an
+       email to the franchise/admin; no office is created or auto-linked. */
+    public static function office_contact(\WP_REST_Request $req) {
+        $b = $req->get_json_params() ?: [];
+        $name = sanitize_text_field($b['officeName'] ?? '');
+        if ($name === '') return new \WP_Error('missing', 'Nom du bureau ou de la société requis.', ['status' => 400]);
+        $phone   = sanitize_text_field($b['phone'] ?? '');
+        $email   = sanitize_email($b['email'] ?? '');
+        $address = sanitize_text_field($b['address'] ?? '');
+        if ($phone === '' && $email === '' && $address === '') {
+            return new \WP_Error('missing', 'Indiquez au moins un moyen de contact (téléphone, e-mail ou adresse).', ['status' => 400]);
+        }
+        $shopId = sanitize_text_field($b['shopId'] ?? '');
+        $by     = sanitize_text_field($b['requestedBy'] ?? '');
+        $to     = get_option('atelier_franchise_email') ?: get_option('admin_email');
+        $subject = 'Demande de contact bureau — ' . $name;
+        $body = "Un client souhaite que la franchise contacte son bureau.\n\n"
+              . "Bureau / Société : $name\n"
+              . ($phone   ? "Téléphone : $phone\n"   : '')
+              . ($email   ? "E-mail : $email\n"       : '')
+              . ($address ? "Adresse : $address\n"    : '')
+              . "Boutique préférée : $shopId\n"
+              . "Demandé par : $by\n";
+        wp_mail($to, $subject, $body);
+        do_action('atelier_office_contact_request', compact('name', 'phone', 'email', 'address', 'shopId', 'by'));
+        return rest_ensure_response(['ok' => true]);
     }
 
     /* ── Orders → WooCommerce order + Stripe ─────────────────────── */

@@ -11,16 +11,37 @@
   const api = {
     endpoint: null,
 
-    // List APPROVED offices the customer can self-link to.
-    async listApproved() {
+    // List APPROVED offices for a given (preferred) shop that the customer
+    // can self-link to. Offices belong to a shop → always scope by shopId.
+    async listApproved(shopId) {
       if (api.endpoint) {
         try {
-          const r = await fetch(api.endpoint + '?status=validated', { credentials: 'include' });
+          const q = '?status=validated' + (shopId ? '&shopId=' + encodeURIComponent(shopId) : '');
+          const r = await fetch(api.endpoint + q, { credentials: 'include' });
           if (r.ok) return await r.json();
         } catch (e) { /* fall through */ }
       }
       const store = (window._AUTH_STORE && window._AUTH_STORE.offices) || {};
-      return Object.values(store).filter((o) => o && o.status === 'validated');
+      return Object.values(store).filter((o) =>
+        o && o.status === 'validated' && (!shopId || o.shopId === shopId || o.preferredShopId === shopId));
+    },
+
+    // "My office isn't listed" — ask the franchise to contact it.
+    // Does NOT create or link an office; it sends a request to the franchise.
+    async contactFranchise(payload) {
+      if (api.endpoint) {
+        try {
+          const r = await fetch(api.endpoint + '/contact', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (r.ok) return await r.json();
+          const j = await r.json().catch(() => ({}));
+          return { ok: false, error: j.message || 'Échec de l\'envoi.' };
+        } catch (e) { /* fall through */ }
+      }
+      return { ok: true }; // demo: pretend it was sent
     },
 
     // Get a single office by id (any status).

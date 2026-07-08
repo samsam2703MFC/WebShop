@@ -96,6 +96,39 @@ class Atelier_ERP {
         return $shops;
     }
 
+    /* Map one ERP office → the storefront office shape. */
+    public static function map_office($o): ?array {
+        if (!is_array($o)) return null;
+        $id = self::pick($o, ['id', 'code', 'uuid', 'reference']);
+        if ($id === null) return null;
+        $status = strtolower((string) self::pick($o, ['status', 'statut', 'state'], 'validated'));
+        return [
+            'id'        => (string) $id,
+            'name'      => (string) self::pick($o, ['company', 'company_name', 'name', 'societe', 'representative_name', 'nom', 'enseigne'], 'Bureau'),
+            'shopId'    => (string) self::pick($o, ['shop', 'shop_id', 'shop_code', 'boutique', 'magasin'], ''),
+            'tourId'    => (string) self::pick($o, ['tour', 'tour_id', 'tournee', 'tournee_id'], '') ?: null,
+            'address'   => self::shop_address($o),
+            'status'    => in_array($status, ['validated', 'valid', 'approved', 'active', 'valide', 'validé'], true) ? 'validated' : $status,
+        ];
+    }
+
+    /* Validated offices for a shop, from the ERP (cached), or []. */
+    public static function offices(?string $shopId = null): array {
+        $ck = 'atelier_erp_offices_' . md5((string) $shopId);
+        $cached = get_transient($ck);
+        if (is_array($cached)) return $cached;
+
+        $data = $shopId ? self::get('offices/?shop=' . rawurlencode($shopId)) : self::get('offices/');
+        if ($data === null && $shopId) $data = self::get('offices/'); // global then filter locally
+        if ($data === null) return [];
+
+        $offices = array_values(array_filter(array_map([self::class, 'map_office'], self::as_list($data))));
+        if ($shopId) $offices = array_values(array_filter($offices, fn($o) => $o['shopId'] === '' || $o['shopId'] === $shopId));
+        $offices = array_values(array_filter($offices, fn($o) => $o['status'] === 'validated'));
+        set_transient($ck, $offices, self::CACHE_TTL);
+        return $offices;
+    }
+
     public static function flush_cache(): void {
         delete_transient('atelier_erp_shops');
     }

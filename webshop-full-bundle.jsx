@@ -2021,9 +2021,10 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   // ── Office: unplug / reconnect / add new ───────────────────────────
   async function loadApprovedOffices() {
     if (!window.WSOffices) return;
+    const shopId = form.preferredShopId; // offices are scoped to the preferred shop
     setOfficeBusy(true);
     try {
-      const list = await window.WSOffices.listApproved();
+      const list = await window.WSOffices.listApproved(shopId);
       const filtered = (list || []).filter((o) => o && o.id !== user.officeId);
       setApprovedOffices(filtered);
       if (window.WSTours && filtered.length) {
@@ -2041,9 +2042,9 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     setOfficeStep('ask');
   }
   function chooseLinkAnother() {
-    setPickedOfficeId('');
+    setPickedOfficeId(''); setOfficeErr('');
     setOfficeStep('pick');
-    loadApprovedOffices();
+    if (form.preferredShopId) loadApprovedOffices();
   }
   function chooseDone() {
     setOfficeStep('idle');
@@ -2054,24 +2055,23 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     setOfficeStep('idle');
   }
   function setNewOfficeField(k, v) { setNewOffice((f) => ({ ...f, [k]: v })); setOfficeErr(''); }
-  async function submitNewOffice() {
-    const required = ['name', 'address', 'postalCode', 'city', 'contact', 'email', 'phone', 'preferredShopId'];
-    for (const k of required) {
-      if (!String(newOffice[k] || '').trim()) {
-        setOfficeErr('Tous les champs sont obligatoires (sauf TVA).');
-        return;
-      }
-    }
+  // "My office isn't listed" → ask the franchise to contact it (no office is
+  // created/linked; the franchise handles it). Only name + one contact needed.
+  async function submitContactRequest() {
+    const nameOk = String(newOffice.name || '').trim();
+    const contactOk = ['phone', 'email', 'address'].some((k) => String(newOffice[k] || '').trim());
+    if (!nameOk) { setOfficeErr('Indiquez le nom du bureau ou de la société.'); return; }
+    if (!contactOk) { setOfficeErr('Indiquez au moins un moyen de contact (téléphone, e-mail ou adresse).'); return; }
     if (!window.WSOffices) { setOfficeErr('Service indisponible.'); return; }
     setOfficeBusy(true); setOfficeErr('');
     try {
-      const office = await window.WSOffices.requestNew({
-        ...newOffice,
-        requestedBy: user.email,
+      const r = await window.WSOffices.contactFranchise({
+        officeName: newOffice.name, phone: newOffice.phone, email: newOffice.email, address: newOffice.address,
+        shopId: form.preferredShopId, requestedBy: user.email,
       });
-      persistPartial({ officeId: office.id });
+      if (r && r.ok === false) { setOfficeErr(r.error || 'Échec de l\'envoi.'); return; }
       setNewOffice({ name: '', vat: '', address: '', postalCode: '', city: '', contact: '', email: '', phone: '', preferredShopId: '' });
-      setOfficeStep('idle');
+      setOfficeStep('sent');
     } catch (e) {
       setOfficeErr('Échec de l\'envoi. Réessayez.');
     } finally {
@@ -2387,25 +2387,35 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           </div>
         )}
 
-        {officeStep === 'pick' && (
+        {officeStep === 'pick' && !form.preferredShopId && (
           <div className="ws-acc__card">
-            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Choisir un bureau approuvé</div>
+            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Choisir un bureau</div>
+            <p className="ws-acc__hint">Sélectionnez d'abord votre <strong>boutique préférée</strong> (ci-dessus) : la liste des bureaux en dépend.</p>
+            <div className="ws-acc__row-foot">
+              <button type="button" className="ws-fid__cancel" onClick={() => setOfficeStep('idle')}>Fermer</button>
+            </div>
+          </div>
+        )}
+
+        {officeStep === 'pick' && form.preferredShopId && (
+          <div className="ws-acc__card">
+            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>
+              Bureaux de {((shops || []).find((s) => s.id === form.preferredShopId) || {}).name || 'votre boutique'}
+            </div>
             {officeBusy && <p className="ws-acc__hint">Chargement…</p>}
             {!officeBusy && approvedOffices.length === 0 && (
-              <p className="ws-acc__hint">Aucun bureau approuvé disponible.</p>
+              <p className="ws-acc__hint">Aucun bureau validé pour cette boutique. Vous pouvez demander l'ajout du vôtre ci-dessous.</p>
             )}
             {!officeBusy && approvedOffices.length > 0 && (
               <select className="ws-acc__input" value={pickedOfficeId} onChange={(e) => { setPickedOfficeId(e.target.value); setOfficeErr(''); }}>
                 <option value="">— Sélectionnez un bureau —</option>
-                {approvedOffices.map((o) => {
-                  const t = approvedOfficeTours[o.tourId] || null;
-                  const shopForTour = t && (shops || []).find((s) => s.id === t.shopId);
-                  return <option key={o.id} value={o.id}>{o.name}{shopForTour ? ` · ${shopForTour.name}` : ''}</option>;
-                })}
+                {approvedOffices.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}{o.address ? ` · ${o.address}` : ''}</option>
+                ))}
               </select>
             )}
             {officeErr && <p className="ws-form__err">{officeErr}</p>}
-            <button type="button" className="ws-acc__addlink" onClick={() => { setOfficeErr(''); setOfficeStep('add'); }}>+ Ajouter votre bureau</button>
+            <button type="button" className="ws-acc__addlink" onClick={() => { setOfficeErr(''); setOfficeStep('add'); }}>Mon bureau n'est pas dans la liste</button>
             <div className="ws-acc__row-foot">
               <button type="button" className="ws-fid__cancel" onClick={() => setOfficeStep('idle')}>Annuler</button>
               <button type="button" className="ws-cta" onClick={confirmPick} disabled={!pickedOfficeId}>Confirmer</button>
@@ -2415,53 +2425,41 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
 
         {officeStep === 'add' && (
           <div className="ws-acc__card">
-            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Demander l'ajout d'un bureau</div>
-            <p className="ws-acc__hint">Votre demande sera enregistrée comme <em>en attente d'approbation</em>. La livraison sera activée après validation.</p>
+            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Votre bureau n'est pas dans la liste ?</div>
+            <p className="ws-acc__hint">Envoyez une demande à la franchise : elle contactera votre bureau pour l'ajouter. Indiquez son nom et <strong>au moins un</strong> moyen de contact.</p>
             <div className="ws-acc__grid">
               <label className="ws-acc__field ws-acc__field--full">
-                <span className="ws-acc__field-label">Nom de l'entreprise *</span>
+                <span className="ws-acc__field-label">Nom du bureau ou de la société *</span>
                 <input className="ws-acc__input" value={newOffice.name} onChange={(e) => setNewOfficeField('name', e.target.value)} placeholder="ACME SA"/>
               </label>
               <label className="ws-acc__field">
-                <span className="ws-acc__field-label">Numéro de TVA</span>
-                <input className="ws-acc__input" value={newOffice.vat} onChange={(e) => setNewOfficeField('vat', e.target.value)} placeholder="BE0123456789"/>
-              </label>
-              <label className="ws-acc__field">
-                <span className="ws-acc__field-label">Boutique préférée *</span>
-                <select className="ws-acc__input" value={newOffice.preferredShopId} onChange={(e) => setNewOfficeField('preferredShopId', e.target.value)}>
-                  <option value="">—</option>
-                  {(shops || []).map((s) => <option key={s.id} value={s.id}>{s.name} · {s.city}</option>)}
-                </select>
-              </label>
-              <label className="ws-acc__field ws-acc__field--full">
-                <span className="ws-acc__field-label">Adresse *</span>
-                <input className="ws-acc__input" value={newOffice.address} onChange={(e) => setNewOfficeField('address', e.target.value)} placeholder="Rue et numéro"/>
-              </label>
-              <label className="ws-acc__field">
-                <span className="ws-acc__field-label">Code postal *</span>
-                <input className="ws-acc__input" value={newOffice.postalCode} onChange={(e) => setNewOfficeField('postalCode', e.target.value)} placeholder="1000"/>
-              </label>
-              <label className="ws-acc__field">
-                <span className="ws-acc__field-label">Ville *</span>
-                <input className="ws-acc__input" value={newOffice.city} onChange={(e) => setNewOfficeField('city', e.target.value)} placeholder="Bruxelles"/>
-              </label>
-              <label className="ws-acc__field ws-acc__field--full">
-                <span className="ws-acc__field-label">Personne de contact *</span>
-                <input className="ws-acc__input" value={newOffice.contact} onChange={(e) => setNewOfficeField('contact', e.target.value)} placeholder="Prénom Nom"/>
-              </label>
-              <label className="ws-acc__field">
-                <span className="ws-acc__field-label">E-mail *</span>
-                <input type="email" className="ws-acc__input" value={newOffice.email} onChange={(e) => setNewOfficeField('email', e.target.value)} placeholder="contact@acme.be"/>
-              </label>
-              <label className="ws-acc__field">
-                <span className="ws-acc__field-label">Téléphone *</span>
+                <span className="ws-acc__field-label">Téléphone</span>
                 <input className="ws-acc__input" value={newOffice.phone} onChange={(e) => setNewOfficeField('phone', e.target.value)} placeholder="+32 …"/>
               </label>
+              <label className="ws-acc__field">
+                <span className="ws-acc__field-label">E-mail</span>
+                <input type="email" className="ws-acc__input" value={newOffice.email} onChange={(e) => setNewOfficeField('email', e.target.value)} placeholder="contact@acme.be"/>
+              </label>
+              <label className="ws-acc__field ws-acc__field--full">
+                <span className="ws-acc__field-label">Adresse</span>
+                <input className="ws-acc__input" value={newOffice.address} onChange={(e) => setNewOfficeField('address', e.target.value)} placeholder="Rue, numéro, ville"/>
+              </label>
             </div>
+            <p className="ws-acc__hint">Au moins un des trois champs de contact est requis.</p>
             {officeErr && <p className="ws-form__err">{officeErr}</p>}
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-fid__cancel" onClick={() => setOfficeStep('pick')}>Retour</button>
-              <button type="button" className="ws-cta" onClick={submitNewOffice} disabled={officeBusy}>{officeBusy ? 'Envoi…' : 'Envoyer la demande'}</button>
+              <button type="button" className="ws-fid__cancel" onClick={() => { setOfficeErr(''); setOfficeStep('pick'); }}>Retour</button>
+              <button type="button" className="ws-cta" onClick={submitContactRequest} disabled={officeBusy}>{officeBusy ? 'Envoi…' : 'Envoyer à la franchise'}</button>
+            </div>
+          </div>
+        )}
+
+        {officeStep === 'sent' && (
+          <div className="ws-acc__card">
+            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Demande envoyée ✓</div>
+            <p className="ws-acc__hint">Merci ! La franchise a reçu votre demande et contactera votre bureau. Vous pourrez le sélectionner dès qu'il aura été validé.</p>
+            <div className="ws-acc__row-foot">
+              <button type="button" className="ws-cta" onClick={() => setOfficeStep('idle')}>Fermer</button>
             </div>
           </div>
         )}
