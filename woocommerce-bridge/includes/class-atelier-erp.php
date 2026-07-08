@@ -62,7 +62,7 @@ class Atelier_ERP {
         if ($id === null) return null;
         return [
             'id'            => (string) $id,
-            'name'          => (string) self::pick($s, ['name', 'enseigne', 'nom', 'title', 'label'], 'Boutique'),
+            'name'          => (string) self::pick($s, ['representative_name', 'name', 'enseigne', 'nom', 'title', 'label'], 'Boutique'),
             'address'       => (string) self::pick($s, ['address', 'adresse', 'full_address', 'location', 'rue'], ''),
             'accent'        => (string) self::pick($s, ['accent', 'color', 'couleur', 'brand_color'], '#8D1D2C'),
             'click_collect' => (bool)   self::pick($s, ['click_collect', 'click_and_collect', 'collect', 'pickup'], true),
