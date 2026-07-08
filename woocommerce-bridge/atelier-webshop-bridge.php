@@ -25,6 +25,7 @@ require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-install.php';
 require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-mapper.php';
 require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-pricing.php';
 require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-rest.php';
+require_once ATELIER_BRIDGE_DIR . 'includes/class-atelier-cors.php';
 
 /* Custom B2B tables are created on activation (delivery sites + fee rules).
    These have no WooCommerce equivalent, so the plugin owns them. */
@@ -32,6 +33,9 @@ register_activation_hook(__FILE__, ['Atelier_Install', 'activate']);
 
 /* Register all REST routes under the atelier/v1 namespace. */
 add_action('rest_api_init', ['Atelier_REST', 'register_routes']);
+
+/* Restrict CORS on our routes to the storefront origin(s). */
+Atelier_CORS::init();
 
 /* Make sure WooCommerce is present; if not, warn in admin. */
 add_action('admin_init', function () {

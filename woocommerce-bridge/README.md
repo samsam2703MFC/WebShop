@@ -41,6 +41,18 @@ and serves them itself.
    reduced **6 %** class (`reduit-6`) for food.
 5. Point `../api-config.js`:
    `const BASE_URL = 'https://your-wp/wp-json/atelier/v1';`
+6. Allow your storefront origin for CORS (defaults to the GitHub Pages URL):
+   `wp option update atelier_storefront_origins "https://yourname.github.io"`
+   (comma-separate several; or use the `atelier_cors_allowed_origins` filter).
+
+## CORS
+
+The plugin restricts cross-origin access **on its own routes** to the
+configured storefront origin(s) and drops `Allow-Credentials` (identity travels
+in the payload, not cookies). WordPress core's default — echo any origin with
+credentials — is replaced only for `/atelier/v1/*`; the rest of the WP REST API
+is untouched. This is what lets the GitHub Pages storefront call the WooCommerce
+API on a different domain safely.
 
 ## Product fields → WooCommerce
 
