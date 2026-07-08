@@ -17,37 +17,23 @@
   // WooCommerce bridge:      'https://shop.atelier.be/wp-json/atelier/v1'
   //   (the Atelier Webshop Bridge plugin exposes the same contracts on
   //    WooCommerce — see woocommerce-bridge/ and WOOCOMMERCE.md)
-  const BASE_URL = null;
+  const BASE_URL = 'https://atelierby.online/wp-json/atelier/v1';
   // ─────────────────────────────────────────────────────────────────────
 
   if (!BASE_URL) return; // demo mode — all stubs use in-memory fixtures
 
-  /* Storefront data */
-  if (window.WSShops)    window.WSShops.endpoint    = BASE_URL + '/shops';
-  if (window.WSCatalog)  window.WSCatalog.endpoint  = BASE_URL + '/catalog';
-  if (window.WSCalendar)      window.WSCalendar.endpoint      = BASE_URL + '/calendar';
-  if (window.WSAvailability)    window.WSAvailability.endpoint    = BASE_URL + '/availability';
-  if (window.WSDeliveryFees)    window.WSDeliveryFees.endpoint    = BASE_URL + '/delivery-fees';
-  if (window.WSOffices)       window.WSOffices.endpoint       = BASE_URL + '/offices';
-  if (window.WSBrand)    window.WSBrand.endpoint    = BASE_URL + '/brand';
+  /* Endpoints served by the Atelier Webshop Bridge (WooCommerce) plugin. */
+  if (window.WSShops)        window.WSShops.endpoint        = BASE_URL + '/shops';
+  if (window.WSCatalog)      window.WSCatalog.endpoint      = BASE_URL + '/catalog';
+  if (window.WSPricing)      window.WSPricing.endpoint      = BASE_URL + '/pricing';
+  if (window.WSVouchers)     window.WSVouchers.endpoint     = BASE_URL + '/vouchers';
+  if (window.WSDeliveryFees) window.WSDeliveryFees.endpoint = BASE_URL + '/delivery-fees';
+  if (window.WSOffices)      window.WSOffices.endpoint      = BASE_URL + '/offices';
+  if (window.WSTours)        window.WSTours.endpoint        = BASE_URL + '/tours';
+  if (window.WSOrders)       window.WSOrders.endpoint       = BASE_URL + '/orders';
 
-  /* Pricing, promos, payment methods */
-  if (window.WSPricing)  window.WSPricing.endpoint  = BASE_URL + '/pricing';
-
-  /* Vouchers */
-  if (window.WSVouchers) window.WSVouchers.endpoint = BASE_URL + '/vouchers';
-
-  /* Auth / users */
-  if (window.WSAuth)     window.WSAuth.endpoint     = BASE_URL + '/auth';
-
-  /* Delivery tours */
-  if (window.WSTours)    window.WSTours.endpoint    = BASE_URL + '/tours';
-
-  /* Orders / checkout */
-  if (window.WSOrders)   window.WSOrders.endpoint   = BASE_URL + '/orders';
-
-  /* VAT / VIES proxy */
-  if (window.WSVies)     window.WSVies.endpoint     = BASE_URL + '/vies';
+  /* Not yet implemented by the bridge → these stay on demo fallback:
+     WSAuth, WSCalendar, WSAvailability, WSBrand, WSVies. */
 
   /* Optional: CSRF token for mutations (set by your auth endpoint) */
   // document.addEventListener('wsauth:login', function (e) {
