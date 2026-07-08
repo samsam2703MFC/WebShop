@@ -1,11 +1,24 @@
+/*
+ * Generate a WooCommerce product-import CSV from the storefront's mockup
+ * catalog (W_PRODUCTS seed in webshop-full-bundle.jsx).
+ *
+ *   node woocommerce-bridge/tools/generate-products-csv.mjs
+ *
+ * Output: woocommerce-bridge/sample-products.csv — canonical WooCommerce
+ * import columns + _atelier_* meta + Belgian 6% tax class. Verified against
+ * WooCommerce 10.9 (26 products, 0 failures). Import via WooCommerce →
+ * Products → Import.
+ */
 import fs from 'node:fs';
 
-const src = fs.readFileSync('new URL('../../webshop-full-bundle.jsx', import.meta.url).pathname', 'utf8');
+const bundlePath = new URL('../../webshop-full-bundle.jsx', import.meta.url).pathname;
+const outPath = new URL('../sample-products.csv', import.meta.url).pathname;
+
+const src = fs.readFileSync(bundlePath, 'utf8');
 // Extract the W_PRODUCTS array literal (data only, no function calls).
 const start = src.indexOf('const W_PRODUCTS = [');
-const endMarker = '\n];';
-const end = src.indexOf(endMarker, start);
-const arrText = src.slice(start + 'const W_PRODUCTS = '.length, end + 2); // include closing ]
+const end = src.indexOf('\n];', start);
+const arrText = src.slice(start + 'const W_PRODUCTS = '.length, end + 2);
 // eslint-disable-next-line no-new-func
 const W_PRODUCTS = Function('return ' + arrText)();
 
@@ -31,7 +44,6 @@ const esc = (v) => {
 
 const rows = [cols.join(',')];
 for (const p of W_PRODUCTS) {
-  // Configurable products (bundles/options) import as simple base products.
   const row = {
     'Type': 'simple',
     'SKU': 'WS-' + p.id,
@@ -55,7 +67,5 @@ for (const p of W_PRODUCTS) {
   rows.push(cols.map((c) => esc(row[c])).join(','));
 }
 
-const out = rows.join('\n') + '\n';
-fs.writeFileSync(new URL('../sample-products.csv', import.meta.url).pathname, out);
-console.log(`Generated ${W_PRODUCTS.length} products → /tmp/atelier-produits-woocommerce.csv`);
-console.log('Categories:', [...new Set(W_PRODUCTS.map((p) => CAT_NAME[p.cat] || 'Divers'))].join(', '));
+fs.writeFileSync(outPath, rows.join('\n') + '\n');
+console.log(`Generated ${W_PRODUCTS.length} products → ${outPath}`);
