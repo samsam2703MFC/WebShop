@@ -13,7 +13,11 @@
 
 (function () {
   // ─── Change this one line to point at your backend ───────────────────
-  const BASE_URL = null; // e.g. 'https://api.atelier.be'
+  // Node reference backend:  'https://api.atelier.be'
+  // WooCommerce bridge:      'https://shop.atelier.be/wp-json/atelier/v1'
+  //   (the Atelier Webshop Bridge plugin exposes the same contracts on
+  //    WooCommerce — see woocommerce-bridge/ and WOOCOMMERCE.md)
+  const BASE_URL = null;
   // ─────────────────────────────────────────────────────────────────────
 
   if (!BASE_URL) return; // demo mode — all stubs use in-memory fixtures
