@@ -55,6 +55,14 @@ class Atelier_Auth {
             'company'         => $c->get_billing_company() ?: null,
             'postalCode'      => $c->get_billing_postcode() ?: null,
             'isBusiness'      => (bool) get_user_meta($uid, '_atelier_is_business', true),
+            'invoice'         => [
+                'country'    => get_user_meta($uid, '_atelier_invoice_country', true) ?: 'BE',
+                'vat'        => get_user_meta($uid, '_atelier_invoice_vat', true) ?: '',
+                'name'       => get_user_meta($uid, '_atelier_invoice_name', true) ?: '',
+                'address'    => get_user_meta($uid, '_atelier_invoice_address', true) ?: '',
+                'postalCode' => get_user_meta($uid, '_atelier_invoice_postalCode', true) ?: '',
+                'city'       => get_user_meta($uid, '_atelier_invoice_city', true) ?: '',
+            ],
             'officeId'        => get_user_meta($uid, '_atelier_office_id', true) ?: null,
             'preferredShopId' => get_user_meta($uid, self::PREF_SHOP_META, true) ?: null,
         ];
@@ -104,10 +112,33 @@ class Atelier_Auth {
         if (isset($b['firstName'])) $c->set_first_name(sanitize_text_field($b['firstName']));
         if (isset($b['lastName']))  $c->set_last_name(sanitize_text_field($b['lastName']));
         if (isset($b['phone']))     $c->set_billing_phone(sanitize_text_field($b['phone']));
-        if (isset($b['company']))   $c->set_billing_company(sanitize_text_field($b['company']));
-        if (isset($b['postalCode'])) $c->set_billing_postcode(sanitize_text_field($b['postalCode']));
+
+        $isBusiness = !empty($b['isBusiness']);
+        $inv = (isset($b['invoice']) && is_array($b['invoice'])) ? $b['invoice'] : null;
+
+        // Preserve the full invoice block in dedicated meta (source for the form).
+        if ($inv) {
+            foreach (['country', 'vat', 'name', 'address', 'postalCode', 'city'] as $k) {
+                if (isset($inv[$k])) update_user_meta($uid, '_atelier_invoice_' . $k, sanitize_text_field($inv[$k]));
+            }
+        }
+
+        // WooCommerce billing address = invoice data for businesses (used to
+        // generate invoices), else the personal company/postcode.
+        if ($isBusiness && $inv) {
+            if (isset($inv['name']))       $c->set_billing_company(sanitize_text_field($inv['name']));
+            if (isset($inv['address']))    $c->set_billing_address_1(sanitize_text_field($inv['address']));
+            if (isset($inv['city']))       $c->set_billing_city(sanitize_text_field($inv['city']));
+            if (isset($inv['postalCode'])) $c->set_billing_postcode(sanitize_text_field($inv['postalCode']));
+            if (isset($inv['country']))    $c->set_billing_country(sanitize_text_field($inv['country']));
+            if (isset($inv['vat']))        update_user_meta($uid, '_atelier_vat_number', sanitize_text_field($inv['vat']));
+        } else {
+            if (isset($b['company']))    $c->set_billing_company(sanitize_text_field($b['company']));
+            if (isset($b['postalCode'])) $c->set_billing_postcode(sanitize_text_field($b['postalCode']));
+        }
         $c->save();
-        if (isset($b['isBusiness']))      update_user_meta($uid, '_atelier_is_business', $b['isBusiness'] ? 1 : 0);
+
+        update_user_meta($uid, '_atelier_is_business', $isBusiness ? 1 : 0);
         if (isset($b['preferredShopId'])) update_user_meta($uid, self::PREF_SHOP_META, sanitize_text_field($b['preferredShopId']));
         return ['user' => self::user_payload($uid)];
     }

@@ -206,6 +206,16 @@ class Atelier_REST {
             $order->set_customer_id($authUid);
             $u = get_userdata($authUid);
             if ($u && !$order->get_billing_email()) $order->set_billing_email($u->user_email);
+            // Carry the customer's billing/invoice details onto the order so an
+            // invoice can be generated (company, address, VAT).
+            $cust = new \WC_Customer($authUid);
+            if ($cust->get_billing_company())   $order->set_billing_company($cust->get_billing_company());
+            if ($cust->get_billing_address_1()) $order->set_billing_address_1($cust->get_billing_address_1());
+            if ($cust->get_billing_city())      $order->set_billing_city($cust->get_billing_city());
+            if ($cust->get_billing_postcode())  $order->set_billing_postcode($cust->get_billing_postcode());
+            if ($cust->get_billing_country())   $order->set_billing_country($cust->get_billing_country());
+            $vat = get_user_meta($authUid, '_atelier_vat_number', true);
+            if ($vat) { $order->update_meta_data('_atelier_vat_number', $vat); $order->update_meta_data('_vat_number', $vat); }
         }
         if ($q['voucher']) $order->apply_coupon($q['voucher']['code']);
 

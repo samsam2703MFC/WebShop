@@ -2124,6 +2124,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           firstName: form.firstName, lastName: form.lastName,
           phone: form.phone, company: form.company,
           postalCode: form.postalCode, isBusiness: !!form.isBusiness,
+          invoice: form.invoice,
         });
         if (r && r.ok && r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
       } catch (_) {}
