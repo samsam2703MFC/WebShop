@@ -27,6 +27,15 @@ export function createCatalogRouter(db) {
     res.json(rows);
   }));
 
+  /* GET /brand?shopId= — theme tokens for a shop. */
+  r.get('/brand', wrap(async (req, res) => {
+    const { shopId } = req.query;
+    if (!shopId) return res.status(400).json({ error: 'shopId requis' });
+    const [[row]] = await db.query(
+      'SELECT id, slug, name, accent, tint, logo_url FROM ws_shops WHERE id = ?', [shopId]);
+    res.json(row || {});
+  }));
+
   /* GET /catalog/categories?shopId= — a shop's categories. */
   r.get('/catalog/categories', wrap(async (req, res) => {
     const { shopId } = req.query;
