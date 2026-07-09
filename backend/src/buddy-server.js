@@ -12,6 +12,8 @@ import { createPromosRouter } from './promos.js';
 import { createAvailabilityRouter } from './availability.js';
 import { createNetworkRouter } from './network.js';
 import { createOrdersRouter } from './orders.js';
+import { createAuthRouter } from './auth.js';
+import { createPaymentsRouter } from './payments.js';
 
 export const app = express();
 
@@ -39,6 +41,8 @@ app.use(createPromosRouter(webshopDb));        // /pricing/promos/* /vouchers/re
 app.use(createAvailabilityRouter(webshopDb));  // /availability/* /calendar/*
 app.use(createNetworkRouter(webshopDb));       // /tours /offices /delivery-fees/*
 app.use(createOrdersRouter(webshopDb));        // /orders
+app.use(createAuthRouter(webshopDb));          // /auth/* (bcrypt + token)
+app.use(createPaymentsRouter(webshopDb));      // /payments/* (Stripe)
 
 const port = Number(process.env.PORT || 3002);
 if (import.meta.url === `file://${process.argv[1]}`) {

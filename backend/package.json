@@ -5,7 +5,8 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node src/buddy-server.js",
+    "start:legacy": "node src/server.js",
     "migrate": "node migrations/run.js",
     "sync:full": "node sync/full-sync.js",
     "sync:worker": "node sync/worker.js",
@@ -17,6 +18,7 @@
   },
   "license": "UNLICENSED",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "mysql2": "^3.22.5",

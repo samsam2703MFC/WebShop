@@ -50,5 +50,37 @@ export function createAvailabilityRouter(db) {
     res.json(rows);
   }));
 
+  /* GET /availability/days?shopId=&mode=&from=YYYY-MM-DD&to=YYYY-MM-DD
+     Computes, for each date in the range, whether the shop is orderable:
+     open weekday (ISO day in *_open_days) AND not a 'closed' exception. */
+  r.get('/availability/days', wrap(async (req, res) => {
+    const { shopId, mode = 'collect' } = req.query;
+    if (!shopId) return res.status(400).json({ error: 'shopId requis' });
+    const from = req.query.from || new Date().toISOString().slice(0, 10);
+    const to = req.query.to || new Date(Date.now() + 30 * 86400e3).toISOString().slice(0, 10);
+
+    const [[av]] = await db.query('SELECT collect_open_days, delivery_open_days FROM ws_shop_availability WHERE shop_id = ?', [shopId]);
+    const col = mode === 'delivery' ? 'delivery_open_days' : 'collect_open_days';
+    let openDays = av && av[col] ? JSON.parse(av[col]) : (mode === 'delivery' ? [1, 2, 3, 4, 5] : [1, 2, 3, 4, 5, 6]);
+
+    const [exc] = await db.query(
+      `SELECT DATE_FORMAT(exception_date, '%Y-%m-%d') AS d, type
+         FROM ws_shop_exceptions WHERE shop_id = ? AND exception_date BETWEEN ? AND ?`,
+      [shopId, from, to]
+    );
+    const closed = new Set(exc.filter((e) => e.type === 'closed').map((e) => e.d));
+
+    const days = [];
+    for (let d = new Date(from + 'T00:00:00Z'), end = new Date(to + 'T00:00:00Z'); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      const iso = d.toISOString().slice(0, 10);
+      const isoDay = ((d.getUTCDay() + 6) % 7) + 1;   // Mon=1 … Sun=7
+      let reason = null;
+      if (!openDays.includes(isoDay)) reason = 'closed';
+      else if (closed.has(iso)) reason = 'holiday';
+      days.push({ date: iso, available: !reason, reason });
+    }
+    res.json(days);
+  }));
+
   return r;
 }
