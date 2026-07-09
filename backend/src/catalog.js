@@ -1,9 +1,9 @@
-/* Catalog API against the real ws_ schema (backend/schema/ws_schema.sql).
+/* Catalog API against the real ws_ schema (backend/schema/ws_schema.sql, INT keys).
  *
- * These are the "requêtes API" — Express routes that read the DB and return
- * JSON. The frontend (WSShops / WSCatalog) points at them; it never touches
- * MySQL directly. Per-shop price comes from ws_product_prices (fallback to the
- * global ws_products.price); per-day stock from ws_product_stock.
+ * Express routes that read the DB and return JSON. The frontend (WSShops /
+ * WSCatalog) points at them; it never touches MySQL directly. Per-shop price
+ * comes from ws_product_prices (fallback to the global ws_products.price);
+ * per-day stock from ws_product_stock. Shop is identified by its INT id.
  *
  * Mount:  app.use(createCatalogRouter(webshopDb))
  */
@@ -20,7 +20,8 @@ export function createCatalogRouter(db) {
   /* GET /shops — all active shops. */
   r.get('/shops', wrap(async (_req, res) => {
     const [rows] = await db.query(
-      `SELECT id, name, city, address, phone, email, accent, tint, logo_url
+      `SELECT id, slug, name, city, email, phone, accent, tint, logo_url,
+              TRIM(CONCAT_WS(' ', street, street_num)) AS address
          FROM ws_shops WHERE active = 1 ORDER BY name`
     );
     res.json(rows);
@@ -31,7 +32,7 @@ export function createCatalogRouter(db) {
     const { shopId } = req.query;
     if (!shopId) return res.status(400).json({ error: 'shopId requis' });
     const [rows] = await db.query(
-      `SELECT id, label, img, sort_order
+      `SELECT id, slug, label, img, sort_order
          FROM ws_categories
         WHERE active = 1 AND (shop_id = ? OR shop_id IS NULL)
         ORDER BY sort_order, label`,
@@ -41,12 +42,13 @@ export function createCatalogRouter(db) {
   }));
 
   /* GET /catalog/products?shopId= — products available at a shop, with the
-     per-shop price and aggregated allergens. */
+     per-shop price, category label and aggregated allergens. */
   r.get('/catalog/products', wrap(async (req, res) => {
     const { shopId } = req.query;
     if (!shopId) return res.status(400).json({ error: 'shopId requis' });
     const [rows] = await db.query(
-      `SELECT p.id, p.cat, p.sub_cat, p.name, p.description, p.badge,
+      `SELECT p.id, p.cat_id, p.sub_cat_id, c.label AS category,
+              p.name, p.description, p.badge,
               p.portions, p.cross_portion, p.has_menu_options,
               COALESCE(pp.price, p.price) AS price,   -- prix boutique, sinon global
               ps.no_delivery,
@@ -56,12 +58,13 @@ export function createCatalogRouter(db) {
            ON ps.product_id = p.id AND ps.shop_id = ? AND ps.active = 1
          LEFT JOIN ws_product_prices pp
            ON pp.product_id = p.id AND pp.shop_id = ? AND pp.active = 1
+         LEFT JOIN ws_categories c ON c.id = p.cat_id
          LEFT JOIN (
               SELECT product_id, JSON_ARRAYAGG(allergen) AS allergens
                 FROM ws_product_allergens GROUP BY product_id
          ) al ON al.product_id = p.id
         WHERE p.active = 1
-        ORDER BY p.cat, p.name`,
+        ORDER BY c.sort_order, p.name`,
       [shopId, shopId]
     );
     res.json(rows.map((x) => ({
