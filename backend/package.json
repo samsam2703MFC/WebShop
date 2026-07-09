@@ -12,6 +12,7 @@
     "sync:reconcile": "node sync/reconcile.js",
     "sync:push": "node sync/push-woo.js",
     "sync:pull": "node sync/pull-orders.js",
+    "import:csv": "node sync/import-csv.js",
     "test": "node --test test/*.test.js"
   },
   "license": "UNLICENSED",
