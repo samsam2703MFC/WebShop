@@ -207,9 +207,30 @@ Wrapping with `{ "shops": [...] }` is also accepted by the stub.
 | `city` | string | For grouping in the shop picker |
 | `address` | string | Full street address |
 | `accent` | string | CSS hex color for the shop chip pill |
+| `woo_base_url` | string \| null | This shop's WooCommerce site URL (Multisite). Frontend routes cart/checkout/login here. `null` until the site is provisioned. |
 | `capabilities.collect` | boolean | Click & Collect enabled |
 | `capabilities.delivery` | boolean | Office delivery enabled |
 | `openingHours` | object | Keys `mon`–`sun`, value `"HH:MM–HH:MM"` or `null` (closed) |
+
+Only shops with `status = 'live'` are returned. Each shop is its own
+WooCommerce site inside a WordPress Multisite network; `webshop-shop-router.jsx`
+(`window.WSShopRouter`) maps the active `shopId` → `woo_base_url`.
+
+### Provisioning (admin)
+
+Guarded by `ADMIN_TOKEN` — send `Authorization: Bearer <token>` or `X-Admin-Token: <token>`.
+
+**POST /admin/shops** — register a shop (starts `provisioning`, hidden from `/shops`).
+```json
+{ "id": "berlo", "name": "Atelier by Berlo", "city": "Corbais",
+  "address": "…", "accent": "#8D1D2C", "woo_base_url": "https://berlo.atelier.be" }
+```
+
+**PATCH /admin/shops/:id** — set `woo_base_url` / `woo_blog_id` and flip
+`status` to `live` once the Woo site exists and the initial sync ran.
+```json
+{ "woo_base_url": "https://berlo.atelier.be", "status": "live" }
+```
 
 ---
 

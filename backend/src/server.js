@@ -19,7 +19,7 @@ app.use((req, res, next) => {
   if (origin && (config.corsOrigins.includes(origin) || config.corsOrigins.includes('*'))) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Access-Control-Allow-Credentials', 'true');
-    res.set('Access-Control-Allow-Headers', 'Content-Type, X-CSRF-Token');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, X-CSRF-Token, X-Admin-Token, Authorization');
     res.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -55,6 +55,22 @@ const wrap = (fn) => (req, res) => fn(req, res).catch((e) => {
   res.status(500).json({ error: 'Erreur interne' });
 });
 
+/* Admin guard — provisioning endpoints require a shared token. Set
+   ADMIN_TOKEN in the environment; clients present it as
+   `Authorization: Bearer <token>` or `X-Admin-Token: <token>`. */
+function requireAdmin(req, res, next) {
+  const expected = config.adminToken;
+  if (!expected) return res.status(503).json({ error: 'Admin non configuré (ADMIN_TOKEN manquant)' });
+  const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const provided = String(req.headers['x-admin-token'] || bearer || '');
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(401).json({ error: 'Non autorisé' });
+  }
+  next();
+}
+
 /* ── Health & sync monitoring ──────────────────────────────────────── */
 app.get('/health', wrap(async (_req, res) => {
   await webshopDb.query('SELECT 1');
@@ -86,11 +102,50 @@ app.get('/sync/status', wrap(async (_req, res) => {
 }));
 
 /* ── Shops ─────────────────────────────────────────────────────────── */
+/* Only 'live' shops are exposed to the storefront; provisioning shops stay
+   hidden until their Woo site + initial sync are ready. woo_base_url is the
+   frontend's routing target (which Woo to send cart/checkout/login to). */
 app.get('/shops', wrap(async (_req, res) => {
   const [rows] = await webshopDb.query(
-    'SELECT id, name, address, accent, opening_hours, click_collect FROM ws_shops WHERE active = 1'
+    `SELECT id, name, city, address, accent, opening_hours, click_collect, woo_base_url
+       FROM ws_shops WHERE active = 1 AND status = 'live'`
   );
   res.json(rows);
+}));
+
+/* Register a new shop (fiche Buddy). Starts in 'provisioning' — invisible to
+   the storefront — until the Multisite site is created and the initial sync
+   flips it 'live' via PATCH. */
+app.post('/admin/shops', requireAdmin, wrap(async (req, res) => {
+  const { id, name, city, address, accent, woo_base_url } = req.body || {};
+  if (!id || !name) return res.status(400).json({ error: 'id et name requis' });
+  if (!/^[a-z0-9-]+$/.test(id)) return res.status(400).json({ error: 'id doit être un slug [a-z0-9-]' });
+  await webshopDb.query(
+    `INSERT INTO ws_shops (id, name, city, address, accent, woo_base_url, status, active)
+     VALUES (?,?,?,?,?,?, 'provisioning', 1)
+     ON DUPLICATE KEY UPDATE name = VALUES(name), city = VALUES(city),
+       address = VALUES(address), accent = VALUES(accent), woo_base_url = VALUES(woo_base_url)`,
+    [id, name, city || null, address || '', accent || '#8D1D2C', woo_base_url || null]
+  );
+  res.status(201).json({ id, status: 'provisioning' });
+}));
+
+/* Update a shop — set woo_base_url / woo_blog_id and flip status to 'live'
+   once its Woo site is provisioned and synced. */
+app.patch('/admin/shops/:id', requireAdmin, wrap(async (req, res) => {
+  const { woo_base_url, woo_blog_id, status, name, city, address, accent } = req.body || {};
+  if (status !== undefined && !['provisioning', 'live', 'paused'].includes(status)) {
+    return res.status(400).json({ error: 'status invalide' });
+  }
+  const sets = [], vals = [];
+  for (const [col, v] of Object.entries({ woo_base_url, woo_blog_id, status, name, city, address, accent })) {
+    if (v !== undefined) { sets.push(`${col} = ?`); vals.push(v); }
+  }
+  if (!sets.length) return res.status(400).json({ error: 'aucun champ à modifier' });
+  vals.push(req.params.id);
+  const [r] = await webshopDb.query(`UPDATE ws_shops SET ${sets.join(', ')} WHERE id = ?`, vals);
+  if (!r.affectedRows) return res.status(404).json({ error: 'shop introuvable' });
+  res.json({ id: req.params.id, updated: sets.length });
 }));
 
 /* ── Catalog ───────────────────────────────────────────────────────── */

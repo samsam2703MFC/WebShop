@@ -9,6 +9,8 @@ function req(name, fallback) {
 export const config = {
   port: Number(req('PORT', 3001)),
   corsOrigins: req('CORS_ORIGINS', '').split(',').map((s) => s.trim()).filter(Boolean),
+  // Shared secret for admin/provisioning endpoints (POST/PATCH /admin/shops).
+  adminToken: process.env.ADMIN_TOKEN || null,
 
   webshopDb: {
     host: req('WEBSHOP_DB_HOST', 'localhost'),

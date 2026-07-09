@@ -3152,8 +3152,13 @@ function ShopFrame({ variant }) {
   // Deep-link: read URL params once at mount so admin direct links
   // (?shop=&mode=&voucher=&category=) preload the storefront state.
   const _deep = typeof parseDeepLink === 'function' ? parseDeepLink() : {};
-  const [shopId, setShopId] = useState(_deep.shopId || 'chatelain');
+  // Active shop: deep-link → last remembered (WSShopRouter) → default.
+  const [shopId, setShopId] = useState(
+    _deep.shopId || (window.WSShopRouter && window.WSShopRouter.current()) || 'chatelain'
+  );
   React.useEffect(() => {
+    // Persist the active shop so cart/checkout/login route to its Woo.
+    if (window.WSShopRouter) window.WSShopRouter.setActive(shopId);
     if (window.WSBrand && typeof window.WSBrand.apply === 'function') {
       window.WSBrand.apply(shopId);
     }
