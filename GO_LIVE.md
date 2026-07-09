@@ -1,48 +1,105 @@
-# GO-LIVE CHECKLIST — Webshop
+# 🚀 GO LIVE — Runbook de déploiement (L'Atelier By)
 
-Phase order: infrastructure → sync → payments → switch-over → monitoring.
+Architecture : **`ws_` (base Buddy) = maître** · **buddy-server (Node) = API** ·
+**React (GitHub Pages) = vitrine** · **WooCommerce = moteur de vente (optionnel)**.
 
-## 1. Infrastructure
-- [ ] Provision backend host (VPS / Railway / Fly.io …) with Node 22 + access to both MySQL instances
-- [ ] DNS: `api.<your-domain>` → backend host
-- [ ] SSL: HTTPS on the API (Let's Encrypt / platform TLS) — Stripe webhooks and the Pages frontend both require it
-- [ ] Create production webshop MySQL DB; run `npm run migrate` (001 + 004 only — **never 002** in production)
-- [ ] `.env` filled from `.env.example`; secrets in the host's secret store, never committed
+Légende : 🖥️ = sur **ton serveur** · 🗄️ = dans **phpMyAdmin** · ☁️ = **GitHub / Claude**
 
-## 2. General DB (Franchise Buddy) — requires ERP DBA approval
-- [ ] Review + run `backend/migrations/003_general_db_outbox.sql` on the production ERP (outbox table + triggers — the only change to the general DB)
-- [ ] Create a dedicated MySQL user for the sync: `SELECT` on source tables + `SELECT, UPDATE` on `fb_outbox` only
-- [ ] Adjust `sync/field-mapping.json` to the real ERP table/column names
+---
 
-## 3. Initial sync
-- [ ] `npm run sync:full` — initial load (products, categories, boutiques, stock, promotions)
-- [ ] Spot-check: product count, prices TTC, VAT rates (6 % food / 21 % standard), accents/utf8mb4
-- [ ] Start `npm run sync:worker` as a supervised service (systemd/pm2, auto-restart)
-- [ ] Cron the reconcile job hourly: `0 * * * * cd /srv/backend && node sync/reconcile.js`
-- [ ] Verify `GET /sync/status`: outbox backlog ≈ 0, no recent errors
+## Phase 1 — Base de données 🗄️
 
-## 4. Stripe
-- [ ] Test mode end-to-end first: `stripe listen --forward-to …/stripe/webhook`, card 4242…, Bancontact test flow, declined card → `payment_failed`
-- [ ] Register the production webhook endpoint in the Stripe Dashboard: `https://api.<domain>/stripe/webhook` — events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `payment_intent.payment_failed`
-- [ ] Swap to live keys in `.env` (`sk_live_…`, live `whsec_…`); restart API
-- [ ] Bancontact enabled in Stripe Dashboard → Payment methods
-- [ ] `CHECKOUT_SUCCESS_URL` / `CANCEL_URL` point at the production storefront
-- [ ] One real €1 live transaction + refund to validate the full loop
+1. phpMyAdmin → base `test-webshop_db` → onglet **Importer** :
+   - `backend/schema/ws_schema.sql`  → crée les 33 tables
+   - `backend/schema/seed-shops.sql` → tes 5 boutiques (Halle=4, Corbais=2, …)
+2. Importer ton catalogue (voir Phase 5 pour l'outil), ou coller `ws-import.sql`.
+3. Compléter les données franchise : `ws_product_prices`, `ws_product_stock`,
+   `ws_slots`, `ws_calendar_rules`, `ws_shop_availability`, `ws_offices`,
+   `ws_tours`, `ws_delivery_fee_rules`, `ws_pricing_rules`, `ws_vouchers`.
+   (Requêtes types dans `backend/schema/api-queries.sql`.)
 
-## 5. Frontend switch-over
-- [ ] `api-config.js`: set `BASE_URL = 'https://api.<domain>'` — all stubs switch from demo seeds to live HTTP
-- [ ] `CORS_ORIGINS` includes `https://samsam2703mfc.github.io`
-- [ ] Push → GitHub Pages deploys; hard-refresh and verify catalog loads from the API (Network tab)
-- [ ] Place a test order in each mode: collect (Stripe) + B2B delivery (deferred)
+## Phase 2 — Backend (buddy-server) 🖥️
 
-## 6. Monitoring & operations
-- [ ] Uptime check on `GET /health` and `GET /sync/status`
-- [ ] Alert if `outbox_pending` grows or `recent_errors` is non-empty
-- [ ] Stripe Dashboard email alerts for failed webhooks
-- [ ] DB backups: daily dump of the webshop DB (orders are the only non-recoverable data — catalog can always be re-synced)
-- [ ] Logs: API + worker stdout shipped to the host's log system
+```bash
+git clone https://github.com/samsam2703MFC/WebShop.git
+cd WebShop/backend
+npm install
+cp .env.example .env      # puis édite .env :
+```
+```ini
+WEBSHOP_DB_HOST=localhost
+WEBSHOP_DB_USER=test_webshop_user
+WEBSHOP_DB_PASSWORD=•••          # ton mot de passe DB
+WEBSHOP_DB_NAME=test-webshop_db
+ADMIN_TOKEN=•••                  # un secret long (endpoints admin)
+AUTH_SECRET=•••                  # un secret long (tokens de session)
+STRIPE_SECRET_KEY=sk_live_•••    # (Phase 4)
+CORS_ORIGINS=https://samsam2703mfc.github.io
+```
+Lancer et garder en vie :
+```bash
+npm install -g pm2
+pm2 start deploy/ecosystem.config.cjs
+pm2 save && pm2 startup           # survit au reboot
+curl http://localhost:3002/shops  # doit lister tes 5 boutiques
+```
 
-## Rollback plan
-- Frontend: set `BASE_URL = null` → instant return to demo mode (site stays up)
-- Sync: stop the worker; data freezes but the shop keeps selling; `sync:full` recovers after fix
-- Payments: orders stuck `pending_payment` expire via `checkout.session.expired` → auto-canceled
+## Phase 3 — Frontend (React) ☁️
+
+Dans `api-config.js` :
+```js
+const BASE_URL = 'https://ton-serveur:3002';   // ← ton backend (HTTPS conseillé)
+```
+`git commit` + `git push` → **GitHub Pages déploie tout seul**.
+Ouvre `https://samsam2703mfc.github.io/WebShop/` → il lit ta base.
+
+## Phase 4 — Paiement (Stripe) 🖥️
+
+1. Mets `STRIPE_SECRET_KEY` (et `STRIPE_WEBHOOK_SECRET`) dans `.env`, `pm2 restart buddy-api`.
+2. Dans Stripe → Webhooks : URL `https://ton-serveur:3002/payments/webhook`, event `checkout.session.completed`.
+3. Le paiement s'active automatiquement (sinon l'API renvoie 503, le reste marche).
+
+## Phase 5 — WooCommerce (vitrine + synchro) 🖥️
+
+1. Uploader le plugin : `atelier-webshop-bridge.zip` → WP admin → Extensions → Ajouter → Téléverser → Activer.
+2. Secret partagé (les deux côtés identiques) :
+   ```bash
+   # côté Woo (WP-CLI)
+   wp option update atelier_sync_token "MON-SECRET"
+   ```
+   ```sql
+   -- côté Buddy
+   UPDATE ws_shops SET sync_token='MON-SECRET', woo_base_url='https://atelierby.online' WHERE id=2;
+   ```
+3. Importer ton catalogue Woo → base :
+   ```bash
+   npm run import:csv -- wc-product-export.csv 2      # shop 2 = Corbais
+   ```
+4. Pousser prix/stock → Woo : `npm run sync:push`
+5. Récupérer les commandes ← Woo : `npm run sync:pull`
+
+## Phase 6 — Automatiser 🖥️
+
+```bash
+# adapte le chemin absolu dans le fichier, puis :
+crontab backend/deploy/crontab.txt
+```
+→ push/pull toutes les 5 min + libération des réservations expirées chaque minute.
+
+---
+
+## ✅ Test final « de A à Z »
+
+1. Ouvrir le site → choisir une boutique → le catalogue s'affiche (depuis `ws_`)
+2. Créer un compte (`/auth/register`) → se connecter
+3. Ajouter au panier → commander → payer (Stripe test)
+4. Vérifier : `SELECT * FROM ws_orders ORDER BY id DESC LIMIT 1;`
+
+## Aide-mémoire endpoints (buddy-server `:3002`)
+```
+/shops /brand /catalog/* /catalog/stock
+/availability/* /calendar/*
+/pricing/promos/* /vouchers/redeem
+/tours /offices /delivery-fees/*
+/orders            /auth/*            /payments/*
+```
