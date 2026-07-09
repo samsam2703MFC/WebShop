@@ -44,6 +44,12 @@ class Atelier_REST {
         register_rest_route(self::NS, '/orders', $post([self::class, 'place_order']));
         register_rest_route(self::NS, '/orders/(?P<id>[\w-]+)', $get([self::class, 'get_order']));
 
+        // Write-side sync (Buddy master → Woo): absolute price/stock by SKU,
+        // guarded in-handler by the atelier_sync_token secret.
+        register_rest_route(self::NS, '/sync/stock',    $post(['Atelier_Sync', 'stock']));
+        register_rest_route(self::NS, '/sync/price',    $post(['Atelier_Sync', 'price']));
+        register_rest_route(self::NS, '/sync/products', $post(['Atelier_Sync', 'products']));
+
         // Auth — real WordPress/WooCommerce customer accounts + bearer tokens.
         register_rest_route(self::NS, '/auth/register', $post(['Atelier_Auth', 'register']));
         register_rest_route(self::NS, '/auth/login', $post(['Atelier_Auth', 'login']));
