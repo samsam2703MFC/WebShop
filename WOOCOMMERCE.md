@@ -78,6 +78,34 @@ POST {woo_base_url}/wp-json/atelier/v1/sync/products
 Setup per shop: `PATCH /admin/shops/:id { woo_base_url, status:"live" }`, set
 `ws_shops.sync_token`, and mirror it on Woo: `wp option update atelier_sync_token "<secret>"`.
 
+## Multi-shop: validated orders Woo → Buddy (pull)
+
+The other half of the loop. Woo owns the checkout; Buddy pulls **validated**
+orders after the fact and consolidates them.
+
+```
+GET {woo_base_url}/wp-json/atelier/v1/sync/orders?since=<ISO8601>&statuses=processing,completed&limit=100
+    Header: X-Atelier-Sync-Token: <sync_token>
+    → { orders: [ {id, status, customer, totals{ttc/htva/tva}, lines[{sku,qty,…}], stripe} ],
+        next_since, count }
+```
+
+- Sender: `backend/sync/pull-orders.js` (`npm run sync:pull`) — per shop, keeps
+  a `pull_orders:<shopId>` cursor in `sync_state`, drains oldest-first, and
+  **upserts by order id** into `ws_orders` + `ws_order_lines` (lines resolved by
+  SKU). Boundary re-pull is idempotent.
+- **Stock stays consistent**: on an order's *first* insert, Buddy decrements its
+  own master `delivery_stock` by each line qty (tracked stock only; NULL =
+  unlimited is left alone). Because the push sends **absolute** values, Woo
+  (which already decremented natively at checkout) and Buddy converge — no
+  double-decrement.
+- Statuses are configurable (`PULL_STATUSES`, default `processing,completed`);
+  Woo status → `ws_orders` enum (`processing→paid`, `completed→delivered`,
+  `on-hold→deferred_billing`, …).
+
+Together, push + pull make Buddy the master (`catalogue · prix · stock · menus`)
+while WooCommerce stays the storefront engine (`panier · paiement · compte · commande`).
+
 ## Verified end-to-end (against WooCommerce 10.9, WordPress, PHP 8.4)
 
 Built and tested live in a real WordPress + WooCommerce install:

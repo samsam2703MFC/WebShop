@@ -49,6 +49,8 @@ class Atelier_REST {
         register_rest_route(self::NS, '/sync/stock',    $post(['Atelier_Sync', 'stock']));
         register_rest_route(self::NS, '/sync/price',    $post(['Atelier_Sync', 'price']));
         register_rest_route(self::NS, '/sync/products', $post(['Atelier_Sync', 'products']));
+        // Pull side (Woo → Buddy): validated orders since a cursor.
+        register_rest_route(self::NS, '/sync/orders',   $get(['Atelier_Sync', 'orders']));
 
         // Auth — real WordPress/WooCommerce customer accounts + bearer tokens.
         register_rest_route(self::NS, '/auth/register', $post(['Atelier_Auth', 'register']));
