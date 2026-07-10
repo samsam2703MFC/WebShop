@@ -142,14 +142,51 @@ function dispatch($m, $p) {
     $mode = qp('mode') ?: 'collect';
     $from = qp('from') ?: date('Y-m-d');
     $to = qp('to') ?: date('Y-m-d', time() + 30 * 86400);
-    $av = row("SELECT collect_open_days, delivery_open_days FROM ws_shop_availability WHERE shop_id=?", [$s]);
-    $col = $mode === 'delivery' ? 'delivery_open_days' : 'collect_open_days';
-    $open = $av && $av[$col] ? json_decode($av[$col], true) : ($mode === 'delivery' ? [1,2,3,4,5] : [1,2,3,4,5,6]);
+    $officeId = qp('officeId'); $siteId = qp('siteId');
+    // Fermetures boutique (communes)
     $exc = rows("SELECT DATE_FORMAT(exception_date,'%Y-%m-%d') AS d, type FROM ws_shop_exceptions
                   WHERE shop_id=? AND exception_date BETWEEN ? AND ?", [$s, $from, $to]);
     $closed = []; foreach ($exc as $e) if ($e['type'] === 'closed') $closed[$e['d']] = true;
-    // Cutoff serveur : date minimale commandable = maintenant + délai (lead_hours) ;
-    // et si l'heure limite (cutoff) du jour est passée, on repousse à demain.
+
+    // ── B2B : livraison liée à un bureau/site → piloté par la TOURNÉE ──
+    if ($mode === 'delivery' && ($officeId || $siteId)) {
+      $tourId = null;
+      if ($siteId) {
+        $site = row("SELECT tournee_id, office_client_id FROM ws_office_delivery_sites WHERE id=? AND active=1", [$siteId]);
+        if ($site) { $tourId = $site['tournee_id']; if (!$officeId) $officeId = $site['office_client_id']; }
+      }
+      $set = $officeId ? row("SELECT tour_id, allowed_days, delivery_cutoff
+                                FROM ws_office_delivery_settings WHERE office_id=? AND shop_id=? AND active=1", [$officeId, $s]) : null;
+      if (!$tourId && $set) $tourId = $set['tour_id'];
+      $ta = $tourId ? rows("SELECT delivery_day, cutoff_time FROM ws_tour_availability
+                              WHERE tour_id=? AND shop_id=? AND active=1", [$tourId, $s]) : [];
+      $tourDays = []; $cutoffByDay = [];
+      foreach ($ta as $r) { $d = (int) $r['delivery_day']; $tourDays[] = $d; $cutoffByDay[$d] = $r['cutoff_time']; }
+      $allowed = ($set && $set['allowed_days']) ? json_decode($set['allowed_days'], true) : null; // null = pas de restriction bureau
+      $officeCutoff = $set['delivery_cutoff'] ?? null;
+      $today = date('Y-m-d'); $nowT = date('H:i:s');
+
+      $days = [];
+      for ($t = strtotime($from), $end = strtotime($to); $t <= $end; $t += 86400) {
+        $iso = date('Y-m-d', $t); $w = (int) date('N', $t);
+        $reason = null;
+        if (!in_array($w, $tourDays)) $reason = 'no_tour';                          // pas de tournée ce jour
+        elseif ($allowed !== null && !in_array($w, $allowed)) $reason = 'office_closed'; // bureau ne reçoit pas ce jour
+        elseif (isset($closed[$iso])) $reason = 'holiday';
+        else {
+          $cutoff = $officeCutoff ?: ($cutoffByDay[$w] ?? null);  // heure max de commande
+          if ($iso < $today) $reason = 'cutoff';
+          elseif ($iso === $today && $cutoff && $nowT >= $cutoff) $reason = 'cutoff'; // limite du jour passée
+        }
+        $days[] = ['date' => $iso, 'available' => $reason === null, 'reason' => $reason];
+      }
+      json_out($days);
+    }
+
+    // ── Retrait ou livraison simple (niveau boutique) ──
+    $av = row("SELECT collect_open_days, delivery_open_days FROM ws_shop_availability WHERE shop_id=?", [$s]);
+    $col = $mode === 'delivery' ? 'delivery_open_days' : 'collect_open_days';
+    $open = $av && $av[$col] ? json_decode($av[$col], true) : ($mode === 'delivery' ? [1,2,3,4,5] : [1,2,3,4,5,6]);
     $cut = row("SELECT cutoff_hour, cutoff_minutes, lead_hours FROM ws_calendar_rules
                  WHERE shop_id=? AND mode=? AND active=1 LIMIT 1", [$s, $mode]);
     $minDate = date('Y-m-d', time() + ($cut ? (int) $cut['lead_hours'] : 0) * 3600);
@@ -306,6 +343,26 @@ function dispatch($m, $p) {
         if ($cap && (int) $cap['current_orders'] >= (int) $cap['max_orders']) {
           $pdo->rollBack();
           json_out(['error' => 'Créneau complet', 'slot' => $b['slotLabel']], 409);
+        }
+      }
+      // 6b-bis. Capacité de la TOURNÉE B2B (livraison liée à un site) : refus si pleine.
+      if ($mode === 'delivery' && !empty($dl['siteId']) && !empty($b['deliveryDate'])) {
+        $siteRow = row("SELECT tournee_id FROM ws_office_delivery_sites WHERE id=?", [$dl['siteId']]);
+        $tourId = $siteRow['tournee_id'] ?? null;
+        if ($tourId) {
+          $w = (int) date('N', strtotime($b['deliveryDate']));
+          $tcap = row("SELECT max_orders FROM ws_tour_availability
+                        WHERE tour_id=? AND shop_id=? AND delivery_day=? AND active=1 LIMIT 1", [$tourId, $shop, $w]);
+          if ($tcap && $tcap['max_orders'] !== null) {
+            $cnt = row("SELECT COUNT(*) AS n FROM ws_orders o
+                          JOIN ws_office_delivery_sites st ON st.id = o.office_delivery_site_id
+                         WHERE st.tournee_id=? AND o.delivery_date=? AND o.status<>'cancelled'",
+                       [$tourId, $b['deliveryDate']]);
+            if ($cnt && (int) $cnt['n'] >= (int) $tcap['max_orders']) {
+              $pdo->rollBack();
+              json_out(['error' => 'Tournée complète pour cette date', 'date' => $b['deliveryDate']], 409);
+            }
+          }
         }
       }
       // 6c. Écriture de la commande + lignes + décrément stock (même jour).
