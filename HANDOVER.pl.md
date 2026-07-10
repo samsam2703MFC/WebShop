@@ -5,6 +5,13 @@
 **Gałąź robocza:** `feat/multi-shop-routing` (cała praca opisana poniżej znajduje się tutaj, nie na `main`)
 **Status:** cały kod jest napisany i przetestowany. Pozostało **wdrożenie na hostingu klienta**.
 
+> ## ✅ WYBRANA ARCHITEKTURA — pełny React + PHP, na serwerze klienta, **BEZ WooCommerce**
+> Cała strona działa na hostingu współdzielonym klienta: **statyczny frontend React + `php-api/`
+> (PHP) + MySQL `ws_`**. Bez Node.js, bez VPS, bez WooCommerce. Foldery `woocommerce-bridge/`
+> i Node `backend/` pozostają w repo **tylko jako referencja — nie wdrażaj ich**.
+> Serwuj pliki React i API PHP z **tego samego serwera** (ten sam origin → brak problemów
+> z CORS i mixed-content).
+
 ---
 
 ## 1. Czym jest ten projekt
@@ -41,7 +48,8 @@ biur (trasy/biura), regułami dostępności i promocją 4+1 (cross-portion).
   *(Odpowiednik w Node.js jest w `backend/` — użyj go tylko po przejściu na VPS.)*
 - **Frontend to statyczny React** serwowany przez GitHub Pages. Przełącza się z danych
   demo na żywe API przez ustawienie jednej zmiennej (`BASE_URL` w `api-config.js`).
-- **WooCommerce jest opcjonalny** — silnik sprzedaży/koszyka, który można synchronizować.
+- **WooCommerce NIE jest używany** — stack React + PHP całkowicie go zastępuje. Jego
+  kod pozostaje w repo tylko jako referencja.
 
 ## 3. Aktualny status
 
@@ -51,7 +59,7 @@ biur (trasy/biura), regułami dostępności i promocją 4+1 (cross-portion).
 | Dane 5 realnych sklepów (`backend/schema/seed-shops.sql`) | ✅ gotowe do importu |
 | **API PHP** (`php-api/`) — wszystkie endpointy, auth, płatności | ✅ napisane i przetestowane |
 | Importer produktów WooCommerce → baza (`backend/sync/import-csv.js` + narzędzia CSV) | ✅ narzędzie gotowe |
-| Synchronizacja WooCommerce push/pull + wtyczka (`woocommerce-bridge/`) | ✅ gotowe (opcjonalne) |
+| WooCommerce (`woocommerce-bridge/`) | ❌ **NIE UŻYWANE** (tylko referencja) |
 | Podłączenie frontendu na żywo (`api-config.js`) | ⏳ **wymaga URL API** |
 | Wdrożenie na hostingu klienta | ⏳ **DO ZROBIENIA (Twoje zadanie)** |
 
@@ -105,11 +113,17 @@ Wstaw klucz Stripe w `php-api/config.php` (`'stripe_secret' => 'sk_live_…'`).
 `POST /payments/checkout` zwróci wtedy URL do Stripe Checkout. Bez klucza zwraca 503,
 a reszta API działa dalej.
 
-### Krok 6 — Synchronizacja WooCommerce (opcjonalnie)
-Jeśli WooCommerce ma zostać silnikiem sprzedaży: zainstaluj wtyczkę
-`woocommerce-bridge/` (dostarczony zip), ustaw wspólny `atelier_sync_token` po obu
-stronach i zaplanuj `sync:push` (ceny/stany → Woo) oraz `sync:pull` (zamówienia → baza).
-Zobacz `WOOCOMMERCE.md` i `GO_LIVE.md`.
+### Krok 6 — WooCommerce — ❌ NIE UŻYWANE (pomiń)
+Klient zdecydował się działać **bez WooCommerce**. Wtyczka `woocommerce-bridge/` oraz
+narzędzia `sync:push`/`sync:pull` pozostają w repo tylko jako referencja — **nie instaluj
+ani nie uruchamiaj ich**. Wszystko, co robił WooCommerce (katalog, koszyk, zamówienia,
+płatności, konta klientów), obsługuje frontend React + `php-api/`.
+
+**Czego API PHP jeszcze NIE zawiera (a WooCommerce to zapewniał):**
+- panelu administracyjnego (zarządzanie produktami/cenami/stanami/zamówieniami z UI) —
+  na razie dane zarządza się w phpMyAdmin; mały panel można dodać później.
+- automatycznych e-maili potwierdzających zamówienie i faktur PDF — można dodać do `php-api/`.
+- wielu bramek płatności / interfejsu zwrotów — API obsługuje tylko Stripe.
 
 ## 5. Kluczowe pliki i lokalizacje
 

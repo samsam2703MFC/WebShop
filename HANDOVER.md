@@ -5,6 +5,13 @@
 **Working branch:** `feat/multi-shop-routing` (all the work below lives here, not `main`)
 **Status:** all code is written & tested. What remains is **deployment on the client's hosting**.
 
+> ## ✅ CHOSEN ARCHITECTURE — full React + PHP, on the client's server, **NO WooCommerce**
+> The whole site runs on the client's shared hosting: **static React frontend + `php-api/`
+> (PHP) + MySQL `ws_`**. No Node.js, no VPS, no WooCommerce. The `woocommerce-bridge/`
+> and Node `backend/` folders stay in the repo **for reference only — do not deploy them**.
+> Serve the React files and the PHP API from the **same server** (same origin → no CORS
+> or mixed-content issues).
+
 ---
 
 ## 1. What this project is
@@ -41,7 +48,8 @@ availability rules, and a 4+1 cross-portion promo.
   *(A Node.js equivalent exists in `backend/` — use it only if you move to a VPS.)*
 - **The frontend is static React** served from GitHub Pages. It switches from demo
   data to the live API by setting one variable (`BASE_URL` in `api-config.js`).
-- **WooCommerce is optional** — a sales/checkout engine that can be kept in sync.
+- **WooCommerce is NOT used** — the React + PHP stack replaces it entirely. Its
+  code stays in the repo for reference only.
 
 ## 3. Current status
 
@@ -51,7 +59,7 @@ availability rules, and a 4+1 cross-portion promo.
 | Seed of the 5 real shops (`backend/schema/seed-shops.sql`) | ✅ ready to import |
 | **PHP API** (`php-api/`) — all endpoints, auth, payments | ✅ written & tested |
 | WooCommerce → DB product importer (`backend/sync/import-csv.js` + `.../tools/wc-csv-to-ws-sql.mjs`) | ✅ tool ready |
-| WooCommerce sync push/pull + bridge plugin (`woocommerce-bridge/`) | ✅ ready (optional) |
+| WooCommerce (`woocommerce-bridge/`) | ❌ **NOT USED** (reference only) |
 | Frontend live wiring (`api-config.js`) | ⏳ **needs the API URL** |
 | Deployment on the client's hosting | ⏳ **TO DO (your job)** |
 
@@ -105,11 +113,17 @@ Put a Stripe secret key in `php-api/config.php` (`'stripe_secret' => 'sk_live_�
 `POST /payments/checkout` then returns a Stripe Checkout URL. Without a key it returns
 503 and the rest of the API keeps working.
 
-### Step 6 — WooCommerce sync (optional)
-If they keep WooCommerce as the sales engine: install the plugin
-`woocommerce-bridge/` (zip provided), set a shared `atelier_sync_token` on both sides,
-and schedule `sync:push` (prices/stock → Woo) and `sync:pull` (orders → DB).
-See `WOOCOMMERCE.md` and `GO_LIVE.md`.
+### Step 6 — WooCommerce — ❌ NOT USED (skip)
+The client has decided to run **without WooCommerce**. The `woocommerce-bridge/`
+plugin and the `sync:push`/`sync:pull` tooling stay in the repo for reference only;
+**do not install or run them**. Everything WooCommerce did (catalogue, cart, orders,
+payment, customer accounts) is handled by the React frontend + `php-api/`.
+
+**What the PHP API does NOT include yet (WooCommerce used to provide these):**
+- an admin back-office (manage products/prices/stock/orders from a UI) — for now
+  data is managed in phpMyAdmin; a small admin can be added later.
+- automatic order-confirmation emails and PDF invoices — can be added to `php-api/`.
+- multiple payment gateways / refunds UI — the API supports Stripe only.
 
 ## 5. Key files & where things are
 

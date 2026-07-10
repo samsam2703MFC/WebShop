@@ -1,13 +1,25 @@
 # L'Atelier By — Webshop · Project Guide for Claude
 
-## Stack
+## Stack & architecture (FINAL — full React + PHP, NO WooCommerce)
 
-- **Frontend** — no build step. React 18 UMD + Babel Standalone loaded from CDN.
-- **Entry point** — `index.html` redirects to `webshop-full.html`.
-- **Deployment** — GitHub Pages (`https://samsam2703MFC.github.io/WebShop/`).
-- **Backend** — `backend/` (Node 22 + Express + MySQL): API per `API.md`,
-  near-real-time ERP sync (outbox), Stripe hosted Checkout. See `backend/README.md`
-  and `GO_LIVE.md`. Frontend stays in demo mode until `BASE_URL` is set in `api-config.js`.
+> **Chosen mode of operation:** the whole site runs on the client's own server
+> (shared hosting: **PHP 8 + MySQL**). **No Node.js, no VPS, no WooCommerce.**
+
+- **Frontend** — static React 18 UMD + Babel Standalone (no build step). Entry
+  point `index.html` → `webshop-full.html`. Served from the client's server
+  (same origin as the API); GitHub Pages is used only for staging/demo.
+- **Backend** — **`php-api/`** (PHP + PDO). Serves the whole API from the `ws_`
+  MySQL schema. Credentials in `php-api/config.php`. This is THE backend.
+- **Database** — the **`ws_` schema** (`backend/schema/ws_schema.sql`, 33 tables)
+  is the single source of truth (catalogue, per-shop price, per-day stock, menus,
+  B2B network, customers, orders).
+- **Frontend goes live** by setting `BASE_URL` in `api-config.js` to the PHP API
+  URL (e.g. `https://<domain>/api`). Until then it runs on in-memory demo data.
+
+### Not used (kept in the repo for reference only — ignore for this deployment)
+- **`woocommerce-bridge/`** — WooCommerce integration. **WooCommerce is not used.**
+- **`backend/`** (Node 22 + Express) — Node version of the API, only relevant if
+  the project ever moves to a VPS. On shared hosting, use `php-api/` instead.
 
 ---
 
