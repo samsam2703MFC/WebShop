@@ -213,9 +213,24 @@ CREATE TABLE ws_offices (
   phone       VARCHAR(30),
   vat         VARCHAR(30),
   status      VARCHAR(20)  DEFAULT 'pending',
+  deferred_billing_enabled BOOLEAN DEFAULT FALSE,  -- commande sur compte (facturation)
+  contract_url             VARCHAR(255),           -- contrat rattaché au compte
   active      BOOLEAN DEFAULT TRUE,
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (tour_id) REFERENCES ws_tours(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Adresses e-mail rattachées à un compte entreprise (plusieurs par bureau).
+CREATE TABLE ws_office_emails (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  office_id    INT NOT NULL,
+  email        VARCHAR(200) NOT NULL,
+  contract_url VARCHAR(255),
+  active       BOOLEAN DEFAULT TRUE,
+  created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_office_email (office_id, email),
+  KEY idx_office_email (email),
+  FOREIGN KEY (office_id) REFERENCES ws_offices(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE ws_customers (
@@ -291,6 +306,7 @@ CREATE TABLE ws_orders (
   payment_method   VARCHAR(30),
   payment_status   VARCHAR(30)   DEFAULT 'pending',
   lang             VARCHAR(5)    DEFAULT 'fr',
+  note             VARCHAR(500),               -- note libre au niveau commande
   created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   office_client_id          INT,
   office_delivery_site_id   INT,
@@ -316,6 +332,7 @@ CREATE TABLE ws_order_lines (
   qty          INT           NOT NULL,
   unit_price   DECIMAL(10,2),
   `portion`    VARCHAR(20),                -- mot réservé MariaDB → backticks
+  note         VARCHAR(255),               -- note libre au niveau produit
   bundle_id    INT,
   options      JSON,
   bundle_slots JSON,

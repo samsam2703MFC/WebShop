@@ -234,6 +234,17 @@ function dispatch($m, $p) {
                           FROM ws_office_delivery_sites WHERE office_client_id=? AND active=1", [$mm['id']]);
     json_out($o);
   }
+
+  /* Comptes entreprise auxquels un e-mail est rattaché (pour commander « pour
+     une entreprise »). deferredBilling = paiement sur compte activé. */
+  if ($m === 'GET' && $p === '/companies') {
+    $email = strtolower(trim(qp('email') ?: ''));
+    if ($email === '') json_out([]);
+    json_out(rows("SELECT o.id, o.name, o.vat, o.deferred_billing_enabled AS deferredBilling
+                     FROM ws_office_emails e JOIN ws_offices o ON o.id = e.office_id
+                    WHERE e.email = ? AND e.active = 1 AND o.active = 1 AND o.status = 'validated'
+                    ORDER BY o.name", [$email]));
+  }
   if ($m === 'POST' && $p === '/delivery-fees/quote') {
     $b = body();
     $r = row("SELECT id, level, free_delivery AS freeDelivery, always_charge AS alwaysCharge,
@@ -254,8 +265,9 @@ function dispatch($m, $p) {
     if (!$shop || !is_array($basket) || !count($basket)) json_out(['error' => 'shopId et basket requis'], 400);
     $mode = $b['mode'] ?? 'collect';
     $dl = is_array($b['delivery'] ?? null) ? $b['delivery'] : [];
+    $note = isset($b['note']) ? mb_substr((string) $b['note'], 0, 500) : null;  // note commande
 
-    // 1. Lignes + sous-total (prix serveur), avec le flag promo croisée par produit.
+    // 1. Lignes + sous-total (prix serveur), avec le flag promo croisée + note produit.
     $subtotal = 0; $lines = [];
     foreach ($basket as $it) {
       $p2 = row("SELECT p.id, p.name, p.cross_portion, COALESCE(pp.price, p.price) AS price
@@ -265,7 +277,8 @@ function dispatch($m, $p) {
       $qty = max(1, (int) ($it['qty'] ?? 1));
       $subtotal += (float) $p2['price'] * $qty;
       $lines[] = ['productId' => $p2['id'], 'name' => $p2['name'], 'qty' => $qty,
-                  'unit' => (float) $p2['price'], 'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion']];
+                  'unit' => (float) $p2['price'], 'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion'],
+                  'note' => isset($it['note']) ? mb_substr((string) $it['note'], 0, 255) : null];
     }
     if (!count($lines)) json_out(['error' => 'aucun produit valide'], 400);
     $subtotal = round($subtotal, 2);
@@ -329,6 +342,29 @@ function dispatch($m, $p) {
       }
     }
 
+    // 4-bis. Compte entreprise : « commander pour une entreprise ».
+    //   - Si le compte a le paiement différé activé ET que le client choisit
+    //     « sur compte » → commande facturée (deferred, pas de paiement en ligne).
+    //   - Sinon → paiement par carte société (le front affiche « Je paie pour ma société ? »).
+    $companyId = $b['companyId'] ?? null; $onAccount = false;
+    $paymentMethod = $b['paymentMethod'] ?? 'cash';
+    if ($companyId) {
+      $custEmail = $b['email'] ?? null;
+      if (!$custEmail && !empty($b['customerId'])) {
+        $cc = row("SELECT email FROM ws_customers WHERE id=?", [$b['customerId']]); $custEmail = $cc['email'] ?? null;
+      }
+      $link = $custEmail ? row("SELECT o.deferred_billing_enabled AS deferred
+                                  FROM ws_office_emails e JOIN ws_offices o ON o.id = e.office_id
+                                 WHERE e.office_id=? AND e.email=? AND e.active=1 AND o.active=1 AND o.status='validated' LIMIT 1",
+                               [$companyId, strtolower(trim($custEmail))]) : null;
+      if (!$link) json_out(['error' => "Cet e-mail n'est pas rattaché à ce compte entreprise"], 403);
+      if ($link['deferred'] && !empty($b['onAccount'])) {
+        $onAccount = true; $paymentType = 'deferred'; $paymentMethod = 'account';
+      }
+    }
+    $orderStatus = $onAccount ? 'confirmed' : 'pending';
+    $officeClientId = $companyId ?? ($dl['officeClientId'] ?? null);
+
     // 5. Total final.
     $total = max(0, round($subtotal - $promo - $webshopDisc - $voucherDisc + $feeAmount, 2));
     $ref = 'WS-' . time() . rand(10, 99);
@@ -388,19 +424,19 @@ function dispatch($m, $p) {
       q("INSERT INTO ws_orders
            (order_ref, shop_id, customer_id, mode, status, slot_id, slot_label, delivery_date,
             subtotal, promo_amount, webshop_discount, voucher_code, voucher_discount, total,
-            payment_method, payment_status, lang, delivery_mode,
+            payment_method, payment_status, lang, note, delivery_mode,
             office_client_id, office_delivery_site_id, office_delivery_site_name, tournee_stop_id,
             payment_type, delivery_fee_applied, delivery_fee_amount, free_delivery_minimum)
-         VALUES (?,?,?,?, 'pending', ?,?,?, ?,?,?,?,?,?, ?, 'pending', ?, ?, ?,?,?,?, ?,?,?,?)",
-        [$ref, $shop, $b['customerId'] ?? null, $mode, $b['slotId'] ?? null, $b['slotLabel'] ?? null, $b['deliveryDate'] ?? null,
+         VALUES (?,?,?,?, ?, ?,?,?, ?,?,?,?,?,?, ?, 'pending', ?, ?, ?, ?,?,?,?, ?,?,?,?)",
+        [$ref, $shop, $b['customerId'] ?? null, $mode, $orderStatus, $b['slotId'] ?? null, $b['slotLabel'] ?? null, $b['deliveryDate'] ?? null,
          $subtotal, $promo, $webshopDisc, $voucherCode, $voucherDisc, $total,
-         $b['paymentMethod'] ?? 'cash', $b['lang'] ?? 'fr', $mode === 'delivery' ? 'office_delivery' : 'collect',
-         $dl['officeClientId'] ?? null, $dl['siteId'] ?? null, $dl['siteName'] ?? null, $dl['tourneeStopId'] ?? null,
+         $paymentMethod, $b['lang'] ?? 'fr', $note, $mode === 'delivery' ? 'office_delivery' : 'collect',
+         $officeClientId, $dl['siteId'] ?? null, $dl['siteName'] ?? null, $dl['tourneeStopId'] ?? null,
          $paymentType, $feeApplied, $feeAmount, $freeMin]);
       $oid = $pdo->lastInsertId();
       foreach ($lines as $l) {
-        q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`) VALUES (?,?,?,?,?,?)",
-          [$oid, $l['productId'], $l['name'], $l['qty'], $l['unit'], $l['portion']]);
+        q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note) VALUES (?,?,?,?,?,?,?)",
+          [$oid, $l['productId'], $l['name'], $l['qty'], $l['unit'], $l['portion'], $l['note']]);
         q("UPDATE ws_product_stock SET qty_sold = qty_sold + ?
             WHERE product_id=? AND shop_id=? AND date=? AND (mode=? OR mode IS NULL)",
           [$l['qty'], $l['productId'], $shop, $stockDate, $mode]);
@@ -422,7 +458,7 @@ function dispatch($m, $p) {
     json_out(['ok' => true, 'orderId' => (int) $oid, 'orderRef' => $ref,
               'subtotal' => $subtotal, 'promo' => $promo, 'webshopDiscount' => $webshopDisc,
               'voucherDiscount' => $voucherDisc, 'deliveryFee' => $feeAmount,
-              'paymentType' => $paymentType, 'total' => $total]);
+              'paymentType' => $paymentType, 'onAccount' => $onAccount, 'total' => $total]);
   }
   if ($m === 'GET' && ($mm = $match('/orders/:id'))) {
     $o = row("SELECT * FROM ws_orders WHERE id=? OR order_ref=? LIMIT 1", [$mm['id'], $mm['id']]);
@@ -535,6 +571,35 @@ function dispatch($m, $p) {
       q("UPDATE ws_shops SET webshop_discount_type=?, webshop_discount_value=? WHERE id=?",
         [$type, (float) ($b['value'] ?? 0), $b['shopId'] ?? 0]);
       json_out(['ok' => true, 'type' => $type, 'value' => (float) ($b['value'] ?? 0)]);
+    }
+    // ── Comptes entreprise (B2B) ──
+    // Activer/désactiver le paiement différé (sur compte) + contrat.
+    if ($m === 'POST' && $p === '/admin/company-billing') {
+      $b = body();
+      q("UPDATE ws_offices SET deferred_billing_enabled=?, contract_url=? WHERE id=?",
+        [!empty($b['deferred']) ? 1 : 0, $b['contractUrl'] ?? null, $b['officeId'] ?? 0]);
+      json_out(['ok' => true]);
+    }
+    // Lister les e-mails rattachés à un compte.
+    if ($m === 'GET' && $p === '/admin/company-emails') {
+      $oid = qp('officeId'); if (!$oid) json_out(['error' => 'officeId requis'], 400);
+      json_out(rows("SELECT id, email, contract_url AS contractUrl, active FROM ws_office_emails WHERE office_id=? ORDER BY email", [$oid]));
+    }
+    // Ajouter un e-mail à un compte entreprise.
+    if ($m === 'POST' && $p === '/admin/company-email') {
+      $b = body(); $email = strtolower(trim($b['email'] ?? ''));
+      if (!filter_var($email, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'Email invalide'], 400);
+      q("INSERT INTO ws_office_emails (office_id, email, contract_url, active) VALUES (?,?,?,1)
+         ON DUPLICATE KEY UPDATE active=1, contract_url=VALUES(contract_url)",
+        [$b['officeId'] ?? 0, $email, $b['contractUrl'] ?? null]);
+      json_out(['ok' => true]);
+    }
+    // Retirer un e-mail (désactiver).
+    if ($m === 'POST' && $p === '/admin/company-email/remove') {
+      $b = body();
+      q("UPDATE ws_office_emails SET active=0 WHERE office_id=? AND email=?",
+        [$b['officeId'] ?? 0, strtolower(trim($b['email'] ?? ''))]);
+      json_out(['ok' => true]);
     }
   }
 }

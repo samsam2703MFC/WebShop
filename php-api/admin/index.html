@@ -36,6 +36,7 @@
     <button data-tab="products" class="on" onclick="tab('products')">Produits</button>
     <button data-tab="pricing" onclick="tab('pricing')">Prix / Stock</button>
     <button data-tab="orders" onclick="tab('orders')">Commandes</button>
+    <button data-tab="b2b" onclick="tab('b2b')">Entreprises</button>
   </div>
 
   <section id="products" class="card">
@@ -80,6 +81,25 @@
     <h3>Commandes</h3>
     <table><thead><tr><th>Réf</th><th>Boutique</th><th>Total</th><th>Paiement</th><th>Statut</th></tr></thead><tbody id="otbody"></tbody></table>
   </section>
+
+  <section id="b2b" class="card" hidden>
+    <h3>Compte entreprise — paiement différé</h3>
+    <div class="row">
+      <label>Bureau ID<input id="cb_office" type="number" style="width:90px"></label>
+      <label>Paiement sur compte<input id="cb_deferred" type="checkbox"></label>
+      <label>Contrat (URL)<input id="cb_contract" placeholder="https://…"></label>
+      <button class="act" onclick="setBilling()">Enregistrer</button>
+    </div>
+    <p class="muted">Coché = la société peut commander « sur compte » (facturation). Sinon → paiement par carte société.</p>
+    <h3 style="margin-top:20px">E-mails rattachés au compte</h3>
+    <div class="row">
+      <label>Bureau ID<input id="ce_office" type="number" style="width:90px"></label>
+      <label>E-mail<input id="ce_email" placeholder="nom@societe.be"></label>
+      <button class="act" onclick="addEmail()">Ajouter</button>
+      <button class="act" style="background:#666" onclick="listEmails()">Lister</button>
+    </div>
+    <table><thead><tr><th>E-mail</th><th>Actif</th><th></th></tr></thead><tbody id="cetbody"></tbody></table>
+  </section>
 </main>
 <div id="msg"></div>
 
@@ -96,9 +116,29 @@ async function api(path, opts={}){
   return r.json();
 }
 function tab(name){
-  for(const s of ['products','pricing','orders']) document.getElementById(s).hidden = s!==name;
+  for(const s of ['products','pricing','orders','b2b']) document.getElementById(s).hidden = s!==name;
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.tab===name));
   if(name==='orders') loadOrders();
+}
+async function setBilling(){
+  await api('/admin/company-billing',{method:'POST',body:JSON.stringify({
+    officeId:+cb_office.value, deferred:cb_deferred.checked, contractUrl:cb_contract.value||null })});
+  toast('Compte enregistré');
+}
+async function addEmail(){
+  await api('/admin/company-email',{method:'POST',body:JSON.stringify({
+    officeId:+ce_office.value, email:ce_email.value.trim() })});
+  ce_email.value=''; toast('E-mail ajouté'); listEmails();
+}
+async function listEmails(){
+  const list = await api('/admin/company-emails?officeId='+(+ce_office.value));
+  document.getElementById('cetbody').innerHTML = list.map(e=>`
+    <tr><td>${e.email}</td><td>${e.active?'✓':'—'}</td>
+    <td><button class="act" style="background:#a33" onclick="rmEmail('${e.email.replace(/'/g,"")}')">Retirer</button></td></tr>`).join('');
+}
+async function rmEmail(email){
+  await api('/admin/company-email/remove',{method:'POST',body:JSON.stringify({officeId:+ce_office.value, email})});
+  toast('E-mail retiré'); listEmails();
 }
 async function load(){ if(TOKEN){ loadProducts(); } }
 async function loadProducts(){
