@@ -61,6 +61,8 @@ CREATE TABLE ws_shops (
   accent        VARCHAR(20) DEFAULT '#8D1D2C',
   tint          VARCHAR(20) DEFAULT '#fdf6f0',
   logo_url      VARCHAR(255),
+  webshop_discount_type  VARCHAR(20)   DEFAULT 'percent',  -- percent | fixed
+  webshop_discount_value DECIMAL(10,2) DEFAULT 0,          -- remise auto du webshop
   active        BOOLEAN DEFAULT TRUE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -282,6 +284,7 @@ CREATE TABLE ws_orders (
   delivery_date    DATE,
   subtotal         DECIMAL(10,2),
   promo_amount     DECIMAL(10,2) DEFAULT 0,
+  webshop_discount DECIMAL(10,2) DEFAULT 0,   -- remise auto du webshop (config boutique)
   voucher_code     VARCHAR(50),
   voucher_discount DECIMAL(10,2) DEFAULT 0,
   total            DECIMAL(10,2),

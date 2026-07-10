@@ -66,6 +66,14 @@
       <label>Qté totale<input id="st_qty" type="number" style="width:90px"></label>
       <button class="act" onclick="setStock()">Enregistrer le stock</button>
     </div>
+    <h3 style="margin-top:20px">Remise webshop (par boutique)</h3>
+    <div class="row">
+      <label>Boutique ID<input id="wd_shop" type="number" style="width:90px"></label>
+      <label>Type<select id="wd_type"><option value="percent">% pourcentage</option><option value="fixed">€ montant fixe</option></select></label>
+      <label>Valeur<input id="wd_val" type="number" step="0.01" style="width:90px"></label>
+      <button class="act" onclick="setDiscount()">Enregistrer la remise</button>
+    </div>
+    <p class="muted">Appliquée automatiquement à toutes les commandes webshop de cette boutique.</p>
   </section>
 
   <section id="orders" class="card" hidden>
@@ -126,6 +134,11 @@ async function setStock(){
     productId:+st_pid.value, shopId:+st_shop.value, mode:st_mode.value,
     date:st_date.value||undefined, qtyTotal:+st_qty.value })});
   toast('Stock enregistré');
+}
+async function setDiscount(){
+  await api('/admin/shop-discount',{method:'POST',body:JSON.stringify({
+    shopId:+wd_shop.value, type:wd_type.value, value:+wd_val.value })});
+  toast('Remise enregistrée');
 }
 async function loadOrders(){
   const list = await api('/admin/orders');

@@ -47,12 +47,15 @@ function dispatch($m, $p) {
   /* ── Shops / Brand ── */
   if ($m === 'GET' && $p === '/shops') {
     json_out(rows("SELECT id, slug, name, city, email, phone, accent, tint, logo_url,
+                          webshop_discount_type, webshop_discount_value,
                           TRIM(CONCAT_WS(' ', street, street_num)) AS address
                      FROM ws_shops WHERE active = 1 ORDER BY name"));
   }
   if ($m === 'GET' && $p === '/brand') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    json_out(row("SELECT id, slug, name, accent, tint, logo_url FROM ws_shops WHERE id = ?", [$s]) ?: []);
+    json_out(row("SELECT id, slug, name, accent, tint, logo_url,
+                         webshop_discount_type, webshop_discount_value
+                    FROM ws_shops WHERE id = ?", [$s]) ?: []);
   }
 
   /* ── Catalog ── */
@@ -283,13 +286,22 @@ function dispatch($m, $p) {
     }
     $promo = round($promo, 2);
 
+    // 2-bis. Remise webshop paramétrée par boutique (ws_shops.webshop_discount_*).
+    $webshopDisc = 0;
+    $sd = row("SELECT webshop_discount_type AS t, webshop_discount_value AS v FROM ws_shops WHERE id=?", [$shop]);
+    if ($sd && (float) $sd['v'] > 0) {
+      $baseW = $subtotal - $promo;
+      $webshopDisc = $sd['t'] === 'fixed' ? min($baseW, (float) $sd['v']) : round($baseW * (float) $sd['v']) / 100;
+    }
+    $webshopDisc = round($webshopDisc, 2);
+
     // 3. Bon de réduction (ws_vouchers) — validé serveur.
     $voucherCode = null; $voucherDisc = 0;
     if (!empty($b['voucher'])) {
       $v = row("SELECT code, type, value, min_order FROM ws_vouchers
                  WHERE code=? AND active=1 AND (expires_at IS NULL OR expires_at>NOW())
                    AND (max_uses IS NULL OR used_count<max_uses) LIMIT 1", [strtoupper(trim($b['voucher']))]);
-      $baseV = $subtotal - $promo;
+      $baseV = $subtotal - $promo - $webshopDisc;
       if ($v && $baseV >= (float) $v['min_order']) {
         $voucherCode = $v['code'];
         $voucherDisc = $v['type'] === 'percent' ? round($baseV * (float) $v['value']) / 100
@@ -311,14 +323,14 @@ function dispatch($m, $p) {
       if ($fr) {
         $paymentType = $fr['payment_type'] ?: 'immediate';
         $freeMin = (float) $fr['free_delivery_minimum'];
-        $afterDisc = $subtotal - $promo - $voucherDisc;
+        $afterDisc = $subtotal - $promo - $webshopDisc - $voucherDisc;
         $isFree = !$fr['always_charge'] && ($fr['free_delivery'] || ($freeMin > 0 && $afterDisc >= $freeMin));
         if (!$isFree) { $feeAmount = (float) $fr['fee_amount']; $feeApplied = $feeAmount > 0 ? 1 : 0; }
       }
     }
 
     // 5. Total final.
-    $total = max(0, round($subtotal - $promo - $voucherDisc + $feeAmount, 2));
+    $total = max(0, round($subtotal - $promo - $webshopDisc - $voucherDisc + $feeAmount, 2));
     $ref = 'WS-' . time() . rand(10, 99);
     $stockDate = $b['deliveryDate'] ?? date('Y-m-d');   // le stock est par jour
     $slotStart = (!empty($b['slotLabel']) && preg_match('/(\d{1,2}):(\d{2})/', $b['slotLabel'], $tm))
@@ -375,13 +387,13 @@ function dispatch($m, $p) {
       // 6c. Écriture de la commande + lignes + décrément stock (même jour).
       q("INSERT INTO ws_orders
            (order_ref, shop_id, customer_id, mode, status, slot_id, slot_label, delivery_date,
-            subtotal, promo_amount, voucher_code, voucher_discount, total,
+            subtotal, promo_amount, webshop_discount, voucher_code, voucher_discount, total,
             payment_method, payment_status, lang, delivery_mode,
             office_client_id, office_delivery_site_id, office_delivery_site_name, tournee_stop_id,
             payment_type, delivery_fee_applied, delivery_fee_amount, free_delivery_minimum)
-         VALUES (?,?,?,?, 'pending', ?,?,?, ?,?,?,?,?, ?, 'pending', ?, ?, ?,?,?,?, ?,?,?,?)",
+         VALUES (?,?,?,?, 'pending', ?,?,?, ?,?,?,?,?,?, ?, 'pending', ?, ?, ?,?,?,?, ?,?,?,?)",
         [$ref, $shop, $b['customerId'] ?? null, $mode, $b['slotId'] ?? null, $b['slotLabel'] ?? null, $b['deliveryDate'] ?? null,
-         $subtotal, $promo, $voucherCode, $voucherDisc, $total,
+         $subtotal, $promo, $webshopDisc, $voucherCode, $voucherDisc, $total,
          $b['paymentMethod'] ?? 'cash', $b['lang'] ?? 'fr', $mode === 'delivery' ? 'office_delivery' : 'collect',
          $dl['officeClientId'] ?? null, $dl['siteId'] ?? null, $dl['siteName'] ?? null, $dl['tourneeStopId'] ?? null,
          $paymentType, $feeApplied, $feeAmount, $freeMin]);
@@ -408,8 +420,9 @@ function dispatch($m, $p) {
     }
     send_order_email($ref, $lines, $total, $to);
     json_out(['ok' => true, 'orderId' => (int) $oid, 'orderRef' => $ref,
-              'subtotal' => $subtotal, 'promo' => $promo, 'voucherDiscount' => $voucherDisc,
-              'deliveryFee' => $feeAmount, 'paymentType' => $paymentType, 'total' => $total]);
+              'subtotal' => $subtotal, 'promo' => $promo, 'webshopDiscount' => $webshopDisc,
+              'voucherDiscount' => $voucherDisc, 'deliveryFee' => $feeAmount,
+              'paymentType' => $paymentType, 'total' => $total]);
   }
   if ($m === 'GET' && ($mm = $match('/orders/:id'))) {
     $o = row("SELECT * FROM ws_orders WHERE id=? OR order_ref=? LIMIT 1", [$mm['id'], $mm['id']]);
@@ -514,6 +527,14 @@ function dispatch($m, $p) {
       $b = body();
       q("UPDATE ws_orders SET status=? WHERE id=?", [$b['status'] ?? 'confirmed', $mm['id']]);
       json_out(['ok' => true]);
+    }
+    // Régler la remise webshop d'une boutique
+    if ($m === 'POST' && $p === '/admin/shop-discount') {
+      $b = body();
+      $type = in_array($b['type'] ?? '', ['percent', 'fixed'], true) ? $b['type'] : 'percent';
+      q("UPDATE ws_shops SET webshop_discount_type=?, webshop_discount_value=? WHERE id=?",
+        [$type, (float) ($b['value'] ?? 0), $b['shopId'] ?? 0]);
+      json_out(['ok' => true, 'type' => $type, 'value' => (float) ($b['value'] ?? 0)]);
     }
   }
 }
