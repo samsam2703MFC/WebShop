@@ -2639,10 +2639,25 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const defaultPayment = (deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : 'bancontact';
   const [payment, setPayment] = useState(defaultPayment);
 
+  // B2B « commander pour une entreprise » + note libre de commande.
+  const [orderNote, setOrderNote] = useState('');
+  const [companies, setCompanies] = useState([]);
+  const [companyId, setCompanyId] = useState('');
+  const [onAccount, setOnAccount] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const email = user && user.email;
+    if (open && email && window.WSCompanies) {
+      window.WSCompanies.list(email).then((cs) => { if (alive) setCompanies(cs || []); }).catch(() => {});
+    } else setCompanies([]);
+    return () => { alive = false; };
+  }, [open, user && user.email]);
+
   // Reset when reopened
   useEffect(() => {
     if (open) {
       setStep(1); setSlot(null); setInvoice(false); setVat(''); setForceAuth(false); setPaying(false); setPayErr(null);
+      setOrderNote(''); setCompanyId(''); setOnAccount(false);
       setPayment((deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : 'bancontact');
     }
   }, [open]);
@@ -2676,8 +2691,11 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         slot: typeof slot === 'object' && slot
           ? { slotId: slot.id, label: slot.label }
           : { slotId: slot, label: slot },
-        basket: basket.map((l) => ({ productId: l.productId, qty: l.qty, portion: l.portion || null, options: l.options || [], bundleId: l.bundleId || null, bundleSlots: l.bundleSlots || {} })),
+        basket: basket.map((l) => ({ productId: l.productId, qty: l.qty, portion: l.portion || null, note: l.note || null, options: l.options || [], bundleId: l.bundleId || null, bundleSlots: l.bundleSlots || {} })),
         voucher: voucherApplied && voucherApplied.ok ? voucherApplied.voucher.code : null,
+        note: orderNote || null,
+        companyId: companyId || null,
+        onAccount: !!onAccount,
         customer: user ? { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, phone: user.phone || null, officeId: user.officeId || null } : { ...contact },
         payment: { method: payment },
         delivery: mode === 'delivery' && office ? {
@@ -2763,6 +2781,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           <CheckoutStep2 mode={mode} shop={shop} office={office} tour={tour} slot={slot} setSlot={setSlot} date={date}/>
         )}
         {step === 3 && (
+          <>
           <CheckoutStep3
             mode={mode} basket={basket} subtotal={subtotal} promo={promo} total={total}
             deliveryFee={deliveryFee} deliveryFeeResult={deliveryFeeResult}
@@ -2773,6 +2792,37 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
             voucherDiscount={voucherDiscount}
           />
+          <div className="ws-b2b" style={{ marginTop: 12, padding: 12, border: '1px solid #eee', borderRadius: 10 }}>
+            {companies.length > 0 && (
+              <label style={{ display: 'block', marginBottom: 8 }}>
+                Commander pour une entreprise
+                <select value={companyId} onChange={(e) => { setCompanyId(e.target.value); setOnAccount(false); }}
+                        style={{ display: 'block', width: '100%', marginTop: 4 }}>
+                  <option value="">— Non (commande personnelle) —</option>
+                  {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </label>
+            )}
+            {companyId && (() => {
+              const c = companies.find((x) => String(x.id) === String(companyId));
+              if (c && c.deferredBilling) {
+                return (
+                  <label style={{ display: 'block', marginBottom: 8 }}>
+                    <input type="checkbox" checked={onAccount} onChange={(e) => setOnAccount(e.target.checked)} />
+                    {' '}Commander sur le compte de l'entreprise (facturation)
+                  </label>
+                );
+              }
+              return <p style={{ margin: '4px 0', color: '#8D1D2C' }}>Je paie pour ma société — paiement par carte société.</p>;
+            })()}
+            <label style={{ display: 'block' }}>
+              Note (facultatif)
+              <textarea value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2}
+                        placeholder="Instructions, occasion…"
+                        style={{ display: 'block', width: '100%', marginTop: 4 }} />
+            </label>
+          </div>
+          </>
         )}
       </div>
 

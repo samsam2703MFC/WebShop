@@ -267,6 +267,19 @@ function dispatch($m, $p) {
     $dl = is_array($b['delivery'] ?? null) ? $b['delivery'] : [];
     $note = isset($b['note']) ? mb_substr((string) $b['note'], 0, 500) : null;  // note commande
 
+    // Compatibilité avec le payload du front (imbriqué / snake_case) : on normalise.
+    $b['customerId']   = $b['customerId']   ?? ($b['customer']['id']    ?? null);
+    $b['email']        = $b['email']        ?? ($b['customer']['email'] ?? null);
+    $b['paymentMethod']= $b['paymentMethod']?? ($b['payment']['method'] ?? null);
+    $b['slotId']       = $b['slotId']       ?? ($b['slot']['slotId']    ?? null);
+    $b['slotLabel']    = $b['slotLabel']    ?? ($b['slot']['label']     ?? null);
+    $b['deliveryDate'] = $b['deliveryDate'] ?? ($b['slot']['date']      ?? null);
+    $dl['siteId']         = $dl['siteId']         ?? ($dl['office_delivery_site_id']   ?? null);
+    $dl['officeClientId'] = $dl['officeClientId'] ?? ($dl['office_client_id']          ?? null);
+    $dl['tourId']         = $dl['tourId']         ?? ($dl['tournee_id']                ?? null);
+    $dl['siteName']       = $dl['siteName']       ?? ($dl['office_delivery_site_name'] ?? null);
+    $dl['tourneeStopId']  = $dl['tourneeStopId']  ?? ($dl['tournee_stop_id']           ?? null);
+
     // 1. Lignes + sous-total (prix serveur), avec le flag promo croisée + note produit.
     $subtotal = 0; $lines = [];
     foreach ($basket as $it) {
