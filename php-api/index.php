@@ -147,6 +147,10 @@ function dispatch($m, $p) {
     $exc = rows("SELECT DATE_FORMAT(exception_date,'%Y-%m-%d') AS d, type FROM ws_shop_exceptions
                   WHERE shop_id=? AND exception_date BETWEEN ? AND ?", [$s, $from, $to]);
     $closed = []; foreach ($exc as $e) if ($e['type'] === 'closed') $closed[$e['d']] = true;
+    // Contrainte du panier (par produit + mode) : lead max, cutoff le plus tôt, dispo.
+    $productIds = array_values(array_filter(array_map('intval', explode(',', qp('products') ?: ''))));
+    [$leadDays, $prodCutoff, $prodEnabled] = basket_pa($s, $mode, $productIds);
+    $todayIso = date('Y-m-d'); $nowT = date('H:i:s');
 
     // ── B2B : livraison liée à un bureau/site → piloté par la TOURNÉE ──
     if ($mode === 'delivery' && ($officeId || $siteId)) {
@@ -164,7 +168,11 @@ function dispatch($m, $p) {
       foreach ($ta as $r) { $d = (int) $r['delivery_day']; $tourDays[] = $d; $cutoffByDay[$d] = $r['cutoff_time']; }
       $allowed = ($set && $set['allowed_days']) ? json_decode($set['allowed_days'], true) : null; // null = pas de restriction bureau
       $officeCutoff = $set['delivery_cutoff'] ?? null;
-      $today = date('Y-m-d'); $nowT = date('H:i:s');
+      // Date min = aujourd'hui + lead produit (+1 si limite du jour déjà passée).
+      $wToday = (int) date('N');
+      $cutToday = $prodCutoff ?: ($officeCutoff ?: ($cutoffByDay[$wToday] ?? null));
+      $extra = ($cutToday && $nowT >= $cutToday) ? 1 : 0;
+      $minDate = date('Y-m-d', strtotime('today') + ($leadDays + $extra) * 86400);
 
       $days = [];
       for ($t = strtotime($from), $end = strtotime($to); $t <= $end; $t += 86400) {
@@ -173,11 +181,8 @@ function dispatch($m, $p) {
         if (!in_array($w, $tourDays)) $reason = 'no_tour';                          // pas de tournée ce jour
         elseif ($allowed !== null && !in_array($w, $allowed)) $reason = 'office_closed'; // bureau ne reçoit pas ce jour
         elseif (isset($closed[$iso])) $reason = 'holiday';
-        else {
-          $cutoff = $officeCutoff ?: ($cutoffByDay[$w] ?? null);  // heure max de commande
-          if ($iso < $today) $reason = 'cutoff';
-          elseif ($iso === $today && $cutoff && $nowT >= $cutoff) $reason = 'cutoff'; // limite du jour passée
-        }
+        elseif (!$prodEnabled) $reason = 'mode_unavailable';                        // produit non livrable
+        elseif ($iso < $minDate) $reason = 'cutoff';                                // trop tôt (lead/limite)
         $days[] = ['date' => $iso, 'available' => $reason === null, 'reason' => $reason];
       }
       json_out($days);
@@ -189,18 +194,20 @@ function dispatch($m, $p) {
     $open = $av && $av[$col] ? json_decode($av[$col], true) : ($mode === 'delivery' ? [1,2,3,4,5] : [1,2,3,4,5,6]);
     $cut = row("SELECT cutoff_hour, cutoff_minutes, lead_hours FROM ws_calendar_rules
                  WHERE shop_id=? AND mode=? AND active=1 LIMIT 1", [$s, $mode]);
-    $minDate = date('Y-m-d', time() + ($cut ? (int) $cut['lead_hours'] : 0) * 3600);
-    if ($cut) {
-      $nowMin = (int) date('G') * 60 + (int) date('i');
-      $cutMin = (int) $cut['cutoff_hour'] * 60 + (int) $cut['cutoff_minutes'];
-      if ($nowMin > $cutMin) $minDate = max($minDate, date('Y-m-d', strtotime('tomorrow')));
-    }
+    // Lead (jours) : max entre le défaut boutique et le panier ; cutoff : le plus tôt
+    // entre la limite boutique et l'override produit ; le tout selon le mode.
+    $shopCutoff = $cut ? sprintf('%02d:%02d:00', (int) $cut['cutoff_hour'], (int) $cut['cutoff_minutes']) : null;
+    $cutoff = $prodCutoff !== null ? ($shopCutoff !== null ? min($prodCutoff, $shopCutoff) : $prodCutoff) : $shopCutoff;
+    $lead = max($leadDays, $cut ? (int) ceil((int) $cut['lead_hours'] / 24) : 0);
+    $extra = ($cutoff && $nowT >= $cutoff) ? 1 : 0;
+    $minDate = date('Y-m-d', strtotime('today') + ($lead + $extra) * 86400);
     $days = [];
     for ($t = strtotime($from), $end = strtotime($to); $t <= $end; $t += 86400) {
       $iso = date('Y-m-d', $t); $isoDay = (int) date('N', $t); // 1=Mon..7=Sun
       $reason = !in_array($isoDay, $open) ? 'closed'
               : (isset($closed[$iso]) ? 'holiday'
-              : ($iso < $minDate ? 'cutoff' : null));
+              : (!$prodEnabled ? 'mode_unavailable'
+              : ($iso < $minDate ? 'cutoff' : null)));
       $days[] = ['date' => $iso, 'available' => $reason === null, 'reason' => $reason];
     }
     json_out($days);
@@ -509,6 +516,44 @@ function dispatch($m, $p) {
       json_out(['ok' => true]);
     }
   }
+}
+
+/* Contrainte de date d'un panier, PAR MODE (collect/delivery).
+   Hiérarchie par produit : ws_product_availability → ws_category_availability.
+   Retourne [leadMax (jours), cutoffMin ('HH:MM:SS' ou null), tousDispo(bool)].
+   - lead : le produit le plus long impose son délai (max).
+   - cutoff : la limite la plus tôt s'impose (min).
+   - dispo : faux si un produit n'est pas activé dans ce mode. */
+function basket_pa($shop, $mode, $productIds) {
+  if (!$productIds) return [0, null, true];
+  $in = implode(',', array_fill(0, count($productIds), '?'));
+  $rs = rows("SELECT p.id, p.no_delivery,
+                     pa.collect_enabled p_ce, pa.delivery_enabled p_de,
+                     pa.collect_lead_time p_cl, pa.delivery_lead_time p_dl,
+                     pa.collect_cutoff_override p_cc, pa.delivery_cutoff_override p_dc,
+                     ca.collect_enabled c_ce, ca.delivery_enabled c_de,
+                     ca.collect_lead_time c_cl, ca.delivery_lead_time c_dl,
+                     ca.collect_cutoff_override c_cc, ca.delivery_cutoff_override c_dc
+                FROM ws_products p
+                LEFT JOIN ws_product_availability pa ON pa.product_id=p.id AND pa.shop_id=? AND pa.active=1
+                LEFT JOIN ws_category_availability ca ON ca.category_id=p.cat_id AND ca.shop_id=? AND ca.active=1
+               WHERE p.id IN ($in)", array_merge([$shop, $shop], $productIds));
+  $lead = 0; $cutoff = null; $enabled = true;
+  foreach ($rs as $r) {
+    if ($mode === 'delivery') {
+      $en = $r['p_de'] ?? $r['c_de'] ?? (int) !$r['no_delivery'];
+      $l  = $r['p_dl'] ?? $r['c_dl'] ?? null;
+      $c  = $r['p_dc'] ?? $r['c_dc'] ?? null;
+    } else {
+      $en = $r['p_ce'] ?? $r['c_ce'] ?? 1;
+      $l  = $r['p_cl'] ?? $r['c_cl'] ?? null;
+      $c  = $r['p_cc'] ?? $r['c_cc'] ?? null;
+    }
+    if (!$en) $enabled = false;
+    if ($l !== null) $lead = max($lead, (int) $l);
+    if ($c !== null) $cutoff = ($cutoff === null) ? $c : min($cutoff, $c);
+  }
+  return [$lead, $cutoff, $enabled];
 }
 
 /* Shape client d'un customer. */
