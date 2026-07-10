@@ -148,10 +148,22 @@ function dispatch($m, $p) {
     $exc = rows("SELECT DATE_FORMAT(exception_date,'%Y-%m-%d') AS d, type FROM ws_shop_exceptions
                   WHERE shop_id=? AND exception_date BETWEEN ? AND ?", [$s, $from, $to]);
     $closed = []; foreach ($exc as $e) if ($e['type'] === 'closed') $closed[$e['d']] = true;
+    // Cutoff serveur : date minimale commandable = maintenant + délai (lead_hours) ;
+    // et si l'heure limite (cutoff) du jour est passée, on repousse à demain.
+    $cut = row("SELECT cutoff_hour, cutoff_minutes, lead_hours FROM ws_calendar_rules
+                 WHERE shop_id=? AND mode=? AND active=1 LIMIT 1", [$s, $mode]);
+    $minDate = date('Y-m-d', time() + ($cut ? (int) $cut['lead_hours'] : 0) * 3600);
+    if ($cut) {
+      $nowMin = (int) date('G') * 60 + (int) date('i');
+      $cutMin = (int) $cut['cutoff_hour'] * 60 + (int) $cut['cutoff_minutes'];
+      if ($nowMin > $cutMin) $minDate = max($minDate, date('Y-m-d', strtotime('tomorrow')));
+    }
     $days = [];
     for ($t = strtotime($from), $end = strtotime($to); $t <= $end; $t += 86400) {
       $iso = date('Y-m-d', $t); $isoDay = (int) date('N', $t); // 1=Mon..7=Sun
-      $reason = !in_array($isoDay, $open) ? 'closed' : (isset($closed[$iso]) ? 'holiday' : null);
+      $reason = !in_array($isoDay, $open) ? 'closed'
+              : (isset($closed[$iso]) ? 'holiday'
+              : ($iso < $minDate ? 'cutoff' : null));
       $days[] = ['date' => $iso, 'available' => $reason === null, 'reason' => $reason];
     }
     json_out($days);
@@ -264,29 +276,66 @@ function dispatch($m, $p) {
     // 5. Total final.
     $total = max(0, round($subtotal - $promo - $voucherDisc + $feeAmount, 2));
     $ref = 'WS-' . time() . rand(10, 99);
+    $stockDate = $b['deliveryDate'] ?? date('Y-m-d');   // le stock est par jour
+    $slotStart = (!empty($b['slotLabel']) && preg_match('/(\d{1,2}):(\d{2})/', $b['slotLabel'], $tm))
+                 ? sprintf('%02d:%02d:00', (int) $tm[1], (int) $tm[2]) : null;
+    $totalQty = array_sum(array_map(fn ($l) => $l['qty'], $lines));
 
-    // 6. Persistance — toutes les colonnes (fee, promo, voucher, B2B, payment_type).
-    q("INSERT INTO ws_orders
-         (order_ref, shop_id, customer_id, mode, status, slot_id, slot_label, delivery_date,
-          subtotal, promo_amount, voucher_code, voucher_discount, total,
-          payment_method, payment_status, lang, delivery_mode,
-          office_client_id, office_delivery_site_id, office_delivery_site_name, tournee_stop_id,
-          payment_type, delivery_fee_applied, delivery_fee_amount, free_delivery_minimum)
-       VALUES (?,?,?,?, 'pending', ?,?,?, ?,?,?,?,?, ?, 'pending', ?, ?, ?,?,?,?, ?,?,?,?)",
-      [$ref, $shop, $b['customerId'] ?? null, $mode, $b['slotId'] ?? null, $b['slotLabel'] ?? null, $b['deliveryDate'] ?? null,
-       $subtotal, $promo, $voucherCode, $voucherDisc, $total,
-       $b['paymentMethod'] ?? 'cash', $b['lang'] ?? 'fr', $mode === 'delivery' ? 'office_delivery' : 'collect',
-       $dl['officeClientId'] ?? null, $dl['siteId'] ?? null, $dl['siteName'] ?? null, $dl['tourneeStopId'] ?? null,
-       $paymentType, $feeApplied, $feeAmount, $freeMin]);
-    $oid = db()->lastInsertId();
-    foreach ($lines as $l) {
-      q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`) VALUES (?,?,?,?,?,?)",
-        [$oid, $l['productId'], $l['name'], $l['qty'], $l['unit'], $l['portion']]);
-      q("UPDATE ws_product_stock SET qty_sold = qty_sold + ?
-          WHERE product_id=? AND shop_id=? AND date=CURDATE() AND (mode=? OR mode IS NULL)",
-        [$l['qty'], $l['productId'], $shop, $mode]);
+    // 6. Transaction : anti-survente + capacité créneau + écriture (tout ou rien).
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+      // 6a. Anti-survente : stock verrouillé (FOR UPDATE), refus si insuffisant.
+      //     Pas de ligne stock pour ce jour = illimité (aucune vérification).
+      foreach ($lines as $l) {
+        $st = row("SELECT GREATEST(0, qty_total - qty_reserved - qty_sold) AS avail
+                     FROM ws_product_stock
+                    WHERE product_id=? AND shop_id=? AND date=? AND (mode=? OR mode IS NULL)
+                    LIMIT 1 FOR UPDATE", [$l['productId'], $shop, $stockDate, $mode]);
+        if ($st !== null && $l['qty'] > (int) $st['avail']) {
+          $pdo->rollBack();
+          json_out(['error' => 'Stock insuffisant', 'product' => $l['name'], 'available' => (int) $st['avail']], 409);
+        }
+      }
+      // 6b. Capacité du créneau (si défini pour cette date) : refus si complet.
+      $cap = null;
+      if ($slotStart && !empty($b['deliveryDate'])) {
+        $cap = row("SELECT id, max_orders, current_orders FROM ws_slot_capacity
+                     WHERE shop_id=? AND mode=? AND slot_date=? AND slot_start=? LIMIT 1 FOR UPDATE",
+                   [$shop, $mode, $b['deliveryDate'], $slotStart]);
+        if ($cap && (int) $cap['current_orders'] >= (int) $cap['max_orders']) {
+          $pdo->rollBack();
+          json_out(['error' => 'Créneau complet', 'slot' => $b['slotLabel']], 409);
+        }
+      }
+      // 6c. Écriture de la commande + lignes + décrément stock (même jour).
+      q("INSERT INTO ws_orders
+           (order_ref, shop_id, customer_id, mode, status, slot_id, slot_label, delivery_date,
+            subtotal, promo_amount, voucher_code, voucher_discount, total,
+            payment_method, payment_status, lang, delivery_mode,
+            office_client_id, office_delivery_site_id, office_delivery_site_name, tournee_stop_id,
+            payment_type, delivery_fee_applied, delivery_fee_amount, free_delivery_minimum)
+         VALUES (?,?,?,?, 'pending', ?,?,?, ?,?,?,?,?, ?, 'pending', ?, ?, ?,?,?,?, ?,?,?,?)",
+        [$ref, $shop, $b['customerId'] ?? null, $mode, $b['slotId'] ?? null, $b['slotLabel'] ?? null, $b['deliveryDate'] ?? null,
+         $subtotal, $promo, $voucherCode, $voucherDisc, $total,
+         $b['paymentMethod'] ?? 'cash', $b['lang'] ?? 'fr', $mode === 'delivery' ? 'office_delivery' : 'collect',
+         $dl['officeClientId'] ?? null, $dl['siteId'] ?? null, $dl['siteName'] ?? null, $dl['tourneeStopId'] ?? null,
+         $paymentType, $feeApplied, $feeAmount, $freeMin]);
+      $oid = $pdo->lastInsertId();
+      foreach ($lines as $l) {
+        q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`) VALUES (?,?,?,?,?,?)",
+          [$oid, $l['productId'], $l['name'], $l['qty'], $l['unit'], $l['portion']]);
+        q("UPDATE ws_product_stock SET qty_sold = qty_sold + ?
+            WHERE product_id=? AND shop_id=? AND date=? AND (mode=? OR mode IS NULL)",
+          [$l['qty'], $l['productId'], $shop, $stockDate, $mode]);
+      }
+      if ($cap) q("UPDATE ws_slot_capacity SET current_orders = current_orders + 1, current_items = current_items + ? WHERE id=?", [$totalQty, $cap['id']]);
+      if ($voucherCode) q("UPDATE ws_vouchers SET used_count = used_count + 1 WHERE code=?", [$voucherCode]);
+      $pdo->commit();
+    } catch (Throwable $e) {
+      if ($pdo->inTransaction()) $pdo->rollBack();
+      throw $e;
     }
-    if ($voucherCode) q("UPDATE ws_vouchers SET used_count = used_count + 1 WHERE code=?", [$voucherCode]);
 
     // E-mail de confirmation (email fourni, ou celui du client connecté).
     $to = $b['email'] ?? null;
