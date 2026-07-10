@@ -119,11 +119,16 @@ plugin and the `sync:push`/`sync:pull` tooling stay in the repo for reference on
 **do not install or run them**. Everything WooCommerce did (catalogue, cart, orders,
 payment, customer accounts) is handled by the React frontend + `php-api/`.
 
-**What the PHP API does NOT include yet (WooCommerce used to provide these):**
-- an admin back-office (manage products/prices/stock/orders from a UI) — for now
-  data is managed in phpMyAdmin; a small admin can be added later.
-- automatic order-confirmation emails and PDF invoices — can be added to `php-api/`.
-- multiple payment gateways / refunds UI — the API supports Stripe only.
+**Replacements for WooCommerce features (now built into `php-api/`):**
+- ✅ **Admin back-office** — `php-api/admin/index.html` (open `https://<domain>/api/admin/`).
+  Manage products, per-shop prices, daily stock, and order statuses. Protected by
+  `admin_token` (set it in `config.php`). Admin endpoints: `/admin/products`,
+  `/admin/price`, `/admin/stock`, `/admin/orders`, `/admin/orders/:id/status`.
+- ✅ **Order-confirmation emails** — sent on `POST /orders` via PHP `mail()`
+  (set `mail_from` in `config.php`; pass `email` in the order or use the logged-in
+  customer). Best-effort: an email failure never blocks the order.
+- ⚠️ Still Stripe-only for payments (no other gateways / no refunds UI) + no PDF
+  invoice yet — add later if needed.
 
 ## 5. Key files & where things are
 

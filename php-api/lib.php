@@ -57,3 +57,23 @@ function auth_uid() {
   if (stripos($h, 'bearer ') === 0) $h = substr($h, 7);
   return verify_token(trim($h))['id'] ?? null;
 }
+
+/* Garde du back-office : jeton admin (X-Admin-Token ou Bearer). */
+function require_admin() {
+  $expected = cfg()['admin_token'] ?? '';
+  if ($expected === '') json_out(['error' => 'Admin non configuré (admin_token manquant)'], 503);
+  $given = req_header('X-Admin-Token');
+  if ($given === '') { $a = req_header('Authorization'); if (stripos($a, 'bearer ') === 0) $given = substr($a, 7); }
+  if (!hash_equals($expected, trim($given))) json_out(['error' => 'Non autorisé'], 401);
+}
+
+/* E-mail de confirmation de commande (best-effort ; n'échoue jamais la commande). */
+function send_order_email($ref, $lines, $total, $to) {
+  $from = cfg()['mail_from'] ?? '';
+  if (!$to || !$from || !filter_var($to, FILTER_VALIDATE_EMAIL)) return;
+  $items = '';
+  foreach ($lines as $l) $items .= "- {$l['name']} x{$l['qty']} : " . number_format($l['unit'], 2) . " EUR\n";
+  $body = "Bonjour,\n\nMerci pour votre commande $ref.\n\n$items\nTotal : " . number_format($total, 2) . " EUR\n\nL'Atelier By";
+  $headers = "From: $from\r\nContent-Type: text/plain; charset=utf-8\r\n";
+  @mail($to, "Confirmation de commande $ref", $body, $headers);
+}

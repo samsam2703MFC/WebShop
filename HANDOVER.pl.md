@@ -119,11 +119,16 @@ narzędzia `sync:push`/`sync:pull` pozostają w repo tylko jako referencja — *
 ani nie uruchamiaj ich**. Wszystko, co robił WooCommerce (katalog, koszyk, zamówienia,
 płatności, konta klientów), obsługuje frontend React + `php-api/`.
 
-**Czego API PHP jeszcze NIE zawiera (a WooCommerce to zapewniał):**
-- panelu administracyjnego (zarządzanie produktami/cenami/stanami/zamówieniami z UI) —
-  na razie dane zarządza się w phpMyAdmin; mały panel można dodać później.
-- automatycznych e-maili potwierdzających zamówienie i faktur PDF — można dodać do `php-api/`.
-- wielu bramek płatności / interfejsu zwrotów — API obsługuje tylko Stripe.
+**Zastępniki funkcji WooCommerce (już wbudowane w `php-api/`):**
+- ✅ **Panel administracyjny** — `php-api/admin/index.html` (otwórz `https://<domena>/api/admin/`).
+  Zarządzanie produktami, cenami per sklep, dziennym stanem i statusami zamówień.
+  Chroniony przez `admin_token` (ustaw w `config.php`). Endpointy: `/admin/products`,
+  `/admin/price`, `/admin/stock`, `/admin/orders`, `/admin/orders/:id/status`.
+- ✅ **E-maile potwierdzające zamówienie** — wysyłane przy `POST /orders` przez PHP `mail()`
+  (ustaw `mail_from` w `config.php`; przekaż `email` w zamówieniu lub użyj zalogowanego
+  klienta). Best-effort: błąd e-maila nigdy nie blokuje zamówienia.
+- ⚠️ Płatności nadal tylko Stripe (brak innych bramek / interfejsu zwrotów) + brak faktur
+  PDF — do dodania później w razie potrzeby.
 
 ## 5. Kluczowe pliki i lokalizacje
 

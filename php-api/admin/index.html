@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Back-office — L'Atelier By</title>
+<style>
+  :root { --accent:#8D1D2C; }
+  * { box-sizing:border-box; font-family:system-ui,sans-serif; }
+  body { margin:0; background:#faf7f4; color:#222; }
+  header { background:var(--accent); color:#fff; padding:14px 20px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; flex:1; }
+  header input { padding:6px 10px; border:0; border-radius:6px; min-width:220px; }
+  main { max-width:1000px; margin:0 auto; padding:20px; }
+  .tabs { display:flex; gap:8px; margin-bottom:16px; }
+  .tabs button { padding:8px 16px; border:1px solid #ddd; background:#fff; border-radius:8px; cursor:pointer; }
+  .tabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .card { background:#fff; border:1px solid #eee; border-radius:10px; padding:16px; margin-bottom:16px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th,td { text-align:left; padding:8px; border-bottom:1px solid #f0f0f0; }
+  input,select { padding:6px 8px; border:1px solid #ddd; border-radius:6px; }
+  button.act { padding:6px 12px; background:var(--accent); color:#fff; border:0; border-radius:6px; cursor:pointer; }
+  .muted { color:#888; font-size:13px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:end; }
+  .row label { display:flex; flex-direction:column; font-size:12px; gap:4px; }
+  #msg { position:fixed; bottom:16px; right:16px; background:#222; color:#fff; padding:10px 16px; border-radius:8px; opacity:0; transition:.3s; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🥐 Back-office — L'Atelier By</h1>
+  <input id="token" placeholder="Jeton admin (admin_token)" />
+  <button class="act" onclick="saveToken()">OK</button>
+</header>
+<main>
+  <div class="tabs">
+    <button data-tab="products" class="on" onclick="tab('products')">Produits</button>
+    <button data-tab="pricing" onclick="tab('pricing')">Prix / Stock</button>
+    <button data-tab="orders" onclick="tab('orders')">Commandes</button>
+  </div>
+
+  <section id="products" class="card">
+    <h3>Produits</h3>
+    <table><thead><tr><th>ID</th><th>Nom</th><th>Prix (€)</th><th>Actif</th><th></th></tr></thead><tbody id="ptbody"></tbody></table>
+    <hr>
+    <div class="row">
+      <label>Nouveau produit<input id="np_name" placeholder="Nom"></label>
+      <label>Prix<input id="np_price" type="number" step="0.01" style="width:90px"></label>
+      <button class="act" onclick="addProduct()">Ajouter</button>
+    </div>
+  </section>
+
+  <section id="pricing" class="card" hidden>
+    <h3>Prix par boutique</h3>
+    <div class="row">
+      <label>Produit ID<input id="pr_pid" type="number" style="width:90px"></label>
+      <label>Boutique ID<input id="pr_shop" type="number" style="width:90px"></label>
+      <label>Prix<input id="pr_price" type="number" step="0.01" style="width:90px"></label>
+      <button class="act" onclick="setPrice()">Enregistrer le prix</button>
+    </div>
+    <h3 style="margin-top:20px">Stock du jour</h3>
+    <div class="row">
+      <label>Produit ID<input id="st_pid" type="number" style="width:90px"></label>
+      <label>Boutique ID<input id="st_shop" type="number" style="width:90px"></label>
+      <label>Mode<select id="st_mode"><option>collect</option><option>delivery</option></select></label>
+      <label>Date<input id="st_date" type="date"></label>
+      <label>Qté totale<input id="st_qty" type="number" style="width:90px"></label>
+      <button class="act" onclick="setStock()">Enregistrer le stock</button>
+    </div>
+  </section>
+
+  <section id="orders" class="card" hidden>
+    <h3>Commandes</h3>
+    <table><thead><tr><th>Réf</th><th>Boutique</th><th>Total</th><th>Paiement</th><th>Statut</th></tr></thead><tbody id="otbody"></tbody></table>
+  </section>
+</main>
+<div id="msg"></div>
+
+<script>
+const API = '..'; // l'API est le dossier parent (ex: /api)
+let TOKEN = localStorage.getItem('adminToken') || '';
+document.getElementById('token').value = TOKEN;
+function saveToken(){ TOKEN = document.getElementById('token').value.trim(); localStorage.setItem('adminToken', TOKEN); load(); }
+function toast(t){ const m=document.getElementById('msg'); m.textContent=t; m.style.opacity=1; setTimeout(()=>m.style.opacity=0,1800); }
+async function api(path, opts={}){
+  opts.headers = Object.assign({'Content-Type':'application/json','X-Admin-Token':TOKEN}, opts.headers||{});
+  const r = await fetch(API+path, opts);
+  if(!r.ok){ toast('Erreur '+r.status); throw new Error(r.status); }
+  return r.json();
+}
+function tab(name){
+  for(const s of ['products','pricing','orders']) document.getElementById(s).hidden = s!==name;
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.tab===name));
+  if(name==='orders') loadOrders();
+}
+async function load(){ if(TOKEN){ loadProducts(); } }
+async function loadProducts(){
+  const list = await api('/admin/products');
+  document.getElementById('ptbody').innerHTML = list.map(p=>`
+    <tr>
+      <td>${p.id}</td>
+      <td><input value="${(p.name||'').replace(/"/g,'&quot;')}" id="n${p.id}"></td>
+      <td><input type="number" step="0.01" value="${p.price}" id="pr${p.id}" style="width:90px"></td>
+      <td><input type="checkbox" ${p.active?'checked':''} id="a${p.id}"></td>
+      <td><button class="act" onclick="saveProduct(${p.id},${p.cat_id||'null'})">Enregistrer</button></td>
+    </tr>`).join('');
+}
+async function saveProduct(id,cat){
+  await api('/admin/products',{method:'POST',body:JSON.stringify({
+    id, name:document.getElementById('n'+id).value, price:document.getElementById('pr'+id).value,
+    cat_id:cat, active:document.getElementById('a'+id).checked })});
+  toast('Produit enregistré');
+}
+async function addProduct(){
+  await api('/admin/products',{method:'POST',body:JSON.stringify({
+    name:document.getElementById('np_name').value, price:document.getElementById('np_price').value })});
+  document.getElementById('np_name').value=''; document.getElementById('np_price').value='';
+  toast('Produit ajouté'); loadProducts();
+}
+async function setPrice(){
+  await api('/admin/price',{method:'POST',body:JSON.stringify({
+    productId:+pr_pid.value, shopId:+pr_shop.value, price:pr_price.value })});
+  toast('Prix enregistré');
+}
+async function setStock(){
+  await api('/admin/stock',{method:'POST',body:JSON.stringify({
+    productId:+st_pid.value, shopId:+st_shop.value, mode:st_mode.value,
+    date:st_date.value||undefined, qtyTotal:+st_qty.value })});
+  toast('Stock enregistré');
+}
+async function loadOrders(){
+  const list = await api('/admin/orders');
+  const STATUS = ['pending','confirmed','preparing','ready','delivered','cancelled'];
+  document.getElementById('otbody').innerHTML = list.map(o=>`
+    <tr>
+      <td>${o.order_ref||o.id}</td><td>${o.shop_id}</td><td>${o.total} €</td><td>${o.payment_status}</td>
+      <td><select onchange="setStatus(${o.id},this.value)">
+        ${STATUS.map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join('')}
+      </select></td>
+    </tr>`).join('');
+}
+async function setStatus(id,status){
+  await api('/admin/orders/'+id+'/status',{method:'POST',body:JSON.stringify({status})});
+  toast('Statut mis à jour');
+}
+load();
+</script>
+</body>
+</html>

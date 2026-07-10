@@ -11,6 +11,10 @@ return [
   ],
   // Secret qui signe les jetons de session (/auth). Long & aléatoire.
   'auth_secret'  => getenv('WS_AUTH_SECRET') ?: 'change-me-long-random',
+  // Jeton du back-office admin (/admin/* et la page admin/). Long & aléatoire.
+  'admin_token'  => getenv('WS_ADMIN_TOKEN') ?: 'change-me-admin-token',
+  // E-mails de commande (from). Laisse vide pour désactiver l'envoi.
+  'mail_from'    => getenv('WS_MAIL_FROM') ?: 'no-reply@atelierby.be',
   // Origines autorisées (ton GitHub Pages).
   'cors_origins' => array_values(array_filter(array_map('trim',
                     explode(',', getenv('WS_CORS') ?: 'https://samsam2703mfc.github.io')))),

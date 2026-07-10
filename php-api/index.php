@@ -14,9 +14,13 @@ if ($origin && (in_array($origin, $allowed, true) || in_array('*', $allowed, tru
 }
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') { http_response_code(204); exit; }
 
-/* Chemin, en retirant le sous-dossier où vit l'API (ex. /api) */
+/* Chemin, en retirant le sous-dossier où vit l'API (ex. /api).
+   On ne retire le préfixe que si SCRIPT_NAME pointe bien sur index.php (Apache) ;
+   sous le serveur intégré `php -S` (routeur), SCRIPT_NAME = le chemin demandé, donc
+   on ne découpe pas (sinon /admin/... serait mal tronqué). */
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
-$base = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/');
+$script = $_SERVER['SCRIPT_NAME'] ?? '';
+$base = (substr($script, -4) === '.php') ? rtrim(str_replace('\\', '/', dirname($script)), '/') : '';
 if ($base !== '' && $base !== '/' && strpos($path, $base) === 0) $path = substr($path, strlen($base));
 $path = '/' . trim($path, '/');
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -214,6 +218,12 @@ function dispatch($m, $p) {
           WHERE product_id=? AND shop_id=? AND date=CURDATE() AND (mode=? OR mode IS NULL)",
         [$l['qty'], $l['productId'], $shop, $mode]);
     }
+    // E-mail de confirmation (email fourni, ou celui du client connecté).
+    $to = $b['email'] ?? null;
+    if (!$to && !empty($b['customerId'])) {
+      $c = row("SELECT email FROM ws_customers WHERE id=?", [$b['customerId']]); $to = $c['email'] ?? null;
+    }
+    send_order_email($ref, $lines, $total, $to);
     json_out(['ok' => true, 'orderId' => (int) $oid, 'orderRef' => $ref, 'total' => $total]);
   }
   if ($m === 'GET' && ($mm = $match('/orders/:id'))) {
@@ -266,6 +276,60 @@ function dispatch($m, $p) {
     if ($sess === false) json_out(['error' => 'Échec Stripe'], 502);
     q("UPDATE ws_orders SET payment_method='card', payment_status='pending' WHERE id=?", [$o['id']]);
     json_out(['ok' => true, 'orderId' => (int) $o['id'], 'checkoutUrl' => $sess['url']]);
+  }
+
+  /* ── Back-office admin (protégé par admin_token) ── */
+  if (strpos($p, '/admin/') === 0) {
+    require_admin();
+
+    // Produits (tous) — pour la gestion
+    if ($m === 'GET' && $p === '/admin/products') {
+      json_out(rows("SELECT p.id, p.cat_id, c.label AS category, p.name, p.price, p.active
+                       FROM ws_products p LEFT JOIN ws_categories c ON c.id=p.cat_id ORDER BY p.name"));
+    }
+    // Créer / modifier un produit
+    if ($m === 'POST' && $p === '/admin/products') {
+      $b = body();
+      if (!empty($b['id'])) {
+        q("UPDATE ws_products SET name=?, price=?, cat_id=?, active=? WHERE id=?",
+          [$b['name'], (float) $b['price'], $b['cat_id'] ?? null, !empty($b['active']) ? 1 : 0, $b['id']]);
+        json_out(['ok' => true, 'id' => (int) $b['id']]);
+      }
+      if (empty($b['name'])) json_out(['error' => 'name requis'], 400);
+      q("INSERT INTO ws_products (cat_id, name, price, active) VALUES (?,?,?,1)",
+        [$b['cat_id'] ?? null, $b['name'], (float) ($b['price'] ?? 0)]);
+      json_out(['ok' => true, 'id' => (int) db()->lastInsertId()], 201);
+    }
+    // Prix par boutique
+    if ($m === 'POST' && $p === '/admin/price') {
+      $b = body();
+      q("INSERT INTO ws_product_prices (product_id, shop_id, price, active) VALUES (?,?,?,1)
+         ON DUPLICATE KEY UPDATE price=VALUES(price), active=1",
+        [$b['productId'], $b['shopId'], (float) $b['price']]);
+      json_out(['ok' => true]);
+    }
+    // Stock du jour (ou date donnée)
+    if ($m === 'POST' && $p === '/admin/stock') {
+      $b = body();
+      q("INSERT INTO ws_product_stock (product_id, shop_id, date, mode, qty_total, qty_reserved, qty_sold, active)
+         VALUES (?,?,?,?,?,0,0,1)
+         ON DUPLICATE KEY UPDATE qty_total=VALUES(qty_total)",
+        [$b['productId'], $b['shopId'], $b['date'] ?? date('Y-m-d'), $b['mode'] ?? 'collect', (int) $b['qtyTotal']]);
+      json_out(['ok' => true]);
+    }
+    // Commandes (liste)
+    if ($m === 'GET' && $p === '/admin/orders') {
+      $s = qp('shopId');
+      $sql = "SELECT id, order_ref, shop_id, mode, status, payment_status, total, created_at FROM ws_orders";
+      json_out($s ? rows("$sql WHERE shop_id=? ORDER BY id DESC LIMIT 200", [$s])
+                  : rows("$sql ORDER BY id DESC LIMIT 200"));
+    }
+    // Changer le statut d'une commande
+    if ($m === 'POST' && ($mm = $match('/admin/orders/:id/status'))) {
+      $b = body();
+      q("UPDATE ws_orders SET status=? WHERE id=?", [$b['status'] ?? 'confirmed', $mm['id']]);
+      json_out(['ok' => true]);
+    }
   }
 }
 
