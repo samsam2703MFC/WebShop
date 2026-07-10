@@ -187,29 +187,97 @@ function dispatch($m, $p) {
     json_out($r ?: null);
   }
 
-  /* ── Orders ── */
+  /* ── Orders ── (tout est calculé serveur depuis la base : prix, promo 4+1,
+       bon de réduction, frais de livraison, paiement différé B2B, liaison bureau) */
   if ($m === 'POST' && $p === '/orders') {
     $b = body();
     $shop = $b['shopId'] ?? null; $basket = $b['basket'] ?? [];
     if (!$shop || !is_array($basket) || !count($basket)) json_out(['error' => 'shopId et basket requis'], 400);
     $mode = $b['mode'] ?? 'collect';
+    $dl = is_array($b['delivery'] ?? null) ? $b['delivery'] : [];
+
+    // 1. Lignes + sous-total (prix serveur), avec le flag promo croisée par produit.
     $subtotal = 0; $lines = [];
     foreach ($basket as $it) {
-      $p2 = row("SELECT p.id, p.name, COALESCE(pp.price, p.price) AS price
+      $p2 = row("SELECT p.id, p.name, p.cross_portion, COALESCE(pp.price, p.price) AS price
                    FROM ws_products p LEFT JOIN ws_product_prices pp ON pp.product_id=p.id AND pp.shop_id=? AND pp.active=1
                   WHERE p.id=? AND p.active=1", [$shop, $it['productId'] ?? 0]);
       if (!$p2) continue;
       $qty = max(1, (int) ($it['qty'] ?? 1));
       $subtotal += (float) $p2['price'] * $qty;
-      $lines[] = ['productId' => $p2['id'], 'name' => $p2['name'], 'qty' => $qty, 'unit' => (float) $p2['price'], 'portion' => $it['portion'] ?? null];
+      $lines[] = ['productId' => $p2['id'], 'name' => $p2['name'], 'qty' => $qty,
+                  'unit' => (float) $p2['price'], 'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion']];
     }
     if (!count($lines)) json_out(['error' => 'aucun produit valide'], 400);
-    $total = round($subtotal, 2); $ref = 'WS-' . time() . rand(10, 99);
-    q("INSERT INTO ws_orders (order_ref, shop_id, customer_id, mode, status, slot_id, slot_label, delivery_date,
-         subtotal, total, payment_method, payment_status, lang, delivery_mode)
-       VALUES (?,?,?,?, 'pending', ?,?,?, ?,?, ?, 'pending', ?, ?)",
+    $subtotal = round($subtotal, 2);
+
+    // 2. Promo croisée X+Y (ws_pricing_rules) : les Y les moins chers offerts par tranche de X.
+    $promo = 0;
+    $rule = row("SELECT x, y, threshold FROM ws_pricing_rules
+                  WHERE rule_type='cross_portion' AND active=1 AND (shop_id=? OR shop_id IS NULL)
+                  ORDER BY shop_id IS NULL LIMIT 1", [$shop]);
+    if ($rule && (int) $rule['x'] > 0) {
+      $units = [];
+      foreach ($lines as $l) if ($l['cross']) for ($k = 0; $k < $l['qty']; $k++) $units[] = $l['unit'];
+      if (count($units) >= (int) $rule['threshold']) {
+        sort($units); // les moins chers d'abord
+        $freeCount = intdiv(count($units), (int) $rule['x']) * (int) $rule['y'];
+        for ($k = 0; $k < $freeCount && $k < count($units); $k++) $promo += $units[$k];
+      }
+    }
+    $promo = round($promo, 2);
+
+    // 3. Bon de réduction (ws_vouchers) — validé serveur.
+    $voucherCode = null; $voucherDisc = 0;
+    if (!empty($b['voucher'])) {
+      $v = row("SELECT code, type, value, min_order FROM ws_vouchers
+                 WHERE code=? AND active=1 AND (expires_at IS NULL OR expires_at>NOW())
+                   AND (max_uses IS NULL OR used_count<max_uses) LIMIT 1", [strtoupper(trim($b['voucher']))]);
+      $baseV = $subtotal - $promo;
+      if ($v && $baseV >= (float) $v['min_order']) {
+        $voucherCode = $v['code'];
+        $voucherDisc = $v['type'] === 'percent' ? round($baseV * (float) $v['value']) / 100
+                     : ($v['type'] === 'fixed' ? (float) $v['value'] : 0);
+      }
+    }
+    $voucherDisc = round($voucherDisc, 2);
+
+    // 4. Frais de livraison (ws_delivery_fee_rules) — seulement en mode livraison.
+    //    La règle la plus spécifique (site>office>tour>shop>global) fixe aussi payment_type.
+    $feeApplied = 0; $feeAmount = 0; $freeMin = 0; $paymentType = 'immediate';
+    if ($mode === 'delivery') {
+      $fr = row("SELECT free_delivery, always_charge, fee_amount, free_delivery_minimum, payment_type
+                   FROM ws_delivery_fee_rules WHERE active=1 AND (
+                        (level='site'   AND site_id=?) OR (level='office' AND office_client_id=?) OR
+                        (level='tour'   AND tour_id=?) OR (level='shop' AND shop_id=?) OR (level='global'))
+                  ORDER BY FIELD(level,'site','office','tour','shop','global') LIMIT 1",
+                [$dl['siteId'] ?? null, $dl['officeClientId'] ?? null, $dl['tourId'] ?? null, $shop]);
+      if ($fr) {
+        $paymentType = $fr['payment_type'] ?: 'immediate';
+        $freeMin = (float) $fr['free_delivery_minimum'];
+        $afterDisc = $subtotal - $promo - $voucherDisc;
+        $isFree = !$fr['always_charge'] && ($fr['free_delivery'] || ($freeMin > 0 && $afterDisc >= $freeMin));
+        if (!$isFree) { $feeAmount = (float) $fr['fee_amount']; $feeApplied = $feeAmount > 0 ? 1 : 0; }
+      }
+    }
+
+    // 5. Total final.
+    $total = max(0, round($subtotal - $promo - $voucherDisc + $feeAmount, 2));
+    $ref = 'WS-' . time() . rand(10, 99);
+
+    // 6. Persistance — toutes les colonnes (fee, promo, voucher, B2B, payment_type).
+    q("INSERT INTO ws_orders
+         (order_ref, shop_id, customer_id, mode, status, slot_id, slot_label, delivery_date,
+          subtotal, promo_amount, voucher_code, voucher_discount, total,
+          payment_method, payment_status, lang, delivery_mode,
+          office_client_id, office_delivery_site_id, office_delivery_site_name, tournee_stop_id,
+          payment_type, delivery_fee_applied, delivery_fee_amount, free_delivery_minimum)
+       VALUES (?,?,?,?, 'pending', ?,?,?, ?,?,?,?,?, ?, 'pending', ?, ?, ?,?,?,?, ?,?,?,?)",
       [$ref, $shop, $b['customerId'] ?? null, $mode, $b['slotId'] ?? null, $b['slotLabel'] ?? null, $b['deliveryDate'] ?? null,
-       $total, $total, $b['paymentMethod'] ?? 'cash', $b['lang'] ?? 'fr', $mode === 'delivery' ? 'office_delivery' : 'collect']);
+       $subtotal, $promo, $voucherCode, $voucherDisc, $total,
+       $b['paymentMethod'] ?? 'cash', $b['lang'] ?? 'fr', $mode === 'delivery' ? 'office_delivery' : 'collect',
+       $dl['officeClientId'] ?? null, $dl['siteId'] ?? null, $dl['siteName'] ?? null, $dl['tourneeStopId'] ?? null,
+       $paymentType, $feeApplied, $feeAmount, $freeMin]);
     $oid = db()->lastInsertId();
     foreach ($lines as $l) {
       q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`) VALUES (?,?,?,?,?,?)",
@@ -218,13 +286,17 @@ function dispatch($m, $p) {
           WHERE product_id=? AND shop_id=? AND date=CURDATE() AND (mode=? OR mode IS NULL)",
         [$l['qty'], $l['productId'], $shop, $mode]);
     }
+    if ($voucherCode) q("UPDATE ws_vouchers SET used_count = used_count + 1 WHERE code=?", [$voucherCode]);
+
     // E-mail de confirmation (email fourni, ou celui du client connecté).
     $to = $b['email'] ?? null;
     if (!$to && !empty($b['customerId'])) {
       $c = row("SELECT email FROM ws_customers WHERE id=?", [$b['customerId']]); $to = $c['email'] ?? null;
     }
     send_order_email($ref, $lines, $total, $to);
-    json_out(['ok' => true, 'orderId' => (int) $oid, 'orderRef' => $ref, 'total' => $total]);
+    json_out(['ok' => true, 'orderId' => (int) $oid, 'orderRef' => $ref,
+              'subtotal' => $subtotal, 'promo' => $promo, 'voucherDiscount' => $voucherDisc,
+              'deliveryFee' => $feeAmount, 'paymentType' => $paymentType, 'total' => $total]);
   }
   if ($m === 'GET' && ($mm = $match('/orders/:id'))) {
     $o = row("SELECT * FROM ws_orders WHERE id=? OR order_ref=? LIMIT 1", [$mm['id'], $mm['id']]);
