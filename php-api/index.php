@@ -119,6 +119,19 @@ function dispatch($m, $p) {
     json_out(['ok' => true, 'discount' => $disc, 'voucher' => ['code' => $v['code'], 'type' => $v['type'], 'value' => (float) $v['value']], 'message' => 'Code appliqué']);
   }
 
+  /* Moyens de paiement autorisés — par boutique ET par profil (guest/registered/
+     company). deferred retiré si la société n'a pas le paiement différé activé. */
+  if ($m === 'GET' && $p === '/payment-methods') {
+    $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+    $profile = in_array(qp('profile'), ['guest', 'registered', 'company'], true) ? qp('profile') : 'guest';
+    $methods = allowed_methods($s, $profile);
+    if ($profile === 'company' && ($cid = qp('companyId'))) {
+      $o = row("SELECT deferred_billing_enabled AS d FROM ws_offices WHERE id=?", [$cid]);
+      if (!$o || !$o['d']) $methods = array_values(array_filter($methods, fn ($x) => $x !== 'deferred'));
+    }
+    json_out(array_map(fn ($x) => ['method' => $x, 'label' => payment_label($x)], $methods));
+  }
+
   /* ── Availability / Calendar ── */
   if ($m === 'GET' && $p === '/availability/settings') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
@@ -378,6 +391,19 @@ function dispatch($m, $p) {
     $orderStatus = $onAccount ? 'confirmed' : 'pending';
     $officeClientId = $companyId ?? ($dl['officeClientId'] ?? null);
 
+    // 4-ter. Profil de paiement + validation du moyen selon la config boutique.
+    //   profil : company (société) > registered (compte) > guest (visiteur).
+    $profile = $companyId ? 'company' : (!empty($b['customerId']) ? 'registered' : 'guest');
+    $family = payment_family($paymentMethod);
+    if ($family !== '' && !in_array($family, allowed_methods($shop, $profile), true)) {
+      json_out(['error' => 'Moyen de paiement non autorisé pour ce profil',
+                'profile' => $profile, 'allowed' => allowed_methods($shop, $profile)], 400);
+    }
+    // Contact visiteur (guest) — enregistré seulement si pas de compte.
+    $guestEmail = empty($b['customerId']) ? ($b['email'] ?? null) : null;
+    $guestName  = empty($b['customerId']) ? (trim(($b['customer']['firstName'] ?? '') . ' ' . ($b['customer']['lastName'] ?? '')) ?: null) : null;
+    $guestPhone = empty($b['customerId']) ? ($b['customer']['phone'] ?? ($b['phone'] ?? null)) : null;
+
     // 5. Total final.
     $total = max(0, round($subtotal - $promo - $webshopDisc - $voucherDisc + $feeAmount, 2));
     $ref = 'WS-' . time() . rand(10, 99);
@@ -435,13 +461,15 @@ function dispatch($m, $p) {
       }
       // 6c. Écriture de la commande + lignes + décrément stock (même jour).
       q("INSERT INTO ws_orders
-           (order_ref, shop_id, customer_id, mode, status, slot_id, slot_label, delivery_date,
+           (order_ref, shop_id, customer_id, guest_email, guest_name, guest_phone, mode, status,
+            slot_id, slot_label, delivery_date,
             subtotal, promo_amount, webshop_discount, voucher_code, voucher_discount, total,
             payment_method, payment_status, lang, note, delivery_mode,
             office_client_id, office_delivery_site_id, office_delivery_site_name, tournee_stop_id,
             payment_type, delivery_fee_applied, delivery_fee_amount, free_delivery_minimum)
-         VALUES (?,?,?,?, ?, ?,?,?, ?,?,?,?,?,?, ?, 'pending', ?, ?, ?, ?,?,?,?, ?,?,?,?)",
-        [$ref, $shop, $b['customerId'] ?? null, $mode, $orderStatus, $b['slotId'] ?? null, $b['slotLabel'] ?? null, $b['deliveryDate'] ?? null,
+         VALUES (?,?,?, ?,?,?, ?, ?, ?,?,?, ?,?,?,?,?,?, ?, 'pending', ?, ?, ?, ?,?,?,?, ?,?,?,?)",
+        [$ref, $shop, $b['customerId'] ?? null, $guestEmail, $guestName, $guestPhone, $mode, $orderStatus,
+         $b['slotId'] ?? null, $b['slotLabel'] ?? null, $b['deliveryDate'] ?? null,
          $subtotal, $promo, $webshopDisc, $voucherCode, $voucherDisc, $total,
          $paymentMethod, $b['lang'] ?? 'fr', $note, $mode === 'delivery' ? 'office_delivery' : 'collect',
          $officeClientId, $dl['siteId'] ?? null, $dl['siteName'] ?? null, $dl['tourneeStopId'] ?? null,
@@ -614,6 +642,23 @@ function dispatch($m, $p) {
         [$b['officeId'] ?? 0, strtolower(trim($b['email'] ?? ''))]);
       json_out(['ok' => true]);
     }
+    // ── Moyens de paiement par boutique × profil ──
+    if ($m === 'GET' && $p === '/admin/payment-options') {
+      $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+      json_out(rows("SELECT profile_type AS profile, method, active FROM ws_shop_payment_options
+                      WHERE shop_id=? ORDER BY profile_type, method", [$s]));
+    }
+    // Activer/désactiver un moyen pour un (boutique, profil).
+    if ($m === 'POST' && $p === '/admin/payment-option') {
+      $b = body();
+      $prof = in_array($b['profile'] ?? '', ['guest', 'registered', 'company'], true) ? $b['profile'] : null;
+      $meth = in_array($b['method'] ?? '', ['stripe', 'shop', 'deferred'], true) ? $b['method'] : null;
+      if (!$prof || !$meth || empty($b['shopId'])) json_out(['error' => 'shopId, profile, method requis'], 400);
+      q("INSERT INTO ws_shop_payment_options (shop_id, profile_type, method, active) VALUES (?,?,?,?)
+         ON DUPLICATE KEY UPDATE active=VALUES(active)",
+        [$b['shopId'], $prof, $meth, !empty($b['active']) ? 1 : 0]);
+      json_out(['ok' => true]);
+    }
   }
 }
 
@@ -653,6 +698,25 @@ function basket_pa($shop, $mode, $productIds) {
     if ($c !== null) $cutoff = ($cutoff === null) ? $c : min($cutoff, $c);
   }
   return [$lead, $cutoff, $enabled];
+}
+
+/* Normalise un moyen de paiement vers sa famille canonique. */
+function payment_family($m) {
+  $m = strtolower(trim((string) $m));
+  if (in_array($m, ['stripe', 'card', 'carte', 'bancontact', 'visa', 'mastercard', 'maestro'], true)) return 'stripe';
+  if (in_array($m, ['shop', 'boutique', 'especes', 'cash', 'cod'], true)) return 'shop';
+  if (in_array($m, ['deferred', 'account', 'compte', 'facturation'], true)) return 'deferred';
+  return $m;
+}
+function payment_label($m) {
+  $map = ['stripe' => 'Carte / Bancontact (en ligne)', 'shop' => 'Paiement en boutique', 'deferred' => 'Sur compte (facturation)'];
+  return $map[$m] ?? $m;
+}
+/* Moyens de paiement autorisés pour une boutique + profil (config, sinon défaut). */
+function allowed_methods($shop, $profile) {
+  $rows = rows("SELECT method FROM ws_shop_payment_options WHERE shop_id=? AND profile_type=? AND active=1 ORDER BY method", [$shop, $profile]);
+  if ($rows) return array_column($rows, 'method');
+  return $profile === 'company' ? ['stripe', 'deferred'] : ['stripe', 'shop']; // défaut
 }
 
 /* Shape client d'un customer. */

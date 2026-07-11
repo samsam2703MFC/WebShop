@@ -40,6 +40,7 @@ DROP TABLE IF EXISTS ws_product_allergens;
 DROP TABLE IF EXISTS ws_products;
 DROP TABLE IF EXISTS ws_category_subs;
 DROP TABLE IF EXISTS ws_categories;
+DROP TABLE IF EXISTS ws_shop_payment_options;
 DROP TABLE IF EXISTS ws_shops;
 
 CREATE TABLE ws_shops (
@@ -64,6 +65,20 @@ CREATE TABLE ws_shops (
   webshop_discount_type  VARCHAR(20)   DEFAULT 'percent',  -- percent | fixed
   webshop_discount_value DECIMAL(10,2) DEFAULT 0,          -- remise auto du webshop
   active        BOOLEAN DEFAULT TRUE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Moyens de paiement autorisés PAR boutique ET PAR type de profil.
+--   profile_type : guest | registered | company
+--   method       : stripe | shop | deferred
+-- Si aucune ligne pour une boutique → aucune restriction (tout autorisé).
+CREATE TABLE ws_shop_payment_options (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  shop_id      INT NOT NULL,
+  profile_type VARCHAR(20) NOT NULL,
+  method       VARCHAR(20) NOT NULL,
+  active       BOOLEAN DEFAULT TRUE,
+  UNIQUE KEY uq_shop_payment (shop_id, profile_type, method),
+  FOREIGN KEY (shop_id) REFERENCES ws_shops(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE ws_categories (
@@ -291,7 +306,10 @@ CREATE TABLE ws_orders (
   id               INT AUTO_INCREMENT PRIMARY KEY,
   order_ref        VARCHAR(50) UNIQUE,
   shop_id          INT,
-  customer_id      INT,
+  customer_id      INT,                        -- NULL = commande visiteur (guest)
+  guest_email      VARCHAR(200),               -- contact visiteur (si pas de compte)
+  guest_name       VARCHAR(200),
+  guest_phone      VARCHAR(30),
   mode             VARCHAR(20)   NOT NULL,
   status           VARCHAR(30)   DEFAULT 'pending',
   slot_id          INT,

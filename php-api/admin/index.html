@@ -75,6 +75,17 @@
       <button class="act" onclick="setDiscount()">Enregistrer la remise</button>
     </div>
     <p class="muted">Appliquée automatiquement à toutes les commandes webshop de cette boutique.</p>
+    <h3 style="margin-top:20px">Moyens de paiement (par boutique × profil)</h3>
+    <div class="row">
+      <label>Boutique ID<input id="pm_shop" type="number" style="width:90px"></label>
+      <label>Profil<select id="pm_profile"><option value="guest">Visiteur</option><option value="registered">Enregistré</option><option value="company">Société</option></select></label>
+      <label>Moyen<select id="pm_method"><option value="stripe">Carte / Bancontact</option><option value="shop">En boutique</option><option value="deferred">Sur compte (différé)</option></select></label>
+      <label>Autorisé<input id="pm_active" type="checkbox" checked></label>
+      <button class="act" onclick="setPayOption()">Enregistrer</button>
+      <button class="act" style="background:#666" onclick="listPayOptions()">Voir</button>
+    </div>
+    <table><thead><tr><th>Profil</th><th>Moyen</th><th>Autorisé</th></tr></thead><tbody id="pmtbody"></tbody></table>
+    <p class="muted">Aucune ligne pour une boutique = valeurs par défaut (visiteur/enregistré : carte + boutique ; société : carte + différé).</p>
   </section>
 
   <section id="orders" class="card" hidden>
@@ -179,6 +190,18 @@ async function setDiscount(){
   await api('/admin/shop-discount',{method:'POST',body:JSON.stringify({
     shopId:+wd_shop.value, type:wd_type.value, value:+wd_val.value })});
   toast('Remise enregistrée');
+}
+async function setPayOption(){
+  await api('/admin/payment-option',{method:'POST',body:JSON.stringify({
+    shopId:+pm_shop.value, profile:pm_profile.value, method:pm_method.value, active:pm_active.checked })});
+  toast('Moyen enregistré'); listPayOptions();
+}
+async function listPayOptions(){
+  const list = await api('/admin/payment-options?shopId='+(+pm_shop.value));
+  const L={stripe:'Carte / Bancontact',shop:'En boutique',deferred:'Sur compte'};
+  const P={guest:'Visiteur',registered:'Enregistré',company:'Société'};
+  document.getElementById('pmtbody').innerHTML = list.map(o=>`
+    <tr><td>${P[o.profile]||o.profile}</td><td>${L[o.method]||o.method}</td><td>${o.active?'✓':'—'}</td></tr>`).join('');
 }
 async function loadOrders(){
   const list = await api('/admin/orders');
