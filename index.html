@@ -2,10 +2,21 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>L'Atelier By — Webshop</title>
-<meta http-equiv="refresh" content="0; url=webshop-full.html">
+<title>L'Atelier By · Webshop</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#8D1D2C">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="/WebShop/apple-touch-icon.png">
+<link rel="icon" href="/WebShop/favicon-32.png">
+<style>
+  html, body, #root { height: 100%; margin: 0; }
+  #root { display: flex; }
+  #root > .ws { flex: 1; }
+</style>
 </head>
 <body>
-<p><a href="webshop-full.html">Accéder au Webshop →</a></p>
+<div id="root"></div>
+<script type="module" src="/src/main.jsx"></script>
 </body>
 </html>

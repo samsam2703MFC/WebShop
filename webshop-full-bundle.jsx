@@ -2804,7 +2804,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             payment={payment} setPayment={setPayment}
             profile={checkoutProfile} companyId={companyId || null}
             isOffice={isOffice} invoice={invoice} setInvoice={setInvoice} vat={vat} setVat={setVat}
-            shopId={shop && shop.id} mode={mode}
+            shopId={shop && shop.id}
             voucherInput={voucherInput} setVoucherInput={setVoucherInput}
             voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
             voucherDiscount={voucherDiscount}
