@@ -178,9 +178,9 @@ INSERT INTO ws_menu_slot_choices (id, slot_id, code, label, image, price_delta) 
 - **Source de vérité** : si les menus sont gérés dans **Franchise Buddy**, ces
   tables vivent dans l'ERP et sont synchronisées ; l'endpoint catalogue doit
   renvoyer `options` / `available_bundles` / `upsells` imbriqués par produit.
-- **WooCommerce** n'a pas d'équivalent natif : ces structures se stockent en
-  méta de produit (`_atelier_options`, `_atelier_menus`, `_atelier_upsells`)
-  et le pont les ressert dans la forme attendue par le front.
+- **Stockage** : ces structures vivent dans le schéma `ws_` (`ws_product_options`,
+  `ws_bundles`, `ws_assortments`) et l'API PHP les ressert dans la forme attendue
+  par le front (`options` / `available_bundles` / `upsells` imbriqués par produit).
 - **Codes vs IDs** : `code` est l'identifiant stable côté métier (ex. `mayo`) ;
   l'`id` est la clé technique. Le front n'utilise que les `code`/`id` pour
   reconstruire la sélection sur la commande.

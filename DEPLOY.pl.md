@@ -21,7 +21,7 @@ stanu (frontend działa w trybie demo) do **pełnej produkcji** na serwerze klie
   przez **GitHub Actions** przy każdym pushu do `main` (`.github/workflows/deploy.yml`). Instalowalna, offline app-shell.
 - **Backend** = **`php-api/`** (czysty PHP + PDO). Działa na **hostingu współdzielonym** klienta (PHP 8+). Bez Node, bez VPS.
 - **Baza danych** = schemat **`ws_`** (`backend/schema/ws_schema.sql`, 33 tabele) = jedyne źródło prawdy.
-- **WooCommerce NIE jest używane.** Foldery `woocommerce-bridge/` i Node `backend/` są tylko referencyjne — zignoruj je.
+- **WooCommerce NIE jest używane** (usunięte z repozytorium). `backend/` zawiera teraz wyłącznie schemat SQL (`backend/schema/`).
 
 ---
 
@@ -86,18 +86,17 @@ Po podłączeniu wypełnij dane franczyzy. Dwa sposoby: **panel administracyjny*
 | **Metody płatności per sklep × profil** | panel admin → `ws_shop_payment_options` (profil guest/registered/company × metoda stripe/shop/deferred) |
 | Promocja cross-portion, rabat sklepu, kupony | `ws_pricing_rules`, `ws_shops.webshop_discount_*`, `ws_vouchers` |
 
-**Import katalogu WooCommerce jednym poleceniem** (wymaga Node na twoim komputerze, uruchom raz):
-```bash
-node woocommerce-bridge/tools/wc-csv-to-ws-sql.mjs wc-export.csv 2 > import.sql   # 2 = id sklepu
-```
-następnie zaimportuj `import.sql` w phpMyAdmin. (Referencyjny SQL dla każdego przypadku: `backend/schema/api-queries.sql`.)
+**Masowy import katalogu:** przygotuj skrypt INSERT dla `ws_products` / `ws_product_prices` /
+`ws_product_stock` (jeden wiersz na produkt × sklep) i zaimportuj go w phpMyAdmin.
+Referencyjny SQL dla każdej tabeli i przypadku: `backend/schema/api-queries.sql`.
 
 ## 5. Płatności i dodatki (gdy gotowe)
 
 - **Stripe:** wpisz `sk_live_…` w `config.php` (`stripe_secret`). Dodaj webhook w Stripe →
   URL `https://<domena-api>/api/payments/webhook`, zdarzenie `checkout.session.completed`. Płatność kartą wtedy działa.
 - **E-maile z zamówieniami:** ustaw `mail_from` w `config.php` (wysyłane przez PHP `mail()` przy każdym zamówieniu).
-- **Cron** (czyszczenie rezerwacji magazynowych + opcjonalna synchronizacja): zobacz `backend/deploy/crontab.txt`.
+- **Cron:** niepotrzebny. PHP API rezerwuje stan magazynowy w ramach transakcji zamówienia
+  (`SELECT … FOR UPDATE` na `ws_product_stock`), więc nie ma zadania w tle do zaplanowania.
 
 ## 6. Lista kontrolna weryfikacji ✅
 

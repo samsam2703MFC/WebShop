@@ -1,7 +1,7 @@
 # Franchise Buddy — API Menus (contrat d'intégration)
 
 Ce que l'ERP doit exposer pour que la boutique affiche les produits
-configurables (menus). Le pont WooCommerce lit cette API et la ressert au
+configurables (menus). L'API PHP lit ces données et les ressert au
 front **quasi sans transformation** — donc la forme ci-dessous suit exactement
 ce que le front attend (`options`, `available_bundles`, `upsells`).
 

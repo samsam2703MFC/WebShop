@@ -2124,7 +2124,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       const existing = window.WSI18n.getCustomer() || {};
       window.WSI18n.setCustomer({ ...existing, ...updated });
     }
-    // Persist to the backend (WooCommerce customer) when the API is wired.
+    // Persist to the backend (customer profile) when the API is wired.
     if (window.WSAuth && typeof window.WSAuth.updateMe === 'function') {
       try {
         const r = await window.WSAuth.updateMe({
@@ -3225,7 +3225,7 @@ function ShopFrame({ variant }) {
     _deep.shopId || (window.WSShopRouter && window.WSShopRouter.current()) || 'chatelain'
   );
   React.useEffect(() => {
-    // Persist the active shop so cart/checkout/login route to its Woo.
+    // Persist the active shop so cart/checkout/login stay scoped to it.
     if (window.WSShopRouter) window.WSShopRouter.setActive(shopId);
     if (window.WSBrand && typeof window.WSBrand.apply === 'function') {
       window.WSBrand.apply(shopId);

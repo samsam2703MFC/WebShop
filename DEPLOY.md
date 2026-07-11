@@ -21,7 +21,7 @@ state (frontend live in demo mode) to **full production** on the client's server
   **GitHub Actions** on every push to `main` (`.github/workflows/deploy.yml`). Installable, offline app-shell.
 - **Backend** = **`php-api/`** (plain PHP + PDO). Runs on the client's **shared hosting** (PHP 8+). No Node, no VPS.
 - **Database** = the **`ws_` schema** (`backend/schema/ws_schema.sql`, 33 tables) = single source of truth.
-- **WooCommerce is NOT used.** The `woocommerce-bridge/` and Node `backend/` folders are reference only — ignore them.
+- **WooCommerce is NOT used** (removed from the repo). `backend/` now holds only the SQL schema (`backend/schema/`).
 
 ---
 
@@ -86,18 +86,17 @@ Once connected, fill in the franchise data. Two ways: the **admin panel** at
 | **Payment methods per shop × profile** | admin panel → `ws_shop_payment_options` (profile guest/registered/company × method stripe/shop/deferred) |
 | Cross-portion promo, webshop discount, vouchers | `ws_pricing_rules`, `ws_shops.webshop_discount_*`, `ws_vouchers` |
 
-**Import the WooCommerce catalogue in one shot** (needs Node on your machine, run once):
-```bash
-node woocommerce-bridge/tools/wc-csv-to-ws-sql.mjs wc-export.csv 2 > import.sql   # 2 = shop id
-```
-then import `import.sql` in phpMyAdmin. (Reference SQL for every case: `backend/schema/api-queries.sql`.)
+**Bulk catalogue import:** prepare an INSERT script for `ws_products` / `ws_product_prices` /
+`ws_product_stock` (one row per product × shop) and import it in phpMyAdmin.
+Reference SQL for every table and case: `backend/schema/api-queries.sql`.
 
 ## 5. Payments & extras (when ready)
 
 - **Stripe:** put `sk_live_…` in `config.php` (`stripe_secret`). Add a webhook in Stripe →
   URL `https://<api-domain>/api/payments/webhook`, event `checkout.session.completed`. Card payment then works.
 - **Order e-mails:** set `mail_from` in `config.php` (sent via PHP `mail()` on each order).
-- **Cron** (stock reservation cleanup + optional sync): see `backend/deploy/crontab.txt`.
+- **Cron:** none required. The PHP API reserves stock inline inside the order transaction
+  (`SELECT … FOR UPDATE` on `ws_product_stock`), so there is no background job to schedule.
 
 ## 6. Verification checklist ✅
 

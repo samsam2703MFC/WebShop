@@ -16,10 +16,12 @@
 - **Frontend goes live** by setting `BASE_URL` in `api-config.js` to the PHP API
   URL (e.g. `https://<domain>/api`). Until then it runs on in-memory demo data.
 
-### Not used (kept in the repo for reference only — ignore for this deployment)
-- **`woocommerce-bridge/`** — WooCommerce integration. **WooCommerce is not used.**
-- **`backend/`** (Node 22 + Express) — Node version of the API, only relevant if
-  the project ever moves to a VPS. On shared hosting, use `php-api/` instead.
+### Backend layout
+- **`php-api/`** is THE backend (PHP + PDO). Serves the whole API. **WooCommerce
+  is not used** and has been removed from the repo.
+- **`backend/schema/`** holds the canonical SQL only — `ws_schema.sql` (33 tables,
+  single source of truth) + `seed-shops.sql` + `alter-*.sql` + `api-queries.sql`.
+  There is no Node backend; `php-api/` reads this schema directly.
 
 ---
 

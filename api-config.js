@@ -1,28 +1,26 @@
 /* =====================================================================
    api-config.js — Central API endpoint configuration
    =====================================================================
-   Set BASE_URL to your backend host to switch all stubs from demo
+   Set BASE_URL to the PHP API host to switch all stubs from demo
    fixtures to live HTTP at once. Leave null to keep demo mode.
 
-   Example:
-     const BASE_URL = 'https://api.atelier.be';
+   Example (once php-api/ is deployed on the server):
+     const BASE_URL = 'https://atelierby.online/api';
 
    Individual overrides are also supported — useful while endpoints are
    being built out one by one (comment out the ones not yet ready).
    ===================================================================== */
 
 (function () {
-  // ─── Change this one line to point at your backend ───────────────────
-  // Node reference backend:  'https://api.atelier.be'
-  // WooCommerce bridge:      'https://shop.atelier.be/wp-json/atelier/v1'
-  //   (the Atelier Webshop Bridge plugin exposes the same contracts on
-  //    WooCommerce — see woocommerce-bridge/ and WOOCOMMERCE.md)
-  const BASE_URL = 'https://atelierby.online/wp-json/atelier/v1';
+  // ─── Change this one line to point at the PHP API (php-api/) ─────────
+  //   e.g. 'https://atelierby.online/api'  — see DEPLOY.md, step 3.
+  //   Leave null to stay in demo mode (in-memory fixtures).
+  const BASE_URL = null;
   // ─────────────────────────────────────────────────────────────────────
 
   if (!BASE_URL) return; // demo mode — all stubs use in-memory fixtures
 
-  /* Endpoints served by the Atelier Webshop Bridge (WooCommerce) plugin. */
+  /* Endpoints served by the PHP API (php-api/index.php). */
   if (window.WSShops)        window.WSShops.endpoint        = BASE_URL + '/shops';
   if (window.WSCatalog)      window.WSCatalog.endpoint      = BASE_URL + '/catalog';
   if (window.WSPricing)      window.WSPricing.endpoint      = BASE_URL + '/pricing';
@@ -36,11 +34,9 @@
   if (window.WSAuth)         window.WSAuth.endpoint         = BASE_URL + '/auth';
   if (window.WSAvailability) window.WSAvailability.endpoint = BASE_URL + '/availability';
   if (window.WSCalendar)     window.WSCalendar.endpoint     = BASE_URL + '/calendar';
+  if (window.WSBrand)        window.WSBrand.endpoint        = BASE_URL + '/brand';
   /* VIES: template endpoint — the stub fills {country}/{vat}. */
   if (window.WSVies)         window.WSVies.endpoint         = BASE_URL + '/vies/{country}/{vat}';
-
-  /* Not yet implemented by the bridge → these stay on demo fallback:
-     WSBrand. */
 
   /* Optional: CSRF token for mutations (set by your auth endpoint) */
   // document.addEventListener('wsauth:login', function (e) {
