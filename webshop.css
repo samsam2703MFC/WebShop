@@ -1387,9 +1387,9 @@
 .ws-card--unavail .ws-add { background: #bbb; cursor: not-allowed; }
 .ws-card__leadtime {
   display: inline-flex; align-items: center;
-  font-size: 10px; font-weight: 600; letter-spacing: .03em;
-  background: #1a3a5c; color: #fff;
-  border-radius: 4px; padding: 1px 5px;
+  font-size: 10px; font-weight: 500; letter-spacing: .02em;
+  background: rgba(26, 58, 92, .08); color: #5a708a;
+  border-radius: 4px; padding: 0 5px;
   margin-bottom: 3px;
 }
 .ws-card__stock {
