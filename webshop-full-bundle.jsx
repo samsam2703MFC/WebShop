@@ -1465,7 +1465,7 @@ function CrossPortionStrip({ calc }) {
   );
 }
 
-function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, deliveryFeeResult }) {
+function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, deliveryFeeResult }) {
   // TODO[BACKEND]: replace with `await WSPricing.quote({ shopId, mode, basket })`
   // and render the returned subtotal / discounts / total. The synchronous
   // computation below is a fallback so the demo basket still totals correctly
@@ -1509,6 +1509,14 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, deliveryFee
               {l.options.map((o, i) => (<div key={i} className="ws-line__opt">{o.label}</div>))}
               {l.offerLabel && (
                 <div className="ws-line__offer">Offre {l.offerLabel}{l.offerDiscount ? ` · −€${Number(l.offerDiscount).toFixed(2)}` : ''}</div>
+              )}
+              {typeof onNote === 'function' && (
+                <input
+                  className="ws-line__note" type="text" defaultValue={l.note || ''}
+                  placeholder="Note (ex : sans oignon)"
+                  onBlur={(e) => onNote(l.line, e.target.value)}
+                  style={{ marginTop: 4, width: '100%', fontSize: 12, padding: '2px 6px', border: '1px solid #ddd', borderRadius: 6 }}
+                />
               )}
             </div>
             <div className="ws-line__price">€{(l.price * l.qty).toFixed(2)}</div>
@@ -2595,11 +2603,18 @@ const W_PAYMENTS_DEFERRED = [
   { id: 'deferred', label: 'Paiement différé', sub: 'Facturation mensuelle · paiement sur facture' },
 ];
 
-function usePaymentMethods(shopId, mode, deliveryFeeResult) {
+function usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId) {
   const [methods, setMethods] = React.useState(W_PAYMENTS_FALLBACK);
   React.useEffect(() => {
     let alive = true;
-    // Delivery mode with deferred payment_type → only show "Paiement différé".
+    // Profile-aware list from the backend (shop × profil : guest/registered/company).
+    if (window.WSPayments && window.WSPayments.endpoint) {
+      window.WSPayments.list({ shopId, profile: profile || 'guest', companyId })
+        .then((m) => { if (alive && m && m.length) setMethods(m.map((x) => ({ id: x.method, label: x.label || x.method, sub: '' }))); })
+        .catch(() => {});
+      return () => { alive = false; };
+    }
+    // Repli (démo / ancien backend).
     if (mode === 'delivery' && deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') {
       setMethods(W_PAYMENTS_DEFERRED);
       return () => { alive = false; };
@@ -2612,7 +2627,7 @@ function usePaymentMethods(shopId, mode, deliveryFeeResult) {
       setMethods(W_PAYMENTS_FALLBACK);
     }
     return () => { alive = false; };
-  }, [shopId, mode, deliveryFeeResult && deliveryFeeResult.payment_type]);
+  }, [shopId, mode, deliveryFeeResult && deliveryFeeResult.payment_type, profile, companyId]);
   return methods;
 }
 
@@ -2673,6 +2688,8 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
 
   const isOffice = mode === 'delivery' && user && office;
   const isGuest = !user;
+  // Profil de paiement : société (companyId) > enregistré (user) > visiteur (guest).
+  const checkoutProfile = companyId ? 'company' : (user ? 'registered' : 'guest');
 
   // Step 1 validity
   function step1Valid() {
@@ -2786,6 +2803,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             mode={mode} basket={basket} subtotal={subtotal} promo={promo} total={total}
             deliveryFee={deliveryFee} deliveryFeeResult={deliveryFeeResult}
             payment={payment} setPayment={setPayment}
+            profile={checkoutProfile} companyId={companyId || null}
             isOffice={isOffice} invoice={invoice} setInvoice={setInvoice} vat={vat} setVat={setVat}
             shopId={shop && shop.id} mode={mode}
             voucherInput={voucherInput} setVoucherInput={setVoucherInput}
@@ -3005,10 +3023,14 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
 
 function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, isOffice, invoice, setInvoice, vat, setVat,
                          shopId, mode, voucherInput, setVoucherInput, voucherApplied, setVoucherApplied, voucherDiscount,
-                         deliveryFee, deliveryFeeResult }) {
+                         deliveryFee, deliveryFeeResult, profile, companyId }) {
   const [voucherErr, setVoucherErr] = useState(null);
   const [voucherLoading, setVoucherLoading] = useState(false);
-  const paymentMethods = usePaymentMethods(shopId, mode, deliveryFeeResult);
+  const paymentMethods = usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId);
+  // Si le moyen sélectionné n'est plus proposé (profil/boutique), prendre le premier dispo.
+  useEffect(() => {
+    if (paymentMethods.length && !paymentMethods.some((p) => p.id === payment)) setPayment(paymentMethods[0].id);
+  }, [paymentMethods]);
 
   // Re-validate whenever subtotal changes (e.g. minOrder boundary)
   useEffect(() => {
@@ -3479,6 +3501,9 @@ function ShopFrame({ variant }) {
     setBasket((b) => b.filter((l) => l.line !== lineId));
     if (line) stockRelease(line.productId, line.qty);
   }
+  function handleNote(lineId, note) {
+    setBasket((b) => b.map((l) => (l.line === lineId ? { ...l, note } : l)));
+  }
 
   const [detailProduct, setDetailProduct] = useState(null);
   function handleAddConfigured(line) {
@@ -3611,7 +3636,7 @@ function ShopFrame({ variant }) {
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
         </button>
 
-        <Basket shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} deliveryFeeResult={deliveryFeeResult}/>
+        <Basket shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} onNote={handleNote} deliveryFeeResult={deliveryFeeResult}/>
       </div>
 
       {/* Mobile bottom tab bar — 2 buttons, 50/50 split */}
