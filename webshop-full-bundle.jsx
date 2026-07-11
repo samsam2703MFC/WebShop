@@ -1515,7 +1515,6 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, del
                   className="ws-line__note" type="text" defaultValue={l.note || ''}
                   placeholder="Note (ex : sans oignon)"
                   onBlur={(e) => onNote(l.line, e.target.value)}
-                  style={{ marginTop: 4, width: '100%', fontSize: 12, padding: '2px 6px', border: '1px solid #ddd', borderRadius: 6 }}
                 />
               )}
             </div>
@@ -2810,12 +2809,11 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
             voucherDiscount={voucherDiscount}
           />
-          <div className="ws-b2b" style={{ marginTop: 12, padding: 12, border: '1px solid #eee', borderRadius: 10 }}>
+          <div className="ws-b2b">
             {companies.length > 0 && (
-              <label style={{ display: 'block', marginBottom: 8 }}>
-                Commander pour une entreprise
-                <select value={companyId} onChange={(e) => { setCompanyId(e.target.value); setOnAccount(false); }}
-                        style={{ display: 'block', width: '100%', marginTop: 4 }}>
+              <label className="ws-b2b__field">
+                <span className="ws-b2b__label">Commander pour une entreprise</span>
+                <select className="ws-b2b__select" value={companyId} onChange={(e) => { setCompanyId(e.target.value); setOnAccount(false); }}>
                   <option value="">— Non (commande personnelle) —</option>
                   {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
@@ -2825,19 +2823,17 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
               const c = companies.find((x) => String(x.id) === String(companyId));
               if (c && c.deferredBilling) {
                 return (
-                  <label style={{ display: 'block', marginBottom: 8 }}>
+                  <label className="ws-b2b__check">
                     <input type="checkbox" checked={onAccount} onChange={(e) => setOnAccount(e.target.checked)} />
-                    {' '}Commander sur le compte de l'entreprise (facturation)
+                    <span>Commander sur le compte de l'entreprise (facturation)</span>
                   </label>
                 );
               }
-              return <p style={{ margin: '4px 0', color: '#8D1D2C' }}>Je paie pour ma société — paiement par carte société.</p>;
+              return <p className="ws-b2b__msg">Je paie pour ma société — paiement par carte société.</p>;
             })()}
-            <label style={{ display: 'block' }}>
-              Note (facultatif)
-              <textarea value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2}
-                        placeholder="Instructions, occasion…"
-                        style={{ display: 'block', width: '100%', marginTop: 4 }} />
+            <label className="ws-b2b__field">
+              <span className="ws-b2b__label">Note (facultatif)</span>
+              <textarea className="ws-b2b__note" value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2} placeholder="Instructions, occasion…" />
             </label>
           </div>
           </>

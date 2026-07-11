@@ -2742,6 +2742,51 @@
 .ws-pay__logo[data-prov="bancontact"]::before { content: 'BC'; color: #1e2c5e; }
 .ws-pay__logo[data-prov="visa"]::before       { content: 'VISA'; color: #1a1f71; }
 .ws-pay__logo[data-prov="apple"]::before      { content: ''; }
+
+/* =====================================================================
+   Bloc entreprise (B2B) + notes au checkout — assorti aux cartes existantes
+   ===================================================================== */
+.ws-b2b {
+  display: flex; flex-direction: column; gap: 10px;
+  margin-top: 12px; padding: 14px;
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 12px;
+  background: var(--color-surface);
+}
+.ws-b2b__field { display: flex; flex-direction: column; gap: 4px; }
+.ws-b2b__label { font-size: 12px; font-weight: 500; color: var(--color-text-muted); }
+.ws-b2b__select,
+.ws-b2b__note {
+  width: 100%;
+  font: inherit; font-size: 13px; color: var(--color-text);
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-secondary);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+.ws-b2b__note { resize: vertical; min-height: 40px; }
+.ws-b2b__select:focus,
+.ws-b2b__note:focus { outline: none; border-color: var(--color-primary); }
+.ws-b2b__check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--color-text); cursor: pointer; }
+.ws-b2b__check input { width: 16px; height: 16px; accent-color: var(--color-primary); }
+.ws-b2b__msg {
+  margin: 0; padding: 8px 10px; font-size: 12px;
+  color: var(--color-primary);
+  background: var(--color-bg-secondary);
+  border-radius: 8px;
+}
+
+/* Note libre par produit dans le panier */
+.ws-line__note {
+  margin-top: 6px; width: 100%;
+  font: inherit; font-size: 12px; color: var(--color-text);
+  padding: 4px 8px;
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+.ws-line__note::placeholder { color: var(--color-text-muted); }
+.ws-line__note:focus { outline: none; border-color: var(--color-primary); }
 .ws-pay__logo[data-prov="apple"] {
   background: #000; color: #fff;
 }
