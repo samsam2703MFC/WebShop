@@ -60,15 +60,37 @@ state (frontend live in demo mode) to **full production** on the client's server
 
 ## 3. Connect the frontend to the backend ⏱️ ~2 min
 
-1. Edit **`api-config.js`** at the repo root:
-   ```js
-   const BASE_URL = 'https://<api-domain>/api';   // e.g. https://atelierby.online/api
-   ```
-   *(that single line switches all `window.WSXxx` stubs from demo data to the live API.)*
-2. Commit & push to **`main`** → **GitHub Actions rebuilds & redeploys** the PWA automatically (~1-2 min).
-3. Reload https://samsam2703mfc.github.io/WebShop/ → it now shows **real data**.
+There are two ways to run the frontend. **Option A (recommended)** puts everything on
+the client's own hosting via FTP — same origin, no CORS, nothing to edit.
 
-> **CORS** must match: `cors_origins` in `config.php` must contain exactly `https://samsam2703mfc.github.io`.
+### Option A — everything on the client's hosting (FTP auto-deploy) ✅
+The repo ships a workflow `.github/workflows/deploy-ftp.yml` that, on every push to
+`main`, builds the PWA and uploads **the frontend to the web root** and **`php-api/` to
+`/api`** over **FTPS**. Because they share the same origin, `api-config.js` auto-detects
+the API at `/api` — **no `BASE_URL` to edit, no CORS**.
+
+One-time setup in **GitHub → Settings → Secrets and variables → Actions**:
+| Kind | Name | Value |
+|---|---|---|
+| Secret | `FTP_SERVER` | e.g. `ftp.atelierby.online` |
+| Secret | `FTP_USERNAME` | the FTP account user |
+| Secret | `FTP_PASSWORD` | the FTP account password |
+| Variable | `FTP_ENABLED` | `true` (turns the workflow on — it's dormant until then) |
+| Variable *(opt.)* | `FTP_WEB_DIR` | web-root dir (default `./`) |
+| Variable *(opt.)* | `FTP_API_DIR` | API dir (default `./api/`) |
+| Variable *(opt.)* | `FTP_WEB_BASE` | base path if served from a subfolder (default `/`) |
+
+Then push to `main` (or run the workflow manually) → the site is live on the client's
+domain. **`config.php` on the server is never overwritten or deleted** by the deploy.
+*(Prefer FTPS; if the host only offers plain FTP, change `protocol: ftps` → `ftp` in the workflow.)*
+
+### Option B — frontend on GitHub Pages, API elsewhere
+Keep the Pages deploy and point it at an API on a **different** host by hardcoding the URL
+in `api-config.js` (replace the auto-detect line with `const BASE_URL = 'https://<api-domain>/api';`),
+then push to `main`. In this case set `cors_origins` in `config.php` to exactly
+`https://samsam2703mfc.github.io`.
+
+> On GitHub Pages the app always runs in **demo mode** (auto-detected) — handy as a staging preview.
 
 ## 4. Populate the data (back-office or phpMyAdmin) ⏱️ ongoing
 

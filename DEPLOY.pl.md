@@ -60,15 +60,37 @@ stanu (frontend działa w trybie demo) do **pełnej produkcji** na serwerze klie
 
 ## 3. Podłączenie frontendu do backendu ⏱️ ~2 min
 
-1. Edytuj **`api-config.js`** w katalogu głównym repozytorium:
-   ```js
-   const BASE_URL = 'https://<domena-api>/api';   // np. https://atelierby.online/api
-   ```
-   *(ta jedna linia przełącza wszystkie stuby `window.WSXxx` z danych demo na żywe API.)*
-2. Zatwierdź (commit) i wypchnij (push) do **`main`** → **GitHub Actions automatycznie przebuduje i wdroży** PWA (~1-2 min).
-3. Odśwież https://samsam2703mfc.github.io/WebShop/ → teraz pokazuje **prawdziwe dane**.
+Są dwa sposoby uruchomienia frontendu. **Opcja A (zalecana)** umieszcza wszystko na
+hostingu klienta przez FTP — ten sam origin, brak CORS, nic do edycji.
 
-> **CORS** musi się zgadzać: `cors_origins` w `config.php` musi zawierać dokładnie `https://samsam2703mfc.github.io`.
+### Opcja A — wszystko na hostingu klienta (auto-deploy FTP) ✅
+Repo zawiera workflow `.github/workflows/deploy-ftp.yml`, który przy każdym pushu do
+`main` buduje PWA i wgrywa **frontend do web root** oraz **`php-api/` do `/api`** przez
+**FTPS**. Ponieważ mają ten sam origin, `api-config.js` automatycznie wykrywa API pod
+`/api` — **brak `BASE_URL` do edycji, brak CORS**.
+
+Jednorazowa konfiguracja w **GitHub → Settings → Secrets and variables → Actions**:
+| Rodzaj | Nazwa | Wartość |
+|---|---|---|
+| Secret | `FTP_SERVER` | np. `ftp.atelierby.online` |
+| Secret | `FTP_USERNAME` | użytkownik konta FTP |
+| Secret | `FTP_PASSWORD` | hasło konta FTP |
+| Variable | `FTP_ENABLED` | `true` (włącza workflow — do tego czasu jest uśpiony) |
+| Variable *(opc.)* | `FTP_WEB_DIR` | katalog web root (domyślnie `./`) |
+| Variable *(opc.)* | `FTP_API_DIR` | katalog API (domyślnie `./api/`) |
+| Variable *(opc.)* | `FTP_WEB_BASE` | ścieżka bazowa jeśli w podfolderze (domyślnie `/`) |
+
+Następnie push do `main` (lub uruchom workflow ręcznie) → strona działa na domenie
+klienta. **`config.php` na serwerze nigdy nie jest nadpisywany ani usuwany** przez deploy.
+*(Preferuj FTPS; jeśli host oferuje tylko zwykły FTP, zmień `protocol: ftps` → `ftp` w workflow.)*
+
+### Opcja B — frontend na GitHub Pages, API gdzie indziej
+Zachowaj deploy Pages i wskaż API na **innym** hoście, wpisując URL na sztywno w
+`api-config.js` (zastąp linię auto-wykrywania przez `const BASE_URL = 'https://<domena-api>/api';`),
+potem push do `main`. W tym przypadku ustaw `cors_origins` w `config.php` dokładnie na
+`https://samsam2703mfc.github.io`.
+
+> Na GitHub Pages aplikacja zawsze działa w **trybie demo** (auto-wykrywane) — przydatne jako podgląd/staging.
 
 ## 4. Wypełnienie danych (panel administracyjny lub phpMyAdmin) ⏱️ na bieżąco
 

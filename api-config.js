@@ -12,10 +12,16 @@
    ===================================================================== */
 
 (function () {
-  // ─── Change this one line to point at the PHP API (php-api/) ─────────
-  //   e.g. 'https://atelierby.online/api'  — see DEPLOY.md, step 3.
-  //   Leave null to stay in demo mode (in-memory fixtures).
-  const BASE_URL = null;
+  // ─── API endpoint resolution ─────────────────────────────────────────
+  //   • On GitHub Pages (*.github.io) → demo mode (in-memory fixtures).
+  //   • Anywhere else (the client's own hosting) → the PHP API on the SAME
+  //     origin, at "/api" — no CORS, no config to touch. Deploy php-api/ to
+  //     <web-root>/api and it just works. See .github/workflows/deploy-ftp.yml.
+  //
+  //   To force a specific URL (e.g. API on a different host), replace the
+  //   line below with:  const BASE_URL = 'https://api.example.com';
+  const onGitHubPages = /\.github\.io$/i.test(location.hostname);
+  const BASE_URL = onGitHubPages ? null : (location.origin + '/api');
   // ─────────────────────────────────────────────────────────────────────
 
   if (!BASE_URL) return; // demo mode — all stubs use in-memory fixtures
