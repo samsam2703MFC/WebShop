@@ -1,4 +1,4 @@
 node_modules/
 dist/
 dev-dist/
-_design-incoming/
+_design-incoming*/
