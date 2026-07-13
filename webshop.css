@@ -1387,9 +1387,9 @@
 .ws-card--unavail .ws-add { background: #bbb; cursor: not-allowed; }
 .ws-card__leadtime {
   display: inline-flex; align-items: center;
-  font-size: 10px; font-weight: 500; letter-spacing: .02em;
-  background: rgba(26, 58, 92, .08); color: #5a708a;
-  border-radius: 4px; padding: 0 5px;
+  font-size: 10px; font-weight: 600; letter-spacing: .03em;
+  background: #1a3a5c; color: #fff;
+  border-radius: 4px; padding: 1px 5px;
   margin-bottom: 3px;
 }
 .ws-card__stock {
@@ -1532,6 +1532,31 @@
   letter-spacing: .01em;
 }
 .ws-line__price { font-size: 12px; font-weight: 500; }
+/* Per-line note — discreet until focused */
+.ws-line__notewrap {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 8px;
+  background: var(--color-bg);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.ws-line__notewrap:focus-within {
+  border-color: var(--color-primary);
+  background: var(--color-surface);
+}
+.ws-line__note-ic { color: var(--color-text-muted); flex: 0 0 auto; }
+.ws-line__notewrap:focus-within .ws-line__note-ic { color: var(--color-primary); }
+.ws-line__note {
+  flex: 1 1 auto; min-width: 0;
+  border: 0; background: transparent;
+  font-family: inherit; font-size: 11.5px;
+  color: var(--color-text);
+  padding: 1px 0;
+}
+.ws-line__note:focus { outline: none; }
+.ws-line__note::placeholder { color: var(--color-text-muted); }
 .ws-line__remove {
   appearance: none;
   background: transparent;
@@ -2742,55 +2767,84 @@
 .ws-pay__logo[data-prov="bancontact"]::before { content: 'BC'; color: #1e2c5e; }
 .ws-pay__logo[data-prov="visa"]::before       { content: 'VISA'; color: #1a1f71; }
 .ws-pay__logo[data-prov="apple"]::before      { content: ''; }
-
-/* =====================================================================
-   Bloc entreprise (B2B) + notes au checkout — assorti aux cartes existantes
-   ===================================================================== */
-.ws-b2b {
-  display: flex; flex-direction: column; gap: 10px;
-  margin-top: 12px; padding: 14px;
-  border: 1px solid var(--color-border-tertiary);
-  border-radius: 12px;
-  background: var(--color-surface);
-}
-.ws-b2b__field { display: flex; flex-direction: column; gap: 4px; }
-.ws-b2b__label { font-size: 12px; font-weight: 500; color: var(--color-text-muted); }
-.ws-b2b__select,
-.ws-b2b__note {
-  width: 100%;
-  font: inherit; font-size: 13px; color: var(--color-text);
-  padding: 8px 10px;
-  border: 1px solid var(--color-border-secondary);
-  border-radius: 10px;
-  background: var(--color-surface);
-}
-.ws-b2b__note { resize: vertical; min-height: 40px; }
-.ws-b2b__select:focus,
-.ws-b2b__note:focus { outline: none; border-color: var(--color-primary); }
-.ws-b2b__check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--color-text); cursor: pointer; }
-.ws-b2b__check input { width: 16px; height: 16px; accent-color: var(--color-primary); }
-.ws-b2b__msg {
-  margin: 0; padding: 8px 10px; font-size: 12px;
-  color: var(--color-primary);
-  background: var(--color-bg-secondary);
-  border-radius: 8px;
-}
-
-/* Note libre par produit dans le panier */
-.ws-line__note {
-  margin-top: 6px; width: 100%;
-  font: inherit; font-size: 12px; color: var(--color-text);
-  padding: 4px 8px;
-  border: 1px solid var(--color-border-tertiary);
-  border-radius: 8px;
-  background: var(--color-surface);
-}
-.ws-line__note::placeholder { color: var(--color-text-muted); }
-.ws-line__note:focus { outline: none; border-color: var(--color-primary); }
 .ws-pay__logo[data-prov="apple"] {
   background: #000; color: #fff;
 }
 .ws-pay__logo[data-prov="apple"]::after { content: ''; color: #fff; font-size: 11px; }
+
+/* =====================================================================
+   B2B / ENTREPRISE + ORDER NOTE  (checkout step 3)
+   ===================================================================== */
+.ws-b2b {
+  margin-top: 14px;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 12px;
+  background: var(--color-bg);
+}
+.ws-b2b__head { display: flex; align-items: flex-start; gap: 10px; }
+.ws-b2b__icon {
+  flex: 0 0 auto;
+  width: 30px; height: 30px; border-radius: 8px;
+  display: grid; place-items: center;
+  background: color-mix(in oklab, var(--color-primary) 10%, var(--color-surface));
+  color: var(--color-primary);
+}
+.ws-b2b__titles { display: flex; flex-direction: column; gap: 1px; }
+.ws-b2b__title { font-size: 13px; font-weight: 600; color: var(--color-text); letter-spacing: .005em; }
+.ws-b2b__sub { font-size: 11px; color: var(--color-text-muted); line-height: 1.3; }
+.ws-b2b__field { gap: 5px; }
+
+/* "Commander sur le compte" — selectable account row */
+.ws-b2b__account {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--color-border-secondary);
+  border-radius: 10px;
+  background: var(--color-surface);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.ws-b2b__account:has(input:checked) {
+  border-color: var(--color-primary);
+  background: color-mix(in oklab, var(--color-primary) 6%, var(--color-surface));
+}
+.ws-b2b__account input { position: absolute; opacity: 0; pointer-events: none; }
+.ws-b2b__account-box {
+  flex: 0 0 auto; margin-top: 1px;
+  width: 18px; height: 18px; border-radius: 5px;
+  border: 1.5px solid var(--color-border-secondary);
+  display: grid; place-items: center;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.ws-b2b__account:has(input:checked) .ws-b2b__account-box {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+}
+.ws-b2b__account-box::after {
+  content: ''; width: 9px; height: 5px;
+  border-left: 2px solid #fff; border-bottom: 2px solid #fff;
+  transform: rotate(-45deg) scale(0); transform-origin: center;
+  margin-top: -2px;
+  transition: transform 160ms cubic-bezier(.2,.8,.2,1);
+}
+.ws-b2b__account:has(input:checked) .ws-b2b__account-box::after { transform: rotate(-45deg) scale(1); }
+.ws-b2b__account-copy { display: flex; flex-direction: column; gap: 2px; }
+.ws-b2b__account-name { font-size: 12.5px; font-weight: 500; color: var(--color-text); line-height: 1.3; }
+.ws-b2b__account-sub { font-size: 11px; color: var(--color-text-muted); }
+
+/* "Je paie pour ma société" — informational callout */
+.ws-b2b__callout {
+  display: flex; align-items: center; gap: 9px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--color-primary) 8%, var(--color-surface));
+  color: var(--color-primary);
+  font-size: 12px; line-height: 1.35;
+}
+.ws-b2b__callout svg { flex: 0 0 auto; }
+.ws-b2b__callout strong { font-weight: 600; }
 
 /* Invoice */
 .ws-co-invoice { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }

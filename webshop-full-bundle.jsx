@@ -1511,11 +1511,17 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, del
                 <div className="ws-line__offer">Offre {l.offerLabel}{l.offerDiscount ? ` · −€${Number(l.offerDiscount).toFixed(2)}` : ''}</div>
               )}
               {typeof onNote === 'function' && (
-                <input
-                  className="ws-line__note" type="text" defaultValue={l.note || ''}
-                  placeholder="Note (ex : sans oignon)"
-                  onBlur={(e) => onNote(l.line, e.target.value)}
-                />
+                <div className="ws-line__notewrap">
+                  <svg className="ws-line__note-ic" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M12 20h9"/>
+                    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+                  </svg>
+                  <input
+                    className="ws-line__note" type="text" defaultValue={l.note || ''}
+                    placeholder="Note (ex : sans oignon)"
+                    onBlur={(e) => onNote(l.line, e.target.value)}
+                  />
+                </div>
               )}
             </div>
             <div className="ws-line__price">€{(l.price * l.qty).toFixed(2)}</div>
@@ -1923,7 +1929,6 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
         <label className="ws-field"><span>Email</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
         <label className="ws-field"><span>Mot de passe</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete={tab === 'login' ? 'current-password' : 'new-password'}/></label>
         {err && <p className="ws-form__err">{err}</p>}
-        {tab === 'login' && <p className="ws-form__hint">Démo : <strong>marie@acme.be</strong> · <strong>lou@borderline.be</strong> · <strong>jules@indep.be</strong> — mdp <strong>demo</strong></p>}
         <button type="submit" className="ws-cta ws-cta--block" disabled={loading}>{loading ? 'Chargement…' : (tab === 'login' ? 'Se connecter' : 'Créer mon compte')}</button>
       </form>
     </ModalShell>
@@ -2810,30 +2815,59 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             voucherDiscount={voucherDiscount}
           />
           <div className="ws-b2b">
+            <div className="ws-b2b__head">
+              <span className="ws-b2b__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 21h18"/>
+                  <path d="M5 21V7l7-4 7 4v14"/>
+                  <path d="M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01"/>
+                </svg>
+              </span>
+              <div className="ws-b2b__titles">
+                <span className="ws-b2b__title">Entreprise & note</span>
+                <span className="ws-b2b__sub">Facturation professionnelle ou message pour l'atelier</span>
+              </div>
+            </div>
+
             {companies.length > 0 && (
-              <label className="ws-b2b__field">
-                <span className="ws-b2b__label">Commander pour une entreprise</span>
-                <select className="ws-b2b__select" value={companyId} onChange={(e) => { setCompanyId(e.target.value); setOnAccount(false); }}>
-                  <option value="">— Non (commande personnelle) —</option>
+              <label className="ws-field ws-b2b__field">
+                <span>Commander pour une entreprise</span>
+                <select value={companyId} onChange={(e) => { setCompanyId(e.target.value); setOnAccount(false); }}>
+                  <option value="">Non — commande personnelle</option>
                   {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </label>
             )}
+
             {companyId && (() => {
               const c = companies.find((x) => String(x.id) === String(companyId));
               if (c && c.deferredBilling) {
                 return (
-                  <label className="ws-b2b__check">
+                  <label className="ws-b2b__account">
                     <input type="checkbox" checked={onAccount} onChange={(e) => setOnAccount(e.target.checked)} />
-                    <span>Commander sur le compte de l'entreprise (facturation)</span>
+                    <span className="ws-b2b__account-box" aria-hidden="true"/>
+                    <span className="ws-b2b__account-copy">
+                      <span className="ws-b2b__account-name">Commander sur le compte de l'entreprise</span>
+                      <span className="ws-b2b__account-sub">Facturation différée · réglée par la société</span>
+                    </span>
                   </label>
                 );
               }
-              return <p className="ws-b2b__msg">Je paie pour ma société — paiement par carte société.</p>;
+              return (
+                <div className="ws-b2b__callout" role="note">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="2" y="5" width="20" height="14" rx="2"/>
+                    <path d="M2 10h20"/>
+                  </svg>
+                  <span>Je paie pour ma société — paiement par <strong>carte société</strong>.</span>
+                </div>
+              );
             })()}
-            <label className="ws-b2b__field">
-              <span className="ws-b2b__label">Note (facultatif)</span>
-              <textarea className="ws-b2b__note" value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2} placeholder="Instructions, occasion…" />
+
+            <label className="ws-field ws-b2b__field">
+              <span>Note (facultatif)</span>
+              <textarea value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2}
+                        placeholder="Instructions, occasion…" />
             </label>
           </div>
           </>
@@ -2939,7 +2973,6 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
           <button className="ws-cta ws-cta--block" onClick={onLoginNow}>Se connecter</button>
           <button className="ws-btn-ghost" onClick={onLoginNow}>Créer un compte</button>
         </div>
-        <p className="ws-co-step__hint">Démo : marie@acme.be · jules@indep.be — mdp <strong>demo</strong></p>
       </div>
     );
   }
