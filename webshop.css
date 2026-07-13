@@ -2628,6 +2628,13 @@
 .ws-co-step { display: flex; flex-direction: column; gap: 12px; }
 .ws-co-step__title { margin: 0; font-family: var(--font-display); font-size: 17px; font-weight: 400; }
 .ws-co-step__lede  { margin: 0; font-size: 12px; color: var(--color-text-muted); line-height: 1.55; }
+.ws-co-guest__login { margin: 2px 0 0; font-size: 11.5px; color: var(--color-text-muted); }
+.ws-linkbtn {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  font: inherit; color: var(--color-primary); font-weight: 600;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.ws-linkbtn:hover { opacity: .8; }
 .ws-co-step__hint  { margin: 4px 0 0; font-size: 11px; color: var(--color-text-muted); }
 .ws-co-step__hint strong { background: var(--color-bg-secondary); padding: 1px 5px; border-radius: 4px; color: var(--color-text); font-weight: 600; }
 .ws-co-step__locknote {

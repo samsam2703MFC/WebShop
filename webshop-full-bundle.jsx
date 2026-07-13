@@ -2755,8 +2755,6 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   function next() {
     if (step === 1) {
       if (!step1Valid()) return;
-      // Guest collect → force login/register before reaching step 2
-      if (isGuest && !forceAuth) { setForceAuth(true); return; }
       setStep(2);
     } else if (step === 2) {
       if (!step2Valid()) return;
@@ -2887,7 +2885,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             disabled={paying || (step === 1 && !step1Valid()) || (step === 2 && !step2Valid())}
             onClick={next}
           >
-            {paying ? 'Traitement…' : step === 3 ? `Payer · €${total.toFixed(2)}` : (step === 1 && isGuest && !forceAuth ? 'Continuer · se connecter' : 'Continuer')}
+            {paying ? 'Traitement…' : step === 3 ? `Payer · €${total.toFixed(2)}` : 'Continuer'}
             {!paying && step < 3 && <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>}
           </button>
         </div>
@@ -2976,10 +2974,11 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
       </div>
     );
   }
+  // Guest collect — contact fields, optional login
   return (
     <div className="ws-co-step">
       <h3 className="ws-co-step__title">Vos coordonnées</h3>
-      <p className="ws-co-step__lede">Indiquez comment nous joindre, puis connectez-vous pour continuer.</p>
+      <p className="ws-co-step__lede">Commandez sans compte. Indiquez simplement comment vous joindre pour le retrait.</p>
       <div className="ws-form">
         <div className="ws-form__row2">
           <label className="ws-field"><span>Prénom</span><input value={contact.firstName} onChange={(e) => setContact((c) => ({ ...c, firstName: e.target.value }))} autoComplete="given-name"/></label>
@@ -2988,6 +2987,7 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
         <label className="ws-field"><span>Email</span><input type="email" value={contact.email} onChange={(e) => setContact((c) => ({ ...c, email: e.target.value }))} autoComplete="email"/></label>
         <label className="ws-field"><span>Téléphone</span><input value={contact.phone} onChange={(e) => setContact((c) => ({ ...c, phone: e.target.value }))} autoComplete="tel"/></label>
       </div>
+      <p className="ws-co-guest__login">Déjà client ? <button type="button" className="ws-linkbtn" onClick={onLoginNow}>Se connecter</button> pour pré-remplir vos infos.</p>
     </div>
   );
 }
