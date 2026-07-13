@@ -3,7 +3,16 @@
 <head>
 <meta charset="utf-8">
 <title>Webshop · L'Atelier By</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="L'Atelier By — boulangerie artisanale : commande en ligne, retrait & livraison.">
+<!-- PWA -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#8D1D2C">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Atelier By">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="admin.css">
 <link rel="stylesheet" href="webshop.css">
 <link rel="stylesheet" href="webshop-detail.css">
@@ -49,5 +58,14 @@
 <script type="text/babel" data-presets="react" src="webshop-i18n-react.jsx"></script>
 <script type="text/babel" data-presets="react" src="webshop-allergens.jsx"></script>
 <script type="text/babel" data-presets="react" src="webshop-full-bundle.jsx"></script>
+
+<!-- PWA: register service worker (progressive enhancement; no effect on file://) -->
+<script>
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    });
+  }
+</script>
 </body>
 </html>
