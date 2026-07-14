@@ -12,7 +12,7 @@ SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
   php_flag display_errors off
 </IfModule>
 
-# Protéger la config.
-<Files "config.php">
+# Protéger la config (config.php, config.local.php, config.example.php).
+<Files ~ "^config(\.local|\.example)?\.php$">
   Require all denied
 </Files>

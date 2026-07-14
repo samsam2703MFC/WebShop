@@ -1,0 +1,69 @@
+name: Deploy to server (SSH / rsync)
+
+# Builds the PWA and pushes BOTH the frontend and the PHP API to the client's
+# server over SSH (rsync). Same origin: frontend at the web root, API at /api →
+# no CORS, and api-config.js auto-detects the API at /api.
+#
+# ─── One-time setup (GitHub → Settings → Secrets and variables → Actions) ─────
+#   Secrets:
+#     SSH_HOST       server IP/host, e.g. 185.180.206.46
+#     SSH_USER       ssh user (e.g. a dedicated deploy user — see note below)
+#     SSH_PASSWORD   that user's password
+#   Variables:
+#     DEPLOY_ENABLED set to  true   to turn this workflow on (dormant otherwise)
+#   Optional variables:
+#     SSH_PORT       ssh port (default 22)
+#     WEB_ROOT       web root (default /var/www/html)
+#
+#   Notes:
+#   • config.php is gitignored → it is NEVER uploaded, so the server's real
+#     config.php (with DB credentials) is preserved across every deploy.
+#   • rsync runs WITHOUT --delete, so nothing on the server is wiped.
+#   • SECURITY: prefer a dedicated non-root deploy user + SSH key over the root
+#     password. To switch to a key, replace the sshpass lines with an ssh-agent
+#     key and drop SSH_PASSWORD.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    # Dormant until you set the repository variable DEPLOY_ENABLED = true.
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build frontend (served from web root)
+        env:
+          SITE_BASE: /
+        run: npm run build
+
+      - name: Install sshpass
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Deploy PHP API → ${{ vars.WEB_ROOT || '/var/www/html' }}/api
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e rsync -rltDz --omit-dir-times \
+            -e "ssh -p ${{ vars.SSH_PORT || '22' }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+            php-api/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ vars.WEB_ROOT || '/var/www/html' }}/api/"
+
+      - name: Deploy frontend → ${{ vars.WEB_ROOT || '/var/www/html' }}
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e rsync -rltDz --omit-dir-times \
+            -e "ssh -p ${{ vars.SSH_PORT || '22' }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+            dist/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ vars.WEB_ROOT || '/var/www/html' }}/"
