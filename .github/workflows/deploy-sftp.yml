@@ -11,9 +11,12 @@ name: Deploy to server (SSH / rsync)
 #     SSH_PASSWORD   that user's password
 #   Variables:
 #     DEPLOY_ENABLED set to  true   to turn this workflow on (dormant otherwise)
-#   Optional variables:
+#   Optional variables (per-project isolation):
 #     SSH_PORT       ssh port (default 22)
-#     WEB_ROOT       web root (default /var/www/html)
+#     WEB_ROOT       this project's DocumentRoot (default /var/www/html)
+#                    e.g. /var/www/atelierby/public  — frontend lands here, API at <WEB_ROOT>/api
+#     SITE_BASE      base path the site is served at (default /). Use / for a
+#                    domain/subdomain/port root; use /atelierby/ only if served on a subpath.
 #
 #   Notes:
 #   • config.php is gitignored → it is NEVER uploaded, so the server's real
@@ -46,7 +49,7 @@ jobs:
 
       - name: Build frontend (served from web root)
         env:
-          SITE_BASE: /
+          SITE_BASE: ${{ vars.SITE_BASE || '/' }}
         run: npm run build
 
       - name: Install sshpass
