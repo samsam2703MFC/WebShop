@@ -1465,7 +1465,7 @@ function CrossPortionStrip({ calc }) {
   );
 }
 
-function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, deliveryFeeResult }) {
+function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, notesEnabled, deliveryFeeResult }) {
   // TODO[BACKEND]: replace with `await WSPricing.quote({ shopId, mode, basket })`
   // and render the returned subtotal / discounts / total. The synchronous
   // computation below is a fallback so the demo basket still totals correctly
@@ -1510,7 +1510,7 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, del
               {l.offerLabel && (
                 <div className="ws-line__offer">Offre {l.offerLabel}{l.offerDiscount ? ` · −€${Number(l.offerDiscount).toFixed(2)}` : ''}</div>
               )}
-              {typeof onNote === 'function' && (
+              {notesEnabled && typeof onNote === 'function' && (
                 <div className="ws-line__notewrap">
                   <svg className="ws-line__note-ic" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M12 20h9"/>
@@ -2977,8 +2977,16 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
   // Guest collect — contact fields, optional login
   return (
     <div className="ws-co-step">
+      <div className="ws-co-guest__banner">
+        <span className="ws-co-guest__check" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        </span>
+        <div className="ws-co-guest__banner-copy">
+          <strong>Commande sans compte</strong>
+          <span>Aucune inscription requise — vos coordonnées servent uniquement au retrait.</span>
+        </div>
+      </div>
       <h3 className="ws-co-step__title">Vos coordonnées</h3>
-      <p className="ws-co-step__lede">Commandez sans compte. Indiquez simplement comment vous joindre pour le retrait.</p>
       <div className="ws-form">
         <div className="ws-form__row2">
           <label className="ws-field"><span>Prénom</span><input value={contact.firstName} onChange={(e) => setContact((c) => ({ ...c, firstName: e.target.value }))} autoComplete="given-name"/></label>
@@ -3288,6 +3296,25 @@ function ShopFrame({ variant }) {
   // Cutoff times loaded from API per shop — defaults until API responds.
   const [deliveryCutoffMinutes, setDeliveryCutoffMinutes] = React.useState(11 * 60); // 11:00
   const [collectCutoffMinutes,  setCollectCutoffMinutes]  = React.useState(16 * 60); // 16:00
+  // Per-product notes are a toggleable feature (enabled/disabled via API/DB).
+  // Default off until the shop settings confirm it's on.
+  const [lineNotesEnabled, setLineNotesEnabled] = React.useState(false);
+  React.useEffect(() => {
+    let alive = true;
+    const cfgApi = [window.WSCatalog, window.WSBrand, window.WSAvailability, window.WSCalendar]
+      .find((a) => a && (a.getSettings || a.getShopSettings));
+    const getter = cfgApi && (cfgApi.getSettings || cfgApi.getShopSettings);
+    if (!getter) return;
+    Promise.resolve(getter.call(cfgApi, { shopId }))
+      .then((s) => {
+        if (!alive || !s) return;
+        // Accept a few likely field names from the settings payload.
+        const flag = s.line_notes_enabled ?? s.product_notes_enabled ?? s.allow_line_notes ?? (s.features && s.features.lineNotes);
+        if (typeof flag === 'boolean') setLineNotesEnabled(flag);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [shopId]);
   React.useEffect(() => {
     const calApi = window.WSAvailability || window.WSCalendar;
     if (!calApi) return;
@@ -3665,7 +3692,7 @@ function ShopFrame({ variant }) {
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
         </button>
 
-        <Basket shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} onNote={handleNote} deliveryFeeResult={deliveryFeeResult}/>
+        <Basket shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} deliveryFeeResult={deliveryFeeResult}/>
       </div>
 
       {/* Mobile bottom tab bar — 2 buttons, 50/50 split */}
@@ -3689,7 +3716,7 @@ function ShopFrame({ variant }) {
           <div className="ws-drawer__panel">
             <button className="ws-drawer__close" onClick={() => setCartDrawerOpen(false)} aria-label="Fermer">×</button>
             <div className="ws-drawer__handle" aria-hidden="true"/>
-            <Basket shop={shop} mode={mode} basket={basket} onCheckout={() => { setCartDrawerOpen(false); handleCheckout(); }} onRemove={handleRemove}/>
+            <Basket shop={shop} mode={mode} basket={basket} onCheckout={() => { setCartDrawerOpen(false); handleCheckout(); }} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled}/>
           </div>
         </div>
       )}

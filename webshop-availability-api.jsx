@@ -70,6 +70,7 @@
     collect_capacity_per_slot:  15,
     delivery_capacity_per_slot: 30,
     timezone: 'Europe/Brussels',
+    line_notes_enabled: true,   // per-line product notes — toggled per shop (demo: on)
   };
 
   // Shop exception days — ws_shop_exceptions table.
