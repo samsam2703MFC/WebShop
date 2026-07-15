@@ -209,10 +209,11 @@ CREATE TABLE ws_assortments (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE ws_tours (
-  id      INT AUTO_INCREMENT PRIMARY KEY,
-  shop_id INT,
-  name    VARCHAR(100) NOT NULL,
-  active  BOOLEAN DEFAULT TRUE,
+  id        INT AUTO_INCREMENT PRIMARY KEY,
+  shop_id   INT,
+  name      VARCHAR(100) NOT NULL,
+  max_items INT,                    -- cap items par route (NULL = illimité). Cap fin par créneau : ws_tour_availability.max_items
+  active    BOOLEAN DEFAULT TRUE,
   FOREIGN KEY (shop_id) REFERENCES ws_shops(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
