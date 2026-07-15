@@ -1278,7 +1278,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
 // =========================================================================
 // PRODUCT CARD
 // =========================================================================
-const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, basketQty, stock }) {
+const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, basketQty, stock, platsBadge }) {
   const price = p.price;
   const hasOptions = !!(p.options || p.bundle || p.upsells);
   const isDelivery = mode === 'delivery';
@@ -1301,7 +1301,9 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
       <div className="ws-card__photo">
         {deliveryBlocked
           ? <span className="ws-card__badge ws-card__badge--nodeliv">Retrait seulement</span>
-          : p.badge && <span className="ws-card__badge">{p.badge}</span>}
+          : platsBadge
+            ? <span className="ws-badge--plats ws-card__badge">Plats préparés</span>
+            : p.badge && <span className="ws-card__badge">{p.badge}</span>}
         <img
           className={p.img ? 'ws-card__photo-img' : 'ws-card__photo-img ws-card__photo-img--lineart'}
           src={p.img || getPlaceholder(p)}
@@ -3000,6 +3002,76 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
   );
 }
 
+function SlotIcon({ name, size = 15 }) {
+  const paths = {
+    lunch:   <><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></>,
+    evening: <path d="M20 14.5A8 8 0 1 1 10.5 4a6.2 6.2 0 0 0 9.5 10.5z"/>,
+  };
+  return (
+    <svg className="ws-slotseg__ic" viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {paths[name] || paths.lunch}
+    </svg>
+  );
+}
+
+// Single derived CTA — renders ONLY what the server returns in `cta`
+// (label/theme/icon). No horaire, couleur, or libellé hardcoded here.
+function SlotCTA({ cta, onClick }) {
+  if (!cta) return null;
+  return (
+    <button type="button" className="ws-slotcta" data-slot-theme={cta.theme} onClick={onClick}>
+      <span className="ws-slotcta__ic"><SlotIcon name={cta.icon} size={16}/></span>
+      <span>{cta.label}</span>
+    </button>
+  );
+}
+
+// Sticky segmented control — shown only when the office has 2+ orderable slots.
+function SlotSegmented({ slots, selected, onSelect }) {
+  if (!slots || slots.length < 2) return null;
+  const active = slots.find((s) => s.slot_type === selected) || slots[0];
+  return (
+    <div className="ws-slotseg" role="tablist" aria-label="Créneau de livraison">
+      <div className="ws-slotseg__tabs">
+        {slots.map((s) => {
+          const theme = (s.cta && s.cta.theme) || (s.slot_type === 'soir' ? 'evening' : 'lunch');
+          const on = s.slot_type === selected;
+          return (
+            <button key={s.route_id} type="button" role="tab" aria-selected={on}
+              className="ws-slotseg__btn" data-slot-theme={theme} data-active={on}
+              onClick={() => onSelect(s.slot_type, s)}>
+              <SlotIcon name={(s.cta && s.cta.icon) || (s.slot_type === 'soir' ? 'evening' : 'lunch')}/>
+              <span>{(s.cta && s.cta.label) || (s.slot_type === 'soir' ? 'Soirée' : 'Midi')}</span>
+            </button>
+          );
+        })}
+      </div>
+      {active && active.cutoff_label && (
+        <div className="ws-slotseg__cutoff">Commande avant <strong>{active.cutoff_label}</strong></div>
+      )}
+    </div>
+  );
+}
+
+// Confirmation modal — one cart = one route + one date. Lists removed items.
+function SlotChangeModal({ items, targetLabel, onConfirm, onCancel }) {
+  return (
+    <div className="ws-drawer is-open" onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div className="ws-drawer__panel ws-slotchange" role="dialog" aria-label="Changer de créneau">
+        <h3 className="ws-co-step__title">Changer de créneau ?</h3>
+        <p className="ws-co-step__lede">Un panier ne peut contenir qu'un seul créneau. Passer sur <strong>{targetLabel}</strong> retirera {items.length} article{items.length > 1 ? 's' : ''} indisponible{items.length > 1 ? 's' : ''} sur ce créneau :</p>
+        <ul className="ws-slotchange__list">
+          {items.map((l) => <li key={l.line}><span>{l.name}</span><span>×{l.qty}</span></li>)}
+        </ul>
+        <div className="ws-slotchange__actions">
+          <button type="button" className="ws-fid__cancel" onClick={onCancel}>Annuler</button>
+          <button type="button" className="ws-slotchange__confirm" onClick={onConfirm}>Retirer et continuer</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
   const [slots, setSlots] = React.useState([]);
   const [dateLabel, setDateLabel] = React.useState('');
@@ -3299,6 +3371,45 @@ function ShopFrame({ variant }) {
   // Per-product notes are a toggleable feature (enabled/disabled via API/DB).
   // Default off until the shop settings confirm it's on.
   const [lineNotesEnabled, setLineNotesEnabled] = React.useState(false);
+  // ── DELIVERY SLOTS (midi / soir) ────────────────────────────────────
+  // The slot is an ATTRIBUTE of the order, resolved server-side from the
+  // route that serves the office. Front only renders /slots + /next-slot.
+  const [officeSlots, setOfficeSlots] = React.useState([]);
+  const [slotCta, setSlotCta] = React.useState(null);
+  const [selectedSlot, setSelectedSlot] = React.useState(null);
+  const [pendingSlot, setPendingSlot] = React.useState(null);
+  React.useEffect(() => {
+    let alive = true;
+    const api = window.WSSlots || window.WSAvailability;
+    if (mode !== 'delivery' || !api || !(api.listSlots || api.nextSlot)) { setOfficeSlots([]); setSlotCta(null); return; }
+    const officeId = (user && user.officeId) || null;
+    const iso = date instanceof Date ? date.toISOString().slice(0, 10) : '';
+    Promise.all([
+      api.listSlots ? api.listSlots({ officeId, date: iso }) : Promise.resolve([]),
+      api.nextSlot  ? api.nextSlot({ officeId, date: iso })  : Promise.resolve(null),
+    ]).then(([slots, next]) => {
+      if (!alive) return;
+      const list = (slots || []).filter((s) => s && s.orderable !== false);
+      setOfficeSlots(list);
+      setSlotCta(next && next.cta ? next.cta : (list[0] && list[0].cta) || null);
+      setSelectedSlot((cur) => cur || (next && next.slot_type) || (list[0] && list[0].slot_type) || null);
+    }).catch(() => { if (alive) { setOfficeSlots([]); setSlotCta(null); } });
+    return () => { alive = false; };
+  }, [mode, user, date]);
+  // One cart = one route. Changing slot drops items unavailable on the target.
+  function requestSlotChange(slotType) {
+    if (slotType === selectedSlot) return;
+    const target = officeSlots.find((s) => s.slot_type === slotType);
+    const dropped = basket.filter((l) => Array.isArray(l.available_slots) && !l.available_slots.includes(slotType));
+    if (dropped.length > 0) { setPendingSlot({ slot_type: slotType, route: target, dropped }); return; }
+    setSelectedSlot(slotType);
+  }
+  function confirmSlotChange() {
+    if (!pendingSlot) return;
+    setBasket((b) => b.filter((l) => !(Array.isArray(l.available_slots) && !l.available_slots.includes(pendingSlot.slot_type))));
+    setSelectedSlot(pendingSlot.slot_type);
+    setPendingSlot(null);
+  }
   React.useEffect(() => {
     let alive = true;
     const cfgApi = [window.WSCatalog, window.WSBrand, window.WSAvailability, window.WSCalendar]
@@ -3496,13 +3607,21 @@ function ShopFrame({ variant }) {
     return () => { alive = false; };
   }, [shopId]);
   const products = useMemo(() => {
-    const src = allProducts;
+    let src = allProducts;
+    // Slot filtering: one catalogue, filtered by available_slots for the selected slot.
+    if (mode === 'delivery' && selectedSlot) {
+      src = src.filter((p) => !Array.isArray(p.available_slots) || p.available_slots.includes(selectedSlot));
+      // Evening → surface "Plats préparés" first.
+      if (selectedSlot === 'soir') {
+        src = [...src].sort((a, b) => (a.cat === 'plats' ? -1 : 0) - (b.cat === 'plats' ? -1 : 0));
+      }
+    }
     if (cat === 'all') return src;
     if (isAssortment) {
       return src.slice(0, 8);
     }
     return src.filter((p) => p.cat === cat);
-  }, [cat, isAssortment, allProducts]);
+  }, [cat, isAssortment, allProducts, mode, selectedSlot]);
 
   // Stock map: productId -> { qty_total, qty_reserved, qty_sold, qty_available }
   // Reloaded whenever shop, date or mode changes.
@@ -3547,6 +3666,7 @@ function ShopFrame({ variant }) {
       qty: 1, price: p.price, options: [],
       portion: portion || null, cat: p.cat, crossPortion: !!p.crossPortion,
       lead_time: p.lead_time || 0, no_delivery: !!p.no_delivery,
+      available_slots: Array.isArray(p.available_slots) ? p.available_slots : null,
     }]);
     stockReserve(p.id, 1);
   }
@@ -3655,13 +3775,20 @@ function ShopFrame({ variant }) {
 
           {/* page head removed */}
 
+          {mode === 'delivery' && officeSlots.length >= 2 && (
+            <SlotSegmented slots={officeSlots} selected={selectedSlot} onSelect={(t) => requestSlotChange(t)}/>
+          )}
+          {mode === 'delivery' && officeSlots.length === 1 && officeSlots[0].slot_type === 'midi' && (
+            <p className="ws-slot-ask">Vous souhaitez la livraison du soir ? <button type="button" className="ws-linkbtn" onClick={() => window.WSSlots && window.WSSlots.requestEvening && window.WSSlots.requestEvening({ officeId: (user && user.officeId) || null })}>Faites-le nous savoir</button></p>
+          )}
+
           <CategoryRow active={cat} sub={subCat} onSelect={(c) => { setCat(c); setSubCat(null); }} onSelectSub={setSubCat} accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'} tint={mode === 'delivery' ? 'invert(45%) sepia(60%) saturate(600%) hue-rotate(5deg)' : 'invert(15%) sepia(85%) saturate(2400%) hue-rotate(335deg)'} categories={categories} assortments={assortments}/>
 
           <div className="ws-grid">
             {products.map((p) => {
               const bqty = basket.filter((l) => l.productId === p.id).reduce((t, l) => t + l.qty, 0);
               const stock = productStock[p.id] || null;
-              return <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpen={setDetailProduct} mode={mode} basketQty={bqty} stock={stock}/>;
+              return <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpen={setDetailProduct} mode={mode} basketQty={bqty} stock={stock} platsBadge={mode === 'delivery' && selectedSlot === 'soir' && p.cat === 'plats'}/>;
             })}
           </div>
         </main>
@@ -3709,6 +3836,16 @@ function ShopFrame({ variant }) {
           <span className="ws-tabbar__label">{user ? 'Profil' : 'Connexion'}</span>
         </button>
       </nav>
+
+      {/* Slot change confirmation — one cart = one route + one date */}
+      {pendingSlot && (
+        <SlotChangeModal
+          items={pendingSlot.dropped}
+          targetLabel={(pendingSlot.route && pendingSlot.route.cta && pendingSlot.route.cta.label) || (pendingSlot.slot_type === 'soir' ? 'Soirée' : 'Midi')}
+          onConfirm={confirmSlotChange}
+          onCancel={() => setPendingSlot(null)}
+        />
+      )}
 
       {/* Mobile cart drop-up drawer */}
       {cartDrawerOpen && (
