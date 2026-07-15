@@ -542,7 +542,7 @@ CREATE TABLE ws_tour_availability (
   FOREIGN KEY (shop_id) REFERENCES ws_shops(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Join ERP B2B client (client.id, is_b2b=1) → webshop route (ws_tours.id).
+-- Join ERP B2B client (client.id where is_b2b=1 AND tax_number set) → webshop route (ws_tours.id).
 -- client_id is a logical ref to the ERP `client` table (no FK — decoupled).
 -- Populated/refreshed by the sync in alter-clientb2b.sql; route_id assigned webshop-side.
 CREATE TABLE ws_clientb2b (
