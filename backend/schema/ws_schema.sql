@@ -528,13 +528,16 @@ CREATE TABLE ws_tour_availability (
   tour_id        INT NOT NULL,
   shop_id        INT NOT NULL,
   delivery_day   SMALLINT NOT NULL,
+  -- Which delivery window on that day. A tour can have several rows per day
+  -- (e.g. 'morning' + 'afternoon'), each with its own hours and order cutoff.
+  window_label   VARCHAR(16) NOT NULL DEFAULT 'morning',
   delivery_start TIME NOT NULL,
   delivery_end   TIME NOT NULL,
   cutoff_time    TIME NOT NULL,
   max_orders     INT,
   max_items      INT,
   active         BOOLEAN DEFAULT TRUE,
-  UNIQUE KEY uq_tour_avail (tour_id, shop_id, delivery_day),
+  UNIQUE KEY uq_tour_avail (tour_id, shop_id, delivery_day, window_label),
   FOREIGN KEY (tour_id) REFERENCES ws_tours(id),
   FOREIGN KEY (shop_id) REFERENCES ws_shops(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
