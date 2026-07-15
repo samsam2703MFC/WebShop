@@ -542,6 +542,22 @@ CREATE TABLE ws_tour_availability (
   FOREIGN KEY (shop_id) REFERENCES ws_shops(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Join ERP B2B client (client.id, is_b2b=1) → webshop route (ws_tours.id).
+-- client_id is a logical ref to the ERP `client` table (no FK — decoupled).
+-- Populated/refreshed by the sync in alter-clientb2b.sql; route_id assigned webshop-side.
+CREATE TABLE ws_clientb2b (
+  id         INT AUTO_INCREMENT PRIMARY KEY,
+  client_id  INT NOT NULL,
+  route_id   INT,
+  shop_id    INT,
+  active     BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_clientb2b_client (client_id),
+  KEY idx_clientb2b_route (route_id),
+  FOREIGN KEY (route_id) REFERENCES ws_tours(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE ws_office_delivery_settings (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   office_id       INT NOT NULL,
