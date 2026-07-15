@@ -39,6 +39,7 @@
   if (window.WSPayments)     window.WSPayments.endpoint     = BASE_URL + '/payment-methods';
   if (window.WSAuth)         window.WSAuth.endpoint         = BASE_URL + '/auth';
   if (window.WSAvailability) window.WSAvailability.endpoint = BASE_URL + '/availability';
+  if (window.WSSlots)        window.WSSlots.endpoint        = BASE_URL + '/slots';
   if (window.WSCalendar)     window.WSCalendar.endpoint     = BASE_URL + '/calendar';
   if (window.WSBrand)        window.WSBrand.endpoint        = BASE_URL + '/brand';
   /* VIES: template endpoint — the stub fills {country}/{vat}. */

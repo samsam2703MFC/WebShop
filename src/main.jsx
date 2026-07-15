@@ -20,6 +20,7 @@ import '../webshop-shop-router.jsx';
 import '../webshop-offices-api.jsx';
 import '../webshop-calendar-api.jsx';
 import '../webshop-availability-api.jsx';
+import '../webshop-slots-api.jsx';
 import '../webshop-delivery-fees-api.jsx';
 import '../webshop-catalog-api.jsx';
 import '../webshop-brand-api.jsx';
