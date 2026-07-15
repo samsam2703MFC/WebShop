@@ -551,7 +551,7 @@ CREATE TABLE ws_clientb2b (
   client_id  INT NOT NULL,
   route_id   INT,
   shop_id    INT,
-  active     BOOLEAN DEFAULT TRUE,
+  active     BOOLEAN DEFAULT FALSE,   -- piloté par la règle top-5 (clientb2b-top5-active.sql)
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_clientb2b_client (client_id),
