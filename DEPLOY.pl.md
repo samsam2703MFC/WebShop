@@ -134,7 +134,7 @@ Referencyjny SQL dla każdej tabeli i przypadku: `backend/schema/api-queries.sql
 
 - **Redeploy frontendu** = push do `main` (Actions buduje `dist/` → Pages). Aby zmienić URL API, edytuj `api-config.js`, push.
 - **Lokalne uruchomienie frontendu:** `npm install && npm run dev` (Vite).
-- **Endpointy API:** `/shops /brand /catalog/* /catalog/stock /availability/* /calendar/* /pricing/promos/* /vouchers/redeem /payment-methods /tours /offices /delivery-fees/quote /companies /orders /auth/* /payments/* /admin/*`.
+- **Endpointy API:** `/shops /brand /catalog/* /catalog/stock /availability/* /calendar/* /pricing/promos/* /vouchers/redeem /payment-methods /tours /offices /slots /delivery-fees/quote /companies /orders /auth/* /payments/* /admin/*`.
 - **Bezpieczeństwo:** sekrety żyją tylko w `config.php` na serwerze, nigdy w Git. `.env`/`config.php` są w `.gitignore`. 🔴 Zmień hasło bazy, jeśli było udostępnione otwartym tekstem.
 - **Pełne przykłady SQL pole-po-polu:** `backend/schema/api-queries.sql`.
 

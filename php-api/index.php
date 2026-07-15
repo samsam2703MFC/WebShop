@@ -248,6 +248,23 @@ function dispatch($m, $p) {
     json_out($o);
   }
 
+  /* Créneaux de livraison d'un bureau = les fenêtres de SA tournée (ws_tour_availability).
+     window_label 'afternoon' → slot 'soir' (ex. livraison 17:00, cutoff 15:00). Par tournée :
+     seules celles ayant une ligne 'afternoon' renvoient le créneau soir. */
+  if ($m === 'GET' && $p === '/slots') {
+    json_out(slots_for_office(qp('officeId'), qp('date') ?: date('Y-m-d')));
+  }
+  if ($m === 'GET' && $p === '/slots/next') {
+    $list = slots_for_office(qp('officeId'), qp('date') ?: date('Y-m-d'));
+    foreach ($list as $s) if ($s['orderable']) json_out($s);   // 1er créneau encore commandable
+    json_out($list[0] ?? null);
+  }
+  if ($m === 'POST' && $p === '/slots/request-evening') {
+    $b = body();
+    error_log('[ws] demande créneau soir — office=' . ($b['officeId'] ?? '?'));
+    json_out(['ok' => true]);
+  }
+
   /* Comptes entreprise auxquels un e-mail est rattaché (pour commander « pour
      une entreprise »). deferredBilling = paiement sur compte activé. */
   if ($m === 'GET' && $p === '/companies') {
@@ -668,6 +685,47 @@ function dispatch($m, $p) {
    - lead : le produit le plus long impose son délai (max).
    - cutoff : la limite la plus tôt s'impose (min).
    - dispo : faux si un produit n'est pas activé dans ce mode. */
+/* Fenêtres de livraison (créneaux) d'un bureau pour une date, via SA tournée.
+   Lit ws_tour_availability (une ligne par fenêtre : window_label morning/afternoon)
+   pour le jour ISO de la date. Calcule `orderable` côté serveur d'après cutoff_time. */
+function slots_for_office($officeId, $date) {
+  if (!$officeId) return [];
+  $off = row("SELECT o.tour_id, t.shop_id FROM ws_offices o
+                JOIN ws_tours t ON t.id = o.tour_id
+               WHERE o.id = ? AND o.active = 1", [$officeId]);
+  if (!$off || !$off['tour_id']) return [];
+  $dow = (int) date('N', strtotime($date));   // 1=lundi .. 7=dimanche
+  $wins = rows("SELECT id, window_label,
+                       TIME_FORMAT(delivery_start,'%H:%i') AS start_t,
+                       TIME_FORMAT(cutoff_time,'%H:%i')    AS cutoff_t,
+                       cutoff_time
+                  FROM ws_tour_availability
+                 WHERE tour_id = ? AND shop_id = ? AND delivery_day = ? AND active = 1
+                 ORDER BY delivery_start", [$off['tour_id'], $off['shop_id'], $dow]);
+  $today = date('Y-m-d'); $now = date('H:i:s'); $out = [];
+  foreach ($wins as $w) {
+    $lbl  = strtolower((string) $w['window_label']);
+    $soir = in_array($lbl, ['afternoon', 'soir', 'evening', 'pm'], true);
+    if ($date > $today)     $orderable = true;
+    elseif ($date < $today) $orderable = false;
+    else                    $orderable = ($now < $w['cutoff_time']);   // aujourd'hui : avant le cutoff
+    $out[] = [
+      'slot_type'     => $soir ? 'soir' : 'midi',
+      'route_id'      => 'w' . $w['id'],
+      'delivery_time' => $w['start_t'],
+      'cutoff'        => $w['cutoff_t'],
+      'cutoff_label'  => str_replace(':', 'h', $w['cutoff_t']),
+      'orderable'     => $orderable,
+      'cta' => [
+        'theme' => $soir ? 'evening' : 'lunch',
+        'icon'  => $soir ? 'evening' : 'lunch',
+        'label' => $soir ? 'Soirée' : 'Midi',
+      ],
+    ];
+  }
+  return $out;
+}
+
 function basket_pa($shop, $mode, $productIds) {
   if (!$productIds) return [0, null, true];
   $in = implode(',', array_fill(0, count($productIds), '?'));

@@ -150,3 +150,26 @@ UPDATE ws_product_stock
 SET qty_sold = qty_sold + 3
 WHERE product_id = 14 AND shop_id = 2 AND date = CURDATE()
   AND (mode = 'collect' OR mode IS NULL);
+
+-- ============================================================================
+-- GET /slots?officeId=&date=  → créneaux de livraison du bureau (via sa tournée)
+-- Une ligne par fenêtre (window_label morning/afternoon). 'afternoon' → slot 'soir'.
+-- `orderable` calculé côté PHP : date future = ok ; aujourd'hui = NOW() < cutoff_time.
+-- ============================================================================
+SELECT ta.id, ta.window_label,
+       TIME_FORMAT(ta.delivery_start,'%H:%i') AS delivery_time,
+       TIME_FORMAT(ta.cutoff_time,'%H:%i')    AS cutoff
+  FROM ws_offices o
+  JOIN ws_tours t              ON t.id = o.tour_id
+  JOIN ws_tour_availability ta ON ta.tour_id = t.id AND ta.shop_id = t.shop_id
+ WHERE o.id = :officeId
+   AND ta.delivery_day = WEEKDAY(:date) + 1   -- 1=lundi..7=dimanche (ISO)
+   AND ta.active = 1
+ ORDER BY ta.delivery_start;
+
+-- Donner un créneau soir (livraison 17:00, cutoff 15:00) à UNE tournée :
+-- INSERT INTO ws_tour_availability
+--   (tour_id, shop_id, delivery_day, window_label, delivery_start, delivery_end, cutoff_time, active)
+-- SELECT tour_id, shop_id, delivery_day, 'afternoon', '17:00:00', '18:00:00', '15:00:00', 1
+--   FROM ws_tour_availability
+--  WHERE tour_id = 2 AND shop_id = 2 AND window_label = 'morning';

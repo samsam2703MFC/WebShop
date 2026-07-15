@@ -134,7 +134,7 @@ Reference SQL for every table and case: `backend/schema/api-queries.sql`.
 
 - **Frontend redeploy** = push to `main` (Actions builds `dist/` → Pages). To change the API URL, edit `api-config.js`, push.
 - **Local dev of the frontend:** `npm install && npm run dev` (Vite).
-- **API endpoints:** `/shops /brand /catalog/* /catalog/stock /availability/* /calendar/* /pricing/promos/* /vouchers/redeem /payment-methods /tours /offices /delivery-fees/quote /companies /orders /auth/* /payments/* /admin/*`.
+- **API endpoints:** `/shops /brand /catalog/* /catalog/stock /availability/* /calendar/* /pricing/promos/* /vouchers/redeem /payment-methods /tours /offices /slots /delivery-fees/quote /companies /orders /auth/* /payments/* /admin/*`.
 - **Security:** secrets live only in `config.php` on the server, never in Git. `.env`/`config.php` are git-ignored. 🔴 Rotate the DB password if it was shared in plaintext.
 - **Full field-by-field SQL examples:** `backend/schema/api-queries.sql`.
 
