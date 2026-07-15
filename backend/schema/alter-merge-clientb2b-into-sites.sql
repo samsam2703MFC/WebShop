@@ -16,6 +16,13 @@ ALTER TABLE ws_office_delivery_sites
   MODIFY name VARCHAR(120) NULL,                     -- was NOT NULL
   ADD UNIQUE KEY uq_ods_client (client_id);
 
+-- Drop the shop_id FK: la synchro y met client.id_main_shop, et l'ERP a des
+-- shops non seedés dans ws_shops → shop_id devient une réf LOGIQUE (comme client_id).
+-- Le nom du FK est auto-généré ; d'après ton erreur c'est ws_office_delivery_sites_ibfk_3.
+-- (Vérifier au besoin : SHOW CREATE TABLE ws_office_delivery_sites;)
+ALTER TABLE ws_office_delivery_sites DROP FOREIGN KEY ws_office_delivery_sites_ibfk_3;
+ALTER TABLE ws_office_delivery_sites ADD KEY idx_ods_shop (shop_id);
+
 -- OPTIONNEL — si tu avais déjà créé/rempli ws_clientb2bdelivery, migre ses lignes
 -- (route_id → tournee_id) AVANT le DROP. Décommente si besoin :
 -- INSERT INTO ws_office_delivery_sites (client_id, tournee_id, shop_id, active)

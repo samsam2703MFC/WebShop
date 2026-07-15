@@ -290,9 +290,10 @@ CREATE TABLE ws_office_delivery_sites (
   created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_ods_client (client_id),    -- 1 config par client ERP (NULL multiples OK pour les sites webshop)
+  KEY idx_ods_shop (shop_id),
   FOREIGN KEY (office_client_id) REFERENCES ws_offices(id),
-  FOREIGN KEY (tournee_id)       REFERENCES ws_tours(id),
-  FOREIGN KEY (shop_id)          REFERENCES ws_shops(id)
+  FOREIGN KEY (tournee_id)       REFERENCES ws_tours(id)
+  -- Pas de FK sur shop_id : c'est une réf logique (l'ERP a des id_main_shop non seedés dans ws_shops).
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE ws_slots (
