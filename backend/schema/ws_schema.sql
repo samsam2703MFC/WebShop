@@ -276,18 +276,20 @@ CREATE TABLE ws_customers (
 
 CREATE TABLE ws_office_delivery_sites (
   id               INT AUTO_INCREMENT PRIMARY KEY,
-  office_client_id INT NOT NULL,
-  name             VARCHAR(120) NOT NULL,
+  office_client_id INT,                    -- ws_offices.id (site créé côté webshop) — nullable
+  client_id        INT,                    -- ERP client.id (config livraison B2B synchronisée) — nullable
+  name             VARCHAR(120),           -- nullable (les lignes synchro ERP n'en ont pas)
   address          VARCHAR(250),
   floor_room       VARCHAR(120),
   contact_name     VARCHAR(120),
   contact_phone    VARCHAR(30),
-  tournee_id       INT,
+  tournee_id       INT,                    -- route / tournée (ws_tours) = ex "route_id"
   tournee_stop_id  INT,
   shop_id          INT,
-  active           BOOLEAN DEFAULT TRUE,
+  active           BOOLEAN DEFAULT TRUE,   -- pour les lignes ERP : piloté par la règle top-5 (posé explicitement)
   created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_ods_client (client_id),    -- 1 config par client ERP (NULL multiples OK pour les sites webshop)
   FOREIGN KEY (office_client_id) REFERENCES ws_offices(id),
   FOREIGN KEY (tournee_id)       REFERENCES ws_tours(id),
   FOREIGN KEY (shop_id)          REFERENCES ws_shops(id)
@@ -543,21 +545,9 @@ CREATE TABLE ws_tour_availability (
   FOREIGN KEY (shop_id) REFERENCES ws_shops(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Join ERP B2B client (client.id where is_b2b=1 AND tax_number set) → webshop route (ws_tours.id).
--- client_id is a logical ref to the ERP `client` table (no FK — decoupled).
--- Populated/refreshed by the sync in alter-clientb2b.sql; route_id assigned webshop-side.
-CREATE TABLE ws_clientb2bdelivery (
-  id         INT AUTO_INCREMENT PRIMARY KEY,
-  client_id  INT NOT NULL,
-  route_id   INT,
-  shop_id    INT,
-  active     BOOLEAN DEFAULT FALSE,   -- piloté par la règle top-5 (clientb2b-top5-active.sql)
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_clientb2b_client (client_id),
-  KEY idx_clientb2b_route (route_id),
-  FOREIGN KEY (route_id) REFERENCES ws_tours(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- NOTE: the ERP B2B client → route mapping is now merged into
+-- ws_office_delivery_sites (columns client_id + tournee_id + shop_id + active).
+-- The standalone ws_clientb2bdelivery table has been removed.
 
 CREATE TABLE ws_office_delivery_settings (
   id              INT AUTO_INCREMENT PRIMARY KEY,

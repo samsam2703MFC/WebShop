@@ -1,6 +1,6 @@
 -- ============================================================================
 -- triggers-clientb2b.sql
--- Keep the ws_clientb2bdelivery ROSTER in sync with the ERP `client` table in real time
+-- Keep the ws_office_delivery_sites ROSTER in sync with the ERP `client` table in real time
 -- (INSERT / UPDATE / DELETE). B2B = is_b2b = 1 AND tax_number set (non-empty).
 --
 -- IMPORTANT: `active` is OWNED by the top-5 rule (clientb2b-top5-active.sql),
@@ -8,7 +8,7 @@
 --   • add a new B2B client to the roster as INACTIVE (the top-5 recompute enables winners),
 --   • sync shop_id, WITHOUT ever forcing active back to 1,
 --   • deactivate a client that is no longer B2B / was deleted.
--- The triggers only ever write ws_clientb2bdelivery — never `client`.
+-- The triggers only ever write ws_office_delivery_sites — never `client`.
 --
 -- Run once in phpMyAdmin (handles DELIMITER) or: mysql atelierby_db < triggers-clientb2b.sql
 -- ============================================================================
@@ -24,7 +24,7 @@ CREATE TRIGGER trg_client_b2b_ai AFTER INSERT ON client
 FOR EACH ROW
 BEGIN
   IF NEW.is_b2b = 1 AND NEW.tax_number IS NOT NULL AND NEW.tax_number <> '' THEN
-    INSERT INTO ws_clientb2bdelivery (client_id, shop_id, active)
+    INSERT INTO ws_office_delivery_sites (client_id, shop_id, active)
     VALUES (NEW.id, NEW.id_main_shop, 0)
     ON DUPLICATE KEY UPDATE shop_id = VALUES(shop_id);   -- ne touche PAS active
   END IF;
@@ -35,11 +35,11 @@ CREATE TRIGGER trg_client_b2b_au AFTER UPDATE ON client
 FOR EACH ROW
 BEGIN
   IF NEW.is_b2b = 1 AND NEW.tax_number IS NOT NULL AND NEW.tax_number <> '' THEN
-    INSERT INTO ws_clientb2bdelivery (client_id, shop_id, active)
+    INSERT INTO ws_office_delivery_sites (client_id, shop_id, active)
     VALUES (NEW.id, NEW.id_main_shop, 0)
     ON DUPLICATE KEY UPDATE shop_id = VALUES(shop_id);   -- active préservé
   ELSE
-    UPDATE ws_clientb2bdelivery SET active = 0 WHERE client_id = NEW.id;
+    UPDATE ws_office_delivery_sites SET active = 0 WHERE client_id = NEW.id;
   END IF;
 END//
 
@@ -47,7 +47,7 @@ END//
 CREATE TRIGGER trg_client_b2b_ad AFTER DELETE ON client
 FOR EACH ROW
 BEGIN
-  UPDATE ws_clientb2bdelivery SET active = 0 WHERE client_id = OLD.id;
+  UPDATE ws_office_delivery_sites SET active = 0 WHERE client_id = OLD.id;
 END//
 
 DELIMITER ;
