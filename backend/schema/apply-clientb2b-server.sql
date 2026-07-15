@@ -3,7 +3,7 @@
 -- (phpMyAdmin → base atelierby_db → onglet SQL → coller → Exécuter ;
 --  ou en SSH :  mysql -usam -p atelierby_db < apply-clientb2b-server.sql)
 --
--- Contient TOUT pour ws_clientb2b : table + roster backfill + sélection top-5
+-- Contient TOUT pour ws_clientb2bdelivery : table + roster backfill + sélection top-5
 -- (5 clients par magasin avec le plus de commandes) + triggers temps-réel.
 --
 -- Modèle de `active` : piloté par la règle TOP-5 (pas par les triggers).
@@ -13,7 +13,7 @@
 -- ============================================================================
 
 -- 1) La table join (idempotent) --------------------------------------------
-CREATE TABLE IF NOT EXISTS ws_clientb2b (
+CREATE TABLE IF NOT EXISTS ws_clientb2bdelivery (
   id         INT AUTO_INCREMENT PRIMARY KEY,
   client_id  INT NOT NULL,          -- ERP client.id (is_b2b=1 + tax_number)
   route_id   INT,                   -- ws_tours.id — assigné côté webshop, jamais écrasé
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS ws_clientb2b (
 
 -- 2) Roster backfill — chaque client B2B (is_b2b=1 ET tax_number) entre dans la join.
 --    (active laissé à la charge du top-5 juste après ; route_id préservé.)
-INSERT INTO ws_clientb2b (client_id, shop_id, active)
+INSERT INTO ws_clientb2bdelivery (client_id, shop_id, active)
 SELECT c.id, c.id_main_shop, 0
   FROM client c
  WHERE c.is_b2b = 1
@@ -36,7 +36,7 @@ SELECT c.id, c.id_main_shop, 0
 ON DUPLICATE KEY UPDATE shop_id = VALUES(shop_id);
 
 -- Retirer du "actif" ceux qui ne sont plus B2B (roster garde la ligne, active=0).
-UPDATE ws_clientb2b j
+UPDATE ws_clientb2bdelivery j
   LEFT JOIN client c
     ON c.id = j.client_id AND c.is_b2b = 1
    AND c.tax_number IS NOT NULL AND c.tax_number <> ''
@@ -45,7 +45,7 @@ UPDATE ws_clientb2b j
 
 -- 3) Sélection TOP-5 par magasin (par nb de commandes dans ce magasin) -------
 --    Actif = uniquement les 5 clients avec le plus de commandes par shop_id.
-UPDATE ws_clientb2b j
+UPDATE ws_clientb2bdelivery j
 LEFT JOIN (
   SELECT client_id FROM (
     SELECT j.client_id,
@@ -53,7 +53,7 @@ LEFT JOIN (
              PARTITION BY j.shop_id
              ORDER BY COALESCE(o.cnt, 0) DESC, j.client_id
            ) AS rn
-    FROM ws_clientb2b j
+    FROM ws_clientb2bdelivery j
     LEFT JOIN (
       SELECT id_client, id_shop, COUNT(*) AS cnt
       FROM   client_order
@@ -74,7 +74,7 @@ CREATE TRIGGER trg_client_b2b_ai AFTER INSERT ON client
 FOR EACH ROW
 BEGIN
   IF NEW.is_b2b = 1 AND NEW.tax_number IS NOT NULL AND NEW.tax_number <> '' THEN
-    INSERT INTO ws_clientb2b (client_id, shop_id, active)
+    INSERT INTO ws_clientb2bdelivery (client_id, shop_id, active)
     VALUES (NEW.id, NEW.id_main_shop, 0)
     ON DUPLICATE KEY UPDATE shop_id = VALUES(shop_id);
   END IF;
@@ -83,18 +83,18 @@ CREATE TRIGGER trg_client_b2b_au AFTER UPDATE ON client
 FOR EACH ROW
 BEGIN
   IF NEW.is_b2b = 1 AND NEW.tax_number IS NOT NULL AND NEW.tax_number <> '' THEN
-    INSERT INTO ws_clientb2b (client_id, shop_id, active)
+    INSERT INTO ws_clientb2bdelivery (client_id, shop_id, active)
     VALUES (NEW.id, NEW.id_main_shop, 0)
     ON DUPLICATE KEY UPDATE shop_id = VALUES(shop_id);
   ELSE
-    UPDATE ws_clientb2b SET active = 0 WHERE client_id = NEW.id;
+    UPDATE ws_clientb2bdelivery SET active = 0 WHERE client_id = NEW.id;
   END IF;
 END//
 CREATE TRIGGER trg_client_b2b_ad AFTER DELETE ON client
 FOR EACH ROW
 BEGIN
-  UPDATE ws_clientb2b SET active = 0 WHERE client_id = OLD.id;
+  UPDATE ws_clientb2bdelivery SET active = 0 WHERE client_id = OLD.id;
 END//
 DELIMITER ;
 
--- Vérif : SELECT shop_id, COUNT(*) FROM ws_clientb2b WHERE active=1 GROUP BY shop_id;  -- <= 5 par magasin
+-- Vérif : SELECT shop_id, COUNT(*) FROM ws_clientb2bdelivery WHERE active=1 GROUP BY shop_id;  -- <= 5 par magasin

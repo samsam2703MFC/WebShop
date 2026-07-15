@@ -13,7 +13,7 @@
 --   • shop_id = ERP client.id_main_shop (== ws_shops.id, the Franchise Buddy id).
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS ws_clientb2b (
+CREATE TABLE IF NOT EXISTS ws_clientb2bdelivery (
   id         INT AUTO_INCREMENT PRIMARY KEY,
   client_id  INT NOT NULL,          -- ERP client.id (is_b2b=1) — logical ref
   route_id   INT,                   -- ws_tours.id (tournée/route) — assigned webshop-side, NULL until set
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS ws_clientb2b (
 -- 1) Upsert every B2B client into the join. New clients arrive with route_id
 --    NULL (to be assigned). Existing rows keep their route_id; only shop_id and
 --    active are refreshed.
-INSERT INTO ws_clientb2b (client_id, shop_id, active)
+INSERT INTO ws_clientb2bdelivery (client_id, shop_id, active)
 SELECT c.id, c.id_main_shop, 1
   FROM client c
  WHERE c.is_b2b = 1
@@ -44,7 +44,7 @@ ON DUPLICATE KEY UPDATE
 
 -- 2) Deactivate join rows whose client no longer qualifies (not B2B, or no VAT).
 --    (Soft: keeps the route assignment for audit / reactivation.)
-UPDATE ws_clientb2b j
+UPDATE ws_clientb2bdelivery j
   LEFT JOIN client c
     ON c.id = j.client_id AND c.is_b2b = 1
    AND c.tax_number IS NOT NULL AND c.tax_number <> ''

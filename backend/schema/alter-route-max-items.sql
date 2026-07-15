@@ -1,7 +1,7 @@
 -- ============================================================================
 -- alter-route-max-items.sql
 -- Max items per route (tournée). ws_tours is the route table referenced by
--- ws_clientb2b.route_id. NULL = no cap. A finer per-window cap already exists
+-- ws_clientb2bdelivery.route_id. NULL = no cap. A finer per-window cap already exists
 -- in ws_tour_availability.max_items (per tour/day/window).
 -- Run once on an existing DB.
 -- ============================================================================

@@ -546,7 +546,7 @@ CREATE TABLE ws_tour_availability (
 -- Join ERP B2B client (client.id where is_b2b=1 AND tax_number set) → webshop route (ws_tours.id).
 -- client_id is a logical ref to the ERP `client` table (no FK — decoupled).
 -- Populated/refreshed by the sync in alter-clientb2b.sql; route_id assigned webshop-side.
-CREATE TABLE ws_clientb2b (
+CREATE TABLE ws_clientb2bdelivery (
   id         INT AUTO_INCREMENT PRIMARY KEY,
   client_id  INT NOT NULL,
   route_id   INT,
