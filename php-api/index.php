@@ -66,9 +66,16 @@ function dispatch($m, $p) {
   /* ── Catalog ── */
   if ($m === 'GET' && $p === '/catalog/categories') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    json_out(rows("SELECT id, slug, label, img, sort_order FROM ws_categories
-                    WHERE active = 1 AND (shop_id = ? OR shop_id IS NULL)
-                    ORDER BY sort_order, label", [$s]));
+    // N'expose une catégorie que si elle a >=1 produit DISPONIBLE dans cette
+    // boutique (produit actif + présent dans l'assortiment ws_product_shops).
+    json_out(rows("SELECT c.id, c.slug, c.label, c.img, c.sort_order
+                     FROM ws_categories c
+                    WHERE c.active = 1 AND (c.shop_id = ? OR c.shop_id IS NULL)
+                      AND EXISTS (SELECT 1 FROM ws_products p
+                                    JOIN ws_product_shops ps ON ps.product_id = p.id
+                                                            AND ps.shop_id = ? AND ps.active = 1
+                                   WHERE p.cat_id = c.id AND p.active = 1)
+                    ORDER BY c.sort_order, c.label", [$s, $s]));
   }
   if ($m === 'GET' && $p === '/catalog/products') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
