@@ -532,31 +532,45 @@ function dispatch($m, $p) {
 
   /* ── Auth (bcrypt natif PHP + jeton HMAC) ── */
   if ($m === 'POST' && $p === '/auth/register') {
-    $b = body(); $mail = strtolower(trim($b['email'] ?? ''));
-    if (!filter_var($mail, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'Email invalide'], 400);
-    if (strlen($b['password'] ?? '') < 6) json_out(['error' => 'Mot de passe trop court (min. 6)'], 400);
+    $b = body();
+    // Champs du formulaire : prénom, nom, code postal, téléphone, email.
+    // Auth par email OU téléphone (toggle `authMethod`). Mot de passe optionnel
+    // (vérification OTP prévue plus tard) ; s'il est fourni il est haché.
+    $mail  = strtolower(trim($b['email'] ?? ''));
     $phone = trim($b['phone'] ?? '');
-    $hash  = password_hash($b['password'], PASSWORD_BCRYPT);
-    // Table `client` unifiée : un client ERP peut déjà exister (email OU téléphone)
-    // sans mot de passe webshop. On active alors l'auth sur cette ligne au lieu
-    // d'en créer une nouvelle. Un mot de passe déjà présent = compte existant → 409.
-    $cl = row("SELECT id, password_hash FROM client WHERE LOWER(TRIM(email))=? OR (? <> '' AND phone=?) LIMIT 1", [$mail, $phone, $phone]);
-    if ($cl && !empty($cl['password_hash'])) json_out(['error' => 'Un compte existe déjà avec cet email.'], 409);
+    $first = trim($b['firstName'] ?? '');
+    $last  = trim($b['lastName'] ?? '');
+    $zip   = trim($b['postalCode'] ?? ($b['zip'] ?? ''));
+    $authM = (($b['authMethod'] ?? 'email') === 'phone') ? 'phone' : 'email';
+    if ($mail !== '' && !filter_var($mail, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'Email invalide'], 400);
+    if ($authM === 'email' && $mail === '')  json_out(['error' => 'Email requis'], 400);
+    if ($authM === 'phone' && $phone === '') json_out(['error' => 'Téléphone requis'], 400);
+    if ($mail === '' && $phone === '')       json_out(['error' => 'Email ou téléphone requis'], 400);
+    $pass = (string) ($b['password'] ?? '');
+    $hash = ($pass !== '' && strlen($pass) >= 6) ? password_hash($pass, PASSWORD_BCRYPT) : null;
+    // Un client peut déjà exister (email OU téléphone). Compte webshop déjà
+    // constitué (password_hash présent) => 409 ; sinon on active le canal webshop.
+    $cl = row("SELECT id, password_hash FROM client WHERE (? <> '' AND LOWER(TRIM(email))=?) OR (? <> '' AND phone=?) LIMIT 1", [$mail, $mail, $phone, $phone]);
+    if ($cl && !empty($cl['password_hash']) && $hash) json_out(['error' => 'Un compte existe déjà.'], 409);
     if ($cl) {
-      q("UPDATE client SET password_hash=?, active=1,
-                email=COALESCE(NULLIF(email,''), ?), phone=COALESCE(NULLIF(phone,''), ?),
-                name=COALESCE(NULLIF(name,''), ?), surname=COALESCE(NULLIF(surname,''), ?)
+      q("UPDATE client SET webshop_user=1, active=1, preferred_auth_method=?,
+                password_hash=COALESCE(password_hash, ?),
+                email=COALESCE(NULLIF(email,''), NULLIF(?, '')),
+                phone=COALESCE(NULLIF(phone,''), NULLIF(?, '')),
+                name=COALESCE(NULLIF(name,''), NULLIF(?, '')),
+                surname=COALESCE(NULLIF(surname,''), NULLIF(?, '')),
+                zip=COALESCE(NULLIF(zip,''), NULLIF(?, ''))
           WHERE id=?",
-        [$hash, $mail, $phone, $b['firstName'] ?? '', $b['lastName'] ?? '', $cl['id']]);
+        [$authM, $hash, $mail, $phone, $first, $last, $zip, $cl['id']]);
       $id = $cl['id'];
     } else {
-      // client.id_main_shop is NOT NULL without a default → use the caller's
-      // shop when given, else the most common shop among existing clients.
+      // client.id_main_shop is NOT NULL without a default → caller's shop else modal.
       $ms = $b['shopId'] ?? null;
       if (!$ms) { $r = row("SELECT id_main_shop FROM client GROUP BY id_main_shop ORDER BY COUNT(*) DESC LIMIT 1"); $ms = $r['id_main_shop'] ?? 1; }
-      q("INSERT INTO client (id_main_shop, email, password_hash, name, surname, phone, active, source_channel)
-         VALUES (?,?,?,?,?,?,1,'webshop')",
-        [$ms, $mail, $hash, $b['firstName'] ?? '', $b['lastName'] ?? '', $phone]);
+      q("INSERT INTO client (id_main_shop, email, phone, name, surname, zip, password_hash,
+                             active, source_channel, webshop_user, preferred_auth_method)
+         VALUES (?,?,?,?,?,?,?,1,'webshop',1,?)",
+        [$ms, ($mail ?: null), ($phone ?: null), $first, $last, ($zip ?: null), $hash, $authM]);
       $id = db()->lastInsertId();
     }
     json_out(['user' => user_payload($id), 'token' => sign_token(['id' => (int) $id, 'exp' => time() + 30 * 86400])], 201);
@@ -817,6 +831,10 @@ function user_payload($id) {
     'firstName' => $u['name'] ?? ($u['first_name'] ?? null),
     'lastName' => $u['surname'] ?? ($u['last_name'] ?? null),
     'phone' => $u['phone'] ?? null,
+    'postalCode' => $u['zip'] ?? null,
+    'authMethod' => $u['preferred_auth_method'] ?? null,
+    'webshopUser' => (bool) ($u['webshop_user'] ?? 0),
+    'pwaUser' => (bool) ($u['pwa_user'] ?? 0),
     'officeId' => $u['office_id'] ?? null,
     'preferredShopId' => $u['preferred_shop_id'] ?? null,
     'lang' => $u['locale'] ?? ($u['preferred_lang'] ?? 'fr'),
