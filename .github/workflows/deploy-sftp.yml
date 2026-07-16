@@ -80,12 +80,19 @@ jobs:
             -e "ssh -p ${{ vars.SSH_PORT || '22' }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
             dist/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ vars.WEB_ROOT || '/var/www/html' }}/"
 
-      # Standalone B2B landing page — shipped as-is (NOT part of the PWA build),
-      # served independently at <WEB_ROOT>/landing/evenements-b2b.html.
-      - name: Deploy landing page → ${{ vars.WEB_ROOT || '/var/www/html' }}/landing
+      # Standalone B2B landing page — shipped as-is (NOT part of the PWA build).
+      # The public URL /landing is an Apache alias to /var/www/latelierby-landing
+      # (see the server's catch-all vhost: `Alias /landing /var/www/latelierby-landing`),
+      # NOT <WEB_ROOT>/landing — so the folder must be deployed there.
+      - name: Deploy landing page → /landing (alias → /var/www/latelierby-landing)
         env:
           SSHPASS: ${{ secrets.SSH_PASSWORD }}
         run: |
           sshpass -e rsync -rltDz --omit-dir-times \
             -e "ssh -p ${{ vars.SSH_PORT || '22' }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
-            landing/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ vars.WEB_ROOT || '/var/www/html' }}/landing/"
+            landing/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ vars.LANDING_DIR || '/var/www/latelierby-landing' }}/"
+          echo "Verifying the page served at /landing is the freshly-deployed build…"
+          sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "curl -s http://localhost/landing/evenements-b2b.html | grep -o 'webshop-landing-b2b.js?v=[0-9]*' | head -1 || echo 'WARN: version marker not found in served page'"
