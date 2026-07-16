@@ -15,13 +15,17 @@
   // ─── API endpoint resolution ─────────────────────────────────────────
   //   • On GitHub Pages (*.github.io) → demo mode (in-memory fixtures).
   //   • Anywhere else (the client's own hosting) → the PHP API on the SAME
-  //     origin, at "/api" — no CORS, no config to touch. Deploy php-api/ to
-  //     <web-root>/api and it just works. See .github/workflows/deploy-ftp.yml.
+  //     origin, under the SAME base path as the app, at "api". Works whether the
+  //     site is served at the domain root (→ /api) OR in a subfolder like
+  //     /webshop/ (→ /webshop/api). Deploy php-api/ to <web-root>/api.
   //
   //   To force a specific URL (e.g. API on a different host), replace the
   //   line below with:  const BASE_URL = 'https://api.example.com';
   const onGitHubPages = /\.github\.io$/i.test(location.hostname);
-  const BASE_URL = onGitHubPages ? null : (location.origin + '/api');
+  // Base path where the app is served: strip the file part of the pathname
+  // ('/webshop/index.html' → '/webshop/', '/' → '/').
+  const basePath = location.pathname.replace(/[^/]*$/, '');
+  const BASE_URL = onGitHubPages ? null : (location.origin + basePath + 'api');
   // ─────────────────────────────────────────────────────────────────────
 
   if (!BASE_URL) return; // demo mode — all stubs use in-memory fixtures
