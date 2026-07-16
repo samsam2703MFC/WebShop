@@ -21,6 +21,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # Ship the standalone B2B landing page alongside the PWA (copied after the
+      # build so it stays out of the app bundle / SW precache). Served at
+      # <pages-url>/landing/evenements-b2b.html.
+      - run: cp -r landing dist/landing
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
