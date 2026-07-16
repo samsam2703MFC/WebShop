@@ -85,7 +85,7 @@
     try {
       const p = new URLSearchParams(window.location.search);
       const out = {};
-      if (p.get('shop'))      out.shopId    = p.get('shop');
+      if (p.get('shop') || p.get('shopId')) out.shopId = p.get('shop') || p.get('shopId'); // accepte ?shop= et ?shopId=
       if (p.get('mode'))      out.mode      = p.get('mode');
       if (p.get('voucher'))   out.voucher   = p.get('voucher').toUpperCase();
       if (p.get('category'))  out.cat       = p.get('category');

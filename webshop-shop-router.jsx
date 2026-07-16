@@ -13,7 +13,8 @@
 
   function deepLinkShop() {
     try {
-      const p = new URLSearchParams(window.location.search).get('shop');
+      const q = new URLSearchParams(window.location.search);
+      const p = q.get('shop') || q.get('shopId'); // ?shop= ou ?shopId= (id num. ou slug)
       return p && /^[a-z0-9-]+$/.test(p) ? p : null;
     } catch { return null; }
   }

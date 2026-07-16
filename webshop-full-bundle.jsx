@@ -3513,6 +3513,15 @@ function ShopFrame({ variant }) {
     return () => { alive = false; };
   }, []);
 
+  // Deep-link : normalise la réf boutique (id numérique OU slug) vers l'id
+  // canonique dès que l'annuaire des boutiques est chargé, pour que tous les
+  // appels API utilisent le vrai shopId.
+  React.useEffect(() => {
+    if (!shops || !shops.length) return;
+    const m = shops.find((s) => String(s.id) === String(shopId) || s.slug === shopId);
+    if (m && m.id !== shopId) setShopId(m.id);
+  }, [shops]);
+
   // Categories — loaded from API, seed used as instant fallback.
   const [categories, setCategories] = React.useState((window._CATALOG_SEED && window._CATALOG_SEED.categories) || []);
   React.useEffect(() => {
@@ -3633,7 +3642,8 @@ function ShopFrame({ variant }) {
     setTimeout(() => setOrderToast(null), 4500);
   }
 
-  const shop = shops.find((s) => s.id === shopId) || shops[0] || null;
+  // Deep-link peut passer un id numérique (en string) OU un slug → match souple.
+  const shop = shops.find((s) => String(s.id) === String(shopId) || s.slug === shopId) || shops[0] || null;
   const isAssortment = typeof cat === 'string' && cat.startsWith('season:');
   const assortmentId = isAssortment ? cat.slice('season:'.length) : null;
   const assortment = assortmentId ? assortments.find((a) => a.id === assortmentId) : null;
