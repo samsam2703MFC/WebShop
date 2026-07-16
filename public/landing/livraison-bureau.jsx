@@ -40,11 +40,11 @@
   // Real photography for each product key (design shipped empty image-slots).
   // Chosen for a consistent photographic look across the carousel.
   const PRODUCT_IMAGES = {
-    sandwich: 'img/p-sandwich-club.png',
-    fruits: 'img/p-chou-farci.png',
-    dessert: 'img/p-parfait.png',
-    salades: 'img/p-salade-chef-saumon.png',
-    breakfast: 'img/p-sand-oeufs-bacon.png'
+    sandwich: 'img/p-sandwich-club.jpg',
+    fruits: 'img/p-chou-farci.jpg',
+    dessert: 'img/p-parfait.jpg',
+    salades: 'img/p-salade-chef-saumon.jpg',
+    breakfast: 'img/p-sand-oeufs-bacon.jpg'
   };
 
   // ---- i18n ----
