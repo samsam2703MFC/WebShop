@@ -63,6 +63,52 @@ function dispatch($m, $p) {
                     FROM ws_shops WHERE id = ?", [$s]) ?: []);
   }
 
+  /* ── Lien webshop du client PWA (footer PWA → boutique préférée) ──
+   * GET /webshop-link?clientId=123
+   *   → { url, shopId, slug }
+   * Résout client.preferred_shop_id → shop, et construit l'URL du webshop mobile :
+   *   1) lien absolu shops.landing_config.webshop_url s'il est défini,
+   *   2) sinon <webshop_base>?shop=<slug>,
+   *   3) sinon (pas connecté / pas de shop préféré / colonne absente) → <webshop_base>.
+   * Compatible avant/après unification (shops sinon ws_shops), sans dépendre du
+   * script d'auth : si la colonne preferred_shop_id n'existe pas encore → lien générique.
+   */
+  if ($m === 'GET' && $p === '/webshop-link') {
+    $base = cfg()['webshop_base'] ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html';
+    $cid  = qp('clientId');
+    $shop = null;
+    $hasCol = row("SELECT 1 AS x FROM information_schema.columns
+                     WHERE table_schema=DATABASE() AND table_name='client'
+                       AND column_name='preferred_shop_id'");
+    if ($cid && $hasCol) {
+      $hasShops = row("SELECT 1 AS x FROM information_schema.tables
+                         WHERE table_schema=DATABASE() AND table_name='shops'");
+      if ($hasShops) {
+        $shop = row("SELECT s.id, s.slug,
+                            JSON_UNQUOTE(JSON_EXTRACT(s.landing_config,'$.webshop_url')) AS webshop_url
+                       FROM client c JOIN shops s ON s.id = c.preferred_shop_id
+                      WHERE c.id = ?", [$cid]);
+      } else {
+        $shop = row("SELECT w.id, w.slug, NULL AS webshop_url
+                       FROM client c JOIN ws_shops w ON w.id = c.preferred_shop_id
+                      WHERE c.id = ?", [$cid]);
+      }
+    }
+    if ($shop && !empty($shop['webshop_url'])) {
+      $url = $shop['webshop_url'];                         // 1) lien absolu par boutique
+    } elseif ($shop && !empty($shop['slug'])) {
+      $sep = (strpos($base, '?') !== false) ? '&' : '?';
+      $url = $base . $sep . 'shop=' . rawurlencode($shop['slug']);   // 2) base + slug
+    } else {
+      $url = $base;                                        // 3) générique
+    }
+    json_out([
+      'url'    => $url,
+      'shopId' => $shop['id']   ?? null,
+      'slug'   => $shop['slug'] ?? null,
+    ]);
+  }
+
   /* ── Catalog ── */
   if ($m === 'GET' && $p === '/catalog/categories') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
