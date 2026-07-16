@@ -2428,6 +2428,27 @@
   border-color: var(--color-primary);
   background: var(--color-surface);
 }
+/* Ligne téléphone : indicatif (select) + numéro (input) */
+.ws-phone { display: flex; gap: 8px; }
+.ws-phone__pfx { flex: 0 0 96px; }
+.ws-phone > input { flex: 1; }
+.ws-phone > select,
+.ws-phone > input {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--color-text);
+  background: var(--color-bg-secondary);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 11px 12px;
+  outline: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.ws-phone > select:focus,
+.ws-phone > input:focus {
+  border-color: var(--color-primary);
+  background: var(--color-surface);
+}
 .ws-form__err {
   font-size: 12px;
   color: var(--color-primary);

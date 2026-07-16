@@ -142,9 +142,13 @@ function dispatch($m, $p) {
   }
   if ($m === 'GET' && $p === '/catalog/products') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+    // `badge` (texte) a été migré en FK tag_id -> ws_tags ; on expose le libellé
+    // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
     $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id,
                       p.cat_id AS cat, p.sub_cat_id AS subCat, c.label AS category,
-                      p.name, p.description, p.badge,
+                      p.name, p.description,
+                      t.tag AS badge, t.slug AS tag_slug, t.bg_color AS tag_bg, t.text_color AS tag_text,
+                      se.slug AS season, se.name AS season_name, se.img AS season_img,
                       p.portions, p.cross_portion, p.has_menu_options,
                       COALESCE(pp.price, p.price) AS price, ps.no_delivery,
                       (SELECT JSON_ARRAYAGG(allergen) FROM ws_product_allergens a WHERE a.product_id = p.id) AS allergens
@@ -152,6 +156,8 @@ function dispatch($m, $p) {
                  JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ? AND ps.active = 1
                  LEFT JOIN ws_product_prices pp ON pp.product_id = p.id AND pp.shop_id = ? AND pp.active = 1
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
+                 LEFT JOIN ws_tags t ON t.id = p.tag_id
+                 LEFT JOIN ws_season se ON se.id = p.season_id
                 WHERE p.active = 1 ORDER BY c.sort_order, p.name", [$s, $s]);
     foreach ($r as &$x) {
       $x['portions'] = (bool) $x['portions'];
@@ -162,6 +168,31 @@ function dispatch($m, $p) {
       $x['allergens'] = $x['allergens'] ? json_decode($x['allergens']) : [];
     }
     json_out($r);
+  }
+  // Menu / bundle d'un produit : ws_bundles -> slots -> choices (imbriqué).
+  if ($m === 'GET' && $p === '/catalog/bundles') {
+    $pid = qp('productId'); if (!$pid) json_out([]);
+    $bundles = rows("SELECT id, name, description, price_modifier, sort_order
+                       FROM ws_bundles WHERE product_id = ? AND active = 1
+                      ORDER BY sort_order, id", [$pid]);
+    foreach ($bundles as &$b) {
+      $b['price_modifier'] = (float) $b['price_modifier'];
+      $slots = rows("SELECT id, label, required, sort_order
+                       FROM ws_bundle_slots WHERE bundle_id = ? AND active = 1
+                      ORDER BY sort_order, id", [$b['id']]);
+      foreach ($slots as &$sl) {
+        $sl['required'] = (bool) $sl['required'];
+        $sl['choices'] = rows("SELECT id, label, img, delta, sort_order
+                                 FROM ws_bundle_slot_choices WHERE slot_id = ? AND active = 1
+                                ORDER BY sort_order, id", [$sl['id']]);
+        foreach ($sl['choices'] as &$ch) { $ch['delta'] = (float) $ch['delta']; }
+        unset($ch);
+      }
+      unset($sl);
+      $b['slots'] = $slots;
+    }
+    unset($b);
+    json_out($bundles);
   }
   if ($m === 'GET' && $p === '/catalog/stock') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
@@ -503,7 +534,11 @@ function dispatch($m, $p) {
     // Contact visiteur (guest) — enregistré seulement si pas de compte.
     $guestEmail = empty($b['customerId']) ? ($b['email'] ?? null) : null;
     $guestName  = empty($b['customerId']) ? (trim(($b['customer']['firstName'] ?? '') . ' ' . ($b['customer']['lastName'] ?? '')) ?: null) : null;
-    $guestPhone = empty($b['customerId']) ? ($b['customer']['phone'] ?? ($b['phone'] ?? null)) : null;
+    $guestPfx = '+32'; $guestPhone = null;
+    if (empty($b['customerId'])) {
+      [$guestPfx, $guestPhone] = norm_phone($b['customer']['phonePrefix'] ?? ($b['phonePrefix'] ?? '+32'), $b['customer']['phone'] ?? ($b['phone'] ?? ''));
+      if ($guestPhone === '') { $guestPhone = null; $guestPfx = null; }
+    }
 
     // 5. Total final.
     $total = max(0, round($subtotal - $promo - $webshopDisc - $voucherDisc + $feeAmount, 2));
@@ -562,14 +597,14 @@ function dispatch($m, $p) {
       }
       // 6c. Écriture de la commande + lignes + décrément stock (même jour).
       q("INSERT INTO ws_orders
-           (order_ref, shop_id, customer_id, guest_email, guest_name, guest_phone, mode, status,
+           (order_ref, shop_id, customer_id, guest_email, guest_name, guest_phone, guest_phone_prefix, mode, status,
             slot_id, slot_label, delivery_date,
             subtotal, promo_amount, webshop_discount, voucher_code, voucher_discount, total,
             payment_method, payment_status, lang, note, delivery_mode,
             office_client_id, office_delivery_site_id, office_delivery_site_name, tournee_stop_id,
             payment_type, delivery_fee_applied, delivery_fee_amount, free_delivery_minimum)
-         VALUES (?,?,?, ?,?,?, ?, ?, ?,?,?, ?,?,?,?,?,?, ?, 'pending', ?, ?, ?, ?,?,?,?, ?,?,?,?)",
-        [$ref, $shop, $b['customerId'] ?? null, $guestEmail, $guestName, $guestPhone, $mode, $orderStatus,
+         VALUES (?,?,?, ?,?,?,?, ?, ?, ?,?,?, ?,?,?,?,?,?, ?, 'pending', ?, ?, ?, ?,?,?,?, ?,?,?,?)",
+        [$ref, $shop, $b['customerId'] ?? null, $guestEmail, $guestName, $guestPhone, $guestPfx, $mode, $orderStatus,
          $b['slotId'] ?? null, $b['slotLabel'] ?? null, $b['deliveryDate'] ?? null,
          $subtotal, $promo, $webshopDisc, $voucherCode, $voucherDisc, $total,
          $paymentMethod, $b['lang'] ?? 'fr', $note, $mode === 'delivery' ? 'office_delivery' : 'collect',
@@ -616,7 +651,7 @@ function dispatch($m, $p) {
     // Auth par email OU téléphone (toggle `authMethod`). Mot de passe optionnel
     // (vérification OTP prévue plus tard) ; s'il est fourni il est haché.
     $mail  = strtolower(trim($b['email'] ?? ''));
-    $phone = trim($b['phone'] ?? '');
+    [$pfx, $phone, $e164] = norm_phone($b['phonePrefix'] ?? '+32', $b['phone'] ?? '');
     $first = trim($b['firstName'] ?? '');
     $last  = trim($b['lastName'] ?? '');
     $zip   = trim($b['postalCode'] ?? ($b['zip'] ?? ''));
@@ -627,29 +662,31 @@ function dispatch($m, $p) {
     if ($mail === '' && $phone === '')       json_out(['error' => 'Email ou téléphone requis'], 400);
     $pass = (string) ($b['password'] ?? '');
     $hash = ($pass !== '' && strlen($pass) >= 6) ? password_hash($pass, PASSWORD_BCRYPT) : null;
-    // Un client peut déjà exister (email OU téléphone). Compte webshop déjà
+    // Un client peut déjà exister (email OU téléphone E.164). Compte webshop déjà
     // constitué (password_hash présent) => 409 ; sinon on active le canal webshop.
-    $cl = row("SELECT id, password_hash FROM client WHERE (? <> '' AND LOWER(TRIM(email))=?) OR (? <> '' AND phone=?) LIMIT 1", [$mail, $mail, $phone, $phone]);
+    $cl = row("SELECT id, password_hash FROM client WHERE (? <> '' AND LOWER(TRIM(email))=?) OR (? <> '' AND (phone_e164=? OR phone=?)) LIMIT 1", [$mail, $mail, $phone, $e164, $phone]);
     if ($cl && !empty($cl['password_hash']) && $hash) json_out(['error' => 'Un compte existe déjà.'], 409);
     if ($cl) {
       q("UPDATE client SET webshop_user=1, active=1, preferred_auth_method=?,
                 password_hash=COALESCE(password_hash, ?),
                 email=COALESCE(NULLIF(email,''), NULLIF(?, '')),
                 phone=COALESCE(NULLIF(phone,''), NULLIF(?, '')),
+                phone_prefix=COALESCE(NULLIF(phone_prefix,''), ?),
+                phone_e164=COALESCE(NULLIF(phone_e164,''), NULLIF(?, '')),
                 name=COALESCE(NULLIF(name,''), NULLIF(?, '')),
                 surname=COALESCE(NULLIF(surname,''), NULLIF(?, '')),
                 zip=COALESCE(NULLIF(zip,''), NULLIF(?, ''), '')
           WHERE id=?",
-        [$authM, $hash, $mail, $phone, $first, $last, $zip, $cl['id']]);
+        [$authM, $hash, $mail, $phone, $pfx, $e164, $first, $last, $zip, $cl['id']]);
       $id = $cl['id'];
     } else {
       // client.id_main_shop is NOT NULL without a default → caller's shop else modal.
       $ms = $b['shopId'] ?? null;
       if (!$ms) { $r = row("SELECT id_main_shop FROM client GROUP BY id_main_shop ORDER BY COUNT(*) DESC LIMIT 1"); $ms = $r['id_main_shop'] ?? 1; }
-      q("INSERT INTO client (id_main_shop, email, phone, name, surname, zip, password_hash,
+      q("INSERT INTO client (id_main_shop, email, phone, phone_prefix, phone_e164, name, surname, zip, password_hash,
                              active, source_channel, webshop_user, preferred_auth_method)
-         VALUES (?,?,?,?,?,?,?,1,'webshop',1,?)",
-        [$ms, ($mail ?: null), ($phone ?: null), $first, $last, $zip, $hash, $authM]);
+         VALUES (?,?,?,?,?,?,?,?,?,1,'webshop',1,?)",
+        [$ms, ($mail ?: null), ($phone ?: null), ($phone !== '' ? $pfx : null), ($e164 ?: null), $first, $last, $zip, $hash, $authM]);
       $id = db()->lastInsertId();
     }
     json_out(['user' => user_payload($id), 'token' => sign_token(['id' => (int) $id, 'exp' => time() + 30 * 86400])], 201);
@@ -659,7 +696,9 @@ function dispatch($m, $p) {
     // Identifiant = email OU téléphone.
     $ident = strtolower(trim($b['identifier'] ?? $b['email'] ?? ''));
     if ($ident === '') json_out(['error' => 'Identifiants incorrects.'], 401);
-    $u = row("SELECT id, password_hash FROM client WHERE (LOWER(TRIM(email))=? OR (phone<>'' AND phone=?)) AND active=1 LIMIT 1", [$ident, $ident]);
+    // Identifiant téléphone : on le normalise en E.164 + national pour le retrouver.
+    [, $identNat, $identE164] = norm_phone($b['phonePrefix'] ?? '+32', $ident);
+    $u = row("SELECT id, password_hash FROM client WHERE (LOWER(TRIM(email))=? OR (? <> '' AND (phone_e164=? OR phone=? OR phone=?))) AND active=1 LIMIT 1", [$ident, $identE164, $identE164, $identNat, $ident]);
     if (!$u || !password_verify($b['password'] ?? '', $u['password_hash'])) json_out(['error' => 'Identifiants incorrects.'], 401);
     json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400])]);
   }
@@ -670,9 +709,16 @@ function dispatch($m, $p) {
   }
   if ($m === 'PATCH' && $p === '/auth/me') {
     $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
-    $b = body(); $map = ['name' => 'firstName', 'surname' => 'lastName', 'phone' => 'phone'];
+    $b = body(); $map = ['name' => 'firstName', 'surname' => 'lastName'];
     $sets = []; $vals = [];
     foreach ($map as $col => $k) if (array_key_exists($k, $b)) { $sets[] = "$col=?"; $vals[] = $b[$k]; }
+    // Téléphone : normalisé en national + E.164 + préfixe.
+    if (array_key_exists('phone', $b)) {
+      [$pfx, $nat, $e164] = norm_phone($b['phonePrefix'] ?? '+32', $b['phone']);
+      $sets[] = 'phone=?';        $vals[] = ($nat ?: null);
+      $sets[] = 'phone_prefix=?'; $vals[] = ($nat !== '' ? $pfx : null);
+      $sets[] = 'phone_e164=?';   $vals[] = ($e164 ?: null);
+    }
     if ($sets) { $vals[] = $id; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $vals); }
     json_out(['user' => user_payload($id)]);
   }
@@ -920,6 +966,8 @@ function user_payload($id) {
     'firstName' => $u['name'] ?? ($u['first_name'] ?? null),
     'lastName' => $u['surname'] ?? ($u['last_name'] ?? null),
     'phone' => $u['phone'] ?? null,
+    'phonePrefix' => $u['phone_prefix'] ?? '+32',
+    'phoneE164' => $u['phone_e164'] ?? null,
     'postalCode' => $u['zip'] ?? null,
     'authMethod' => $u['preferred_auth_method'] ?? null,
     'webshopUser' => (bool) ($u['webshop_user'] ?? 0),
@@ -930,6 +978,23 @@ function user_payload($id) {
     'isBusiness' => (bool) ($u['is_b2b'] ?? ($u['is_business'] ?? 0)),
     'fidelityApp' => ['active' => (bool) ($u['fidelity_active'] ?? 0)],
   ];
+}
+
+/**
+ * Normalise un numéro : préfixe international + numéro national.
+ * Retourne [prefix('+32'), national('0470000002'), e164('+32470000002')].
+ */
+function norm_phone($prefix, $raw) {
+  $pfx = trim((string) $prefix) !== '' ? trim((string) $prefix) : '+32';
+  if ($pfx[0] !== '+') $pfx = '+' . ltrim($pfx, '+');
+  $pd = preg_replace('/[^0-9]/', '', $pfx);
+  $d  = preg_replace('/[^0-9]/', '', (string) $raw);
+  if ($d === '') return [$pfx, '', ''];
+  if (strpos($d, '00' . $pd) === 0)                              $d = substr($d, 2 + strlen($pd));
+  elseif (strpos($d, $pd) === 0 && strlen($d) > strlen($pd) + 6) $d = substr($d, strlen($pd));
+  $d = ltrim($d, '0');
+  if ($d === '') return [$pfx, '', ''];
+  return [$pfx, '0' . $d, $pfx . $d];
 }
 
 /* Crée une session Stripe Checkout via l'API REST (cURL). null si non configuré. */
