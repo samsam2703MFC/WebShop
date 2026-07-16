@@ -29,7 +29,12 @@ try {
   dispatch($method, $path);
   json_out(['error' => 'Not found', 'path' => $path], 404);
 } catch (Throwable $e) {
-  json_out(['error' => 'Erreur interne'], 500);
+  // Vrai message dans le log Apache (tail /var/log/apache2/error.log).
+  error_log('[ws] ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+  // Détail dans la réponse uniquement si 'debug' => true dans config.php.
+  $out = ['error' => 'Erreur interne'];
+  if (!empty(cfg()['debug'])) $out['detail'] = $e->getMessage();
+  json_out($out, 500);
 }
 
 /* ─────────────────────────── Routes ─────────────────────────── */
