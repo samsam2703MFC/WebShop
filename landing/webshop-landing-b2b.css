@@ -1,0 +1,104 @@
+/* ============================================================================
+   webshop-landing-b2b.css — Landing B2B Événements
+   Fonts, tokens and page-level styles for evenements-b2b.html.
+   Self-hosted brand fonts from /fonts (Gotham + Vank). The page's colour
+   tokens (--lp-*) are set inline on the root element by the React component.
+   ========================================================================== */
+
+/* --- Brand fonts (subset shipped in /fonts) ------------------------------- */
+@font-face {
+  font-family: 'Gotham';
+  src: url('fonts/Gotham_Light.otf') format('opentype');
+  font-weight: 300; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Gotham';
+  src: url('fonts/Gotham_Regular.otf') format('opentype');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Gotham';
+  src: url('fonts/Gotham_Medium.otf') format('opentype');
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  /* No dedicated bold cut shipped — map heavier weights to Medium. */
+  font-family: 'Gotham';
+  src: url('fonts/Gotham_Medium.otf') format('opentype');
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Vank';
+  src: url('fonts/GC_Vank.ttf') format('truetype');
+  font-weight: 400; font-style: normal; font-display: swap;
+  unicode-range: U+0020-007E;
+}
+
+:root {
+  --font-ui: 'Gotham', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Vank', 'Gotham', system-ui, sans-serif;
+  /* Playwrite DEVA (hand-script accent) isn't shipped here — fall back to a
+     script face, then to Vank. */
+  --font-accent: 'Playwrite DEVA', 'Segoe Script', 'Bradley Hand', 'Vank', cursive;
+}
+
+html, body { margin: 0; background: #241a16; }
+body { font-family: var(--font-ui); }
+
+a { color: #F2C9A0; text-decoration: none; }
+a:hover { color: #ffffff; }
+::selection { background: #8D1D2C; color: #fff; }
+
+/* Logo asset is the ruby wordmark — render it white on the dark canvas. */
+.lp-logo { filter: brightness(0) invert(1); }
+
+/* --- Reveal-on-scroll animations ----------------------------------------- */
+[data-rev] {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity .9s cubic-bezier(.4, 0, .2, 1), transform .9s cubic-bezier(.4, 0, .2, 1);
+}
+[data-rev].in { opacity: 1; transform: none; }
+
+.lpstag > * {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity .7s cubic-bezier(.4, 0, .2, 1), transform .7s cubic-bezier(.4, 0, .2, 1);
+}
+.lpstag.in > * { opacity: 1; transform: none; }
+.lpstag.in > *:nth-child(2) { transition-delay: .07s; }
+.lpstag.in > *:nth-child(3) { transition-delay: .14s; }
+.lpstag.in > *:nth-child(4) { transition-delay: .21s; }
+.lpstag.in > *:nth-child(5) { transition-delay: .28s; }
+
+@keyframes lpfloat {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(-14px) rotate(2deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-rev], .lpstag > * { opacity: 1 !important; transform: none !important; }
+}
+
+/* --- Terrain cards hover (was style-hover in the design canvas) ----------- */
+.lp-terrain-card:hover { transform: translateY(-4px); background: #835e53 !important; }
+
+/* --- Form controls -------------------------------------------------------- */
+.lpsel::-ms-expand { display: none; }
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: #F2C9A0 !important;
+  box-shadow: 0 0 0 3px rgba(242, 201, 160, .18) !important;
+}
+input::placeholder, textarea::placeholder { color: rgba(251, 243, 236, .34); }
+
+/* --- Responsive ----------------------------------------------------------- */
+@media (max-width: 860px) {
+  .lp-obtenez, .lp-contact { grid-template-columns: 1fr !important; }
+}
+@media (max-width: 720px) {
+  .lp-nav { display: none !important; }
+}
+@media (max-width: 480px) {
+  .lp-header-cta { display: none !important; }
+}

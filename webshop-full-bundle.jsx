@@ -1891,6 +1891,8 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
   const [form, setForm] = useState({ identifier: '', email: '', phone: '', phonePrefix: '+32', password: '', firstName: '', lastName: '', postalCode: '', authMethod: 'email' });
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
+  const [pwStep, setPwStep] = useState(false);   // panneau « compte existant -> mot de passe »
+  const [newPw, setNewPw] = useState('');
   if (!open) return null;
   function set(k, v) { setForm((f) => ({ ...f, [k]: v })); setErr(''); }
   async function submit(e) {
@@ -1910,9 +1912,26 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
         const r = window.WSAuth
           ? await window.WSAuth.register(form)
           : authRegister(form);
-        if (!r.ok) { setErr(r.error || "Erreur lors de l'inscription."); return; }
+        if (!r.ok) {
+          if (r.exists) { setPwStep(true); return; }   // compte déjà présent -> set-password
+          setErr(r.error || "Erreur lors de l'inscription."); return;
+        }
         onRegister(r.user); onClose();
       }
+    } catch (_) {
+      setErr('Erreur réseau. Veuillez réessayer.');
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function submitSetPassword() {
+    setErr('');
+    if (!newPw || newPw.length < 6) { setErr('Mot de passe : 6 caractères minimum.'); return; }
+    setLoading(true);
+    try {
+      const r = await window.WSAuth.setPassword({ email: form.email, phone: form.phone, phonePrefix: form.phonePrefix, identifier: form.identifier, password: newPw });
+      if (!r.ok) { setErr(r.error || 'Échec de la mise à jour.'); return; }
+      onRegister(r.user); onClose();
     } catch (_) {
       setErr('Erreur réseau. Veuillez réessayer.');
     } finally {
@@ -1922,6 +1941,20 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
   return (
     <ModalShell onClose={onClose} narrow>
       <p className="ws-modal__eyebrow">Mon compte</p>
+      {pwStep ? (
+        <>
+          <h2 className="ws-modal__title">Ce compte <em>existe déjà</em>.</h2>
+          <p className="ws-modal__lede">Définissez votre mot de passe pour vous connecter.</p>
+          <div className="ws-form">
+            <label className="ws-field"><span>Mot de passe</span>
+              <input type="password" value={newPw} onChange={(e) => { setNewPw(e.target.value); setErr(''); }} autoComplete="new-password" placeholder="min. 6 caractères"/></label>
+            {err && <p className="ws-form__err">{err}</p>}
+            <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={submitSetPassword}>{loading ? 'Mise à jour…' : 'Mettre à jour & se connecter'}</button>
+            <button type="button" className="ws-linkbtn" onClick={() => { setPwStep(false); setTab('login'); setErr(''); }}>J'ai déjà un mot de passe — Se connecter</button>
+          </div>
+        </>
+      ) : (
+      <>
       <h2 className="ws-modal__title">{tab === 'login' ? <>Bon retour <em>parmi nous</em>.</> : <>Créez <em>votre</em> compte.</>}</h2>
       <p className="ws-modal__lede">{tab === 'login' ? 'Connectez-vous pour retrouver vos commandes et votre bureau.' : 'Quelques secondes pour commander, suivre et faire livrer.'}</p>
       <div className="ws-tabs">
@@ -1974,6 +2007,8 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
         {err && <p className="ws-form__err">{err}</p>}
         <button type="submit" className="ws-cta ws-cta--block" disabled={loading}>{loading ? 'Chargement…' : (tab === 'login' ? 'Se connecter' : 'Créer mon compte')}</button>
       </form>
+      </>
+      )}
     </ModalShell>
   );
 }
