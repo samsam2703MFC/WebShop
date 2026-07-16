@@ -1880,9 +1880,15 @@ function ModalShell({ onClose, children, narrow }) {
   );
 }
 
+// Préfixes internationaux proposés dans les formulaires (défaut +32 Belgique).
+const PHONE_PREFIXES = [
+  ['+32', '🇧🇪 +32'], ['+33', '🇫🇷 +33'], ['+31', '🇳🇱 +31'],
+  ['+352', '🇱🇺 +352'], ['+49', '🇩🇪 +49'],
+];
+
 function LoginModal({ open, onClose, onLogin, onRegister }) {
   const [tab, setTab] = useState('login');
-  const [form, setForm] = useState({ identifier: '', email: '', phone: '', password: '', firstName: '', lastName: '', postalCode: '', authMethod: 'email' });
+  const [form, setForm] = useState({ identifier: '', email: '', phone: '', phonePrefix: '+32', password: '', firstName: '', lastName: '', postalCode: '', authMethod: 'email' });
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
   if (!open) return null;
@@ -1894,7 +1900,7 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
       if (tab === 'login') {
         if (!form.identifier || !form.password) { setErr('Email/téléphone et mot de passe requis.'); return; }
         const r = window.WSAuth
-          ? await window.WSAuth.login({ identifier: form.identifier, password: form.password })
+          ? await window.WSAuth.login({ identifier: form.identifier, password: form.password, phonePrefix: form.phonePrefix, authMethod: form.authMethod })
           : authLogin(form.identifier, form.password);
         if (!r.ok) { setErr(r.error || 'Identifiants incorrects.'); return; }
         onLogin(r.user); onClose();
@@ -1931,7 +1937,14 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
             </div>
             <div className="ws-form__row2">
               <label className="ws-field"><span>Email</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
-              <label className="ws-field"><span>Téléphone</span><input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="tel"/></label>
+              <label className="ws-field"><span>Téléphone</span>
+                <span className="ws-phone">
+                  <select className="ws-phone__pfx" value={form.phonePrefix} onChange={(e) => set('phonePrefix', e.target.value)} aria-label="Indicatif">
+                    {PHONE_PREFIXES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                  <input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="tel" inputMode="tel" placeholder="470 00 00 02"/>
+                </span>
+              </label>
             </div>
             <label className="ws-field"><span>Code postal</span><input value={form.postalCode} onChange={(e) => set('postalCode', e.target.value)} autoComplete="postal-code" inputMode="numeric"/></label>
           </>
@@ -1943,7 +1956,18 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
               <button type="button" role="tab" aria-selected={form.authMethod === 'email'} className={`ws-toggle__opt${form.authMethod === 'email' ? ' is-active' : ''}`} onClick={() => set('authMethod', 'email')}>Email</button>
               <button type="button" role="tab" aria-selected={form.authMethod === 'phone'} className={`ws-toggle__opt${form.authMethod === 'phone' ? ' is-active' : ''}`} onClick={() => set('authMethod', 'phone')}>Téléphone</button>
             </div>
-            <label className="ws-field"><span>{form.authMethod === 'phone' ? 'Téléphone' : 'Email'}</span><input type={form.authMethod === 'phone' ? 'tel' : 'email'} value={form.identifier} onChange={(e) => set('identifier', e.target.value)} autoComplete="username"/></label>
+            <label className="ws-field"><span>{form.authMethod === 'phone' ? 'Téléphone' : 'Email'}</span>
+              {form.authMethod === 'phone' ? (
+                <span className="ws-phone">
+                  <select className="ws-phone__pfx" value={form.phonePrefix} onChange={(e) => set('phonePrefix', e.target.value)} aria-label="Indicatif">
+                    {PHONE_PREFIXES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                  <input type="tel" value={form.identifier} onChange={(e) => set('identifier', e.target.value)} autoComplete="username" inputMode="tel" placeholder="470 00 00 02"/>
+                </span>
+              ) : (
+                <input type="email" value={form.identifier} onChange={(e) => set('identifier', e.target.value)} autoComplete="username"/>
+              )}
+            </label>
             <label className="ws-field"><span>Mot de passe</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="current-password"/></label>
           </>
         )}

@@ -28,14 +28,14 @@
     endpoint: null,
 
     /* ── Login (identifiant = email OU téléphone) ──────────────────── */
-    async login({ identifier, email, password }) {
+    async login({ identifier, email, password, phonePrefix, authMethod }) {
       const ident = (identifier || email || '').trim();
       if (api.endpoint) {
         try {
           const r = await fetch(`${api.endpoint}/login`, {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ identifier: ident, password }),
+            body: JSON.stringify({ identifier: ident, password, phonePrefix: phonePrefix || '+32', authMethod }),
           });
           const j = await r.json();
           if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
@@ -53,13 +53,13 @@
     },
 
     /* ── Register ──────────────────────────────────────────────────── */
-    async register({ email, phone, password, firstName, lastName, postalCode, authMethod }) {
+    async register({ email, phone, phonePrefix, password, firstName, lastName, postalCode, authMethod }) {
       if (api.endpoint) {
         try {
           const r = await fetch(`${api.endpoint}/register`, {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, phone, password, firstName, lastName, postalCode, authMethod }),
+            body: JSON.stringify({ email, phone, phonePrefix: phonePrefix || '+32', password, firstName, lastName, postalCode, authMethod }),
           });
           const j = await r.json();
           if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
