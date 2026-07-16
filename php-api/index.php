@@ -394,7 +394,7 @@ function dispatch($m, $p) {
     if ($companyId) {
       $custEmail = $b['email'] ?? null;
       if (!$custEmail && !empty($b['customerId'])) {
-        $cc = row("SELECT email FROM ws_customers WHERE id=?", [$b['customerId']]); $custEmail = $cc['email'] ?? null;
+        $cc = row("SELECT email FROM client WHERE id=?", [$b['customerId']]); $custEmail = $cc['email'] ?? null;
       }
       $link = $custEmail ? row("SELECT o.deferred_billing_enabled AS deferred
                                   FROM ws_office_emails e JOIN ws_offices o ON o.id = e.office_id
@@ -510,7 +510,7 @@ function dispatch($m, $p) {
     // E-mail de confirmation (email fourni, ou celui du client connecté).
     $to = $b['email'] ?? null;
     if (!$to && !empty($b['customerId'])) {
-      $c = row("SELECT email FROM ws_customers WHERE id=?", [$b['customerId']]); $to = $c['email'] ?? null;
+      $c = row("SELECT email FROM client WHERE id=?", [$b['customerId']]); $to = $c['email'] ?? null;
     }
     send_order_email($ref, $lines, $total, $to);
     json_out(['ok' => true, 'orderId' => (int) $oid, 'orderRef' => $ref,
@@ -530,18 +530,26 @@ function dispatch($m, $p) {
     $b = body(); $mail = strtolower(trim($b['email'] ?? ''));
     if (!filter_var($mail, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'Email invalide'], 400);
     if (strlen($b['password'] ?? '') < 6) json_out(['error' => 'Mot de passe trop court (min. 6)'], 400);
-    if (row("SELECT id FROM ws_customers WHERE email=?", [$mail])) json_out(['error' => 'Un compte existe déjà avec cet email.'], 409);
     $phone = trim($b['phone'] ?? '');
-    $hash = password_hash($b['password'], PASSWORD_BCRYPT);
-    // Rattache le compte à un client ERP existant (match email ou téléphone) → client_id. Best-effort.
-    $clientId = null;
-    try {
-      $cl = row("SELECT id FROM client WHERE email=? OR (? <> '' AND phone=?) LIMIT 1", [$mail, $phone, $phone]);
-      $clientId = $cl['id'] ?? null;
-    } catch (\Throwable $e) { /* table client absente → pas de rattachement */ }
-    q("INSERT INTO ws_customers (email, password_hash, first_name, last_name, phone, client_id) VALUES (?,?,?,?,?,?)",
-      [$mail, $hash, $b['firstName'] ?? '', $b['lastName'] ?? '', $phone, $clientId]);
-    $id = db()->lastInsertId();
+    $hash  = password_hash($b['password'], PASSWORD_BCRYPT);
+    // Table `client` unifiée : un client ERP peut déjà exister (email OU téléphone)
+    // sans mot de passe webshop. On active alors l'auth sur cette ligne au lieu
+    // d'en créer une nouvelle. Un mot de passe déjà présent = compte existant → 409.
+    $cl = row("SELECT id, password_hash FROM client WHERE LOWER(TRIM(email))=? OR (? <> '' AND phone=?) LIMIT 1", [$mail, $phone, $phone]);
+    if ($cl && !empty($cl['password_hash'])) json_out(['error' => 'Un compte existe déjà avec cet email.'], 409);
+    if ($cl) {
+      q("UPDATE client SET password_hash=?, active=1,
+                email=COALESCE(NULLIF(email,''), ?), phone=COALESCE(NULLIF(phone,''), ?),
+                name=COALESCE(NULLIF(name,''), ?), surname=COALESCE(NULLIF(surname,''), ?)
+          WHERE id=?",
+        [$hash, $mail, $phone, $b['firstName'] ?? '', $b['lastName'] ?? '', $cl['id']]);
+      $id = $cl['id'];
+    } else {
+      q("INSERT INTO client (email, password_hash, name, surname, phone, active, source_channel, status)
+         VALUES (?,?,?,?,?,1,'webshop','active')",
+        [$mail, $hash, $b['firstName'] ?? '', $b['lastName'] ?? '', $phone]);
+      $id = db()->lastInsertId();
+    }
     json_out(['user' => user_payload($id), 'token' => sign_token(['id' => (int) $id, 'exp' => time() + 30 * 86400])], 201);
   }
   if ($m === 'POST' && $p === '/auth/login') {
@@ -549,7 +557,7 @@ function dispatch($m, $p) {
     // Identifiant = email OU téléphone.
     $ident = strtolower(trim($b['identifier'] ?? $b['email'] ?? ''));
     if ($ident === '') json_out(['error' => 'Identifiants incorrects.'], 401);
-    $u = row("SELECT id, password_hash FROM ws_customers WHERE (email=? OR phone=?) AND active=1", [$ident, $ident]);
+    $u = row("SELECT id, password_hash FROM client WHERE (LOWER(TRIM(email))=? OR (phone<>'' AND phone=?)) AND active=1 LIMIT 1", [$ident, $ident]);
     if (!$u || !password_verify($b['password'] ?? '', $u['password_hash'])) json_out(['error' => 'Identifiants incorrects.'], 401);
     json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400])]);
   }
@@ -560,10 +568,10 @@ function dispatch($m, $p) {
   }
   if ($m === 'PATCH' && $p === '/auth/me') {
     $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
-    $b = body(); $map = ['first_name' => 'firstName', 'last_name' => 'lastName', 'phone' => 'phone', 'preferred_shop_id' => 'preferredShopId'];
+    $b = body(); $map = ['name' => 'firstName', 'surname' => 'lastName', 'phone' => 'phone', 'preferred_shop_id' => 'preferredShopId'];
     $sets = []; $vals = [];
     foreach ($map as $col => $k) if (array_key_exists($k, $b)) { $sets[] = "$col=?"; $vals[] = $b[$k]; }
-    if ($sets) { $vals[] = $id; q("UPDATE ws_customers SET " . implode(',', $sets) . " WHERE id=?", $vals); }
+    if ($sets) { $vals[] = $id; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $vals); }
     json_out(['user' => user_payload($id)]);
   }
 
@@ -789,14 +797,22 @@ function allowed_methods($shop, $profile) {
 
 /* Shape client d'un customer. */
 function user_payload($id) {
-  $u = row("SELECT id, email, first_name, last_name, phone, office_id, preferred_shop_id,
-                   preferred_lang, is_business, fidelity_active FROM ws_customers WHERE id=?", [$id]);
+  // Table `client` unifiée. SELECT * + accès défensif : tolère les variantes de
+  // noms de colonnes (name/first_name, locale/preferred_lang, is_b2b/is_business)
+  // pendant la transition de schéma.
+  $u = row("SELECT * FROM client WHERE id=?", [$id]);
   if (!$u) return null;
   return [
-    'id' => (int) $u['id'], 'email' => $u['email'], 'firstName' => $u['first_name'], 'lastName' => $u['last_name'],
-    'phone' => $u['phone'], 'officeId' => $u['office_id'], 'preferredShopId' => $u['preferred_shop_id'],
-    'lang' => $u['preferred_lang'], 'isBusiness' => (bool) $u['is_business'],
-    'fidelityApp' => ['active' => (bool) $u['fidelity_active']],
+    'id' => (int) $u['id'],
+    'email' => $u['email'] ?? null,
+    'firstName' => $u['name'] ?? ($u['first_name'] ?? null),
+    'lastName' => $u['surname'] ?? ($u['last_name'] ?? null),
+    'phone' => $u['phone'] ?? null,
+    'officeId' => $u['office_id'] ?? null,
+    'preferredShopId' => $u['preferred_shop_id'] ?? null,
+    'lang' => $u['locale'] ?? ($u['preferred_lang'] ?? 'fr'),
+    'isBusiness' => (bool) ($u['is_b2b'] ?? ($u['is_business'] ?? 0)),
+    'fidelityApp' => ['active' => (bool) ($u['fidelity_active'] ?? 0)],
   ];
 }
 
