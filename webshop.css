@@ -3438,3 +3438,15 @@
   .pdm-car { padding-left: 20px; padding-right: 20px; margin: 0 -20px; }
   .ws-tabbar__btn { font-size: 12px; gap: 6px; padding: 8px 10px; }
 }
+
+/* Auth: email/phone segmented toggle (account creation) */
+.ws-toggle { display: flex; gap: 4px; padding: 4px; margin: 4px 0 2px;
+  background: rgba(0,0,0,.05); border-radius: 10px; }
+.ws-toggle__opt { flex: 1; padding: 8px 10px; border: 0; border-radius: 7px;
+  background: transparent; font: inherit; color: inherit; cursor: pointer;
+  transition: background .15s ease, box-shadow .15s ease; }
+.ws-toggle__opt.is-active { background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.12); font-weight: 600; }
+@media (prefers-color-scheme: dark) {
+  .ws-toggle { background: rgba(255,255,255,.08); }
+  .ws-toggle__opt.is-active { background: rgba(255,255,255,.16); box-shadow: none; }
+}

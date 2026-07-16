@@ -1882,7 +1882,7 @@ function ModalShell({ onClose, children, narrow }) {
 
 function LoginModal({ open, onClose, onLogin, onRegister }) {
   const [tab, setTab] = useState('login');
-  const [form, setForm] = useState({ identifier: '', email: '', phone: '', password: '', firstName: '', lastName: '' });
+  const [form, setForm] = useState({ identifier: '', email: '', phone: '', password: '', firstName: '', lastName: '', postalCode: '', authMethod: 'email' });
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
   if (!open) return null;
@@ -1900,7 +1900,9 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
         onLogin(r.user); onClose();
       } else {
         if (!form.firstName || !form.lastName) { setErr('Prénom et nom requis.'); return; }
-        if (!form.email || !form.password) { setErr('Email et mot de passe requis.'); return; }
+        if (form.authMethod === 'email' && !form.email) { setErr('Email requis.'); return; }
+        if (form.authMethod === 'phone' && !form.phone) { setErr('Téléphone requis.'); return; }
+        if (!form.email && !form.phone) { setErr('Email ou téléphone requis.'); return; }
         const r = window.WSAuth
           ? await window.WSAuth.register(form)
           : authRegister(form);
@@ -1924,20 +1926,29 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
       </div>
       <form className="ws-form" onSubmit={submit}>
         {tab === 'register' && (
-          <div className="ws-form__row2">
-            <label className="ws-field"><span>Prénom</span><input value={form.firstName} onChange={(e) => set('firstName', e.target.value)} autoComplete="given-name"/></label>
-            <label className="ws-field"><span>Nom</span><input value={form.lastName} onChange={(e) => set('lastName', e.target.value)} autoComplete="family-name"/></label>
-          </div>
-        )}
-        {tab === 'login' ? (
-          <label className="ws-field"><span>Email ou téléphone</span><input type="text" value={form.identifier} onChange={(e) => set('identifier', e.target.value)} autoComplete="username"/></label>
-        ) : (
           <>
-            <label className="ws-field"><span>Email</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
-            <label className="ws-field"><span>Téléphone</span><input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="tel"/></label>
+            <div className="ws-form__row2">
+              <label className="ws-field"><span>Prénom</span><input value={form.firstName} onChange={(e) => set('firstName', e.target.value)} autoComplete="given-name"/></label>
+              <label className="ws-field"><span>Nom</span><input value={form.lastName} onChange={(e) => set('lastName', e.target.value)} autoComplete="family-name"/></label>
+            </div>
+            {/* Toggle : identifiant de connexion = email OU téléphone */}
+            <div className="ws-toggle" role="tablist" aria-label="Identifiant de connexion">
+              <button type="button" role="tab" aria-selected={form.authMethod === 'email'} className={`ws-toggle__opt${form.authMethod === 'email' ? ' is-active' : ''}`} onClick={() => set('authMethod', 'email')}>Email</button>
+              <button type="button" role="tab" aria-selected={form.authMethod === 'phone'} className={`ws-toggle__opt${form.authMethod === 'phone' ? ' is-active' : ''}`} onClick={() => set('authMethod', 'phone')}>Téléphone</button>
+            </div>
+            <div className="ws-form__row2">
+              <label className="ws-field"><span>Email{form.authMethod === 'email' ? ' *' : ''}</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
+              <label className="ws-field"><span>Téléphone{form.authMethod === 'phone' ? ' *' : ''}</span><input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="tel"/></label>
+            </div>
+            <label className="ws-field"><span>Code postal</span><input value={form.postalCode} onChange={(e) => set('postalCode', e.target.value)} autoComplete="postal-code" inputMode="numeric"/></label>
           </>
         )}
-        <label className="ws-field"><span>Mot de passe</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete={tab === 'login' ? 'current-password' : 'new-password'}/></label>
+        {tab === 'login' && (
+          <>
+            <label className="ws-field"><span>Email ou téléphone</span><input type="text" value={form.identifier} onChange={(e) => set('identifier', e.target.value)} autoComplete="username"/></label>
+            <label className="ws-field"><span>Mot de passe</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="current-password"/></label>
+          </>
+        )}
         {err && <p className="ws-form__err">{err}</p>}
         <button type="submit" className="ws-cta ws-cta--block" disabled={loading}>{loading ? 'Chargement…' : (tab === 'login' ? 'Se connecter' : 'Créer mon compte')}</button>
       </form>
