@@ -24,10 +24,25 @@ UPDATE ws_categories SET img = '/webshop/assets/category_icons/tartes.png'      
 -- Catégories encore sans icône : boissons, épicerie, fêtes-occasions,
 -- bundle-promotion, b-2-b  (à créer + ajouter un UPDATE ici).
 
--- ── Saisons / assortiments (2 icônes disponibles) ──────────────────────────
--- ws_assortments n'a pas de slug : on matche sur le label. VÉRIFIE les libellés
--- exacts en base (SELECT id, label FROM ws_assortments;) puis ajuste si besoin.
-UPDATE ws_assortments SET img = '/webshop/assets/season_icons/fete-des-meres.png' WHERE label LIKE '%res des m%res%' OR label LIKE '%Fête des mères%';
+-- ── Saisons (2 icônes disponibles) ─────────────────────────────────────────
+-- Les saisons vivent dans DEUX tables :
+--   • ws_seasons  → a un slug (product.season = ws_seasons.slug). Match par slug.
+--   • ws_assortments → pas de slug, seulement label. Match par label.
+-- NB : ws_seasons n'est pas dans le schéma du repo ; confirme le nom exact
+--      (ws_seasons vs ws_season) et la présence d'une colonne img.
+--
+-- ⚠️ IMPORTANT : le PHP API actuel (php-api/index.php) ne lit PAS ws_seasons et
+--    ne renvoie aucun champ season sur les produits. Aujourd'hui les chips de
+--    saison du front live proviennent de ws_assortments. Mettre à jour
+--    ws_seasons.img ne suffira à afficher les icônes que lorsque l'API joindra
+--    ws_seasons (à ajouter côté /catalog).
+
+-- ws_seasons (par slug)
+UPDATE ws_seasons    SET img = '/webshop/assets/season_icons/fete-des-meres.png' WHERE slug = 'fete-des-meres';
+UPDATE ws_seasons    SET img = '/webshop/assets/season_icons/saint-valentin.png' WHERE slug = 'saint-valentin';
+
+-- ws_assortments (par label — VÉRIFIE les libellés : SELECT id, label FROM ws_assortments;)
+UPDATE ws_assortments SET img = '/webshop/assets/season_icons/fete-des-meres.png' WHERE label LIKE '%te des m%res%' OR label LIKE '%Fête des mères%';
 UPDATE ws_assortments SET img = '/webshop/assets/season_icons/saint-valentin.png' WHERE label LIKE '%Valentin%';
 
 -- ── Photos produits (10 placées) ───────────────────────────────────────────
@@ -42,5 +57,6 @@ UPDATE ws_products
 
 -- ── Vérification ────────────────────────────────────────────────────────────
 -- SELECT slug, img FROM ws_categories WHERE img LIKE '%category_icons%';
+-- SELECT slug, img FROM ws_seasons WHERE img LIKE '%season_icons%';
 -- SELECT label, img FROM ws_assortments WHERE img LIKE '%season_icons%';
 -- SELECT id, img FROM ws_products WHERE img LIKE '%product_pictures%';
