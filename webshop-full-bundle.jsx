@@ -3382,6 +3382,8 @@ function ShopFrame({ variant }) {
   // ── DELIVERY SLOTS (midi / soir) ────────────────────────────────────
   // The slot is an ATTRIBUTE of the order, resolved server-side from the
   // route that serves the office. Front only renders /slots + /next-slot.
+  // Déclaré AVANT le slot-effect ci-dessous (qui lit `user` dans ses deps) — sinon TDZ.
+  const [user, setUser] = useState(null);
   const [officeSlots, setOfficeSlots] = React.useState([]);
   const [slotCta, setSlotCta] = React.useState(null);
   const [selectedSlot, setSelectedSlot] = React.useState(null);
@@ -3462,7 +3464,6 @@ function ShopFrame({ variant }) {
     () => basket.reduce((m, l) => Math.max(m, l.lead_time || 0), 0),
     [basket]
   );
-  const [user, setUser] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [allergensOpen, setAllergensOpen] = useState(false);
