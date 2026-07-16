@@ -9,7 +9,7 @@ stack (React 18 UMD + `React.createElement`, no bundler).
 ```
 landing/
 ├── evenements-b2b.html        entry point
-├── webshop-landing-b2b.jsx    React component (plain ES6, no Babel needed)
+├── webshop-landing-b2b.js     React component (plain ES6, no Babel needed)
 ├── webshop-landing-b2b.css    brand fonts + tokens + page styles
 ├── favicon-32.png             tab / touch icons
 ├── apple-touch-icon.png
@@ -34,7 +34,7 @@ at the local files.
 - Bilingual FR / NL (toggle in the header, remembered via `localStorage`).
 - The contact form is client-side only: it validates input, routes the request
   to the shop covering the visitor's zone, and shows a confirmation modal. Wire
-  `onSubmit` in `webshop-landing-b2b.jsx` to a real endpoint when the B2B intake
+  `onSubmit` in `webshop-landing-b2b.js` to a real endpoint when the B2B intake
   backend is ready.
 - The wordmark asset is the ruby logo rendered white via a CSS filter
   (`.lp-logo`) so it reads on the dark canvas.

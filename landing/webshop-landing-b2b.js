@@ -1,5 +1,5 @@
 /* ============================================================================
-   webshop-landing-b2b.jsx — Landing B2B Événements
+   webshop-landing-b2b.js — Landing B2B Événements
    L'Atelier By — page marketing "grands événements" (B2B).
 
    Imported from Claude Design ("Landing B2B Evenements.dc.html") and converted
