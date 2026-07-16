@@ -171,6 +171,14 @@ function dispatch($m, $p) {
                     WHERE shop_id = ? AND date = ? AND active = 1 AND (mode = ? OR mode IS NULL)",
                   [$s, $day, $mode]));
   }
+  if ($m === 'GET' && $p === '/catalog/assortments') {
+    $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+    // Assortiments saisonniers de la boutique (+ ceux globaux, shop_id NULL).
+    // Le front lit id/label/img pour les chips de saison (CategoryRow).
+    json_out(rows("SELECT id, label, img FROM ws_assortments
+                    WHERE active = 1 AND (shop_id = ? OR shop_id IS NULL)
+                    ORDER BY id", [$s]));
+  }
 
   /* ── Promos / Vouchers ── */
   if ($m === 'GET' && $p === '/pricing/promos/cross-portion') {

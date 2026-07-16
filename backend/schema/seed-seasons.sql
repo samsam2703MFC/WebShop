@@ -12,9 +12,10 @@
 -- shop_id = NULL  →  saison visible pour toutes les boutiques.
 -- ---------------------------------------------------------------------------
 
--- 1) Saison été déjà présente (id=1 "Saveurs d'été") : lui donner son icône
---    dès qu'un PNG « été » existe sous season_icons/ete.png.
--- UPDATE ws_assortments SET img = '/webshop/assets/season_icons/ete.png' WHERE id = 1;
+-- 1) Saison été (id=1 "Saveurs d'été") : icône TEMPORAIRE réutilisée
+--    (season_icons/ete.png = copie de la tarte aux fruits, à remplacer par une
+--    vraie icône été plus tard).
+UPDATE ws_assortments SET img = '/webshop/assets/season_icons/ete.png' WHERE id = 1;
 
 -- 2) Saisons manquantes correspondant aux 2 icônes déjà déposées.
 INSERT INTO ws_assortments (shop_id, label, img, active) VALUES
