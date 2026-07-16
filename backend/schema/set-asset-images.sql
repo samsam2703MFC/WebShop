@@ -24,13 +24,18 @@ UPDATE ws_categories SET img = '/webshop/assets/category_icons/tartes.png'      
 -- Catégories encore sans icône : boissons, épicerie, fêtes-occasions,
 -- bundle-promotion, b-2-b  (à créer + ajouter un UPDATE ici).
 
--- ── Saisons (2 icônes disponibles) ─────────────────────────────────────────
+-- ── Saisons (ws_assortments) ────────────────────────────────────────────────
 -- Une SEULE table saison existe : ws_assortments (id, shop_id, label, img,
 -- active). Pas de ws_seasons, pas de colonne season sur ws_products.
--- ws_assortments n'a pas de slug → on matche sur le label.
--- VÉRIFIE d'abord les libellés exacts :  SELECT id, label FROM ws_assortments;
-UPDATE ws_assortments SET img = '/webshop/assets/season_icons/fete-des-meres.png' WHERE label LIKE '%te des m%res%' OR label LIKE '%Fête des mères%';
-UPDATE ws_assortments SET img = '/webshop/assets/season_icons/saint-valentin.png' WHERE label LIKE '%Valentin%';
+--
+-- État réel en base : UNE seule ligne  →  id=1  "Saveurs d'été".
+-- Les 2 icônes disponibles (saint-valentin, fete-des-meres) ne correspondent
+-- PAS à cette ligne : il manque une icône « été ». Donc rien à mettre à jour
+-- ici pour l'instant. Dès qu'une icône été existe :
+--   UPDATE ws_assortments SET img = '/webshop/assets/season_icons/ete.png' WHERE id = 1;
+--
+-- (Les icônes saint-valentin / fete-des-meres n'auront de sens que si tu ajoutes
+--  les lignes de saison correspondantes dans ws_assortments.)
 
 -- ── Photos produits (10 placées) ───────────────────────────────────────────
 -- Le nom de fichier = id du produit, d'où le CONCAT.
