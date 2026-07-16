@@ -1882,8 +1882,8 @@ function ModalShell({ onClose, children, narrow }) {
 
 // Préfixes internationaux proposés dans les formulaires (défaut +32 Belgique).
 const PHONE_PREFIXES = [
-  ['+32', '🇧🇪 +32'], ['+33', '🇫🇷 +33'], ['+31', '🇳🇱 +31'],
-  ['+352', '🇱🇺 +352'], ['+49', '🇩🇪 +49'],
+  ['+32', '+32'], ['+33', '+33'], ['+31', '+31'],
+  ['+352', '+352'], ['+49', '+49'],
 ];
 
 function LoginModal({ open, onClose, onLogin, onRegister }) {
