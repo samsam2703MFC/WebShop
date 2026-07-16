@@ -550,9 +550,13 @@ function dispatch($m, $p) {
         [$hash, $mail, $phone, $b['firstName'] ?? '', $b['lastName'] ?? '', $cl['id']]);
       $id = $cl['id'];
     } else {
-      q("INSERT INTO client (email, password_hash, name, surname, phone, active, source_channel, status)
-         VALUES (?,?,?,?,?,1,'webshop','active')",
-        [$mail, $hash, $b['firstName'] ?? '', $b['lastName'] ?? '', $phone]);
+      // client.id_main_shop is NOT NULL without a default → use the caller's
+      // shop when given, else the most common shop among existing clients.
+      $ms = $b['shopId'] ?? null;
+      if (!$ms) { $r = row("SELECT id_main_shop FROM client GROUP BY id_main_shop ORDER BY COUNT(*) DESC LIMIT 1"); $ms = $r['id_main_shop'] ?? 1; }
+      q("INSERT INTO client (id_main_shop, email, password_hash, name, surname, phone, active, source_channel, status)
+         VALUES (?,?,?,?,?,?,1,'webshop','active')",
+        [$ms, $mail, $hash, $b['firstName'] ?? '', $b['lastName'] ?? '', $phone]);
       $id = db()->lastInsertId();
     }
     json_out(['user' => user_payload($id), 'token' => sign_token(['id' => (int) $id, 'exp' => time() + 30 * 86400])], 201);
