@@ -70,8 +70,9 @@ ON DUPLICATE KEY UPDATE
   webshop_enabled=1, webshop_config=VALUES(webshop_config), legacy_ws_id=VALUES(legacy_ws_id);
 
 -- 2a) lp_shops MATCHÉS (picker_key = un slug ws existant) → merge vitrine, landing_enabled=1.
+--     COLLATE : lp_shops = utf8mb4_unicode_ci, ws/shops = utf8mb4_0900_ai_ci (évite #1267).
 UPDATE shops s
-  JOIN lp_shops l ON l.picker_key = s.slug AND l.picker_key <> ''
+  JOIN lp_shops l ON l.picker_key = s.slug COLLATE utf8mb4_unicode_ci AND l.picker_key <> ''
 SET s.landing_enabled = 1,
     s.legacy_lp_id     = l.id,
     s.image_path       = COALESCE(NULLIF(s.image_path,''), NULLIF(l.image_path,'')),
@@ -101,7 +102,8 @@ SELECT base.maxid + ROW_NUMBER() OVER (ORDER BY l.id),
 FROM lp_shops l
 CROSS JOIN (SELECT COALESCE(MAX(id),0) AS maxid FROM shops) base
 WHERE NOT EXISTS (SELECT 1 FROM shops s WHERE s.legacy_lp_id = l.id)            -- pas déjà migré
-  AND NOT EXISTS (SELECT 1 FROM shops s2 WHERE s2.slug = l.picker_key AND l.picker_key <> ''); -- pas un match ws
+  AND NOT EXISTS (SELECT 1 FROM shops s2
+                   WHERE s2.slug = l.picker_key COLLATE utf8mb4_unicode_ci AND l.picker_key <> ''); -- pas un match ws
 
 COMMIT;
 
