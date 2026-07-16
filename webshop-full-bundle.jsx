@@ -1900,8 +1900,6 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
         onLogin(r.user); onClose();
       } else {
         if (!form.firstName || !form.lastName) { setErr('Prénom et nom requis.'); return; }
-        if (form.authMethod === 'email' && !form.email) { setErr('Email requis.'); return; }
-        if (form.authMethod === 'phone' && !form.phone) { setErr('Téléphone requis.'); return; }
         if (!form.email && !form.phone) { setErr('Email ou téléphone requis.'); return; }
         const r = window.WSAuth
           ? await window.WSAuth.register(form)
@@ -1931,21 +1929,21 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
               <label className="ws-field"><span>Prénom</span><input value={form.firstName} onChange={(e) => set('firstName', e.target.value)} autoComplete="given-name"/></label>
               <label className="ws-field"><span>Nom</span><input value={form.lastName} onChange={(e) => set('lastName', e.target.value)} autoComplete="family-name"/></label>
             </div>
-            {/* Toggle : identifiant de connexion = email OU téléphone */}
-            <div className="ws-toggle" role="tablist" aria-label="Identifiant de connexion">
-              <button type="button" role="tab" aria-selected={form.authMethod === 'email'} className={`ws-toggle__opt${form.authMethod === 'email' ? ' is-active' : ''}`} onClick={() => set('authMethod', 'email')}>Email</button>
-              <button type="button" role="tab" aria-selected={form.authMethod === 'phone'} className={`ws-toggle__opt${form.authMethod === 'phone' ? ' is-active' : ''}`} onClick={() => set('authMethod', 'phone')}>Téléphone</button>
-            </div>
             <div className="ws-form__row2">
-              <label className="ws-field"><span>Email{form.authMethod === 'email' ? ' *' : ''}</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
-              <label className="ws-field"><span>Téléphone{form.authMethod === 'phone' ? ' *' : ''}</span><input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="tel"/></label>
+              <label className="ws-field"><span>Email</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
+              <label className="ws-field"><span>Téléphone</span><input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="tel"/></label>
             </div>
             <label className="ws-field"><span>Code postal</span><input value={form.postalCode} onChange={(e) => set('postalCode', e.target.value)} autoComplete="postal-code" inputMode="numeric"/></label>
           </>
         )}
         {tab === 'login' && (
           <>
-            <label className="ws-field"><span>Email ou téléphone</span><input type="text" value={form.identifier} onChange={(e) => set('identifier', e.target.value)} autoComplete="username"/></label>
+            {/* Toggle : se connecter avec email OU téléphone */}
+            <div className="ws-toggle" role="tablist" aria-label="Se connecter avec">
+              <button type="button" role="tab" aria-selected={form.authMethod === 'email'} className={`ws-toggle__opt${form.authMethod === 'email' ? ' is-active' : ''}`} onClick={() => set('authMethod', 'email')}>Email</button>
+              <button type="button" role="tab" aria-selected={form.authMethod === 'phone'} className={`ws-toggle__opt${form.authMethod === 'phone' ? ' is-active' : ''}`} onClick={() => set('authMethod', 'phone')}>Téléphone</button>
+            </div>
+            <label className="ws-field"><span>{form.authMethod === 'phone' ? 'Téléphone' : 'Email'}</span><input type={form.authMethod === 'phone' ? 'tel' : 'email'} value={form.identifier} onChange={(e) => set('identifier', e.target.value)} autoComplete="username"/></label>
             <label className="ws-field"><span>Mot de passe</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="current-password"/></label>
           </>
         )}
@@ -3638,10 +3636,23 @@ function ShopFrame({ variant }) {
     }
     if (cat === 'all') return src;
     if (isAssortment) {
-      return src.slice(0, 8);
+      // Filtre par SAISON réelle (product.season = slug ws_season).
+      return src.filter((p) => (p.season || '') === assortmentId);
     }
-    return src.filter((p) => p.cat === cat);
-  }, [cat, isAssortment, allProducts, mode, selectedSlot]);
+    // Filtre par CATÉGORIE : l'API renvoie cat_id (num) ; fallback p.cat (seed).
+    return src.filter((p) => String(p.cat_id) === String(cat) || p.cat === cat);
+  }, [cat, isAssortment, assortmentId, allProducts, mode, selectedSlot]);
+
+  // Puces de saison = saisons réellement présentes dans les produits (comme les
+  // catégories, on n'affiche que ce qui existe). Sinon on garde les assortiments.
+  const seasonChips = useMemo(() => {
+    const seen = {};
+    (allProducts || []).forEach((p) => {
+      if (p.season && !seen[p.season]) seen[p.season] = { id: p.season, label: p.season_name || p.season, img: p.season_img || 'img/cat-all.png' };
+    });
+    const arr = Object.values(seen);
+    return arr.length ? arr : assortments;
+  }, [allProducts, assortments]);
 
   // Stock map: productId -> { qty_total, qty_reserved, qty_sold, qty_available }
   // Reloaded whenever shop, date or mode changes.
@@ -3802,7 +3813,7 @@ function ShopFrame({ variant }) {
             <p className="ws-slot-ask">Vous souhaitez la livraison du soir ? <button type="button" className="ws-linkbtn" onClick={() => window.WSSlots && window.WSSlots.requestEvening && window.WSSlots.requestEvening({ officeId: (user && user.officeId) || null })}>Faites-le nous savoir</button></p>
           )}
 
-          <CategoryRow active={cat} sub={subCat} onSelect={(c) => { setCat(c); setSubCat(null); }} onSelectSub={setSubCat} accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'} tint={mode === 'delivery' ? 'invert(45%) sepia(60%) saturate(600%) hue-rotate(5deg)' : 'invert(15%) sepia(85%) saturate(2400%) hue-rotate(335deg)'} categories={categories} assortments={assortments}/>
+          <CategoryRow active={cat} sub={subCat} onSelect={(c) => { setCat(c); setSubCat(null); }} onSelectSub={setSubCat} accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'} tint={mode === 'delivery' ? 'invert(45%) sepia(60%) saturate(600%) hue-rotate(5deg)' : 'invert(15%) sepia(85%) saturate(2400%) hue-rotate(335deg)'} categories={categories} assortments={seasonChips}/>
 
           <div className="ws-grid">
             {products.map((p) => {

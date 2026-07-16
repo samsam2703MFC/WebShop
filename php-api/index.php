@@ -579,11 +579,11 @@ function dispatch($m, $p) {
     $first = trim($b['firstName'] ?? '');
     $last  = trim($b['lastName'] ?? '');
     $zip   = trim($b['postalCode'] ?? ($b['zip'] ?? ''));
-    $authM = (($b['authMethod'] ?? 'email') === 'phone') ? 'phone' : 'email';
+    // Le toggle email/téléphone est côté connexion. À la création on prend ce
+    // qui est fourni (au moins l'un des deux) ; la préférence par défaut suit.
     if ($mail !== '' && !filter_var($mail, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'Email invalide'], 400);
-    if ($authM === 'email' && $mail === '')  json_out(['error' => 'Email requis'], 400);
-    if ($authM === 'phone' && $phone === '') json_out(['error' => 'Téléphone requis'], 400);
     if ($mail === '' && $phone === '')       json_out(['error' => 'Email ou téléphone requis'], 400);
+    $authM = ($mail !== '') ? 'email' : 'phone';
     $pass = (string) ($b['password'] ?? '');
     $hash = ($pass !== '' && strlen($pass) >= 6) ? password_hash($pass, PASSWORD_BCRYPT) : null;
     // Un client peut déjà exister (email OU téléphone). Compte webshop déjà
