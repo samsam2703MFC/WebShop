@@ -618,7 +618,7 @@ function dispatch($m, $p) {
                 phone=COALESCE(NULLIF(phone,''), NULLIF(?, '')),
                 name=COALESCE(NULLIF(name,''), NULLIF(?, '')),
                 surname=COALESCE(NULLIF(surname,''), NULLIF(?, '')),
-                zip=COALESCE(NULLIF(zip,''), NULLIF(?, ''))
+                zip=COALESCE(NULLIF(zip,''), NULLIF(?, ''), '')
           WHERE id=?",
         [$authM, $hash, $mail, $phone, $first, $last, $zip, $cl['id']]);
       $id = $cl['id'];
@@ -629,7 +629,7 @@ function dispatch($m, $p) {
       q("INSERT INTO client (id_main_shop, email, phone, name, surname, zip, password_hash,
                              active, source_channel, webshop_user, preferred_auth_method)
          VALUES (?,?,?,?,?,?,?,1,'webshop',1,?)",
-        [$ms, ($mail ?: null), ($phone ?: null), $first, $last, ($zip ?: null), $hash, $authM]);
+        [$ms, ($mail ?: null), ($phone ?: null), $first, $last, $zip, $hash, $authM]);
       $id = db()->lastInsertId();
     }
     json_out(['user' => user_payload($id), 'token' => sign_token(['id' => (int) $id, 'exp' => time() + 30 * 86400])], 201);
