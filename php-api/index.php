@@ -667,8 +667,18 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/admin/shop-discount') {
       $b = body();
       $type = in_array($b['type'] ?? '', ['percent', 'fixed'], true) ? $b['type'] : 'percent';
-      q("UPDATE ws_shops SET webshop_discount_type=?, webshop_discount_value=? WHERE id=?",
-        [$type, (float) ($b['value'] ?? 0), $b['shopId'] ?? 0]);
+      // Après l'unification des boutiques la remise vit dans shops.webshop_config (JSON).
+      // Tant que `shops` n'existe pas, on retombe sur les colonnes legacy de ws_shops.
+      $hasShops = row("SELECT 1 AS x FROM information_schema.tables
+                        WHERE table_schema=DATABASE() AND table_name='shops'");
+      if ($hasShops) {
+        q("UPDATE shops SET webshop_config = JSON_SET(COALESCE(webshop_config, JSON_OBJECT()),
+             '$.discount_type', ?, '$.discount_value', ?) WHERE id=?",
+          [$type, (float) ($b['value'] ?? 0), $b['shopId'] ?? 0]);
+      } else {
+        q("UPDATE ws_shops SET webshop_discount_type=?, webshop_discount_value=? WHERE id=?",
+          [$type, (float) ($b['value'] ?? 0), $b['shopId'] ?? 0]);
+      }
       json_out(['ok' => true, 'type' => $type, 'value' => (float) ($b['value'] ?? 0)]);
     }
     // ── Comptes entreprise (B2B) ──
