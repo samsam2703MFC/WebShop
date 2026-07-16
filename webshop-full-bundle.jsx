@@ -3640,8 +3640,13 @@ function ShopFrame({ variant }) {
       return src.filter((p) => (p.season || '') === assortmentId);
     }
     // Filtre par CATÉGORIE : l'API renvoie cat_id (num) ; fallback p.cat (seed).
-    return src.filter((p) => String(p.cat_id) === String(cat) || p.cat === cat);
-  }, [cat, isAssortment, assortmentId, allProducts, mode, selectedSlot]);
+    let out = src.filter((p) => String(p.cat_id) === String(cat) || p.cat === cat);
+    // Filtre par SOUS-CATÉGORIE si une puce est sélectionnée (subCat = id num).
+    if (subCat != null) {
+      out = out.filter((p) => String(p.sub_cat_id) === String(subCat) || String(p.subCat) === String(subCat));
+    }
+    return out;
+  }, [cat, subCat, isAssortment, assortmentId, allProducts, mode, selectedSlot]);
 
   // Puces de saison = saisons réellement présentes dans les produits (comme les
   // catégories, on n'affiche que ce qui existe). Sinon on garde les assortiments.
