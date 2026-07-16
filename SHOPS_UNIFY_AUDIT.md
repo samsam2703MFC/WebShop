@@ -4,10 +4,12 @@
 > ici (conformément à la contrainte). Migration / rollback / re-câblage seront livrés
 > **après** ton accord sur le schéma cible et les règles de résolution de conflits.
 >
-> **Limites de mon périmètre :** je n'ai accès qu'au repo **webshop** (`ws_shops`) et
-> **pas** au module Landing Page (`lp_shops`) ni à la DB live (`atelierby_db`, egress
-> bloqué). Les parties `lp_shops` et les comptages doublons sont donc fournis sous forme
-> de **requêtes prêtes** à exécuter — leurs résultats complètent l'audit.
+> **MISE À JOUR :** `lp_shops` trouvé dans le repo **`samsam2703MFC/landing`**
+> (`lp_install_shops.php`). **Même base `atelierby_db`** que `ws_shops` → migration
+> intra-base. **Clé de matching confirmée : `ws_shops.slug = lp_shops.picker_key`.**
+> La **migration Phase 1 est écrite** : `backend/schema/migrate-unify-shops.sql`
+> (+ `rollback-unify-shops.sql`) — **NON exécutée**, en attente de ta validation.
+> Il me reste à obtenir les **comptages doublons réels** (§1.C, DB live inaccessible d'ici).
 
 ---
 
@@ -54,9 +56,39 @@ ws_tour_availability, ws_tours
 **Consommateurs front :** `window.WSShops` (`webshop-shops-api.jsx`),
 `window.WSShopRouter` (`webshop-shop-router.jsx`).
 
-### 1.B — `lp_shops` (À FOURNIR — hors de ce repo)
+### 1.B — `lp_shops` (CONNU — repo `landing`, base `atelierby_db`)
 
-Exécute et **colle-moi les résultats** (structure + dépendances) :
+**Schéma** (`landing/lp_install_shops.php`) :
+| Colonne | Type | Notes |
+|---|---|---|
+| `id` | INT UNSIGNED **AUTO_INCREMENT** PK | ≠ id Buddy |
+| `sort_order` | TINYINT | ordre d'affichage vitrine |
+| `name` | VARCHAR(100) | |
+| `city` | VARCHAR(80) | |
+| `postal_code` | VARCHAR(10) | = `ws_shops.zip` |
+| `kind` | ENUM('shop','popup') | **spécifique landing** |
+| `address` | VARCHAR(255) | **1 seul champ** (vs ws : street/street_num/zip/city) |
+| `phone`, `email` | VARCHAR | |
+| `concept_fr`, `concept_nl` | TEXT | **spécifique landing** |
+| `image_path` | VARCHAR(255) | visuel vitrine |
+| `webshop_url` | VARCHAR(255) | lien vers le webshop de cette boutique |
+| `is_active` | TINYINT(1) | |
+| **`picker_key`** | VARCHAR(40) | **= `ws_shops.slug`** (clé de matching) |
+| `zone`, `lat`, `lng` | VARCHAR/DECIMAL | **spécifique landing** (carte) |
+| `webshop_active` | TINYINT(1) | flag « présent sur le webshop » |
+| `updated_at` | TIMESTAMP | |
+
+**Tables liées landing (FK `shop_id` → `lp_shops.id`)** : `lp_shop_hours` (horaires,
+multi-lignes), `lp_shop_services` (services : collect/delivery/phone/b2b/loyalty).
+→ À re-pointer vers `shops` en Phase 2 (via `legacy_lp_id`).
+
+**Divergence constatée** : les 2 tables décrivent surtout des boutiques **différentes** —
+`ws_shops` = shops Franchise Buddy (Halle, Corbais, Gosselies, Sombreffe, Gembloux) ;
+`lp_shops` = vitrines marketing (Châtelain, Sablon, Le Carré, Zuid, Patershol, Grognon).
+L'overlap se fait sur `picker_key = slug`.
+
+> *(Optionnel, pour confirmer le prod réel : `SHOW CREATE TABLE lp_shops\G` + FK/vues/triggers.)*
+> Requêtes d'introspection restées utiles :
 ```sql
 -- Structure complète
 SHOW CREATE TABLE lp_shops\G
@@ -79,28 +111,26 @@ SELECT trigger_name, event_object_table FROM information_schema.triggers
 
 ### 1.C — Analyse des doublons (À EXÉCUTER — DB live)
 
-Clé de matching pressentie : **`slug`** (ou `code` boutique si présent des deux côtés).
-Adapte les noms de colonnes lp_shops selon 1.B, puis colle les résultats :
+**Clé de matching confirmée : `ws_shops.slug = lp_shops.picker_key`.** Lance ces
+requêtes sur `atelierby_db` et **colle-moi les résultats** (comptages réels) :
 ```sql
--- Combien de chaque
 SELECT (SELECT COUNT(*) FROM ws_shops) AS n_ws, (SELECT COUNT(*) FROM lp_shops) AS n_lp;
 
--- Matchs par slug (à ajuster : lp_shops.slug ou code)
+-- Matchs (boutiques présentes des 2 côtés)
 SELECT COUNT(*) AS matched
-FROM ws_shops w JOIN lp_shops l ON l.slug = w.slug;
+FROM ws_shops w JOIN lp_shops l ON l.picker_key = w.slug AND l.picker_key <> '';
 
--- Orphelins ws (dans ws, pas dans lp)
+-- Orphelins ws (webshop, pas en vitrine)
 SELECT w.id, w.slug, w.name FROM ws_shops w
- LEFT JOIN lp_shops l ON l.slug = w.slug WHERE l.slug IS NULL;
+ LEFT JOIN lp_shops l ON l.picker_key = w.slug WHERE l.id IS NULL;
 
--- Orphelins lp (dans lp, pas dans ws)
-SELECT l.* FROM lp_shops l
- LEFT JOIN ws_shops w ON w.slug = l.slug WHERE w.slug IS NULL;
+-- Orphelins lp (vitrine, pas webshop)  → picker_key vide OU ne matche aucun slug
+SELECT l.id, l.picker_key, l.name, l.city FROM lp_shops l
+ LEFT JOIN ws_shops w ON w.slug = l.picker_key WHERE w.id IS NULL;
 
--- Conflits de valeurs sur les lignes matchées (nom / adresse / email)
-SELECT w.slug, w.name AS ws_name, l.name AS lp_name,
-       w.email AS ws_email, l.email AS lp_email
-FROM ws_shops w JOIN lp_shops l ON l.slug = w.slug
+-- Conflits sur les matchés (nom / email divergents)
+SELECT w.slug, w.name AS ws_name, l.name AS lp_name, w.email AS ws_email, l.email AS lp_email
+FROM ws_shops w JOIN lp_shops l ON l.picker_key = w.slug AND l.picker_key <> ''
 WHERE w.name <> l.name OR IFNULL(w.email,'') <> IFNULL(l.email,'');
 ```
 
