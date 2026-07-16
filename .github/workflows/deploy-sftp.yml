@@ -55,6 +55,15 @@ jobs:
       - name: Install sshpass
         run: sudo apt-get update && sudo apt-get install -y sshpass
 
+      - name: Prepare remote directories (validates SSH login)
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "mkdir -p '${{ vars.WEB_ROOT || '/var/www/html' }}/api' && command -v rsync >/dev/null || (echo 'rsync manquant sur le serveur — apt-get install -y rsync'; exit 1)"
+
       - name: Deploy PHP API → ${{ vars.WEB_ROOT || '/var/www/html' }}/api
         env:
           SSHPASS: ${{ secrets.SSH_PASSWORD }}
