@@ -554,8 +554,8 @@ function dispatch($m, $p) {
       // shop when given, else the most common shop among existing clients.
       $ms = $b['shopId'] ?? null;
       if (!$ms) { $r = row("SELECT id_main_shop FROM client GROUP BY id_main_shop ORDER BY COUNT(*) DESC LIMIT 1"); $ms = $r['id_main_shop'] ?? 1; }
-      q("INSERT INTO client (id_main_shop, email, password_hash, name, surname, phone, active, source_channel, status)
-         VALUES (?,?,?,?,?,?,1,'webshop','active')",
+      q("INSERT INTO client (id_main_shop, email, password_hash, name, surname, phone, active, source_channel)
+         VALUES (?,?,?,?,?,?,1,'webshop')",
         [$ms, $mail, $hash, $b['firstName'] ?? '', $b['lastName'] ?? '', $phone]);
       $id = db()->lastInsertId();
     }
@@ -577,7 +577,7 @@ function dispatch($m, $p) {
   }
   if ($m === 'PATCH' && $p === '/auth/me') {
     $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
-    $b = body(); $map = ['name' => 'firstName', 'surname' => 'lastName', 'phone' => 'phone', 'preferred_shop_id' => 'preferredShopId'];
+    $b = body(); $map = ['name' => 'firstName', 'surname' => 'lastName', 'phone' => 'phone'];
     $sets = []; $vals = [];
     foreach ($map as $col => $k) if (array_key_exists($k, $b)) { $sets[] = "$col=?"; $vals[] = $b[$k]; }
     if ($sets) { $vals[] = $id; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $vals); }
