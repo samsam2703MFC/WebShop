@@ -662,24 +662,14 @@ function dispatch($m, $p) {
     if ($mail === '' && $phone === '')       json_out(['error' => 'Email ou téléphone requis'], 400);
     $pass = (string) ($b['password'] ?? '');
     $hash = ($pass !== '' && strlen($pass) >= 6) ? password_hash($pass, PASSWORD_BCRYPT) : null;
-    // Un client peut déjà exister (email OU téléphone E.164). Compte webshop déjà
-    // constitué (password_hash présent) => 409 ; sinon on active le canal webshop.
-    $cl = row("SELECT id, password_hash FROM client WHERE (? <> '' AND LOWER(TRIM(email))=?) OR (? <> '' AND (phone_e164=? OR phone=?)) LIMIT 1", [$mail, $mail, $phone, $e164, $phone]);
-    if ($cl && !empty($cl['password_hash']) && $hash) json_out(['error' => 'Un compte existe déjà.'], 409);
+    // Anti-doublon : si un client existe déjà (email OU téléphone E.164), on ne
+    // fusionne PAS — on renvoie 409 { exists:true } pour que le front propose de
+    // définir/mettre à jour le mot de passe (endpoint /auth/set-password).
+    $cl = row("SELECT id FROM client WHERE (? <> '' AND LOWER(TRIM(email))=?) OR (? <> '' AND (phone_e164=? OR phone=?)) LIMIT 1", [$mail, $mail, $phone, $e164, $phone]);
     if ($cl) {
-      q("UPDATE client SET webshop_user=1, active=1, preferred_auth_method=?,
-                password_hash=COALESCE(password_hash, ?),
-                email=COALESCE(NULLIF(email,''), NULLIF(?, '')),
-                phone=COALESCE(NULLIF(phone,''), NULLIF(?, '')),
-                phone_prefix=COALESCE(NULLIF(phone_prefix,''), ?),
-                phone_e164=COALESCE(NULLIF(phone_e164,''), NULLIF(?, '')),
-                name=COALESCE(NULLIF(name,''), NULLIF(?, '')),
-                surname=COALESCE(NULLIF(surname,''), NULLIF(?, '')),
-                zip=COALESCE(NULLIF(zip,''), NULLIF(?, ''), '')
-          WHERE id=?",
-        [$authM, $hash, $mail, $phone, $pfx, $e164, $first, $last, $zip, $cl['id']]);
-      $id = $cl['id'];
-    } else {
+      json_out(['error' => 'Ce compte existe déjà. Connectez-vous ou définissez votre mot de passe.', 'exists' => true], 409);
+    }
+    {
       // client.id_main_shop is NOT NULL without a default → caller's shop else modal.
       $ms = $b['shopId'] ?? null;
       if (!$ms) { $r = row("SELECT id_main_shop FROM client GROUP BY id_main_shop ORDER BY COUNT(*) DESC LIMIT 1"); $ms = $r['id_main_shop'] ?? 1; }
@@ -701,6 +691,28 @@ function dispatch($m, $p) {
     $u = row("SELECT id, password_hash FROM client WHERE (LOWER(TRIM(email))=? OR (? <> '' AND (phone_e164=? OR phone=? OR phone=?))) AND active=1 LIMIT 1", [$ident, $identE164, $identE164, $identNat, $ident]);
     if (!$u || !password_verify($b['password'] ?? '', $u['password_hash'])) json_out(['error' => 'Identifiants incorrects.'], 401);
     json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400])]);
+  }
+  // Définit / met à jour le mot de passe d'un compte existant, puis connecte.
+  // ⚠️ SÉCURITÉ : aucune vérification d'identité (pas d'OTP). Choix produit assumé
+  // pour le prototype. NE PAS mettre en prod sans OTP/email — sinon vol de compte.
+  if ($m === 'POST' && $p === '/auth/set-password') {
+    $b = body();
+    $mail = strtolower(trim($b['email'] ?? ''));
+    [, $phoneNat, $phoneE164] = norm_phone($b['phonePrefix'] ?? '+32', $b['phone'] ?? '');
+    $ident = strtolower(trim($b['identifier'] ?? ''));
+    [, $identNat, $identE164] = norm_phone($b['phonePrefix'] ?? '+32', $ident);
+    $pass = (string) ($b['password'] ?? '');
+    if (strlen($pass) < 6) json_out(['error' => 'Mot de passe trop court (min. 6 caractères).'], 400);
+    $u = row("SELECT id FROM client
+                WHERE (? <> '' AND LOWER(TRIM(email))=?)
+                   OR (? <> '' AND (phone_e164=? OR phone=?))
+                   OR (? <> '' AND (LOWER(TRIM(email))=? OR phone_e164=? OR phone=?))
+                ORDER BY webshop_user DESC, id LIMIT 1",
+             [$mail, $mail, $phoneNat, $phoneE164, $phoneNat, $ident, $ident, $identE164, $identNat]);
+    if (!$u) json_out(['error' => 'Compte introuvable.'], 404);
+    q("UPDATE client SET password_hash=?, webshop_user=1, active=1 WHERE id=?",
+      [password_hash($pass, PASSWORD_BCRYPT), $u['id']]);
+    json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400]), 'updated' => true]);
   }
   if ($m === 'GET' && $p === '/auth/me') {
     $id = auth_uid(); $u = $id ? user_payload($id) : null;

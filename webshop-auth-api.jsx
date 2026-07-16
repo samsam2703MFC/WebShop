@@ -63,7 +63,8 @@
           });
           const j = await r.json();
           if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
-          return { ok: false, error: j.message || j.error?.message || "Erreur lors de l'inscription." };
+          // 409 { exists:true } -> le compte existe déjà (proposer set-password).
+          return { ok: false, error: j.error || j.message || "Erreur lors de l'inscription.", exists: !!j.exists, status: r.status };
         } catch (_) {}
       }
       // Fallback.
@@ -74,6 +75,24 @@
       const u = { id: 'u' + Date.now(), email: k, phone: phone || '', password, firstName, lastName, officeId: null, preferredShopId: null, fidelityApp: { active: false, linkedAt: null } };
       if (store.users) store.users[k] = u;
       return { ok: true, user: u };
+    },
+
+    /* ── Set / update password (compte existant) ─────────────────────── */
+    /* ⚠️ Sans vérification d'identité (pas d'OTP) — prototype uniquement. */
+    async setPassword({ email, phone, phonePrefix, identifier, password }) {
+      if (api.endpoint) {
+        try {
+          const r = await fetch(`${api.endpoint}/set-password`, {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, phone, phonePrefix: phonePrefix || '+32', identifier, password }),
+          });
+          const j = await r.json();
+          if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
+          return { ok: false, error: j.error || j.message || 'Échec de la mise à jour.' };
+        } catch (_) {}
+      }
+      return { ok: false, error: 'Service indisponible.' };
     },
 
     /* ── Logout ─────────────────────────────────────────────────────── */
