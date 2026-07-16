@@ -72,8 +72,12 @@ function dispatch($m, $p) {
   }
   if ($m === 'GET' && $p === '/catalog/products') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+    // `badge` (texte) a été migré en FK tag_id -> ws_tags ; on expose le libellé
+    // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
     $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id, c.label AS category,
-                      p.name, p.description, p.badge,
+                      p.name, p.description,
+                      t.tag AS badge, t.slug AS tag_slug, t.bg_color AS tag_bg, t.text_color AS tag_text,
+                      se.slug AS season, se.name AS season_name, se.img AS season_img,
                       p.portions, p.cross_portion, p.has_menu_options,
                       COALESCE(pp.price, p.price) AS price, ps.no_delivery,
                       (SELECT JSON_ARRAYAGG(allergen) FROM ws_product_allergens a WHERE a.product_id = p.id) AS allergens
@@ -81,6 +85,8 @@ function dispatch($m, $p) {
                  JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ? AND ps.active = 1
                  LEFT JOIN ws_product_prices pp ON pp.product_id = p.id AND pp.shop_id = ? AND pp.active = 1
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
+                 LEFT JOIN ws_tags t ON t.id = p.tag_id
+                 LEFT JOIN ws_season se ON se.id = p.season_id
                 WHERE p.active = 1 ORDER BY c.sort_order, p.name", [$s, $s]);
     foreach ($r as &$x) {
       $x['portions'] = (bool) $x['portions'];
@@ -91,6 +97,31 @@ function dispatch($m, $p) {
       $x['allergens'] = $x['allergens'] ? json_decode($x['allergens']) : [];
     }
     json_out($r);
+  }
+  // Menu / bundle d'un produit : ws_bundles -> slots -> choices (imbriqué).
+  if ($m === 'GET' && $p === '/catalog/bundles') {
+    $pid = qp('productId'); if (!$pid) json_out([]);
+    $bundles = rows("SELECT id, name, description, price_modifier, sort_order
+                       FROM ws_bundles WHERE product_id = ? AND active = 1
+                      ORDER BY sort_order, id", [$pid]);
+    foreach ($bundles as &$b) {
+      $b['price_modifier'] = (float) $b['price_modifier'];
+      $slots = rows("SELECT id, label, required, sort_order
+                       FROM ws_bundle_slots WHERE bundle_id = ? AND active = 1
+                      ORDER BY sort_order, id", [$b['id']]);
+      foreach ($slots as &$sl) {
+        $sl['required'] = (bool) $sl['required'];
+        $sl['choices'] = rows("SELECT id, label, img, delta, sort_order
+                                 FROM ws_bundle_slot_choices WHERE slot_id = ? AND active = 1
+                                ORDER BY sort_order, id", [$sl['id']]);
+        foreach ($sl['choices'] as &$ch) { $ch['delta'] = (float) $ch['delta']; }
+        unset($ch);
+      }
+      unset($sl);
+      $b['slots'] = $slots;
+    }
+    unset($b);
+    json_out($bundles);
   }
   if ($m === 'GET' && $p === '/catalog/stock') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
