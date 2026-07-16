@@ -4,3 +4,4 @@ dev-dist/
 _design-incoming*/
 php-api/config.php
 php-api/config.local.php
+deploy/deploy.env
