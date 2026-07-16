@@ -87,7 +87,24 @@ SET s.landing_enabled = 1,
                           'concept_nl', l.concept_nl, 'webshop_url', l.webshop_url,
                           'zone', l.zone, 'lat', l.lat, 'lng', l.lng, 'sort_order', l.sort_order);
 
--- 2b) lp_shops SEULS (picker_key vide OU ne matche aucun slug ws) → nouvelles lignes.
+-- 2a-bis) Cat. D : vitrines RICHES à picker_key VIDE dont la VILLE = une boutique webshop
+--         (ex. « Atelier by / Halle », « / Gembloux ») → fusion dans la boutique webshop
+--         (décision : D→fusionner). Écrase landing_config avec les données riches (concept/image).
+UPDATE shops s
+  JOIN lp_shops l
+    ON TRIM(l.picker_key) = ''
+   AND s.webshop_enabled = 1
+   AND LOWER(TRIM(l.city)) = LOWER(TRIM(s.city)) COLLATE utf8mb4_unicode_ci
+SET s.landing_enabled = 1,
+    s.legacy_lp_id     = l.id,
+    s.image_path       = COALESCE(NULLIF(l.image_path,''), s.image_path),
+    s.address_line     = COALESCE(NULLIF(l.address,''), s.address_line),
+    s.landing_config   = JSON_OBJECT('kind', l.kind, 'concept_fr', l.concept_fr,
+                          'concept_nl', l.concept_nl, 'webshop_url', l.webshop_url,
+                          'zone', l.zone, 'lat', l.lat, 'lng', l.lng, 'sort_order', l.sort_order);
+
+-- 2b) lp_shops SEULS (vitrines dont la ville ne correspond à aucune boutique webshop) → nouvelles lignes.
+--     Exclut : déjà fusionnées (2a/2a-bis), villes = webshop (cat. D), et Wavre (supprimé).
 --     Nouvel id = MAX(shops.id) + rang. Slug = picker_key sinon 'lp-<id>'. Idempotent via legacy_lp_id.
 INSERT INTO shops
   (id, slug, name, email, phone, address_line, zip, city, image_path,
@@ -103,10 +120,15 @@ SELECT base.maxid + ROW_NUMBER() OVER (ORDER BY l.id),
        l.id
 FROM lp_shops l
 CROSS JOIN (SELECT COALESCE(MAX(id),0) AS maxid FROM shops) base
-WHERE NOT EXISTS (SELECT 1 FROM shops s WHERE s.legacy_lp_id = l.id)            -- pas déjà migré
+WHERE NOT EXISTS (SELECT 1 FROM shops s WHERE s.legacy_lp_id = l.id)            -- pas déjà migré (2a/2a-bis)
   AND NOT EXISTS (SELECT 1 FROM shops s2
                    WHERE s2.slug = LOWER(TRIM(l.picker_key)) COLLATE utf8mb4_unicode_ci
-                     AND TRIM(l.picker_key) <> '');   -- pas un match ws (normalisé)
+                     AND TRIM(l.picker_key) <> '')                              -- pas un match ws (normalisé)
+  AND NOT EXISTS (SELECT 1 FROM shops s3
+                   WHERE s3.webshop_enabled = 1
+                     AND LOWER(TRIM(s3.city)) = LOWER(TRIM(l.city)) COLLATE utf8mb4_unicode_ci) -- cat. D : ville = webshop
+  AND LOWER(TRIM(l.picker_key)) <> 'wavre'                                      -- Wavre supprimé (décision)
+  AND LOWER(TRIM(l.city))       <> 'wavre';
 
 COMMIT;
 
