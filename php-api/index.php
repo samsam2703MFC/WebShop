@@ -531,15 +531,25 @@ function dispatch($m, $p) {
     if (!filter_var($mail, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'Email invalide'], 400);
     if (strlen($b['password'] ?? '') < 6) json_out(['error' => 'Mot de passe trop court (min. 6)'], 400);
     if (row("SELECT id FROM ws_customers WHERE email=?", [$mail])) json_out(['error' => 'Un compte existe déjà avec cet email.'], 409);
+    $phone = trim($b['phone'] ?? '');
     $hash = password_hash($b['password'], PASSWORD_BCRYPT);
-    q("INSERT INTO ws_customers (email, password_hash, first_name, last_name) VALUES (?,?,?,?)",
-      [$mail, $hash, $b['firstName'] ?? '', $b['lastName'] ?? '']);
+    // Rattache le compte à un client ERP existant (match email ou téléphone) → client_id. Best-effort.
+    $clientId = null;
+    try {
+      $cl = row("SELECT id FROM client WHERE email=? OR (? <> '' AND phone=?) LIMIT 1", [$mail, $phone, $phone]);
+      $clientId = $cl['id'] ?? null;
+    } catch (\Throwable $e) { /* table client absente → pas de rattachement */ }
+    q("INSERT INTO ws_customers (email, password_hash, first_name, last_name, phone, client_id) VALUES (?,?,?,?,?,?)",
+      [$mail, $hash, $b['firstName'] ?? '', $b['lastName'] ?? '', $phone, $clientId]);
     $id = db()->lastInsertId();
     json_out(['user' => user_payload($id), 'token' => sign_token(['id' => (int) $id, 'exp' => time() + 30 * 86400])], 201);
   }
   if ($m === 'POST' && $p === '/auth/login') {
     $b = body();
-    $u = row("SELECT id, password_hash FROM ws_customers WHERE email=? AND active=1", [strtolower(trim($b['email'] ?? ''))]);
+    // Identifiant = email OU téléphone.
+    $ident = strtolower(trim($b['identifier'] ?? $b['email'] ?? ''));
+    if ($ident === '') json_out(['error' => 'Identifiants incorrects.'], 401);
+    $u = row("SELECT id, password_hash FROM ws_customers WHERE (email=? OR phone=?) AND active=1", [$ident, $ident]);
     if (!$u || !password_verify($b['password'] ?? '', $u['password_hash'])) json_out(['error' => 'Identifiants incorrects.'], 401);
     json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400])]);
   }

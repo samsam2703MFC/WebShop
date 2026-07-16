@@ -256,6 +256,7 @@ CREATE TABLE ws_customers (
   first_name          VARCHAR(100),
   last_name           VARCHAR(100),
   phone               VARCHAR(30),
+  client_id           INT,                        -- lien vers le client ERP (réf logique) — auth commune
   office_id           INT,
   preferred_shop_id   INT,
   preferred_lang      VARCHAR(5)   DEFAULT 'fr',
@@ -270,6 +271,8 @@ CREATE TABLE ws_customers (
   invoice_city        VARCHAR(100),
   active              BOOLEAN DEFAULT TRUE,
   created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_customers_phone (phone),               -- login par téléphone
+  KEY idx_customers_client (client_id),
   FOREIGN KEY (office_id)         REFERENCES ws_offices(id),
   FOREIGN KEY (preferred_shop_id) REFERENCES ws_shops(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

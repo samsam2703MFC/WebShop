@@ -299,9 +299,9 @@ const W_OFFICES_SEED = {
 // (`POST /auth/login`, `GET /me`, `PATCH /me`). This seed is demo-only and
 // stores a plaintext password — NEVER ship to production.
 const W_USERS_SEED = {
-  'marie@acme.be':     { id: 'u1', email: 'marie@acme.be',     password: 'demo', firstName: 'Marie', lastName: 'Dubois',  officeId: 'off-acme',     preferredShopId: 'chatelain', fidelityApp: { active: false, linkedAt: null } },
-  'lou@borderline.be': { id: 'u2', email: 'lou@borderline.be', password: 'demo', firstName: 'Lou',   lastName: 'Mercier', officeId: 'off-pendingA', preferredShopId: 'sablon',    fidelityApp: { active: true,  linkedAt: '2026-01-12T09:30:00Z' } },
-  'jules@indep.be':    { id: 'u3', email: 'jules@indep.be',    password: 'demo', firstName: 'Jules', lastName: 'Vermeer', officeId: null,           preferredShopId: null,         fidelityApp: { active: false, linkedAt: null } },
+  'marie@acme.be':     { id: 'u1', email: 'marie@acme.be', phone: '0470111222', password: 'demo', firstName: 'Marie', lastName: 'Dubois',  officeId: 'off-acme',     preferredShopId: 'chatelain', fidelityApp: { active: false, linkedAt: null } },
+  'lou@borderline.be': { id: 'u2', email: 'lou@borderline.be', phone: '0470222333', password: 'demo', firstName: 'Lou',   lastName: 'Mercier', officeId: 'off-pendingA', preferredShopId: 'sablon',    fidelityApp: { active: true,  linkedAt: '2026-01-12T09:30:00Z' } },
+  'jules@indep.be':    { id: 'u3', email: 'jules@indep.be', phone: '0470333444', password: 'demo', firstName: 'Jules', lastName: 'Vermeer', officeId: null,           preferredShopId: null,         fidelityApp: { active: false, linkedAt: null } },
 };
 const _AUTH_STORE = { users: { ...W_USERS_SEED }, offices: { ...W_OFFICES_SEED } };
 if (typeof window !== 'undefined') window._AUTH_STORE = _AUTH_STORE;
@@ -1882,7 +1882,7 @@ function ModalShell({ onClose, children, narrow }) {
 
 function LoginModal({ open, onClose, onLogin, onRegister }) {
   const [tab, setTab] = useState('login');
-  const [form, setForm] = useState({ email: '', password: '', firstName: '', lastName: '' });
+  const [form, setForm] = useState({ identifier: '', email: '', phone: '', password: '', firstName: '', lastName: '' });
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
   if (!open) return null;
@@ -1892,9 +1892,10 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
     setLoading(true); setErr('');
     try {
       if (tab === 'login') {
+        if (!form.identifier || !form.password) { setErr('Email/téléphone et mot de passe requis.'); return; }
         const r = window.WSAuth
-          ? await window.WSAuth.login({ email: form.email, password: form.password })
-          : authLogin(form.email, form.password);
+          ? await window.WSAuth.login({ identifier: form.identifier, password: form.password })
+          : authLogin(form.identifier, form.password);
         if (!r.ok) { setErr(r.error || 'Identifiants incorrects.'); return; }
         onLogin(r.user); onClose();
       } else {
@@ -1928,7 +1929,14 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
             <label className="ws-field"><span>Nom</span><input value={form.lastName} onChange={(e) => set('lastName', e.target.value)} autoComplete="family-name"/></label>
           </div>
         )}
-        <label className="ws-field"><span>Email</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
+        {tab === 'login' ? (
+          <label className="ws-field"><span>Email ou téléphone</span><input type="text" value={form.identifier} onChange={(e) => set('identifier', e.target.value)} autoComplete="username"/></label>
+        ) : (
+          <>
+            <label className="ws-field"><span>Email</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
+            <label className="ws-field"><span>Téléphone</span><input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="tel"/></label>
+          </>
+        )}
         <label className="ws-field"><span>Mot de passe</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete={tab === 'login' ? 'current-password' : 'new-password'}/></label>
         {err && <p className="ws-form__err">{err}</p>}
         <button type="submit" className="ws-cta ws-cta--block" disabled={loading}>{loading ? 'Chargement…' : (tab === 'login' ? 'Se connecter' : 'Créer mon compte')}</button>

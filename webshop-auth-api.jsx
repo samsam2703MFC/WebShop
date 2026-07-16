@@ -27,36 +27,39 @@
   const api = {
     endpoint: null,
 
-    /* ── Login ─────────────────────────────────────────────────────── */
-    async login({ email, password }) {
+    /* ── Login (identifiant = email OU téléphone) ──────────────────── */
+    async login({ identifier, email, password }) {
+      const ident = (identifier || email || '').trim();
       if (api.endpoint) {
         try {
           const r = await fetch(`${api.endpoint}/login`, {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password }),
+            body: JSON.stringify({ identifier: ident, password }),
           });
           const j = await r.json();
           if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
           return { ok: false, error: j.message || j.error?.message || 'Identifiants incorrects.' };
         } catch (_) {}
       }
-      // Fallback: in-memory _AUTH_STORE (seeded by webshop-full-bundle.jsx).
+      // Fallback: in-memory _AUTH_STORE (email OU téléphone).
       const store = window._AUTH_STORE;
-      if (!store) return { ok: false, error: 'Store unavailable.' };
-      const u = store.users && store.users[String(email).trim().toLowerCase()];
+      if (!store || !store.users) return { ok: false, error: 'Store unavailable.' };
+      const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, '');
+      let u = store.users[ident.toLowerCase()];
+      if (!u) u = Object.values(store.users).find((x) => x.phone && norm(x.phone) === norm(ident));
       if (!u || u.password !== password) return { ok: false, error: 'Identifiants incorrects.' };
       return { ok: true, user: u };
     },
 
     /* ── Register ──────────────────────────────────────────────────── */
-    async register({ email, password, firstName, lastName }) {
+    async register({ email, phone, password, firstName, lastName }) {
       if (api.endpoint) {
         try {
           const r = await fetch(`${api.endpoint}/register`, {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password, firstName, lastName }),
+            body: JSON.stringify({ email, phone, password, firstName, lastName }),
           });
           const j = await r.json();
           if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
@@ -68,7 +71,7 @@
       if (!store) return { ok: false, error: 'Store unavailable.' };
       const k = String(email).trim().toLowerCase();
       if (store.users && store.users[k]) return { ok: false, error: 'Un compte existe déjà avec cet email.' };
-      const u = { id: 'u' + Date.now(), email: k, password, firstName, lastName, officeId: null, preferredShopId: null, fidelityApp: { active: false, linkedAt: null } };
+      const u = { id: 'u' + Date.now(), email: k, phone: phone || '', password, firstName, lastName, officeId: null, preferredShopId: null, fidelityApp: { active: false, linkedAt: null } };
       if (store.users) store.users[k] = u;
       return { ok: true, user: u };
     },
