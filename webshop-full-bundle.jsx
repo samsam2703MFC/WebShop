@@ -3640,8 +3640,13 @@ function ShopFrame({ variant }) {
     if (isAssortment) {
       return src.slice(0, 8);
     }
-    return src.filter((p) => p.cat === cat);
-  }, [cat, isAssortment, allProducts, mode, selectedSlot]);
+    src = src.filter((p) => p.cat === cat);
+    // Sous-catégorie sélectionnée -> on affine (compare en souple: id numérique ou slug).
+    if (subCat != null && subCat !== '') {
+      src = src.filter((p) => String(p.subCat) === String(subCat));
+    }
+    return src;
+  }, [cat, subCat, isAssortment, allProducts, mode, selectedSlot]);
 
   // Stock map: productId -> { qty_total, qty_reserved, qty_sold, qty_available }
   // Reloaded whenever shop, date or mode changes.

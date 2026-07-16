@@ -112,13 +112,26 @@ function dispatch($m, $p) {
   /* ── Catalog ── */
   if ($m === 'GET' && $p === '/catalog/categories') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    json_out(rows("SELECT id, slug, label, img, sort_order FROM ws_categories
+    $cats = rows("SELECT id, slug, label, img, sort_order FROM ws_categories
                     WHERE active = 1 AND (shop_id = ? OR shop_id IS NULL)
-                    ORDER BY sort_order, label", [$s]));
+                    ORDER BY sort_order, label", [$s]);
+    // Rattache les sous-catégories (ws_category_subs) à chaque catégorie -> c.subs[]
+    // (le front lit activeCat.subs pour afficher la bande de sous-catégories).
+    $subs = rows("SELECT sub.id, sub.category_id, sub.slug, sub.label, sub.img, sub.sort_order
+                    FROM ws_category_subs sub
+                    JOIN ws_categories c ON c.id = sub.category_id
+                   WHERE sub.active = 1 AND (c.shop_id = ? OR c.shop_id IS NULL)
+                   ORDER BY sub.sort_order, sub.label", [$s]);
+    $byCat = [];
+    foreach ($subs as $x) { $byCat[$x['category_id']][] = $x; }
+    foreach ($cats as &$c) { $c['subs'] = $byCat[$c['id']] ?? []; }
+    unset($c);
+    json_out($cats);
   }
   if ($m === 'GET' && $p === '/catalog/products') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id, c.label AS category,
+    $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id,
+                      p.cat_id AS cat, p.sub_cat_id AS subCat, c.label AS category,
                       p.name, p.description, p.badge,
                       p.portions, p.cross_portion, p.has_menu_options,
                       COALESCE(pp.price, p.price) AS price, ps.no_delivery,
