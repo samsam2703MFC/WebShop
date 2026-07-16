@@ -69,10 +69,12 @@ ON DUPLICATE KEY UPDATE
   accent=VALUES(accent), tint=VALUES(tint), logo_url=VALUES(logo_url),
   webshop_enabled=1, webshop_config=VALUES(webshop_config), legacy_ws_id=VALUES(legacy_ws_id);
 
--- 2a) lp_shops MATCHÉS (picker_key = un slug ws existant) → merge vitrine, landing_enabled=1.
---     COLLATE : lp_shops = utf8mb4_unicode_ci, ws/shops = utf8mb4_0900_ai_ci (évite #1267).
+-- 2a) lp_shops MATCHÉS (picker_key ~= un slug ws) → merge vitrine, landing_enabled=1.
+--     Match NORMALISÉ LOWER(TRIM(...)) : lp picker_key est Capitalisé/espacé (Halle) vs
+--     ws slug minuscule (halle). COLLATE évite #1267 (lp unicode_ci vs shops 0900).
 UPDATE shops s
-  JOIN lp_shops l ON l.picker_key = s.slug COLLATE utf8mb4_unicode_ci AND l.picker_key <> ''
+  JOIN lp_shops l ON LOWER(TRIM(l.picker_key)) = s.slug COLLATE utf8mb4_unicode_ci
+                 AND TRIM(l.picker_key) <> ''
 SET s.landing_enabled = 1,
     s.legacy_lp_id     = l.id,
     s.image_path       = COALESCE(NULLIF(s.image_path,''), NULLIF(l.image_path,'')),
@@ -91,7 +93,7 @@ INSERT INTO shops
   (id, slug, name, email, phone, address_line, zip, city, image_path,
    landing_enabled, active, landing_config, legacy_lp_id)
 SELECT base.maxid + ROW_NUMBER() OVER (ORDER BY l.id),
-       COALESCE(NULLIF(l.picker_key,''), CONCAT('lp-', l.id)),
+       COALESCE(NULLIF(LOWER(TRIM(l.picker_key)),''), CONCAT('lp-', l.id)),
        l.name, NULLIF(l.email,''), NULLIF(l.phone,''), NULLIF(l.address,''),
        NULLIF(l.postal_code,''), NULLIF(l.city,''), NULLIF(l.image_path,''),
        1, l.is_active,
@@ -103,7 +105,8 @@ FROM lp_shops l
 CROSS JOIN (SELECT COALESCE(MAX(id),0) AS maxid FROM shops) base
 WHERE NOT EXISTS (SELECT 1 FROM shops s WHERE s.legacy_lp_id = l.id)            -- pas déjà migré
   AND NOT EXISTS (SELECT 1 FROM shops s2
-                   WHERE s2.slug = l.picker_key COLLATE utf8mb4_unicode_ci AND l.picker_key <> ''); -- pas un match ws
+                   WHERE s2.slug = LOWER(TRIM(l.picker_key)) COLLATE utf8mb4_unicode_ci
+                     AND TRIM(l.picker_key) <> '');   -- pas un match ws (normalisé)
 
 COMMIT;
 
