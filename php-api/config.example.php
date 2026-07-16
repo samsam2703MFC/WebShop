@@ -18,6 +18,9 @@ return [
   // Origines autorisées (ton GitHub Pages).
   'cors_origins' => array_values(array_filter(array_map('trim',
                     explode(',', getenv('WS_CORS') ?: 'https://samsam2703mfc.github.io')))),
+  // Base du webshop mobile (redirection depuis le footer PWA). Le slug de la
+  // boutique est ajouté en query : <webshop_base>?shop=<slug>.
+  'webshop_base' => getenv('WS_WEBSHOP_BASE') ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html',
   // Paiement (optionnel) — colle ta clé sk_live_… / sk_test_… pour activer Stripe.
   'stripe_secret'    => getenv('WS_STRIPE_SECRET') ?: '',
   'checkout_success' => getenv('WS_CHECKOUT_SUCCESS') ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html?paid=1',

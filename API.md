@@ -221,6 +221,24 @@ Shops live in `ws_shops`. Seed the 5 real shops with `backend/schema/seed-shops.
 and add/edit shops in phpMyAdmin (or via the back-office). Set `active = 1` to make a
 shop appear in `/shops`.
 
+### GET /webshop-link
+
+Resolves the webshop URL for a logged-in PWA user, so the **PWA footer** can deep-link
+to *their preferred shop's* webshop instead of the generic storefront.
+
+```
+GET /webshop-link?clientId=123
+→ { "url": "https://…/webshop?shop=halle", "shopId": 3, "slug": "halle" }
+```
+
+Resolution: `client.preferred_shop_id` → shop, then the URL is
+1. the shop's absolute link `shops.landing_config.webshop_url` if set, else
+2. `<webshop_base>?shop=<slug>` (`webshop_base` in `php-api/config.php`), else
+3. `<webshop_base>` (not logged in / no preferred shop / column absent).
+
+Works before and after the shops unification (`shops` else `ws_shops`) and never 500s
+if `client.preferred_shop_id` doesn't exist yet — it falls back to the generic link.
+
 ---
 
 ## 3. Catalog — `/catalog`
