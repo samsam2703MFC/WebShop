@@ -63,28 +63,76 @@ function dispatch($m, $p) {
                     FROM ws_shops WHERE id = ?", [$s]) ?: []);
   }
 
+  /* ── Lien webshop du client PWA (footer PWA → boutique préférée) ──
+   * GET /webshop-link?clientId=123
+   *   → { url, shopId, slug }
+   * Résout client.preferred_shop_id → shop, et construit l'URL du webshop mobile :
+   *   1) lien absolu shops.landing_config.webshop_url s'il est défini,
+   *   2) sinon <webshop_base>?shop=<slug>,
+   *   3) sinon (pas connecté / pas de shop préféré / colonne absente) → <webshop_base>.
+   * Compatible avant/après unification (shops sinon ws_shops), sans dépendre du
+   * script d'auth : si la colonne preferred_shop_id n'existe pas encore → lien générique.
+   */
+  if ($m === 'GET' && $p === '/webshop-link') {
+    $base = cfg()['webshop_base'] ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html';
+    $cid  = qp('clientId');
+    $shop = null;
+    $hasCol = row("SELECT 1 AS x FROM information_schema.columns
+                     WHERE table_schema=DATABASE() AND table_name='client'
+                       AND column_name='preferred_shop_id'");
+    if ($cid && $hasCol) {
+      $hasShops = row("SELECT 1 AS x FROM information_schema.tables
+                         WHERE table_schema=DATABASE() AND table_name='shops'");
+      if ($hasShops) {
+        $shop = row("SELECT s.id, s.slug,
+                            JSON_UNQUOTE(JSON_EXTRACT(s.landing_config,'$.webshop_url')) AS webshop_url
+                       FROM client c JOIN shops s ON s.id = c.preferred_shop_id
+                      WHERE c.id = ?", [$cid]);
+      } else {
+        $shop = row("SELECT w.id, w.slug, NULL AS webshop_url
+                       FROM client c JOIN ws_shops w ON w.id = c.preferred_shop_id
+                      WHERE c.id = ?", [$cid]);
+      }
+    }
+    if ($shop && !empty($shop['webshop_url'])) {
+      $url = $shop['webshop_url'];                         // 1) lien absolu par boutique
+    } elseif ($shop && !empty($shop['slug'])) {
+      $sep = (strpos($base, '?') !== false) ? '&' : '?';
+      $url = $base . $sep . 'shop=' . rawurlencode($shop['slug']);   // 2) base + slug
+    } else {
+      $url = $base;                                        // 3) générique
+    }
+    json_out([
+      'url'    => $url,
+      'shopId' => $shop['id']   ?? null,
+      'slug'   => $shop['slug'] ?? null,
+    ]);
+  }
+
   /* ── Catalog ── */
   if ($m === 'GET' && $p === '/catalog/categories') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    // N'expose une catégorie que si elle a >=1 produit DISPONIBLE dans cette
-    // boutique (produit actif + présent dans l'assortiment ws_product_shops).
-    json_out(rows("SELECT c.id, c.slug, c.label, c.img, c.sort_order
-                     FROM ws_categories c
-                    WHERE c.active = 1 AND (c.shop_id = ? OR c.shop_id IS NULL)
-                      AND EXISTS (SELECT 1 FROM ws_products p
-                                    JOIN ws_product_shops ps ON ps.product_id = p.id
-                                                            AND ps.shop_id = ? AND ps.active = 1
-                                   WHERE p.cat_id = c.id AND p.active = 1)
-                    ORDER BY c.sort_order, c.label", [$s, $s]));
+    $cats = rows("SELECT id, slug, label, img, sort_order FROM ws_categories
+                    WHERE active = 1 AND (shop_id = ? OR shop_id IS NULL)
+                    ORDER BY sort_order, label", [$s]);
+    // Rattache les sous-catégories (ws_category_subs) à chaque catégorie -> c.subs[]
+    // (le front lit activeCat.subs pour afficher la bande de sous-catégories).
+    $subs = rows("SELECT sub.id, sub.category_id, sub.slug, sub.label, sub.img, sub.sort_order
+                    FROM ws_category_subs sub
+                    JOIN ws_categories c ON c.id = sub.category_id
+                   WHERE sub.active = 1 AND (c.shop_id = ? OR c.shop_id IS NULL)
+                   ORDER BY sub.sort_order, sub.label", [$s]);
+    $byCat = [];
+    foreach ($subs as $x) { $byCat[$x['category_id']][] = $x; }
+    foreach ($cats as &$c) { $c['subs'] = $byCat[$c['id']] ?? []; }
+    unset($c);
+    json_out($cats);
   }
   if ($m === 'GET' && $p === '/catalog/products') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    // `badge` (texte) a été migré en FK tag_id -> ws_tags ; on expose le libellé
-    // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
-    $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id, c.label AS category,
-                      p.name, p.description,
-                      t.tag AS badge, t.slug AS tag_slug, t.bg_color AS tag_bg, t.text_color AS tag_text,
-                      se.slug AS season, se.name AS season_name, se.img AS season_img,
+    $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id,
+                      p.cat_id AS cat, p.sub_cat_id AS subCat, c.label AS category,
+                      p.name, p.description, p.badge,
                       p.portions, p.cross_portion, p.has_menu_options,
                       COALESCE(pp.price, p.price) AS price, ps.no_delivery,
                       (SELECT JSON_ARRAYAGG(allergen) FROM ws_product_allergens a WHERE a.product_id = p.id) AS allergens
@@ -92,8 +140,6 @@ function dispatch($m, $p) {
                  JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ? AND ps.active = 1
                  LEFT JOIN ws_product_prices pp ON pp.product_id = p.id AND pp.shop_id = ? AND pp.active = 1
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
-                 LEFT JOIN ws_tags t ON t.id = p.tag_id
-                 LEFT JOIN ws_season se ON se.id = p.season_id
                 WHERE p.active = 1 ORDER BY c.sort_order, p.name", [$s, $s]);
     foreach ($r as &$x) {
       $x['portions'] = (bool) $x['portions'];
@@ -104,31 +150,6 @@ function dispatch($m, $p) {
       $x['allergens'] = $x['allergens'] ? json_decode($x['allergens']) : [];
     }
     json_out($r);
-  }
-  // Menu / bundle d'un produit : ws_bundles -> slots -> choices (imbriqué).
-  if ($m === 'GET' && $p === '/catalog/bundles') {
-    $pid = qp('productId'); if (!$pid) json_out([]);
-    $bundles = rows("SELECT id, name, description, price_modifier, sort_order
-                       FROM ws_bundles WHERE product_id = ? AND active = 1
-                      ORDER BY sort_order, id", [$pid]);
-    foreach ($bundles as &$b) {
-      $b['price_modifier'] = (float) $b['price_modifier'];
-      $slots = rows("SELECT id, label, required, sort_order
-                       FROM ws_bundle_slots WHERE bundle_id = ? AND active = 1
-                      ORDER BY sort_order, id", [$b['id']]);
-      foreach ($slots as &$sl) {
-        $sl['required'] = (bool) $sl['required'];
-        $sl['choices'] = rows("SELECT id, label, img, delta, sort_order
-                                 FROM ws_bundle_slot_choices WHERE slot_id = ? AND active = 1
-                                ORDER BY sort_order, id", [$sl['id']]);
-        foreach ($sl['choices'] as &$ch) { $ch['delta'] = (float) $ch['delta']; }
-        unset($ch);
-      }
-      unset($sl);
-      $b['slots'] = $slots;
-    }
-    unset($b);
-    json_out($bundles);
   }
   if ($m === 'GET' && $p === '/catalog/stock') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
@@ -579,11 +600,11 @@ function dispatch($m, $p) {
     $first = trim($b['firstName'] ?? '');
     $last  = trim($b['lastName'] ?? '');
     $zip   = trim($b['postalCode'] ?? ($b['zip'] ?? ''));
-    // Le toggle email/téléphone est côté connexion. À la création on prend ce
-    // qui est fourni (au moins l'un des deux) ; la préférence par défaut suit.
+    $authM = (($b['authMethod'] ?? 'email') === 'phone') ? 'phone' : 'email';
     if ($mail !== '' && !filter_var($mail, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'Email invalide'], 400);
+    if ($authM === 'email' && $mail === '')  json_out(['error' => 'Email requis'], 400);
+    if ($authM === 'phone' && $phone === '') json_out(['error' => 'Téléphone requis'], 400);
     if ($mail === '' && $phone === '')       json_out(['error' => 'Email ou téléphone requis'], 400);
-    $authM = ($mail !== '') ? 'email' : 'phone';
     $pass = (string) ($b['password'] ?? '');
     $hash = ($pass !== '' && strlen($pass) >= 6) ? password_hash($pass, PASSWORD_BCRYPT) : null;
     // Un client peut déjà exister (email OU téléphone). Compte webshop déjà
@@ -705,8 +726,18 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/admin/shop-discount') {
       $b = body();
       $type = in_array($b['type'] ?? '', ['percent', 'fixed'], true) ? $b['type'] : 'percent';
-      q("UPDATE ws_shops SET webshop_discount_type=?, webshop_discount_value=? WHERE id=?",
-        [$type, (float) ($b['value'] ?? 0), $b['shopId'] ?? 0]);
+      // Après l'unification des boutiques la remise vit dans shops.webshop_config (JSON).
+      // Tant que `shops` n'existe pas, on retombe sur les colonnes legacy de ws_shops.
+      $hasShops = row("SELECT 1 AS x FROM information_schema.tables
+                        WHERE table_schema=DATABASE() AND table_name='shops'");
+      if ($hasShops) {
+        q("UPDATE shops SET webshop_config = JSON_SET(COALESCE(webshop_config, JSON_OBJECT()),
+             '$.discount_type', ?, '$.discount_value', ?) WHERE id=?",
+          [$type, (float) ($b['value'] ?? 0), $b['shopId'] ?? 0]);
+      } else {
+        q("UPDATE ws_shops SET webshop_discount_type=?, webshop_discount_value=? WHERE id=?",
+          [$type, (float) ($b['value'] ?? 0), $b['shopId'] ?? 0]);
+      }
       json_out(['ok' => true, 'type' => $type, 'value' => (float) ($b['value'] ?? 0)]);
     }
     // ── Comptes entreprise (B2B) ──
