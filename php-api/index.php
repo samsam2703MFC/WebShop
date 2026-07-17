@@ -204,11 +204,18 @@ function dispatch($m, $p) {
   }
   if ($m === 'GET' && $p === '/catalog/assortments') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    // Assortiments saisonniers de la boutique (+ ceux globaux, shop_id NULL).
-    // Le front lit id/label/img pour les chips de saison (CategoryRow).
-    json_out(rows("SELECT id, label, img FROM ws_assortments
-                    WHERE active = 1 AND (shop_id = ? OR shop_id IS NULL)
-                    ORDER BY id", [$s]));
+    // Saisons = ws_season (source unique, basée sur le slug). ws_assortments a
+    // été supprimée (doublon). chip.id = slug -> matché à product.season côté
+    // front, donc le filtre saison fonctionne. On n'expose qu'une saison ayant
+    // >=1 produit disponible dans la boutique (même règle que les catégories).
+    json_out(rows("SELECT se.slug AS id, se.name AS label, se.img
+                     FROM ws_season se
+                    WHERE se.active = 1
+                      AND EXISTS (SELECT 1 FROM ws_products p
+                                    JOIN ws_product_shops ps ON ps.product_id = p.id
+                                                            AND ps.shop_id = ? AND ps.active = 1
+                                   WHERE p.season_id = se.id AND p.active = 1)
+                    ORDER BY se.sort_order", [$s]));
   }
 
   /* ── Promos / Vouchers ── */

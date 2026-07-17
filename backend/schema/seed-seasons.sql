@@ -1,3 +1,5 @@
+-- ⚠️ OBSOLÈTE depuis migrate-seasons-unify.sql : ws_assortments est supprimée.
+-- Les saisons vivent désormais dans ws_season. Ne plus exécuter ce fichier.
 -- ---------------------------------------------------------------------------
 -- seed-seasons.sql
 -- Ajoute les lignes de saison manquantes dans ws_assortments et rattache
