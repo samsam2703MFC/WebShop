@@ -725,6 +725,24 @@ function dispatch($m, $p) {
       [password_hash($pass, PASSWORD_BCRYPT), $u['id']]);
     json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400]), 'updated' => true]);
   }
+  // SSO handoff PWA -> webshop. La PWA insère un jeton à usage unique dans
+  // auth_handoff (token_hash = sha256 du jeton, + client_id + expires_at) puis
+  // redirige vers /webshop?handoff=<jeton>. Ici on le vérifie et on ouvre la session.
+  if ($m === 'POST' && $p === '/auth/handoff') {
+    $token = (string) (body()['token'] ?? '');
+    if ($token === '') json_out(['error' => 'Jeton manquant.'], 400);
+    $th = hash('sha256', $token);
+    $h = row("SELECT client_id, used_at, expires_at FROM auth_handoff WHERE token_hash = ? LIMIT 1", [$th]);
+    if (!$h)                                   json_out(['error' => 'Lien invalide.'], 401);
+    if ($h['used_at'] !== null)                json_out(['error' => 'Lien déjà utilisé.'], 401);
+    if (strtotime($h['expires_at']) < time())  json_out(['error' => 'Lien expiré.'], 401);
+    q("UPDATE auth_handoff SET used_at = NOW() WHERE token_hash = ? AND used_at IS NULL", [$th]); // usage unique
+    $cid = (int) $h['client_id'];
+    if (!row("SELECT id FROM client WHERE id = ? AND active = 1 LIMIT 1", [$cid])) {
+      json_out(['error' => 'Compte inactif.'], 401);
+    }
+    json_out(['user' => user_payload($cid), 'token' => sign_token(['id' => $cid, 'exp' => time() + 30 * 86400])]);
+  }
   if ($m === 'GET' && $p === '/auth/me') {
     $id = auth_uid(); $u = $id ? user_payload($id) : null;
     if (!$u) json_out(['error' => 'Non connecté.'], 401);

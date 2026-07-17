@@ -96,6 +96,25 @@
       return { ok: false, error: 'Service indisponible.' };
     },
 
+    /* ── SSO handoff (PWA -> webshop) : échange un jeton à usage unique
+       contre une session webshop. */
+    async handoff(token) {
+      if (!token) return { ok: false, error: 'Jeton manquant.' };
+      if (api.endpoint) {
+        try {
+          const r = await fetch(`${api.endpoint}/handoff`, {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token }),
+          });
+          const j = await r.json();
+          if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
+          return { ok: false, error: j.error || j.message || 'Lien invalide.' };
+        } catch (_) {}
+      }
+      return { ok: false, error: 'Service indisponible.' };
+    },
+
     /* ── Logout ─────────────────────────────────────────────────────── */
     async logout() {
       if (api.endpoint) {

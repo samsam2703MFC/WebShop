@@ -3452,6 +3452,26 @@ function ShopFrame({ variant }) {
   // route that serves the office. Front only renders /slots + /next-slot.
   // Déclaré AVANT le slot-effect ci-dessous (qui lit `user` dans ses deps) — sinon TDZ.
   const [user, setUser] = useState(null);
+  // SSO handoff PWA -> webshop : si l'URL porte ?handoff=<jeton>, on l'échange
+  // contre une session webshop, puis on retire le jeton de l'URL (usage unique,
+  // ne doit pas rester visible/partageable).
+  React.useEffect(() => {
+    let alive = true;
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const token = p.get('handoff');
+      if (!token || !window.WSAuth || typeof window.WSAuth.handoff !== 'function') return;
+      window.WSAuth.handoff(token).then((r) => {
+        if (alive && r && r.ok && r.user) setUser(r.user);
+        try {
+          p.delete('handoff');
+          const qs = p.toString();
+          window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+        } catch (_) {}
+      }).catch(() => {});
+    } catch (_) {}
+    return () => { alive = false; };
+  }, []);
   const [officeSlots, setOfficeSlots] = React.useState([]);
   const [slotCta, setSlotCta] = React.useState(null);
   const [selectedSlot, setSelectedSlot] = React.useState(null);
