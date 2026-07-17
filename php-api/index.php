@@ -865,6 +865,26 @@ function dispatch($m, $p) {
     if (array_key_exists('company', $b))    { $addCo('company_name', ($b['company'] !== '' ? $b['company'] : null)); }
     if (array_key_exists('postalCode', $b)) { $sets[] = 'zip=?';    $vals[] = ($b['postalCode'] !== '' ? $b['postalCode'] : null); }
     if (array_key_exists('isBusiness', $b)) { $sets[] = 'is_b2b=?'; $vals[] = $b['isBusiness'] ? 1 : 0; }
+    // Préférences éditées dans le profil : persistées pour être visibles depuis
+    // la PWA aussi (colonnes partagées). Sans ça, ces choix restaient locaux au
+    // navigateur et se perdaient au rechargement.
+    if (array_key_exists('preferredShopId', $b)) {
+      $sets[] = 'preferred_shop_id=?';
+      $vals[] = ($b['preferredShopId'] !== '' && $b['preferredShopId'] !== null) ? (int) $b['preferredShopId'] : null;
+    }
+    if (array_key_exists('officeId', $b)) {
+      $sets[] = 'office_id=?';
+      $vals[] = ($b['officeId'] !== '' && $b['officeId'] !== null) ? (int) $b['officeId'] : null;
+    }
+    if (isset($b['fidelityApp']) && is_array($b['fidelityApp'])) {
+      $fa = $b['fidelityApp'];
+      if (array_key_exists('active', $fa)) { $sets[] = 'fidelity_active=?'; $vals[] = $fa['active'] ? 1 : 0; }
+      if (array_key_exists('linkedAt', $fa)) {
+        $lv = $fa['linkedAt'] ?: null;
+        if ($lv) { $ts = strtotime((string) $lv); $lv = $ts ? date('Y-m-d H:i:s', $ts) : null; }
+        $sets[] = 'fidelity_linked_at=?'; $vals[] = $lv;
+      }
+    }
     if (isset($b['invoice']) && is_array($b['invoice'])) {
       $inv  = $b['invoice'];
       $imap = [
