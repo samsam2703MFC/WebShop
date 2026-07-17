@@ -417,6 +417,14 @@
 /* =====================================================================
    CATEGORY ROW
    ===================================================================== */
+/* Texte pour lecteurs d'écran uniquement (annonce du changement de niveau
+   de la ligne de nav) — utilitaire fonctionnel, aucun rôle visuel. */
+.ws-vh {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; border: 0;
+  clip: rect(0 0 0 0); clip-path: inset(50%);
+  overflow: hidden; white-space: nowrap;
+}
 .ws-cats {
   display: flex; gap: 8px;
   overflow-x: auto;

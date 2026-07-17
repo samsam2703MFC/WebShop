@@ -89,6 +89,7 @@
       if (p.get('mode'))      out.mode      = p.get('mode');
       if (p.get('voucher'))   out.voucher   = p.get('voucher').toUpperCase();
       if (p.get('category'))  out.cat       = p.get('category');
+      if (p.get('sub'))       out.sub       = p.get('sub');      // sous-catégorie active (lien direct)
       if (p.get('product'))   out.productId = p.get('product');
       if (p.get('open') === 'product' && p.get('product')) out.openProduct = p.get('product');
       return out;

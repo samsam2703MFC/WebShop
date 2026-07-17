@@ -43,6 +43,15 @@
       // categories shell
       'cats.all': 'Tout voir',
 
+      // category navigation — single line, two levels. The first slot is
+      // always occupied: `all` at category level, `back` at subcategory
+      // level. `back` is a template — the category name is injected as a
+      // variable, never concatenated by the caller.
+      'nav.category.all': 'Tout',
+      'nav.category.back': '← {category}',
+      'nav.category.cats': 'Catégories',
+      'nav.category.subsOf': 'Sous-catégories de {category}',
+
       // product card
       'card.add': 'Ajouter',
       'card.from': 'dès',
@@ -140,6 +149,32 @@
     }
     UI[lang] = out;
   });
+
+  /* Real translations for keys that sit permanently in the storefront chrome
+     (a [TAG] placeholder there would read as broken, not as "to translate").
+     Applied AFTER the placeholder generation so they win. `back` stays a
+     template per language — translators may move the variable. */
+  const UI_REAL = {
+    nl: {
+      'nav.category.all': 'Alles',
+      'nav.category.back': '← {category}',
+      'nav.category.cats': 'Categorieën',
+      'nav.category.subsOf': 'Subcategorieën van {category}',
+    },
+    en: {
+      'nav.category.all': 'All',
+      'nav.category.back': '← {category}',
+      'nav.category.cats': 'Categories',
+      'nav.category.subsOf': 'Subcategories of {category}',
+    },
+    de: {
+      'nav.category.all': 'Alle',
+      'nav.category.back': '← {category}',
+      'nav.category.cats': 'Kategorien',
+      'nav.category.subsOf': 'Unterkategorien von {category}',
+    },
+  };
+  Object.entries(UI_REAL).forEach(([lang, dict]) => Object.assign(UI[lang], dict));
 
   /* ---------- product / category translations ---------------------- */
   /* Keyed by id — separate from the products array so the data can stay

@@ -58,6 +58,12 @@ function dispatch($m, $p) {
     json_out([
       'fidelityTabEnabled'     => ws_param('fidelity_tab_enabled', '1') !== '0',
       'invoiceRequestDeadline' => ws_param('invoice_request_deadline', 'end_of_month'),
+      // Nav catégories : icônes des deux touches de première position (Tout /
+      // retour). Ce ne sont PAS des lignes de category — juste des références
+      // média (même bibliothèque que les icônes de catégorie), changeables via
+      // ws_param sans redéploiement.
+      'categoryNavAllIcon'     => ws_param('category_nav_all_icon',  '/webshop/assets/category_icons/nav-all.svg'),
+      'categoryNavBackIcon'    => ws_param('category_nav_back_icon', '/webshop/assets/category_icons/nav-back.svg'),
     ]);
   }
 

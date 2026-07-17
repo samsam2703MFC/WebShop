@@ -1603,58 +1603,112 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
 }
 
 // =========================================================================
-// CATEGORY ROW + SUBCATEGORIES + SEASONAL ASSORTMENTS
+// CATEGORY ROW — SINGLE LINE, TWO LEVELS
+// -------------------------------------------------------------------------
+// One line of choices, always in the same place; its CONTENT switches level.
+// Never two stacked rows.
+//   Level "cats":  [Tout] [catégories…] | [saisons…]
+//   Level "subs":  [← Nom de la catégorie] [sous-catégories…]
+// The first slot is therefore always occupied, by a different key per level.
+// `Tout` and `← Catégorie` are NOT categories: no `category` row backs them —
+// their icons come from ws_param (via /config), their labels from i18n.
+// The back key carries the current category NAME on purpose: once the line
+// switches to subcategories, that name would otherwise vanish from screen —
+// the key both says where you are and lets you leave.
+// A category with 0 or 1 subcategory never switches level (a single choice
+// is not a choice): the click just filters the grid.
 // =========================================================================
-function CategoryRow({ active, sub, onSelect, onSelectSub, accent, tint, categories, assortments }) {
-  const ALL = { id: 'all', label: 'Tout', img: 'img/cat-all.png' };
+function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint, categories, assortments, navIcons }) {
+  // i18n : hook global (webshop-i18n-react, chargé avant ce bundle) — un
+  // repli direct sur WSI18n.t couvre le cas où le hook n'est pas monté.
+  const { t, tCategory } = window.useT
+    ? window.useT()
+    : { t: (k, p) => (window.WSI18n ? window.WSI18n.t(k, p) : k), tCategory: (id, fb) => fb };
   const cats = categories || W_CATEGORIES;
   const assorts = assortments || W_ASSORTMENTS;
-  const activeCat = cats.find((c) => c.id === active);
+  const activeCat = cats.find((c) => String(c.id) === String(active)) || null;
   const subs = activeCat?.subs || [];
+  // Niveau sous-catégories seulement si la catégorie propose un vrai choix.
+  const subLevel = !!activeCat && subs.length >= 2;
+  const catName = activeCat ? tCategory(activeCat.id, activeCat.label) : '';
+
   const visibleCount = 5;
   const [showAllSubs, setShowAllSubs] = React.useState(false);
   const visibleSubs = showAllSubs ? subs : subs.slice(0, visibleCount);
   const hiddenCount = subs.length - visibleCount;
-
   React.useEffect(() => { setShowAllSubs(false); }, [active]);
+
+  // Accessibilité : au CHANGEMENT de niveau (pas au premier rendu), le focus
+  // se pose sur la première touche de la nouvelle ligne — sinon il retombe en
+  // haut de page — et la zone aria-live annonce le nouveau contenu (la ligne
+  // se transforme sans qu'aucun élément n'apparaisse ailleurs : rien ne le
+  // signalerait par défaut aux lecteurs d'écran).
+  const stripRef = React.useRef(null);
+  const prevLevel = React.useRef(subLevel);
+  const [announce, setAnnounce] = React.useState('');
+  React.useEffect(() => {
+    if (prevLevel.current === subLevel) return;
+    prevLevel.current = subLevel;
+    setAnnounce(subLevel ? t('nav.category.subsOf', { category: catName }) : t('nav.category.cats'));
+    const first = stripRef.current && stripRef.current.querySelector('button');
+    if (first) first.focus();
+  }, [subLevel, catName]);
+
+  const activeStyle = { '--cat-accent': accent, '--cat-tint': tint };
+  const icons = navIcons || {};
 
   return (
     <div className="ws-cats-wrap">
-      <div className="ws-cats">
-        {[ALL, ...cats].map((c) => {
-          const isOn = active === c.id;
-          return (
-            <button key={c.id} className={`ws-cat${isOn ? ' is-active' : ''}`} onClick={() => onSelect(c.id)} style={isOn ? { '--cat-accent': accent, '--cat-tint': tint } : {}}>
-              <span className="ws-cat__tile"><img src={c.img} alt=""/></span>
-              <span className="ws-cat__lbl">{c.label}</span>
+      <span className="ws-vh" aria-live="polite" role="status">{announce}</span>
+      <div className="ws-cats" ref={stripRef}
+           aria-label={subLevel ? t('nav.category.subsOf', { category: catName }) : t('nav.category.cats')}>
+        {!subLevel && (
+          <>
+            {/* Première position — état « Tout » (icône ws_param, libellé i18n) */}
+            <button key="all" className={`ws-cat${active === 'all' ? ' is-active' : ''}`}
+                    onClick={() => onSelect('all')} style={active === 'all' ? activeStyle : {}}>
+              <span className="ws-cat__tile">{icons.all ? <img src={icons.all} alt=""/> : null}</span>
+              <span className="ws-cat__lbl">{t('nav.category.all')}</span>
             </button>
-          );
-        })}
-
-        {/* Seasonal assortments — same badge style, but distinct shape (notched corner) */}
-        <div className="ws-cats__sep" aria-hidden="true"/>
-        {assorts.map((a) => {
-          const isOn = active === `season:${a.id}`;
-          return (
-            <button key={a.id} className={`ws-cat ws-cat--season${isOn ? ' is-active' : ''}`} onClick={() => onSelect(`season:${a.id}`)} style={isOn ? { '--cat-accent': accent, '--cat-tint': tint } : {}}>
-              <span className="ws-cat__tile">
-                <img src={a.img} alt=""/>
-              </span>
-              <span className="ws-cat__lbl">{a.label}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Subcategory strip — appears only when a main category is active */}
-      {activeCat && subs.length > 0 && (
-        <>
-          <div className="ws-subcats__rule" aria-hidden="true"/>
-          <div className="ws-subcats">
-            {visibleSubs.map((s) => {
-              const isOn = sub === s.id;
+            {cats.map((c) => {
+              const isOn = String(active) === String(c.id);
               return (
-                <button key={s.id} className={`ws-subcat${isOn ? ' is-active' : ''}`} onClick={() => onSelectSub(isOn ? null : s.id)} style={isOn ? { '--cat-accent': accent, '--cat-tint': tint } : {}}>
+                <button key={c.id} className={`ws-cat${isOn ? ' is-active' : ''}`} onClick={() => onSelect(c.id)} style={isOn ? activeStyle : {}}>
+                  <span className="ws-cat__tile"><img src={c.img} alt=""/></span>
+                  <span className="ws-cat__lbl">{tCategory(c.id, c.label)}</span>
+                </button>
+              );
+            })}
+            {/* Seasonal assortments — same badge style, but distinct shape (notched corner) */}
+            {assorts.length > 0 && <div className="ws-cats__sep" aria-hidden="true"/>}
+            {assorts.map((a) => {
+              const isOn = active === `season:${a.id}`;
+              return (
+                <button key={a.id} className={`ws-cat ws-cat--season${isOn ? ' is-active' : ''}`} onClick={() => onSelect(`season:${a.id}`)} style={isOn ? activeStyle : {}}>
+                  <span className="ws-cat__tile">
+                    <img src={a.img} alt=""/>
+                  </span>
+                  <span className="ws-cat__lbl">{a.label}</span>
+                </button>
+              );
+            })}
+          </>
+        )}
+
+        {subLevel && (
+          <>
+            {/* Première position — état « retour », porteur du nom de la
+                catégorie courante (dire où on est + permettre d'en sortir). */}
+            <button key="back" className="ws-cat ws-cat--back" onClick={onBack}>
+              <span className="ws-cat__tile">{icons.back ? <img src={icons.back} alt=""/> : null}</span>
+              <span className="ws-cat__lbl">{t('nav.category.back', { category: catName })}</span>
+            </button>
+            {visibleSubs.map((s) => {
+              const isOn = String(sub) === String(s.id);
+              return (
+                <button key={s.id} className={`ws-subcat${isOn ? ' is-active' : ''}`}
+                        aria-pressed={isOn}
+                        onClick={() => onSelectSub(isOn ? null : s.id)} style={isOn ? activeStyle : {}}>
                   <span className="ws-subcat__tile"><img src={s.img} alt=""/></span>
                   <span className="ws-subcat__lbl">{s.label}</span>
                 </button>
@@ -1666,9 +1720,9 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, accent, tint, categor
                 <span className="ws-subcat__lbl">Voir plus</span>
               </button>
             )}
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -3829,8 +3883,12 @@ function ShopFrame({ variant }) {
     }
   }, [shopId]);
   const [mode, setMode] = useState(_deep.mode === 'delivery' ? 'collect' : (_deep.mode || 'collect')); // gate delivery via existing flow
+  // Niveau + catégorie + sous-catégorie vivent dans l'URL (?category=&sub=),
+  // pas seulement en mémoire : une page filtrée est partageable et survit au
+  // rafraîchissement. Un lien direct sur une sous-catégorie ouvre la ligne
+  // directement au niveau sous-catégories.
   const [cat, setCat] = useState(_deep.cat || 'all');
-  const [subCat, setSubCat] = useState(null);
+  const [subCat, setSubCat] = useState(_deep.sub != null ? _deep.sub : null);
   const [basket, setBasket] = useState([]);
   const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
   // Voucher state — may be pre-filled by deep link
@@ -4118,15 +4176,23 @@ function ShopFrame({ variant }) {
     })();
     return () => { alive = false; };
   }, [shopId]);
-  const products = useMemo(() => {
+  // Source commune GRILLE + LIGNE DE NAV : le catalogue restreint au créneau
+  // et à la date en cours. La règle d'affichage de la nav (« n'afficher que ce
+  // qui contient au moins un produit disponible ») est ainsi exactement celle
+  // de la grille — même source, jamais deux vérités.
+  const slotFiltered = useMemo(() => {
     let src = allProducts;
-    // Slot filtering: one catalogue, filtered by available_slots for the selected slot.
     if (mode === 'delivery' && selectedSlot) {
       src = src.filter((p) => !Array.isArray(p.available_slots) || p.available_slots.includes(selectedSlot));
-      // Evening → surface "Plats préparés" first.
-      if (selectedSlot === 'soir') {
-        src = [...src].sort((a, b) => (a.cat === 'plats' ? -1 : 0) - (b.cat === 'plats' ? -1 : 0));
-      }
+    }
+    return src;
+  }, [allProducts, mode, selectedSlot]);
+
+  const products = useMemo(() => {
+    let src = slotFiltered;
+    // Evening → surface "Plats préparés" first.
+    if (mode === 'delivery' && selectedSlot === 'soir') {
+      src = [...src].sort((a, b) => (a.cat === 'plats' ? -1 : 0) - (b.cat === 'plats' ? -1 : 0));
     }
     if (cat === 'all') return src;
     if (isAssortment) {
@@ -4140,18 +4206,104 @@ function ShopFrame({ variant }) {
       out = out.filter((p) => String(p.sub_cat_id) === String(subCat) || String(p.subCat) === String(subCat));
     }
     return out;
-  }, [cat, subCat, isAssortment, assortmentId, allProducts, mode, selectedSlot]);
+  }, [cat, subCat, isAssortment, assortmentId, slotFiltered, mode, selectedSlot]);
 
-  // Puces de saison = saisons réellement présentes dans les produits (comme les
-  // catégories, on n'affiche que ce qui existe). Sinon on garde les assortiments.
+  // Ligne de nav : catégories/sous-catégories qui contiennent au moins un
+  // produit disponible pour le créneau + la date en cours. Une sous-catégorie
+  // vide ne se grise pas : elle ne s'affiche pas. Idem pour une catégorie.
+  const navCats = useMemo(() => {
+    const inCat = (p, c) => String(p.cat_id) === String(c.id) || p.cat === c.id;
+    const inSub = (p, s) => String(p.sub_cat_id) === String(s.id) || String(p.subCat) === String(s.id);
+    return (categories || [])
+      .map((c) => ({ ...c, subs: (c.subs || []).filter((s) => slotFiltered.some((p) => inSub(p, s))) }))
+      .filter((c) => slotFiltered.some((p) => inCat(p, c)));
+  }, [categories, slotFiltered]);
+
+  // Puces de saison = saisons réellement présentes dans les produits du
+  // créneau (comme les catégories, on n'affiche que ce qui est disponible).
   const seasonChips = useMemo(() => {
     const seen = {};
-    (allProducts || []).forEach((p) => {
+    (slotFiltered || []).forEach((p) => {
       if (p.season && !seen[p.season]) seen[p.season] = { id: p.season, label: p.season_name || p.season, img: p.season_img || 'img/cat-all.png' };
     });
     const arr = Object.values(seen);
     return arr.length ? arr : assortments;
-  }, [allProducts, assortments]);
+  }, [slotFiltered, assortments]);
+
+  // ── Nav catégories : icônes des touches « Tout » / retour (ws_param via
+  //    /config — pas de fichier en dur dans le composant), et synchro URL. ──
+  const [navIcons, setNavIcons] = React.useState({ all: null, back: null });
+  React.useEffect(() => {
+    let alive = true;
+    if (window.WSAuth && typeof window.WSAuth.config === 'function') {
+      window.WSAuth.config().then((c) => {
+        if (alive && c) setNavIcons({ all: c.categoryNavAllIcon || null, back: c.categoryNavBackIcon || null });
+      }).catch(() => {});
+    }
+    return () => { alive = false; };
+  }, []);
+
+  // L'URL est la vérité partageable : category= / sub= (fusionnés dans la
+  // query existante — shop, mode, voucher… restent intacts). Les BASCULES de
+  // niveau créent une étape d'historique (pushState) ; les changements de
+  // filtre au sein d'un niveau la remplacent (replaceState). Le « précédent »
+  // du navigateur remonte donc d'un cran, comme la touche de retour — il ne
+  // quitte pas la boutique tant qu'il reste des étapes.
+  const syncCatUrl = React.useCallback((nextCat, nextSub, push) => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (nextCat && nextCat !== 'all') p.set('category', String(nextCat)); else p.delete('category');
+      if (nextSub != null && nextSub !== '') p.set('sub', String(nextSub)); else p.delete('sub');
+      const qs = p.toString();
+      const url = window.location.pathname + (qs ? '?' + qs : '') + window.location.hash;
+      if (push) window.history.pushState({ wsCatNav: 1 }, '', url);
+      else window.history.replaceState(window.history.state, '', url);
+    } catch (_) {}
+  }, []);
+  const catHasSubLevel = React.useCallback((cid) => {
+    const c = (navCats || []).find((x) => String(x.id) === String(cid));
+    return !!c && (c.subs || []).length >= 2;
+  }, [navCats]);
+  const selectCat = React.useCallback((cid) => {
+    setCat(cid); setSubCat(null);
+    // Entrer au niveau sous-catégories = étape d'historique ; une catégorie
+    // sans (vrai) choix de sous-catégories filtre sans changer de niveau.
+    syncCatUrl(cid, null, cid !== 'all' && catHasSubLevel(cid));
+  }, [syncCatUrl, catHasSubLevel]);
+  const backToCats = React.useCallback(() => {
+    setCat('all'); setSubCat(null);
+    syncCatUrl('all', null, true);       // sortie de niveau = étape d'historique
+  }, [syncCatUrl]);
+  const selectSub = React.useCallback((sid) => {
+    setSubCat(sid);
+    syncCatUrl(cat, sid, false);         // même niveau : pas d'étape
+  }, [syncCatUrl, cat]);
+  React.useEffect(() => {
+    // Retour navigateur : mêmes étapes que la touche de retour — l'état suit
+    // l'URL de l'étape sur laquelle on retombe.
+    const onPop = () => {
+      try {
+        const p = new URLSearchParams(window.location.search);
+        setCat(p.get('category') || 'all');
+        setSubCat(p.get('sub'));
+      } catch (_) {}
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  React.useEffect(() => {
+    // Cohérence après un changement de créneau/date : si la catégorie ou la
+    // sous-catégorie active n'a plus de produit disponible, on ne filtre pas
+    // à l'aveugle — retour à un état visible. Gardé silencieux tant que les
+    // données ne sont pas chargées (sinon un chargement lent « reset » l'URL).
+    if (!slotFiltered.length || !(categories || []).length) return;
+    if (cat === 'all' || isAssortment) return;
+    const c = navCats.find((x) => String(x.id) === String(cat));
+    if (!c) { setCat('all'); setSubCat(null); syncCatUrl('all', null, false); return; }
+    if (subCat != null && !(c.subs || []).some((s) => String(s.id) === String(subCat))) {
+      setSubCat(null); syncCatUrl(cat, null, false);
+    }
+  }, [navCats]); // volontairement déclenché par le seul recalcul de la nav
 
   // Stock map: productId -> { qty_total, qty_reserved, qty_sold, qty_available }
   // Reloaded whenever shop, date or mode changes.
@@ -4312,7 +4464,7 @@ function ShopFrame({ variant }) {
             <p className="ws-slot-ask">Vous souhaitez la livraison du soir ? <button type="button" className="ws-linkbtn" onClick={() => window.WSSlots && window.WSSlots.requestEvening && window.WSSlots.requestEvening({ officeId: (user && user.officeId) || null })}>Faites-le nous savoir</button></p>
           )}
 
-          <CategoryRow active={cat} sub={subCat} onSelect={(c) => { setCat(c); setSubCat(null); }} onSelectSub={setSubCat} accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'} tint={mode === 'delivery' ? 'invert(45%) sepia(60%) saturate(600%) hue-rotate(5deg)' : 'invert(15%) sepia(85%) saturate(2400%) hue-rotate(335deg)'} categories={categories} assortments={seasonChips}/>
+          <CategoryRow active={cat} sub={subCat} onSelect={selectCat} onSelectSub={selectSub} onBack={backToCats} navIcons={navIcons} accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'} tint={mode === 'delivery' ? 'invert(45%) sepia(60%) saturate(600%) hue-rotate(5deg)' : 'invert(15%) sepia(85%) saturate(2400%) hue-rotate(335deg)'} categories={navCats} assortments={seasonChips}/>
 
           <div className="ws-grid">
             {products.map((p) => {
