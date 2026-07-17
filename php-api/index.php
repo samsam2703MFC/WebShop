@@ -373,18 +373,26 @@ function dispatch($m, $p) {
     $t = row("SELECT id, shop_id AS shopId, name, zone_id AS zoneId, zone_secondary AS zoneSecondary, active
                 FROM ws_tours WHERE id=?", [$mm['id']]);
     if (!$t) json_out(['error' => 'Tournée introuvable'], 404);
+    // Libellé de fenêtre pour la carte bureau (front : `tour.name · tour.window`).
+    $w = row("SELECT CONCAT(TIME_FORMAT(MIN(delivery_start),'%Hh%i'),'–',TIME_FORMAT(MAX(delivery_end),'%Hh%i')) AS win
+                FROM ws_tour_availability WHERE tour_id=? AND active=1", [$mm['id']]);
+    $t['window'] = ($w && !empty($w['win'])) ? $w['win'] : null;
     json_out($t);
   }
-  // Bureau validé = active (0/1), source de vérité unique (on ne filtre plus sur
-  // la colonne chaîne status, qui fait doublon).
+  // Bureau validé = active (0/1), source de vérité unique. Le front (compilé)
+  // teste `office.status === 'validated'` ; on PROJETTE donc active en status
+  // ('validated' si actif, sinon 'pending') — la colonne chaîne status de la
+  // table (doublon) n'est plus lue.
   if ($m === 'GET' && $p === '/offices') {
     json_out(rows("SELECT id, tour_id AS tourId, name, address, postal_code AS postalCode, city,
-                          contact, email, phone, vat, active
+                          contact, email, phone, vat, active,
+                          IF(active=1,'validated','pending') AS status
                      FROM ws_offices WHERE active=1"));
   }
   if ($m === 'GET' && ($mm = $match('/offices/:id'))) {
     $o = row("SELECT id, tour_id AS tourId, name, address, postal_code AS postalCode, city,
-                     contact, email, phone, vat, active
+                     contact, email, phone, vat, active,
+                     IF(active=1,'validated','pending') AS status
                 FROM ws_offices WHERE id=?", [$mm['id']]);
     if (!$o) json_out(['error' => 'Office introuvable'], 404);
     $o['sites'] = rows("SELECT id, name, address, floor_room AS floorRoom, shop_id AS shopId, is_default AS isDefault
