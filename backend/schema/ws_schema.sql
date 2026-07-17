@@ -231,6 +231,7 @@ CREATE TABLE ws_offices (
   status      VARCHAR(20)  DEFAULT 'pending',
   deferred_billing_enabled BOOLEAN DEFAULT FALSE,  -- commande sur compte (facturation)
   contract_url             VARCHAR(255),           -- contrat rattaché au compte
+  drop_minutes DECIMAL(5,2) NOT NULL DEFAULT 5.00, -- coût-temps dépôt (min), payé 1x/bureau
   active      BOOLEAN DEFAULT TRUE,
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (tour_id) REFERENCES ws_tours(id)
@@ -289,6 +290,7 @@ CREATE TABLE ws_office_delivery_sites (
   tournee_id       INT,                    -- route / tournée (ws_tours) = ex "route_id"
   tournee_stop_id  INT,
   shop_id          INT,
+  site_access_minutes DECIMAL(5,2) NOT NULL DEFAULT 10.00, -- coût-temps accès site (min), payé 1x/site
   active           BOOLEAN DEFAULT TRUE,   -- pour les lignes ERP : piloté par la règle top-5 (posé explicitement)
   created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
