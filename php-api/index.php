@@ -1058,10 +1058,34 @@ function user_payload($id) {
       'city'       => $u['invoice_city'] ?? null,
     ],
     'fidelityApp' => [
-      'active'   => (bool) ($u['fidelity_active'] ?? 0),
-      'linkedAt' => $u['fidelity_linked_at'] ?? null,
+      'active'     => (bool) ($u['fidelity_active'] ?? 0),
+      'linkedAt'   => $u['fidelity_linked_at'] ?? null,
+      // Adresse du PWA (QR d'installation quand l'app fidélité n'est pas encore
+      // liée). Source unique : ws_param.pwa_url ; repli sur la racine serveur.
+      'installUrl' => pwa_url(),
     ],
   ];
+}
+
+/* Adresse du PWA (app fidélité). Source unique : la table de config `ws_param`,
+ * clé `pwa_url`. La structure de ws_param n'étant pas figée, on tente les formes
+ * clé/valeur les plus courantes ET une colonne dédiée, chacune isolée en
+ * try/catch. Repli : la RACINE du serveur — le webshop vit sous /webshop/, donc
+ * `<scheme>://<host>/` pointe sur le PWA. Toujours surchargeable via ws_param. */
+function pwa_url() {
+  $tries = [
+    "SELECT param_value AS v FROM ws_param WHERE param_key = 'pwa_url' LIMIT 1",
+    "SELECT value       AS v FROM ws_param WHERE name      = 'pwa_url' LIMIT 1",
+    "SELECT `value`     AS v FROM ws_param WHERE `key`     = 'pwa_url' LIMIT 1",
+    "SELECT pwa_url     AS v FROM ws_param LIMIT 1",
+  ];
+  foreach ($tries as $sql) {
+    try { $r = row($sql); if ($r && !empty($r['v'])) return (string) $r['v']; }
+    catch (Throwable $e) { /* forme absente -> on tente la suivante */ }
+  }
+  $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+  $host   = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? 'localhost');
+  return $scheme . '://' . $host . '/';
 }
 
 /**
