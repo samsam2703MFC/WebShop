@@ -30,6 +30,7 @@ import '../webshop-tours-api.jsx';
 import '../webshop-orders-api.jsx';
 import '../webshop-companies-api.jsx';
 import '../webshop-payments-api.jsx';
+import '../qr.jsx';                    // encodeur QR (window.QR) — modale fidélité
 
 // Central config (sets endpoints from BASE_URL).
 import '../api-config.js';
