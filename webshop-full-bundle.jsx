@@ -1968,17 +1968,15 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
               <label className="ws-field"><span>Prénom</span><input value={form.firstName} onChange={(e) => set('firstName', e.target.value)} autoComplete="given-name"/></label>
               <label className="ws-field"><span>Nom</span><input value={form.lastName} onChange={(e) => set('lastName', e.target.value)} autoComplete="family-name"/></label>
             </div>
-            <div className="ws-form__row2">
-              <label className="ws-field"><span>Email</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
-              <label className="ws-field"><span>Téléphone</span>
-                <span className="ws-phone">
-                  <select className="ws-phone__pfx" value={form.phonePrefix} onChange={(e) => set('phonePrefix', e.target.value)} aria-label="Indicatif">
-                    {PHONE_PREFIXES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                  </select>
-                  <input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="tel" inputMode="tel" placeholder="470 00 00 02"/>
-                </span>
-              </label>
-            </div>
+            <label className="ws-field"><span>Email</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
+            <label className="ws-field"><span>Téléphone</span>
+              <span className="ws-phone">
+                <select className="ws-phone__pfx" value={form.phonePrefix} onChange={(e) => set('phonePrefix', e.target.value)} aria-label="Indicatif">
+                  {PHONE_PREFIXES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+                <input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="tel" inputMode="tel" placeholder="470 00 00 02"/>
+              </span>
+            </label>
             <label className="ws-field"><span>Code postal</span><input value={form.postalCode} onChange={(e) => set('postalCode', e.target.value)} autoComplete="postal-code" inputMode="numeric"/></label>
           </>
         )}
