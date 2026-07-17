@@ -1094,10 +1094,13 @@ function user_payload($id) {
   $officeId = $u['office_id'] ?? null;
   if (!$officeId) {
     try {
+      // Jointure NUMÉRIQUE (office_ref = id du site en texte) : une comparaison
+      // de chaînes CAST(s.id AS CHAR) = office_ref casse selon la collation de
+      // la connexion PDO (« illegal mix of collations », avalé par le catch).
       $r2 = row("SELECT s.office_client_id AS oid
                    FROM pwa_client_office co
                    JOIN pwa_offices po ON po.id = co.office_id
-                   JOIN ws_office_delivery_sites s ON CAST(s.id AS CHAR) = po.office_ref
+                   JOIN ws_office_delivery_sites s ON s.id = CAST(po.office_ref AS UNSIGNED) AND s.id > 0
                   WHERE co.client_id = ? LIMIT 1", [$u['id']]);
       if ($r2 && !empty($r2['oid'])) $officeId = $r2['oid'];
     } catch (Throwable $e) { /* tables legacy PWA absentes — repli ignoré */ }
@@ -1124,7 +1127,7 @@ function user_payload($id) {
     $officeSite = row("SELECT s.id, s.name, s.address, s.shop_id AS shopId, s.active
                          FROM pwa_client_office co
                          JOIN pwa_offices po ON po.id = co.office_id
-                         JOIN ws_office_delivery_sites s ON CAST(s.id AS CHAR) = po.office_ref
+                         JOIN ws_office_delivery_sites s ON s.id = CAST(po.office_ref AS UNSIGNED) AND s.id > 0
                         WHERE co.client_id = ? LIMIT 1", [$u['id']]);
   } catch (Throwable $e) { /* tables legacy absentes */ }
   // Société liée (modèle « company link » de la PWA) : client.company_client_id
