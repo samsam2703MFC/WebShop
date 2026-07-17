@@ -750,6 +750,26 @@ function dispatch($m, $p) {
     }
     json_out(['user' => user_payload($cid), 'token' => sign_token(['id' => $cid, 'exp' => time() + 30 * 86400])]);
   }
+  /* Vérifie la TVA via VIES ET lie la société au client (persisté) — miroir
+     exact du PWA handle_billing_verify, sur la même table `client` : le badge
+     « vérifié » (verified_at) et les données société restent identiques des
+     deux côtés. */
+  if ($m === 'POST' && $p === '/auth/billing-verify') {
+    $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    $r = vies_lookup((string) (body()['vat'] ?? ''));
+    if (empty($r['valid'])) json_out($r);
+    $d = $r['data'];
+    q("UPDATE client
+          SET tax_number=?, company_name=?, invoice_name=?, invoice_country=?, invoice_address=?,
+              invoice_postal_code=COALESCE(?, invoice_postal_code),
+              invoice_city=COALESCE(?, invoice_city),
+              is_b2b=1, verified_at=NOW()
+        WHERE id=?",
+      [$d['vat'], $d['name'], $d['name'], $d['country'], $d['address'], $d['postalCode'], $d['city'], $id]);
+    $r['saved'] = true;
+    $r['user']  = user_payload($id);
+    json_out($r);
+  }
   if ($m === 'GET' && $p === '/auth/me') {
     $id = auth_uid(); $u = $id ? user_payload($id) : null;
     if (!$u) json_out(['error' => 'Non connecté.'], 401);
@@ -1029,6 +1049,21 @@ function user_payload($id) {
   // pendant la transition de schéma.
   $u = row("SELECT * FROM client WHERE id=?", [$id]);
   if (!$u) return null;
+  // Bureau lié : client.office_id (canal WS) OU, en repli, la liaison faite
+  // depuis la PWA (pwa_client_office → pwa_offices.office_ref = id du site de
+  // livraison → ws_office_delivery_sites.office_client_id = l'entreprise). Un
+  // bureau associé dans la PWA apparaît ainsi aussi dans le profil du webshop.
+  $officeId = $u['office_id'] ?? null;
+  if (!$officeId) {
+    try {
+      $r2 = row("SELECT s.office_client_id AS oid
+                   FROM pwa_client_office co
+                   JOIN pwa_offices po ON po.id = co.office_id
+                   JOIN ws_office_delivery_sites s ON CAST(s.id AS CHAR) = po.office_ref
+                  WHERE co.client_id = ? LIMIT 1", [$u['id']]);
+      if ($r2 && !empty($r2['oid'])) $officeId = $r2['oid'];
+    } catch (Throwable $e) { /* tables legacy PWA absentes — repli ignoré */ }
+  }
   return [
     'id' => (int) $u['id'],
     'email' => $u['email'] ?? null,
@@ -1041,7 +1076,7 @@ function user_payload($id) {
     'authMethod' => $u['preferred_auth_method'] ?? null,
     'webshopUser' => (bool) ($u['webshop_user'] ?? 0),
     'pwaUser' => (bool) ($u['pwa_user'] ?? 0),
-    'officeId' => $u['office_id'] ?? null,
+    'officeId' => $officeId,
     'preferredShopId' => $u['preferred_shop_id'] ?? null,
     'lang' => $u['locale'] ?? ($u['preferred_lang'] ?? 'fr'),
     'isBusiness' => (bool) ($u['is_b2b'] ?? ($u['is_business'] ?? 0)),
@@ -1056,6 +1091,10 @@ function user_payload($id) {
       'address'    => $u['invoice_address'] ?? null,
       'postalCode' => $u['invoice_postal_code'] ?? null,
       'city'       => $u['invoice_city'] ?? null,
+      // « Vérifié » = société effectivement liée en base (verified_at rempli),
+      // même règle que la carte VIES du profil PWA.
+      'viesVerified' => !empty($u['verified_at']),
+      'peppol'       => (bool) ($u['peppol_verified'] ?? 0),
     ],
     'fidelityApp' => [
       'active'     => (bool) ($u['fidelity_active'] ?? 0),

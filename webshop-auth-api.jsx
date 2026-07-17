@@ -115,6 +115,25 @@
       return { ok: false, error: 'Service indisponible.' };
     },
 
+    /* ── Vérification TVA + liaison société (persistée) — miroir de la PWA
+       POST /client/billing : VIES côté serveur, puis raison sociale/adresse/
+       verified_at écrits sur la fiche client partagée. */
+    async billingVerify({ vat, country }) {
+      if (!api.endpoint) return { ok: false, error: { code: 'unavailable', message: 'Service indisponible.' } };
+      try {
+        const r = await fetch(`${api.endpoint}/billing-verify`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ vat, country }),
+        });
+        const j = await r.json();
+        if (r.ok && j.valid) return { ok: true, data: j.data, user: j.user };
+        return { ok: false, error: j.error || { code: 'invalid', message: j.message || 'TVA non reconnue.' } };
+      } catch (_) {
+        return { ok: false, error: { code: 'unavailable', message: 'VIES indisponible. Réessayez.' } };
+      }
+    },
+
     /* ── Logout ─────────────────────────────────────────────────────── */
     async logout() {
       if (api.endpoint) {

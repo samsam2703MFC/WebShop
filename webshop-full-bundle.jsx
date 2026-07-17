@@ -2037,8 +2037,15 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     },
   });
   const [savedFlash, setSavedFlash] = useState(false);
-  const [vies, setVies] = useState({ status: 'idle', message: '' }); // idle | loading | ok | invalid | unavailable
+  // Statut VIES : si la société est déjà liée en base (verified_at côté client),
+  // on affiche le badge « vérifié » d'office — comme la carte VIES de la PWA.
+  const [vies, setVies] = useState(() => (user?.invoice?.viesVerified
+    ? { status: 'ok', message: 'TVA vérifiée (VIES)' }
+    : { status: 'idle', message: '' })); // idle | loading | ok | invalid | unavailable
   const [fidOpen, setFidOpen] = useState(false);
+  // Comptes entreprise (livraison bureau) rattachés à l'e-mail du client
+  // (ws_office_emails → ws_offices) — affichés en lecture seule, comme la PWA.
+  const [linkedCompanies, setLinkedCompanies] = useState([]);
   // Office unplug/reconnect flow: 'idle' | 'confirm' | 'ask' | 'pick' | 'add'
   const [officeStep, setOfficeStep] = useState('idle');
   const [approvedOffices, setApprovedOffices] = useState([]);
@@ -2073,8 +2080,20 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         city: user.invoice?.city || '',
       },
     });
-    setVies({ status: 'idle', message: '' });
+    setVies(user.invoice?.viesVerified
+      ? { status: 'ok', message: 'TVA vérifiée (VIES)' }
+      : { status: 'idle', message: '' });
   }, [user]);
+
+  // Comptes entreprise liés à l'e-mail (lecture seule).
+  useEffect(() => {
+    let alive = true;
+    if (!open || !user?.email || !window.WSCompanies) { setLinkedCompanies([]); return; }
+    Promise.resolve(window.WSCompanies.list(user.email))
+      .then((cs) => { if (alive) setLinkedCompanies(Array.isArray(cs) ? cs : []); })
+      .catch(() => { if (alive) setLinkedCompanies([]); });
+    return () => { alive = false; };
+  }, [open, user?.email]);
 
   if (!open || !user) return null;
   const status = !office ? 'unlinked' : (office.status === 'validated' && tour) ? 'active' : 'pending';
@@ -2181,8 +2200,20 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     }
   }
   async function checkVat() {
-    if (!window.WSVies) { setVies({ status: 'unavailable', message: 'Service VIES indisponible.' }); return; }
     setVies({ status: 'loading', message: '' });
+    // Comme la PWA : la vérification VIES est faite ET persistée côté serveur
+    // (raison sociale + adresse + verified_at sur la fiche client partagée).
+    // Repli sur la simple vérification WSVies (remplissage local) hors ligne.
+    if (window.WSAuth && typeof window.WSAuth.billingVerify === 'function' && window.WSAuth.endpoint) {
+      const rv = await window.WSAuth.billingVerify({ vat: form.invoice.vat, country: form.invoice.country });
+      if (rv.ok && rv.user) {
+        if (typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...rv.user }); // resync du formulaire via l'effet [user]
+        setVies({ status: 'ok', message: 'TVA validée par VIES' });
+        return;
+      }
+      if (rv.error) { setVies({ status: rv.error.code || 'invalid', message: rv.error.message || 'Échec de validation' }); return; }
+    }
+    if (!window.WSVies) { setVies({ status: 'unavailable', message: 'Service VIES indisponible.' }); return; }
     const r = await window.WSVies.check({ vat: form.invoice.vat, country: form.invoice.country });
     if (r.valid && r.data) {
       setForm((f) => ({
@@ -2557,6 +2588,19 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         )}
       </div>
 
+      {linkedCompanies.length > 0 && (
+        <div className="ws-acc__section">
+          <div className="ws-acc__section-h">Comptes entreprise (livraison bureau)</div>
+          {linkedCompanies.map((c) => (
+            <div key={c.id} className="ws-acc__card ws-acc__card--ok">
+              <div className="ws-acc__card-row"><span className="ws-acc__k">Entreprise</span><span className="ws-acc__v">{c.name}</span></div>
+              {c.vat ? <div className="ws-acc__card-row"><span className="ws-acc__k">TVA</span><span className="ws-acc__v">{c.vat}</span></div> : null}
+              <div className="ws-acc__card-row"><span className="ws-acc__k">Facturation</span><span className="ws-acc__v">{c.deferredBilling ? 'Sur compte (différée)' : 'Paiement direct'}</span></div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {window.LangMenu && (
         <div className="ws-acc__section">
           <div className="ws-acc__section-h">Langue</div>
@@ -2576,57 +2620,29 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
 // Shown when the user toggles the fidelity-app setting from OFF to ON.
 // =========================================================================
 function FidelityQR({ payload }) {
-  // Vrai QR scannable (window.QR, fourni par qr.jsx). L'ancienne grille pseudo-
-  // aléatoire ne servait que de décor : on ne garde un repli que si l'encodeur
-  // n'est pas chargé.
-  // Les DEUX useMemo sont appelés inconditionnellement (Rules of Hooks) : on ne
-  // branche qu'APRÈS, dans le rendu.
+  // Vrai QR scannable (window.QR, fourni par qr.jsx). Rendu « classique » —
+  // modules pleins, sombres, marge complète : le style brandé (points ronds
+  // bordeaux, finders arrondis) n'est pas lu par tous les scanners.
   const svg = React.useMemo(() => {
     try {
       if (payload && window.QR && typeof window.QR.render === 'function') {
-        return window.QR.render(payload, { size: 220, margin: 3 });
+        return window.QR.render(payload, { size: 240, margin: 4, branded: false, color: '#111111' });
       }
     } catch (_) {}
     return null;
   }, [payload]);
-  const grid = React.useMemo(() => {
-    const N = 21;
-    const cells = Array.from({ length: N * N }, () => false);
-    let h = 0;
-    for (let i = 0; i < (payload || '').length; i++) h = (h * 31 + payload.charCodeAt(i)) >>> 0;
-    let r = h || 1;
-    for (let i = 0; i < N * N; i++) {
-      r = (r * 1664525 + 1013904223) >>> 0;
-      cells[i] = (r & 1) === 1;
-    }
-    function corner(cx, cy) {
-      for (let y = 0; y < 7; y++) for (let x = 0; x < 7; x++) {
-        const onEdge = x === 0 || x === 6 || y === 0 || y === 6;
-        const inner = x >= 2 && x <= 4 && y >= 2 && y <= 4;
-        cells[(cy + y) * N + (cx + x)] = onEdge || inner;
-      }
-    }
-    corner(0, 0); corner(N - 7, 0); corner(0, N - 7);
-    return { N, cells };
-  }, [payload]);
-  // Vrai QR si l'encodeur est chargé…
   if (svg) {
     return (
       <div className="ws-fid__qr" role="img" aria-label="QR code vers l'application L'Atelier"
         dangerouslySetInnerHTML={{ __html: svg }} />
     );
   }
-  // …sinon repli décoratif (NON scannable).
-  const N = grid.N, cell = 8, size = N * cell;
-  const rects = [];
-  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    if (grid.cells[y * N + x]) rects.push(<rect key={`${x}-${y}`} x={x * cell} y={y * cell} width={cell} height={cell} fill="#1a1a1a"/>);
-  }
+  // Encodeur indisponible : lien direct plutôt qu'un faux QR illisible.
   return (
-    <svg className="ws-fid__qr" viewBox={`0 0 ${size} ${size}`} width="220" height="220" role="img" aria-label="QR code de liaison">
-      <rect width={size} height={size} fill="#fff"/>
-      {rects}
-    </svg>
+    <p className="ws-fid__hint">
+      QR indisponible — ouvrez directement{' '}
+      <a href={payload} target="_blank" rel="noopener noreferrer">{payload}</a>
+    </p>
   );
 }
 
