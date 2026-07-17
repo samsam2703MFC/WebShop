@@ -361,7 +361,9 @@
         '--lp-line': 'rgba(242,201,160,.22)', '--lp-hair': 'rgba(251,243,236,.13)',
         background: 'var(--lp-bg)', color: 'var(--lp-ink)', fontFamily: 'var(--font-ui)',
         fontSize: '16px', lineHeight: '1.65', WebkitFontSmoothing: 'antialiased',
-        minHeight: '100vh', overflowX: 'hidden'
+        // overflow-x:clip (not hidden) keeps the sticky header pinned — `hidden`
+        // makes this element a scroll container, which silently breaks sticky.
+        minHeight: '100vh', overflowX: 'clip'
       };
 
       return React.createElement('div', { style: rootStyle },
