@@ -368,17 +368,50 @@ function dispatch($m, $p) {
     json_out($s ? rows("SELECT id, shop_id AS shopId, name FROM ws_tours WHERE active=1 AND shop_id=?", [$s])
                 : rows("SELECT id, shop_id AS shopId, name FROM ws_tours WHERE active=1"));
   }
+  // Une tournée par id — utilisé par WSTours.get au checkout (frais/libellés).
+  if ($m === 'GET' && ($mm = $match('/tours/:id'))) {
+    $t = row("SELECT id, shop_id AS shopId, name, zone_id AS zoneId, zone_secondary AS zoneSecondary, active
+                FROM ws_tours WHERE id=?", [$mm['id']]);
+    if (!$t) json_out(['error' => 'Tournée introuvable'], 404);
+    json_out($t);
+  }
+  // Bureau validé = active (0/1), source de vérité unique (on ne filtre plus sur
+  // la colonne chaîne status, qui fait doublon).
   if ($m === 'GET' && $p === '/offices') {
     json_out(rows("SELECT id, tour_id AS tourId, name, address, postal_code AS postalCode, city,
-                          contact, email, phone, vat, status
-                     FROM ws_offices WHERE status='validated' AND active=1"));
+                          contact, email, phone, vat, active
+                     FROM ws_offices WHERE active=1"));
   }
   if ($m === 'GET' && ($mm = $match('/offices/:id'))) {
-    $o = row("SELECT * FROM ws_offices WHERE id=?", [$mm['id']]);
+    $o = row("SELECT id, tour_id AS tourId, name, address, postal_code AS postalCode, city,
+                     contact, email, phone, vat, active
+                FROM ws_offices WHERE id=?", [$mm['id']]);
     if (!$o) json_out(['error' => 'Office introuvable'], 404);
-    $o['sites'] = rows("SELECT id, name, address, floor_room AS floorRoom, shop_id AS shopId
+    $o['sites'] = rows("SELECT id, name, address, floor_room AS floorRoom, shop_id AS shopId, is_default AS isDefault
                           FROM ws_office_delivery_sites WHERE office_client_id=? AND active=1", [$mm['id']]);
+    $def = row("SELECT id FROM ws_office_delivery_sites
+                 WHERE office_client_id=? AND active=1 AND is_default=1 LIMIT 1", [$mm['id']]);
+    $o['defaultSiteId'] = $def ? (int) $def['id'] : null;
     json_out($o);
+  }
+  // Sites de livraison d'un bureau (validé) — alimente WSDeliveryFees.listSites
+  // au checkout (le module WSDeliveryFees appelle tout en POST + body JSON).
+  // Même 0/1 que l'éligibilité : bureau et site doivent être actifs.
+  if ($m === 'POST' && $p === '/delivery-fees/sites') {
+    $oc = (int) (body()['officeClientId'] ?? 0);
+    if (!$oc || !row("SELECT 1 AS x FROM ws_offices WHERE id=? AND active=1", [$oc])) json_out([]);
+    json_out(rows("SELECT id, office_client_id, name, address, floor_room, contact_name, contact_phone,
+                          tournee_id, tournee_stop_id, shop_id, is_default, active
+                     FROM ws_office_delivery_sites
+                    WHERE office_client_id=? AND active=1
+                    ORDER BY is_default DESC, name", [$oc]));
+  }
+  // Un site par id — WSDeliveryFees.getSite (POST /sites/:id, body vide).
+  if ($m === 'POST' && ($mm = $match('/delivery-fees/sites/:id'))) {
+    $s = row("SELECT id, office_client_id, name, address, floor_room, contact_name, contact_phone,
+                     tournee_id, tournee_stop_id, shop_id, is_default, active
+                FROM ws_office_delivery_sites WHERE id=? AND active=1", [$mm['id']]);
+    json_out($s ?: null);
   }
   /* Sites de livraison au bureau d'un shop — MÊME liste que la PWA
      (repo_offices) : ws_office_delivery_sites actifs, filtrés par shop. Sert le
