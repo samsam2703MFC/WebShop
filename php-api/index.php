@@ -1072,10 +1072,13 @@ function dispatch($m, $p) {
     $sites = [];
     if ($offices) {
       $ph = implode(',', array_fill(0, count($offices), '?'));
-      $sites = rows("SELECT id, name, address, tournee_id AS tourId, is_default AS isDefault
-                       FROM ws_office_delivery_sites
-                      WHERE office_client_id IN ($ph) AND active = 1 AND tournee_id IS NOT NULL
-                      ORDER BY is_default DESC, name", $offices);
+      // Bureau validé = ws_offices.active = 1 (source de vérité 0/1, pas la chaîne
+      // status). Un site rattaché à un bureau non validé n'est pas éligible.
+      $sites = rows("SELECT s.id, s.name, s.address, s.tournee_id AS tourId, s.is_default AS isDefault
+                       FROM ws_office_delivery_sites s
+                       JOIN ws_offices o ON o.id = s.office_client_id AND o.active = 1
+                      WHERE s.office_client_id IN ($ph) AND s.active = 1 AND s.tournee_id IS NOT NULL
+                      ORDER BY s.is_default DESC, s.name", $offices);
     }
     foreach ($sites as &$st) {
       $chk = tour_orderable((int) $st['tourId'], $date);
@@ -1353,6 +1356,12 @@ function office_delivery_check($siteId, $deliveryDate, $cid) {
   $s = row("SELECT id, office_client_id, client_id, tournee_id, active FROM ws_office_delivery_sites WHERE id=?", [$siteId]);
   if (!$s || !$s['active'])      return ['ok' => false, 'error' => 'Site de livraison indisponible'];
   if (empty($s['tournee_id']))   return ['ok' => false, 'error' => 'Site non rattaché à une tournée'];
+  // Bureau validé = ws_offices.active = 1 (0/1). Un site rattaché à un bureau
+  // non validé n'est pas commandable, même si le site lui-même est actif.
+  if ($s['office_client_id'] !== null) {
+    $off = row("SELECT active FROM ws_offices WHERE id=?", [$s['office_client_id']]);
+    if (!$off || !$off['active']) return ['ok' => false, 'error' => 'Bureau non validé'];
+  }
   // Appartenance : un compte connecté ne peut commander sur un site rattaché à
   // un bureau QUE s'il appartient à ce bureau — ou si le site est le sien
   // (client_id). On NE fait jamais confiance à l'id passé : vérif en base à
