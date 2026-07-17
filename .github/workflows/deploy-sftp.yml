@@ -72,6 +72,17 @@ jobs:
             -e "ssh -p ${{ vars.SSH_PORT || '22' }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
             php-api/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ vars.WEB_ROOT || '/var/www/html' }}/api/"
 
+      # Applique les migrations SQL non encore jouées (idempotent, versionné).
+      # migrate.sh vient d'être rsyncé avec l'API ; il lit config.php pour les creds.
+      - name: Run DB migrations (idempotent, tracked)
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "bash '${{ vars.WEB_ROOT || '/var/www/html' }}/api/migrate.sh'"
+
       - name: Deploy frontend → ${{ vars.WEB_ROOT || '/var/www/html' }}
         env:
           SSHPASS: ${{ secrets.SSH_PASSWORD }}

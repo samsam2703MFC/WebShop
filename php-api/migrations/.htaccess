@@ -1,0 +1,2 @@
+# Les fichiers de migration ne doivent jamais être servis par le web.
+Require all denied
