@@ -48,7 +48,7 @@
       super(props);
       this.state = {
         lang: 'fr', eventType: '', zoneVal: '', cpVisible: false,
-        openFaq: -1, modalOpen: false, routedName: ''
+        openFaq: -1, modalOpen: false, routedName: '', activeSection: ''
       };
       this._form = null;
       this._reveal = null;
@@ -60,12 +60,21 @@
         if (l === 'fr' || l === 'nl') this.setState({ lang: l });
       } catch (e) {}
 
+      var self = this;
+      var spyIds = ['reseau', 'terrains', 'deroule', 'capacites'];
       var reveal = function () {
         var vh = window.innerHeight || document.documentElement.clientHeight;
         document.querySelectorAll('[data-rev]:not(.in)').forEach(function (el) {
           var r = el.getBoundingClientRect();
           if (r.top < vh * 0.92 && r.bottom > 0) el.classList.add('in');
         });
+        // Scroll spy — highlight the nav entry for the section under the header.
+        var cur = '';
+        for (var i = 0; i < spyIds.length; i++) {
+          var sec = document.getElementById(spyIds[i]);
+          if (sec && sec.getBoundingClientRect().top - 96 <= 0) cur = spyIds[i];
+        }
+        if (cur !== self.state.activeSection) self.setState({ activeSection: cur });
       };
       this._reveal = reveal;
       setTimeout(reveal, 60);
@@ -103,6 +112,14 @@
       return 'border:none;background:' + (active ? 'var(--lp-ink)' : 'transparent') +
         ';color:' + (active ? 'var(--lp-deep)' : 'var(--lp-muted)') +
         ';font-family:var(--font-ui);font-size:11px;letter-spacing:.06em;padding:5px 11px;border-radius:999px;cursor:pointer;';
+    }
+
+    navLink(id) {
+      var active = this.state.activeSection === id;
+      return 'font-size:13px;letter-spacing:.03em;padding-bottom:3px;border-bottom:2px solid ' +
+        (active ? 'var(--lp-abricot)' : 'transparent') +
+        ';color:' + (active ? 'var(--lp-ink)' : 'var(--lp-muted)') +
+        ';transition:color .25s,border-color .25s;';
     }
 
     gotoForm() {
@@ -265,6 +282,22 @@
           formNote: t('Aucun engagement. Réponse sous quelques jours ouvrés.', 'Geen verplichting. Antwoord binnen enkele werkdagen.'),
           footerTag: t('Maison de pains et viennoiseries — Belgique.', 'Huis van brood en viennoiserie — België.'),
           footerLegal: t('© 2026 L’Atelier By · Mentions légales · Confidentialité', '© 2026 L’Atelier By · Wettelijke vermeldingen · Privacy'),
+          // Footer aligned with the index / accueil landing page
+          ftTag: t('Maison de pains et viennoiseries — Belgique, depuis 2019.', 'Huis van brood en viennoiserie — België, sinds 2019.'),
+          ftExplore: t('Explorer', 'Ontdekken'),
+          ftShops: t('Nos boutiques', 'Onze winkels'),
+          ftProducts: t('Produits', 'Producten'),
+          ftExperiences: t('Expériences', 'Ervaringen'),
+          ftServices: t('Services', 'Diensten'),
+          ftCollect: t('Click & Collect', 'Click & Collect'),
+          ftOffice: t('Livraison bureau', 'Kantoorlevering'),
+          ftOnline: t('Magasin en ligne', 'Online winkel'),
+          ftHouse: t('La Maison', 'Het Huis'),
+          ftFranchise: t('Franchise', 'Franchise'),
+          ftGalette: t('Galette des rois', 'Driekoningentaart'),
+          ftCopyright: t('© 2026 L’Atelier By — Tous droits réservés.', '© 2026 L’Atelier By — Alle rechten voorbehouden.'),
+          ftLegalLinks: t('Mentions légales · Confidentialité · Conditions', 'Wettelijke vermeldingen · Privacy · Voorwaarden'),
+          ftTotop: t('Haut de page ↑', 'Naar boven ↑'),
           modalEyebrow: t('Bien reçu', 'Goed ontvangen'),
           modalTitle: t('Votre demande est enregistrée.', 'Uw aanvraag is geregistreerd.'),
           modalClose: t('Fermer', 'Sluiten')
@@ -328,7 +361,9 @@
         '--lp-line': 'rgba(242,201,160,.22)', '--lp-hair': 'rgba(251,243,236,.13)',
         background: 'var(--lp-bg)', color: 'var(--lp-ink)', fontFamily: 'var(--font-ui)',
         fontSize: '16px', lineHeight: '1.65', WebkitFontSmoothing: 'antialiased',
-        minHeight: '100vh', overflowX: 'hidden'
+        // overflow-x:clip (not hidden) keeps the sticky header pinned — `hidden`
+        // makes this element a scroll container, which silently breaks sticky.
+        minHeight: '100vh', overflowX: 'clip'
       };
 
       return React.createElement('div', { style: rootStyle },
@@ -337,10 +372,10 @@
           React.createElement('div', { style: css('max-width:1180px;margin:0 auto;padding:0 clamp(20px,5vw,56px);height:74px;display:flex;align-items:center;justify-content:space-between;gap:24px;') },
             React.createElement('img', { src: 'assets/logo-white.png', alt: "L'Atelier By", className: 'lp-logo', style: css('height:22px;width:auto;display:block;') }),
             React.createElement('nav', { className: 'lp-nav', style: css('display:flex;align-items:center;gap:30px;') },
-              React.createElement('a', { href: '#reseau', style: css('font-size:13px;letter-spacing:.03em;color:var(--lp-muted);') }, c.navReseau),
-              React.createElement('a', { href: '#terrains', style: css('font-size:13px;letter-spacing:.03em;color:var(--lp-muted);') }, c.navTerrains),
-              React.createElement('a', { href: '#deroule', style: css('font-size:13px;letter-spacing:.03em;color:var(--lp-muted);') }, c.navDeroule),
-              React.createElement('a', { href: '#capacites', style: css('font-size:13px;letter-spacing:.03em;color:var(--lp-muted);') }, c.navCapacites)
+              React.createElement('a', { href: '#reseau', style: css(self.navLink('reseau')) }, c.navReseau),
+              React.createElement('a', { href: '#terrains', style: css(self.navLink('terrains')) }, c.navTerrains),
+              React.createElement('a', { href: '#deroule', style: css(self.navLink('deroule')) }, c.navDeroule),
+              React.createElement('a', { href: '#capacites', style: css(self.navLink('capacites')) }, c.navCapacites)
             ),
             React.createElement('div', { style: css('display:flex;align-items:center;gap:16px;') },
               React.createElement('div', { style: css('display:inline-flex;gap:2px;border:1px solid var(--lp-hair);border-radius:999px;padding:3px;') },
@@ -631,14 +666,37 @@
           )
         ),
 
-        /* ============ FOOTER ============ */
-        React.createElement('footer', { style: css('border-top:1px solid var(--lp-hair);background:var(--lp-deep);padding:clamp(48px,7vw,72px) clamp(20px,5vw,56px) 34px;') },
-          React.createElement('div', { style: css('max-width:1180px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:22px;') },
-            React.createElement('div', { style: css('display:flex;align-items:center;gap:18px;') },
-              React.createElement('img', { src: 'assets/logo-white.png', alt: "L'Atelier By", className: 'lp-logo', style: css('height:20px;width:auto;') }),
-              React.createElement('span', { style: css('font-size:13px;color:var(--lp-faint);') }, c.footerTag)
+        /* ============ FOOTER (aligned with index / accueil) ============ */
+        React.createElement('footer', { className: 'lp-foot' },
+          React.createElement('div', { className: 'lp-foot__wrap' },
+            React.createElement('div', { className: 'lp-foot__top' },
+              React.createElement('div', { className: 'lp-foot__brand' },
+                React.createElement('img', { className: 'lp-logo lp-foot__logo', src: 'assets/logo-white.png', alt: "L'Atelier By" }),
+                React.createElement('p', { className: 'lp-foot__tag' }, c.ftTag)
+              ),
+              React.createElement('div', { className: 'lp-foot__col' },
+                React.createElement('h4', null, c.ftExplore),
+                React.createElement('a', { href: '/index.html#boutiques' }, c.ftShops),
+                React.createElement('a', { href: '/index.html#produits' }, c.ftProducts),
+                React.createElement('a', { href: '/index.html#experiences' }, c.ftExperiences)
+              ),
+              React.createElement('div', { className: 'lp-foot__col' },
+                React.createElement('h4', null, c.ftServices),
+                React.createElement('a', { href: '/index.html#experiences' }, c.ftCollect),
+                React.createElement('a', { href: '/index.html#experiences' }, c.ftOffice),
+                React.createElement('a', { href: '/index.html#produits' }, c.ftOnline)
+              ),
+              React.createElement('div', { className: 'lp-foot__col' },
+                React.createElement('h4', null, c.ftHouse),
+                React.createElement('a', { href: '/franchise-lead.html' }, c.ftFranchise),
+                React.createElement('a', { href: '/galette-des-rois.html' }, c.ftGalette)
+              )
             ),
-            React.createElement('span', { style: css('font-size:12px;color:var(--lp-faint);') }, c.footerLegal)
+            React.createElement('div', { className: 'lp-foot__bottom' },
+              React.createElement('span', null, c.ftCopyright),
+              React.createElement('span', null, c.ftLegalLinks),
+              React.createElement('button', { type: 'button', onClick: function () { window.scrollTo({ top: 0, behavior: 'smooth' }); } }, c.ftTotop)
+            )
           )
         ),
 

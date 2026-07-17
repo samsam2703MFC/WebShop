@@ -84,8 +84,7 @@ function dispatch($m, $p) {
       $hasShops = row("SELECT 1 AS x FROM information_schema.tables
                          WHERE table_schema=DATABASE() AND table_name='shops'");
       if ($hasShops) {
-        $shop = row("SELECT s.id, s.slug,
-                            JSON_UNQUOTE(JSON_EXTRACT(s.landing_config,'$.webshop_url')) AS webshop_url
+        $shop = row("SELECT s.id, s.slug, s.webshop_url
                        FROM client c JOIN shops s ON s.id = c.preferred_shop_id
                       WHERE c.id = ?", [$cid]);
       } else {
