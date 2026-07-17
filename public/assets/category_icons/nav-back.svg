@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" stroke="#000" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Icône par défaut de la touche de retour (nav catégories, niveau
+       sous-catégories). Remplaçable via ws_param.category_nav_back_icon. -->
+  <path d="M28 10 L14 24 L28 38"/>
+  <path d="M14 24 H40"/>
+</svg>

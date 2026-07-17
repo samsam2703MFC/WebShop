@@ -160,15 +160,23 @@
       }
     },
 
-    /* ── Config front (ws_param en liste blanche) : flag onglet Fidélité… ── */
+    /* ── Config front (ws_param en liste blanche) : flag onglet Fidélité,
+       icônes des deux touches de première position de la nav catégories…
+       Le repli reprend les mêmes références média que les défauts serveur
+       (des chemins vers la bibliothèque, pas des fichiers en dur). ── */
     async config() {
-      if (!api.endpoint) return { fidelityTabEnabled: true };
+      const FALLBACK = {
+        fidelityTabEnabled: true,
+        categoryNavAllIcon: '/webshop/assets/category_icons/nav-all.svg',
+        categoryNavBackIcon: '/webshop/assets/category_icons/nav-back.svg',
+      };
+      if (!api.endpoint) return FALLBACK;
       try {
         const base = api.endpoint.replace(/\/auth\/?$/, '');
         const r = await fetch(`${base}/config`, { credentials: 'include' });
-        if (r.ok) return await r.json();
+        if (r.ok) return { ...FALLBACK, ...(await r.json()) };
       } catch (_) {}
-      return { fidelityTabEnabled: true };
+      return FALLBACK;
     },
 
     /* ── Mes achats : liste unifiée tickets + commandes (12 mois, paginée) ── */
