@@ -134,6 +134,32 @@
       }
     },
 
+    /* ── Bureau (site de livraison) — liste par shop + liaison (parité PWA) ── */
+    async listOfficeSites({ shopId }) {
+      if (!api.endpoint || !shopId) return [];
+      try {
+        const base = api.endpoint.replace(/\/auth\/?$/, '');
+        const r = await fetch(`${base}/office-sites?shopId=${encodeURIComponent(shopId)}`, { credentials: 'include' });
+        if (r.ok) { const j = await r.json(); return Array.isArray(j) ? j : []; }
+      } catch (_) {}
+      return [];
+    },
+    async setOfficeSite(siteId) {
+      if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
+      try {
+        const r = await fetch(`${api.endpoint}/office`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ siteId: siteId || null }),
+        });
+        const j = await r.json();
+        if (r.ok) return { ok: true, user: j.user };
+        return { ok: false, error: j.error || 'Échec de la liaison.' };
+      } catch (_) {
+        return { ok: false, error: 'Réseau indisponible.' };
+      }
+    },
+
     /* ── Logout ─────────────────────────────────────────────────────── */
     async logout() {
       if (api.endpoint) {

@@ -368,6 +368,16 @@ function dispatch($m, $p) {
                           FROM ws_office_delivery_sites WHERE office_client_id=? AND active=1", [$mm['id']]);
     json_out($o);
   }
+  /* Sites de livraison au bureau d'un shop — MÊME liste que la PWA
+     (repo_offices) : ws_office_delivery_sites actifs, filtrés par shop. Sert le
+     sélecteur « bureau » du profil webshop. */
+  if ($m === 'GET' && $p === '/office-sites') {
+    $s = (int) (qp('shopId') ?: 0);
+    if (!$s) json_out([]);
+    json_out(rows("SELECT id, name, address FROM ws_office_delivery_sites
+                    WHERE shop_id = ? AND active = 1 AND name IS NOT NULL AND name <> ''
+                    ORDER BY name", [$s]));
+  }
 
   /* Créneaux de livraison d'un bureau = les fenêtres de SA tournée (ws_tour_availability).
      window_label 'afternoon' → slot 'soir' (ex. livraison 17:00, cutoff 15:00). Par tournée :
@@ -799,6 +809,30 @@ function dispatch($m, $p) {
     $r['saved'] = true;
     $r['user']  = user_payload($id);
     json_out($r);
+  }
+  /* Lier / changer / délier le bureau (site de livraison) du client — miroir du
+     PWA handle_set_office, MÊME stockage (pwa_offices + pwa_client_office) : la
+     modification faite ici est visible dans la PWA et inversement. */
+  if ($m === 'POST' && $p === '/auth/office') {
+    $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    $ref = body()['siteId'] ?? null;
+    if ($ref === null || $ref === '') {
+      q("DELETE FROM pwa_client_office WHERE client_id = ?", [$id]);
+      json_out(['user' => user_payload($id)]);
+    }
+    $po = row("SELECT id FROM pwa_offices WHERE office_ref = ? LIMIT 1", [(string) $ref]);
+    $poid = (int) ($po['id'] ?? 0);
+    if (!$poid) {
+      // Auto-création depuis le site choisi (même logique que la PWA après fix).
+      $site = row("SELECT id, name FROM ws_office_delivery_sites WHERE id = ? AND active = 1 LIMIT 1", [(int) $ref]);
+      if (!$site) json_out(['error' => 'Bureau introuvable.'], 404);
+      q("INSERT INTO pwa_offices (office_ref, name, name_norm, status) VALUES (?,?,?,'active')",
+        [(string) $ref, $site['name'], mb_strtolower(trim($site['name']))]);
+      $poid = (int) db()->lastInsertId();
+    }
+    q("DELETE FROM pwa_client_office WHERE client_id = ?", [$id]);
+    q("INSERT INTO pwa_client_office (client_id, office_id) VALUES (?,?)", [$id, $poid]);
+    json_out(['user' => user_payload($id)]);
   }
   if ($m === 'GET' && $p === '/auth/me') {
     $id = auth_uid(); $u = $id ? user_payload($id) : null;

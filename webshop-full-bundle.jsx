@@ -2057,6 +2057,12 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   });
   const [officeErr, setOfficeErr] = useState('');
   const [officeBusy, setOfficeBusy] = useState(false);
+  // Bureau « site de livraison » (parité PWA) : sélecteur lié au shop.
+  const [siteStep, setSiteStep] = useState('idle');   // 'idle' | 'pick'
+  const [siteList, setSiteList] = useState([]);
+  const [sitePicked, setSitePicked] = useState('');
+  const [siteBusy, setSiteBusy] = useState(false);
+  const [siteErr, setSiteErr] = useState('');
 
   // re-sync the form whenever a different user is loaded into the modal
   useEffect(() => {
@@ -2148,6 +2154,38 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       }
     } finally { setOfficeBusy(false); }
   }
+  // ── Bureau « site de livraison » (parité PWA) : lier / changer / délier ──
+  // Liste = ws_office_delivery_sites du shop (même source que la PWA) ; la
+  // liaison est persistée côté serveur dans pwa_client_office (partagé PWA⇄WS).
+  async function openSitePicker() {
+    setSiteErr(''); setSitePicked(''); setSiteStep('pick'); setSiteBusy(true);
+    try {
+      const shopId = (user.officeSite && user.officeSite.shopId) || form.preferredShopId || currentShopId;
+      const list = (window.WSAuth && typeof window.WSAuth.listOfficeSites === 'function')
+        ? await window.WSAuth.listOfficeSites({ shopId }) : [];
+      setSiteList(Array.isArray(list) ? list : []);
+    } catch (_) { setSiteList([]); }
+    setSiteBusy(false);
+  }
+  async function saveSite() {
+    if (!sitePicked) { setSiteErr('Sélectionnez un bureau.'); return; }
+    setSiteBusy(true); setSiteErr('');
+    const r = await window.WSAuth.setOfficeSite(sitePicked);
+    setSiteBusy(false);
+    if (r.ok && r.user) {
+      if (typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
+      setSiteStep('idle');
+    } else {
+      setSiteErr(r.error || 'Échec de la liaison.');
+    }
+  }
+  async function unlinkSite() {
+    setSiteBusy(true);
+    const r = await window.WSAuth.setOfficeSite(null);
+    setSiteBusy(false);
+    if (r.ok && r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
+  }
+
   function startUnplug() { setOfficeStep('confirm'); setOfficeErr(''); }
   function confirmUnplug() {
     persistPartial({ officeId: null });
@@ -2486,7 +2524,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         {/* Bureau lié côté PWA = un SITE de livraison (ws_office_delivery_sites),
             parfois sans entreprise ws_offices associée : on l'affiche quand même,
             avec les mêmes données que la carte bureau de la PWA. */}
-        {officeStep === 'idle' && status === 'unlinked' && user.officeSite && (
+        {officeStep === 'idle' && siteStep === 'idle' && status === 'unlinked' && user.officeSite && (
           <div className="ws-acc__card ws-acc__card--ok">
             <div className="ws-acc__card-row"><span className="ws-acc__k">Bureau</span><span className="ws-acc__v">{user.officeSite.name}</span></div>
             {user.officeSite.address && <div className="ws-acc__card-row"><span className="ws-acc__k">Adresse</span><span className="ws-acc__v">{user.officeSite.address}</span></div>}
@@ -2494,13 +2532,47 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
               {Number(user.officeSite.active) ? 'Validé' : 'En attente de validation'}
             </div>
             <p className="ws-acc__note">Proposé par défaut comme « Livraison au bureau » lors du paiement.</p>
+            <div className="ws-acc__row-foot">
+              <button type="button" className="ws-fid__cancel" onClick={openSitePicker} disabled={siteBusy}>Changer de bureau</button>
+              <button type="button" className="ws-acc__unplug" onClick={unlinkSite} disabled={siteBusy}>Délier ce bureau</button>
+            </div>
           </div>
         )}
 
-        {officeStep === 'idle' && status === 'unlinked' && !user.officeSite && (
+        {officeStep === 'idle' && siteStep === 'idle' && status === 'unlinked' && !user.officeSite && (
           <div className="ws-acc__card ws-acc__card--empty">
-            <p className="ws-acc__note">Aucun bureau associé. Liez-vous à un bureau approuvé ou demandez l'ajout du vôtre.</p>
-            <button className="ws-cta ws-cta--block" onClick={chooseLinkAnother}>Lier un bureau</button>
+            <p className="ws-acc__note">Aucun bureau associé. Liez-vous à un bureau de livraison de votre boutique.</p>
+            <button className="ws-cta ws-cta--block" onClick={openSitePicker}>Lier un bureau</button>
+          </div>
+        )}
+
+        {/* Sélecteur de bureau (sites de livraison du shop — même liste que la PWA) */}
+        {siteStep === 'pick' && (
+          <div className="ws-acc__card">
+            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>
+              Bureaux de {((shops || []).find((s) => s.id === ((user.officeSite && user.officeSite.shopId) || form.preferredShopId || currentShopId)) || {}).name || 'votre boutique'}
+            </div>
+            {siteBusy && <p className="ws-acc__hint">Chargement…</p>}
+            {!siteBusy && siteList.length === 0 && (
+              <p className="ws-acc__hint">Aucun bureau de livraison disponible pour cette boutique.</p>
+            )}
+            {!siteBusy && siteList.length > 0 && (
+              <div className="ws-acc__select-row">
+                <select className="ws-acc__input" value={sitePicked}
+                  onChange={(e) => { setSitePicked(e.target.value); setSiteErr(''); }}
+                  aria-label="Choisir un bureau de livraison">
+                  <option value="">— Sélectionner un bureau —</option>
+                  {siteList.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}{s.address ? ' — ' + s.address : ''}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {siteErr && <p className="ws-acc__vat-msg ws-acc__vat-msg--err">⚠ {siteErr}</p>}
+            <div className="ws-acc__row-foot">
+              <button type="button" className="ws-fid__cancel" onClick={() => setSiteStep('idle')}>Annuler</button>
+              <button type="button" className="ws-cta" onClick={saveSite} disabled={siteBusy || !sitePicked}>Lier ce bureau</button>
+            </div>
           </div>
         )}
 
