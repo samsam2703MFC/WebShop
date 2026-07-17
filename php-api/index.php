@@ -1321,8 +1321,13 @@ function tour_orderable($tourId, $deliveryDate) {
   $shop = (int) $t['shop_id'];
   if (row("SELECT 1 AS x FROM ws_tour_closures WHERE tour_id=? AND closure_date=? LIMIT 1", [$tourId, $deliveryDate]))
     return ['ok' => false, 'reason' => 'Tournée fermée ce jour'];
-  $tzr = row("SELECT timezone FROM ws_shops WHERE id=?", [$shop]);
-  $tzName = ($tzr && !empty($tzr['timezone'])) ? $tzr['timezone'] : 'Europe/Brussels';
+  // Fuseau boutique : ws_shops.timezone si la colonne existe (capacité), sinon
+  // Europe/Brussels — correct pour toutes les boutiques belges du réseau.
+  $tzName = 'Europe/Brussels';
+  if (col_exists('ws_shops', 'timezone')) {
+    $tzr = row("SELECT timezone FROM ws_shops WHERE id=?", [$shop]);
+    if ($tzr && !empty($tzr['timezone'])) $tzName = $tzr['timezone'];
+  }
   try { $zone = new DateTimeZone($tzName); } catch (Throwable $e) { $zone = new DateTimeZone('Europe/Brussels'); }
   $now = new DateTime('now', $zone);
   $today = $now->format('Y-m-d');
