@@ -750,22 +750,52 @@ function dispatch($m, $p) {
     }
     json_out(['user' => user_payload($cid), 'token' => sign_token(['id' => $cid, 'exp' => time() + 30 * 86400])]);
   }
-  /* Vérifie la TVA via VIES ET lie la société au client (persisté) — miroir
-     exact du PWA handle_billing_verify, sur la même table `client` : le badge
-     « vérifié » (verified_at) et les données société restent identiques des
-     deux côtés. */
+  /* Vérifie la TVA via VIES ET lie la société au client (persisté) — miroir du
+     PWA handle_billing_verify (modèle « company link ») : la société est une
+     LIGNE client dédiée (is_b2b=1, retrouvée par TVA ou créée), la personne y
+     est liée via company_client_id et sa copie locale des champs société est
+     nettoyée. Badge et données restent ainsi identiques PWA ⇄ WS. */
   if ($m === 'POST' && $p === '/auth/billing-verify') {
     $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
     $r = vies_lookup((string) (body()['vat'] ?? ''));
     if (empty($r['valid'])) json_out($r);
     $d = $r['data'];
-    q("UPDATE client
-          SET tax_number=?, company_name=?, invoice_name=?, invoice_country=?, invoice_address=?,
-              invoice_postal_code=COALESCE(?, invoice_postal_code),
-              invoice_city=COALESCE(?, invoice_city),
-              is_b2b=1, verified_at=NOW()
-        WHERE id=?",
-      [$d['vat'], $d['name'], $d['name'], $d['country'], $d['address'], $d['postalCode'], $d['city'], $id]);
+    try {
+      // 1) Retrouver la ligne société existante (par TVA), sinon la créer.
+      $c = row("SELECT id FROM client
+                 WHERE tax_number = ? AND is_b2b = 1 AND (name IS NULL OR name = '')
+                 ORDER BY (verified_at IS NOT NULL) DESC, id ASC LIMIT 1", [$d['vat']]);
+      $companyId = (int) ($c['id'] ?? 0);
+      if ($companyId) {
+        q("UPDATE client SET company_name=?, invoice_name=COALESCE(NULLIF(invoice_name,''),?),
+              invoice_address=COALESCE(NULLIF(invoice_address,''),?),
+              invoice_postal_code=COALESCE(invoice_postal_code,?), invoice_city=COALESCE(invoice_city,?),
+              is_b2b=1, verified_at=NOW() WHERE id=?",
+          [$d['name'], $d['name'], $d['address'], $d['postalCode'], $d['city'], $companyId]);
+      } else {
+        $ms = (int) ((row("SELECT id_main_shop FROM client WHERE id=?", [$id])['id_main_shop'] ?? 0) ?: 1);
+        q("INSERT INTO client (id_main_shop, is_b2b, company_name, tax_number, invoice_name,
+              invoice_address, invoice_postal_code, invoice_city, active, source_channel, verified_at)
+           VALUES (?,1,?,?,?,?,?,?,1,'webshop',NOW())",
+          [$ms, $d['name'], $d['vat'], $d['name'], $d['address'], $d['postalCode'], $d['city']]);
+        $companyId = (int) db()->lastInsertId();
+      }
+      // 2) Lier la personne à la société + retirer sa copie des champs société.
+      q("UPDATE client SET company_client_id=?, is_b2b=1,
+            company_name=NULL, tax_number=NULL, invoice_name=NULL, invoice_address=NULL
+          WHERE id=?", [$companyId, $id]);
+      $r['companyClientId'] = $companyId;
+    } catch (Throwable $e) {
+      // Schéma sans company_client_id (pré-migration) : écriture directe sur la
+      // personne, comme l'ancien flux PWA.
+      q("UPDATE client
+            SET tax_number=?, company_name=?, invoice_name=?, invoice_country=?, invoice_address=?,
+                invoice_postal_code=COALESCE(?, invoice_postal_code),
+                invoice_city=COALESCE(?, invoice_city),
+                is_b2b=1, verified_at=NOW()
+          WHERE id=?",
+        [$d['vat'], $d['name'], $d['name'], $d['country'], $d['address'], $d['postalCode'], $d['city'], $id]);
+    }
     $r['saved'] = true;
     $r['user']  = user_payload($id);
     json_out($r);
@@ -788,12 +818,19 @@ function dispatch($m, $p) {
       $sets[] = 'phone_e164=?';   $vals[] = ($e164 ?: null);
     }
     // Entreprise + facturation : persistées dans la table `client` partagée avec
-    // la PWA, sur les MÊMES colonnes que handle_billing_verify (PWA). Ainsi le
-    // formulaire WS enregistre réellement ces données et elles restent visibles
-    // des deux côtés.
-    if (array_key_exists('company', $b))    { $sets[] = 'company_name=?'; $vals[] = ($b['company'] !== '' ? $b['company'] : null); }
-    if (array_key_exists('postalCode', $b)) { $sets[] = 'zip=?';          $vals[] = ($b['postalCode'] !== '' ? $b['postalCode'] : null); }
-    if (array_key_exists('isBusiness', $b)) { $sets[] = 'is_b2b=?';       $vals[] = $b['isBusiness'] ? 1 : 0; }
+    // la PWA. Si une fiche société est liée (company_client_id, modèle PWA),
+    // les champs société vont sur CETTE ligne — c'est elle que les deux profils
+    // affichent ; sinon sur la personne (comptes non migrés).
+    $cc = 0;
+    try { $cc = (int) (row("SELECT company_client_id AS cc FROM client WHERE id=?", [$id])['cc'] ?? 0); }
+    catch (Throwable $e) { /* colonne absente */ }
+    $csets = []; $cvals = [];                       // cible : fiche société liée
+    $addCo = function ($col, $v) use ($cc, &$csets, &$cvals, &$sets, &$vals) {
+      if ($cc) { $csets[] = "$col=?"; $cvals[] = $v; } else { $sets[] = "$col=?"; $vals[] = $v; }
+    };
+    if (array_key_exists('company', $b))    { $addCo('company_name', ($b['company'] !== '' ? $b['company'] : null)); }
+    if (array_key_exists('postalCode', $b)) { $sets[] = 'zip=?';    $vals[] = ($b['postalCode'] !== '' ? $b['postalCode'] : null); }
+    if (array_key_exists('isBusiness', $b)) { $sets[] = 'is_b2b=?'; $vals[] = $b['isBusiness'] ? 1 : 0; }
     if (isset($b['invoice']) && is_array($b['invoice'])) {
       $inv  = $b['invoice'];
       $imap = [
@@ -805,10 +842,11 @@ function dispatch($m, $p) {
         'invoice_city'        => 'city',
       ];
       foreach ($imap as $col => $k) {
-        if (array_key_exists($k, $inv)) { $sets[] = "$col=?"; $vals[] = ($inv[$k] !== '' ? $inv[$k] : null); }
+        if (array_key_exists($k, $inv)) { $addCo($col, ($inv[$k] !== '' ? $inv[$k] : null)); }
       }
     }
-    if ($sets) { $vals[] = $id; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $vals); }
+    if ($sets)  { $vals[]  = $id; q("UPDATE client SET " . implode(',', $sets)  . " WHERE id=?", $vals); }
+    if ($csets) { $cvals[] = $cc; q("UPDATE client SET " . implode(',', $csets) . " WHERE id=?", $cvals); }
     json_out(['user' => user_payload($id)]);
   }
 
@@ -1064,6 +1102,31 @@ function user_payload($id) {
       if ($r2 && !empty($r2['oid'])) $officeId = $r2['oid'];
     } catch (Throwable $e) { /* tables legacy PWA absentes — repli ignoré */ }
   }
+  if (!$officeId && !empty($u['email'])) {
+    // Dernier repli : e-mail rattaché à une entreprise de livraison bureau
+    // (ws_office_emails — même source que « commander pour une entreprise »).
+    try {
+      $r3 = row("SELECT e.office_id AS oid
+                   FROM ws_office_emails e JOIN ws_offices o ON o.id = e.office_id
+                  WHERE e.email = ? AND e.active = 1 AND o.active = 1
+                  ORDER BY (o.status = 'validated') DESC LIMIT 1",
+                [strtolower(trim($u['email']))]);
+      if ($r3 && !empty($r3['oid'])) $officeId = $r3['oid'];
+    } catch (Throwable $e) { /* table absente — repli ignoré */ }
+  }
+  // Société liée (modèle « company link » de la PWA) : client.company_client_id
+  // pointe vers une LIGNE client société (is_b2b=1) qui porte les vraies données
+  // de facturation ; les colonnes société de la personne sont alors NULL. On
+  // affiche la fiche société quand elle existe — même règle que client_normalize
+  // côté PWA — sinon les colonnes de la personne (comptes non migrés).
+  $comp = null;
+  try {
+    if (!empty($u['company_client_id'])) {
+      $comp = row("SELECT company_name, tax_number, invoice_name, invoice_country, invoice_address,
+                          invoice_postal_code, invoice_city, verified_at, peppol_verified
+                     FROM client WHERE id = ? LIMIT 1", [(int) $u['company_client_id']]);
+    }
+  } catch (Throwable $e) { /* colonne company_client_id absente */ }
   return [
     'id' => (int) $u['id'],
     'email' => $u['email'] ?? null,
@@ -1080,21 +1143,22 @@ function user_payload($id) {
     'preferredShopId' => $u['preferred_shop_id'] ?? null,
     'lang' => $u['locale'] ?? ($u['preferred_lang'] ?? 'fr'),
     'isBusiness' => (bool) ($u['is_b2b'] ?? ($u['is_business'] ?? 0)),
-    // Facturation entreprise (table `client` partagée avec la PWA). Ces champs
-    // pré-remplissent AccountModal (user.company + user.invoice.*) après le
-    // handoff SSO et à chaque reload. Miroir de repo_client_public() côté PWA.
-    'company' => $u['company_name'] ?? ($u['invoice_name'] ?? null),
+    // Facturation entreprise : fiche société liée (company_client_id) en
+    // priorité, sinon les colonnes de la personne. Mêmes valeurs que le profil
+    // PWA (repo_client_public / client_normalize).
+    'company' => ($comp['company_name'] ?? $comp['invoice_name'] ?? null)
+              ?? ($u['company_name'] ?? ($u['invoice_name'] ?? null)),
     'invoice' => [
-      'country'    => $u['invoice_country'] ?? 'BE',
-      'vat'        => $u['invoice_vat'] ?? ($u['tax_number'] ?? null),
-      'name'       => $u['invoice_name'] ?? null,
-      'address'    => $u['invoice_address'] ?? null,
-      'postalCode' => $u['invoice_postal_code'] ?? null,
-      'city'       => $u['invoice_city'] ?? null,
-      // « Vérifié » = société effectivement liée en base (verified_at rempli),
-      // même règle que la carte VIES du profil PWA.
-      'viesVerified' => !empty($u['verified_at']),
-      'peppol'       => (bool) ($u['peppol_verified'] ?? 0),
+      'country'    => ($comp['invoice_country'] ?? null) ?? ($u['invoice_country'] ?? 'BE'),
+      'vat'        => ($comp['tax_number'] ?? null) ?? ($u['invoice_vat'] ?? ($u['tax_number'] ?? null)),
+      'name'       => ($comp['invoice_name'] ?? $comp['company_name'] ?? null) ?? ($u['invoice_name'] ?? null),
+      'address'    => ($comp['invoice_address'] ?? null) ?? ($u['invoice_address'] ?? null),
+      'postalCode' => ($comp['invoice_postal_code'] ?? null) ?? ($u['invoice_postal_code'] ?? null),
+      'city'       => ($comp['invoice_city'] ?? null) ?? ($u['invoice_city'] ?? null),
+      // « Vérifié » = société liée & vérifiée (verified_at de la fiche société,
+      // sinon celui de la personne) — même règle que la carte VIES de la PWA.
+      'viesVerified' => !empty($comp['verified_at']) || !empty($u['verified_at']),
+      'peppol'       => (bool) (($comp['peppol_verified'] ?? 0) ?: ($u['peppol_verified'] ?? 0)),
     ],
     'fidelityApp' => [
       'active'     => (bool) ($u['fidelity_active'] ?? 0),
