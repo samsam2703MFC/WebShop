@@ -725,6 +725,13 @@ function dispatch($m, $p) {
       [password_hash($pass, PASSWORD_BCRYPT), $u['id']]);
     json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400]), 'updated' => true]);
   }
+  /* ── VIES (validation TVA UE) — public, sans état. Miroir du PWA vies_lookup.
+     WSVies.endpoint = <base>/vies/{country}/{vat}. Renvoie
+     { valid, data:{ vat, country, name, address, postalCode, city } } pour
+     pré-remplir le formulaire de facturation exactement comme la PWA. ── */
+  if ($m === 'GET' && ($mm = $match('/vies/:country/:vat'))) {
+    json_out(vies_lookup($mm['vat']));
+  }
   // SSO handoff PWA -> webshop. La PWA insère un jeton à usage unique dans
   // auth_handoff (token_hash = sha256 du jeton, + client_id + expires_at) puis
   // redirige vers /webshop?handoff=<jeton>. Ici on le vérifie et on ouvre la session.
@@ -759,6 +766,27 @@ function dispatch($m, $p) {
       $sets[] = 'phone=?';        $vals[] = ($nat ?: null);
       $sets[] = 'phone_prefix=?'; $vals[] = ($nat !== '' ? $pfx : null);
       $sets[] = 'phone_e164=?';   $vals[] = ($e164 ?: null);
+    }
+    // Entreprise + facturation : persistées dans la table `client` partagée avec
+    // la PWA, sur les MÊMES colonnes que handle_billing_verify (PWA). Ainsi le
+    // formulaire WS enregistre réellement ces données et elles restent visibles
+    // des deux côtés.
+    if (array_key_exists('company', $b))    { $sets[] = 'company_name=?'; $vals[] = ($b['company'] !== '' ? $b['company'] : null); }
+    if (array_key_exists('postalCode', $b)) { $sets[] = 'zip=?';          $vals[] = ($b['postalCode'] !== '' ? $b['postalCode'] : null); }
+    if (array_key_exists('isBusiness', $b)) { $sets[] = 'is_b2b=?';       $vals[] = $b['isBusiness'] ? 1 : 0; }
+    if (isset($b['invoice']) && is_array($b['invoice'])) {
+      $inv  = $b['invoice'];
+      $imap = [
+        'invoice_country'     => 'country',
+        'tax_number'          => 'vat',
+        'invoice_name'        => 'name',
+        'invoice_address'     => 'address',
+        'invoice_postal_code' => 'postalCode',
+        'invoice_city'        => 'city',
+      ];
+      foreach ($imap as $col => $k) {
+        if (array_key_exists($k, $inv)) { $sets[] = "$col=?"; $vals[] = ($inv[$k] !== '' ? $inv[$k] : null); }
+      }
     }
     if ($sets) { $vals[] = $id; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $vals); }
     json_out(['user' => user_payload($id)]);
@@ -1017,14 +1045,101 @@ function user_payload($id) {
     'preferredShopId' => $u['preferred_shop_id'] ?? null,
     'lang' => $u['locale'] ?? ($u['preferred_lang'] ?? 'fr'),
     'isBusiness' => (bool) ($u['is_b2b'] ?? ($u['is_business'] ?? 0)),
-    'fidelityApp' => ['active' => (bool) ($u['fidelity_active'] ?? 0)],
+    // Facturation entreprise (table `client` partagée avec la PWA). Ces champs
+    // pré-remplissent AccountModal (user.company + user.invoice.*) après le
+    // handoff SSO et à chaque reload. Miroir de repo_client_public() côté PWA.
+    'company' => $u['company_name'] ?? ($u['invoice_name'] ?? null),
+    'invoice' => [
+      'country'    => $u['invoice_country'] ?? 'BE',
+      'vat'        => $u['invoice_vat'] ?? ($u['tax_number'] ?? null),
+      'name'       => $u['invoice_name'] ?? null,
+      'address'    => $u['invoice_address'] ?? null,
+      'postalCode' => $u['invoice_postal_code'] ?? null,
+      'city'       => $u['invoice_city'] ?? null,
+    ],
+    'fidelityApp' => [
+      'active'     => (bool) ($u['fidelity_active'] ?? 0),
+      'linkedAt'   => $u['fidelity_linked_at'] ?? null,
+      // Adresse du PWA (QR d'installation quand l'app fidélité n'est pas encore
+      // liée). Source unique : ws_param.pwa_url ; repli sur la racine serveur.
+      'installUrl' => pwa_url(),
+    ],
   ];
+}
+
+/* Adresse du PWA (app fidélité). Source unique : la table de config `ws_param`,
+ * clé `pwa_url`. La structure de ws_param n'étant pas figée, on tente les formes
+ * clé/valeur les plus courantes ET une colonne dédiée, chacune isolée en
+ * try/catch. Repli : la RACINE du serveur — le webshop vit sous /webshop/, donc
+ * `<scheme>://<host>/` pointe sur le PWA. Toujours surchargeable via ws_param. */
+function pwa_url() {
+  $tries = [
+    "SELECT param_value AS v FROM ws_param WHERE param_key = 'pwa_url' LIMIT 1",
+    "SELECT value       AS v FROM ws_param WHERE name      = 'pwa_url' LIMIT 1",
+    "SELECT `value`     AS v FROM ws_param WHERE `key`     = 'pwa_url' LIMIT 1",
+    "SELECT pwa_url     AS v FROM ws_param LIMIT 1",
+  ];
+  foreach ($tries as $sql) {
+    try { $r = row($sql); if ($r && !empty($r['v'])) return (string) $r['v']; }
+    catch (Throwable $e) { /* forme absente -> on tente la suivante */ }
+  }
+  $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+  $host   = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? 'localhost');
+  return $scheme . '://' . $host . '/';
 }
 
 /**
  * Normalise un numéro : préfixe international + numéro national.
  * Retourne [prefix('+32'), national('0470000002'), e164('+32470000002')].
  */
+/* Validation TVA via le service VIES (REST UE). Public, sans état. Renvoie la
+ * raison sociale + l'adresse découpée (rue / code postal / ville), au format
+ * attendu par le formulaire de facturation. Miroir exact du PWA vies_lookup. */
+function vies_lookup($rawVat) {
+  $vat = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string) $rawVat));
+  if (strlen($vat) < 4 || !ctype_alpha(substr($vat, 0, 2))) {
+    return ['valid' => false, 'error' => ['code' => 'invalid', 'message' => 'N° TVA invalide.']];
+  }
+  $country = substr($vat, 0, 2);
+  $number  = substr($vat, 2);
+  $url = "https://ec.europa.eu/taxation_customs/vies/rest-api/ms/$country/vat/$number";
+  $res = false; $http = 0;
+  if (function_exists('curl_init')) {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 12, CURLOPT_HTTPHEADER => ['Accept: application/json']]);
+    $res  = curl_exec($ch);
+    $http = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+  } else {
+    $ctx = stream_context_create(['http' => ['timeout' => 12, 'header' => 'Accept: application/json']]);
+    $res  = @file_get_contents($url, false, $ctx);
+    $http = $res !== false ? 200 : 0;
+  }
+  if ($res === false || $http >= 500 || $http === 0) {
+    return ['valid' => false, 'error' => ['code' => 'unavailable', 'message' => 'VIES indisponible. Veuillez réessayer.']];
+  }
+  $d = json_decode($res, true);
+  if (!is_array($d)) {
+    return ['valid' => false, 'error' => ['code' => 'unavailable', 'message' => 'VIES indisponible.']];
+  }
+  if (empty($d['valid']) && empty($d['isValid'])) {
+    return ['valid' => false, 'error' => ['code' => 'invalid', 'message' => 'Ce numéro de TVA n’a pas été reconnu.']];
+  }
+  $name = isset($d['name'])    && $d['name']    !== '---' ? trim((string) $d['name'])    : null;
+  $addr = isset($d['address']) && $d['address'] !== '---' ? trim((string) $d['address']) : null;
+  // Découpe l'adresse multi-lignes en rue / code postal / ville (comme la PWA).
+  $lines  = $addr !== null ? array_values(array_filter(array_map('trim', preg_split('/\r?\n/', $addr)))) : [];
+  $street = $lines[0] ?? $addr;
+  $postal = null; $city = null;
+  if (count($lines) >= 2 && preg_match('/^(\d{4,6})\s+(.+)$/', (string) end($lines), $mm)) {
+    $postal = $mm[1]; $city = trim($mm[2]);
+  }
+  return ['valid' => true, 'data' => [
+    'vat'     => $vat,   'country'    => $country, 'name' => $name,
+    'address' => $street, 'postalCode' => $postal,  'city' => $city,
+  ]];
+}
+
 function norm_phone($prefix, $raw) {
   $pfx = trim((string) $prefix) !== '' ? trim((string) $prefix) : '+32';
   if ($pfx[0] !== '+') $pfx = '+' . ltrim($pfx, '+');

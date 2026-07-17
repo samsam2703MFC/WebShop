@@ -2098,17 +2098,17 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     }
   }
 
-  // Fidelity toggle: OFF→ON opens the QR modal; ON→OFF unlinks immediately.
+  // Toggle app fidélité. L'état réel vit en base (fidelity_active, écrit par le
+  // PWA lors de la liaison) ; la boutique le reflète seulement.
+  //  • OFF→ON : ouvre la modale QR vers le PWA (pas d'activation locale — c'est
+  //    dans le PWA que ça se lie ; on ne coche donc pas le toggle).
+  //  • ON→OFF : délie côté boutique (état local jusqu'au prochain reload).
   function toggleFidelity(next) {
     if (next) {
-      setFidOpen(true);              // QR modal handles confirmation
+      setFidOpen(true);              // modale QR → installer/ouvrir le PWA
     } else {
       persistPartial({ fidelityApp: { active: false, linkedAt: null } });
     }
-  }
-  function onFidelityConfirmed({ linkedAt }) {
-    setFidOpen(false);
-    persistPartial({ fidelityApp: { active: true, linkedAt } });
   }
 
   // ── Office: unplug / reconnect / add new ───────────────────────────
@@ -2421,7 +2421,6 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       <FidelityLinkPanel
         open={fidOpen}
         user={user}
-        onConfirmed={onFidelityConfirmed}
         onClose={() => setFidOpen(false)}
       />
 
@@ -2577,13 +2576,24 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
 // Shown when the user toggles the fidelity-app setting from OFF to ON.
 // =========================================================================
 function FidelityQR({ payload }) {
-  // 21x21 deterministic pseudo-QR with three corner finders. Looks the part
-  // for the demo; production would use a real QR library (qrcode.react, etc).
+  // Vrai QR scannable (window.QR, fourni par qr.jsx). L'ancienne grille pseudo-
+  // aléatoire ne servait que de décor : on ne garde un repli que si l'encodeur
+  // n'est pas chargé.
+  // Les DEUX useMemo sont appelés inconditionnellement (Rules of Hooks) : on ne
+  // branche qu'APRÈS, dans le rendu.
+  const svg = React.useMemo(() => {
+    try {
+      if (payload && window.QR && typeof window.QR.render === 'function') {
+        return window.QR.render(payload, { size: 220, margin: 3 });
+      }
+    } catch (_) {}
+    return null;
+  }, [payload]);
   const grid = React.useMemo(() => {
     const N = 21;
     const cells = Array.from({ length: N * N }, () => false);
     let h = 0;
-    for (let i = 0; i < payload.length; i++) h = (h * 31 + payload.charCodeAt(i)) >>> 0;
+    for (let i = 0; i < (payload || '').length; i++) h = (h * 31 + payload.charCodeAt(i)) >>> 0;
     let r = h || 1;
     for (let i = 0; i < N * N; i++) {
       r = (r * 1664525 + 1013904223) >>> 0;
@@ -2599,6 +2609,14 @@ function FidelityQR({ payload }) {
     corner(0, 0); corner(N - 7, 0); corner(0, N - 7);
     return { N, cells };
   }, [payload]);
+  // Vrai QR si l'encodeur est chargé…
+  if (svg) {
+    return (
+      <div className="ws-fid__qr" role="img" aria-label="QR code vers l'application L'Atelier"
+        dangerouslySetInnerHTML={{ __html: svg }} />
+    );
+  }
+  // …sinon repli décoratif (NON scannable).
   const N = grid.N, cell = 8, size = N * cell;
   const rects = [];
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
@@ -2612,56 +2630,40 @@ function FidelityQR({ payload }) {
   );
 }
 
-function FidelityLinkPanel({ open, user, onConfirmed, onClose }) {
-  const [step, setStep] = useState('qr');
-  const [pulse, setPulse] = useState(false);
-  useEffect(() => { if (open) { setStep('qr'); setPulse(false); } }, [open]);
+function FidelityLinkPanel({ open, user, onClose }) {
+  // Modale QR-only : elle montre l'adresse du PWA (user.fidelityApp.installUrl,
+  // servi par le backend depuis ws_param.pwa_url). L'activation réelle de l'app
+  // fidélité se fait DANS le PWA (il écrit fidelity_active en base) ; la boutique
+  // ne fait que refléter cet état — pas de fausse liaison locale ici.
   const payload = React.useMemo(() => {
     if (!open || !user) return '';
-    const nonce = Math.random().toString(36).slice(2, 10);
-    return `latelier://fidelity/link?u=${encodeURIComponent(user.id || user.email || 'demo')}&n=${nonce}`;
-  }, [open, user?.id, user?.email]);
+    return (user.fidelityApp && user.fidelityApp.installUrl) || '';
+  }, [open, user?.fidelityApp?.installUrl]);
   if (!open) return null;
-  function confirm() {
-    setStep('success'); setPulse(true);
-    setTimeout(() => {
-      if (typeof onConfirmed === 'function') onConfirmed({ linkedAt: new Date().toISOString() });
-    }, 700);
-  }
   return (
-    <div className="ws-fidpanel" role="region" aria-label="Liaison application fidélité">
+    <div className="ws-fidpanel" role="dialog" aria-modal="true" aria-label="Application fidélité L'Atelier">
       <div className="ws-fidpanel__head">
         <span className="ws-fidpanel__eyebrow">Application fidélité</span>
         <button type="button" className="ws-fidpanel__close" aria-label="Fermer" onClick={onClose}>×</button>
       </div>
-      {step === 'qr' && (
-        <div className="ws-fid ws-fid--inline">
-          <div className="ws-fid__qrwrap ws-fid__qrwrap--sm">
-            <FidelityQR payload={payload}/>
-          </div>
-          <ol className="ws-fid__steps ws-fid__steps--sm">
-            <li><span className="ws-fid__step-n">1</span> Ouvrez l'app <strong>L'Atelier</strong>.</li>
-            <li><span className="ws-fid__step-n">2</span> Profil → <strong>Lier un compte web</strong>.</li>
-            <li><span className="ws-fid__step-n">3</span> Scannez ce code.</li>
-          </ol>
-          <div className="ws-fid__foot ws-fid__foot--sm">
-            <button type="button" className="ws-fid__cancel" onClick={onClose}>Annuler</button>
-            <button type="button" className="ws-cta ws-fid__confirm" onClick={confirm}>J'ai scanné</button>
-          </div>
+      <div className="ws-fid ws-fid--inline">
+        <div className="ws-fid__qrwrap ws-fid__qrwrap--sm">
+          {payload
+            ? <FidelityQR payload={payload}/>
+            : <p className="ws-fid__hint">Lien d'installation indisponible pour le moment.</p>}
         </div>
-      )}
-      {step === 'success' && (
-        <div className={`ws-fid ws-fid--ok ws-fid--inline${pulse ? ' is-pulse' : ''}`}>
-          <div className="ws-fid__ok">
-            <svg viewBox="0 0 64 64" width="48" height="48" aria-hidden="true">
-              <circle cx="32" cy="32" r="30" fill="none" stroke="currentColor" strokeWidth="3"/>
-              <path d="M18 33l10 10 18-22" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <h3 className="ws-fid__ok-title">Application liée</h3>
-          <p className="ws-fid__ok-sub">Votre compte mobile est connecté.</p>
+        <ol className="ws-fid__steps ws-fid__steps--sm">
+          <li><span className="ws-fid__step-n">1</span> Scannez ce code avec votre téléphone.</li>
+          <li><span className="ws-fid__step-n">2</span> Installez / ouvrez l'app <strong>L'Atelier</strong>.</li>
+          <li><span className="ws-fid__step-n">3</span> Connectez-vous : vos points et avantages s'y synchronisent.</li>
+        </ol>
+        {payload && (
+          <a className="ws-fid__link" href={payload} target="_blank" rel="noopener noreferrer">Ouvrir l'application</a>
+        )}
+        <div className="ws-fid__foot ws-fid__foot--sm">
+          <button type="button" className="ws-cta ws-fid__confirm" onClick={onClose}>Fermer</button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
