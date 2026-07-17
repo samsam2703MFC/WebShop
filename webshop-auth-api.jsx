@@ -39,7 +39,8 @@
           });
           const j = await r.json();
           if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
-          return { ok: false, error: j.message || j.error?.message || 'Identifiants incorrects.' };
+          // Compte existant sans mot de passe -> le front bascule sur "définir un mot de passe".
+          return { ok: false, needsPassword: !!j.needsPassword, error: j.message || j.error?.message || 'Identifiants incorrects.' };
         } catch (_) {}
       }
       // Fallback: in-memory _AUTH_STORE (email OU téléphone).

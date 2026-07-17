@@ -1904,7 +1904,12 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
         const r = window.WSAuth
           ? await window.WSAuth.login({ identifier: form.identifier, password: form.password, phonePrefix: form.phonePrefix, authMethod: form.authMethod })
           : authLogin(form.identifier, form.password);
-        if (!r.ok) { setErr(r.error || 'Identifiants incorrects.'); return; }
+        if (!r.ok) {
+          // Compte existant sans mot de passe -> panneau "définir votre mot de passe"
+          // (on pré-remplit avec ce qui vient d'être tapé au login).
+          if (r.needsPassword) { setForm((f) => ({ ...f, email: f.email || (f.identifier.includes('@') ? f.identifier : ''), phone: f.phone || (f.identifier.includes('@') ? '' : f.identifier) })); setNewPw(form.password || ''); setPwStep(true); return; }
+          setErr(r.error || 'Identifiants incorrects.'); return;
+        }
         onLogin(r.user); onClose();
       } else {
         if (!form.firstName || !form.lastName) { setErr('Prénom et nom requis.'); return; }

@@ -695,6 +695,11 @@ function dispatch($m, $p) {
     // Identifiant téléphone : on le normalise en E.164 + national pour le retrouver.
     [, $identNat, $identE164] = norm_phone($b['phonePrefix'] ?? '+32', $ident);
     $u = row("SELECT id, password_hash FROM client WHERE (LOWER(TRIM(email))=? OR (? <> '' AND (phone_e164=? OR phone=? OR phone=?))) AND active=1 LIMIT 1", [$ident, $identE164, $identE164, $identNat, $ident]);
+    // Compte existant mais sans mot de passe (client importé / créé côté PWA) :
+    // on ne renvoie pas "identifiants incorrects" -> on invite à définir un mot de passe.
+    if ($u && empty($u['password_hash'])) {
+      json_out(['error' => 'no_password', 'message' => 'Ce compte existe mais n’a pas encore de mot de passe.', 'needsPassword' => true], 409);
+    }
     if (!$u || !password_verify($b['password'] ?? '', $u['password_hash'])) json_out(['error' => 'Identifiants incorrects.'], 401);
     json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400])]);
   }
