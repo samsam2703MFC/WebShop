@@ -2121,6 +2121,12 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       const existing = window.WSI18n.getCustomer() || {};
       window.WSI18n.setCustomer({ ...existing, ...updated });
     }
+    // Persistance serveur (best-effort) : sans cet appel, boutique préférée,
+    // bureau (flux entreprise) et statut fidélité restaient purement locaux —
+    // perdus au rechargement et invisibles côté PWA (base partagée).
+    if (window.WSAuth && typeof window.WSAuth.updateMe === 'function' && window.WSAuth.endpoint) {
+      try { window.WSAuth.updateMe(patch); } catch (_) {}
+    }
   }
 
   // Toggle app fidélité. L'état réel vit en base (fidelity_active, écrit par le
