@@ -391,6 +391,45 @@ function dispatch($m, $p) {
                     ORDER BY name", [$s]));
   }
 
+  /* ── Zones de livraison bureau (public) — alimente la droplist de la landing :
+     tournées ACTIVES groupées par zone principale (option = zone secondaire).
+     Une tournée en préparation (active=0) n'apparaît jamais. ── */
+  if ($m === 'GET' && $p === '/delivery-zones') {
+    json_out(rows("SELECT t.id, t.name AS tour, t.zone_secondary AS zoneSecondary,
+                          z.id AS zoneId, z.name AS zonePrincipal, z.sort_order AS zoneSort
+                     FROM ws_tours t LEFT JOIN ws_delivery_zones z ON z.id = t.zone_id
+                    WHERE t.active = 1
+                    ORDER BY (z.sort_order IS NULL), z.sort_order, z.name, t.name"));
+  }
+
+  /* ── Demande de zone non servie (public, « Ma zone n'est pas dans la liste »).
+     PERSISTÉE (ws_zone_requests) — c'est la carte de la demande non servie — ET
+     un mail admin part en PLUS. Rate-limit par IP (formulaire public arrosable). ── */
+  if ($m === 'POST' && $p === '/zone-request') {
+    $b  = body();
+    $cp = trim((string) ($b['postalCode'] ?? ''));
+    if ($cp === '') json_out(['error' => 'Code postal requis.'], 400);
+    $ipRaw = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '');
+    $ip = trim(explode(',', $ipRaw)[0]);
+    $max = (int) ws_param('zone_request_rate_per_hour', '5');
+    $rl = row("SELECT COUNT(*) AS n FROM ws_zone_requests
+                WHERE source_ip=? AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)", [$ip]);
+    if ($rl && (int) $rl['n'] >= $max) json_out(['error' => 'Trop de demandes, réessayez plus tard.'], 429);
+    $city = trim((string) ($b['city'] ?? ''));   $company = trim((string) ($b['company'] ?? ''));
+    $head = (int) ($b['headcount'] ?? 0);         $email = trim((string) ($b['email'] ?? ''));
+    q("INSERT INTO ws_zone_requests (postal_code, city, company, headcount, email, source_ip)
+       VALUES (?,?,?,?,?,?)",
+      [$cp, $city ?: null, $company ?: null, $head ?: null, ($email && filter_var($email, FILTER_VALIDATE_EMAIL)) ? $email : null, $ip ?: null]);
+    $admin = ws_param('zone_request_admin_email', cfg()['mail_from'] ?? '');
+    if ($admin && filter_var($admin, FILTER_VALIDATE_EMAIL)) {
+      $from = cfg()['mail_from'] ?? 'no-reply@atelierby.be';
+      @mail($admin, 'Nouvelle demande de zone — livraison bureau',
+            "Code postal: $cp\nCommune: $city\nSociete: $company\nCollaborateurs: $head\nEmail: $email\n",
+            "From: $from\r\nContent-Type: text/plain; charset=utf-8\r\n");
+    }
+    json_out(['ok' => true]);
+  }
+
   /* Créneaux de livraison d'un bureau = les fenêtres de SA tournée (ws_tour_availability).
      window_label 'afternoon' → slot 'soir' (ex. livraison 17:00, cutoff 15:00). Par tournée :
      seules celles ayant une ligne 'afternoon' renvoient le créneau soir. */
@@ -566,6 +605,15 @@ function dispatch($m, $p) {
     if (empty($b['customerId'])) {
       [$guestPfx, $guestPhone] = norm_phone($b['customer']['phonePrefix'] ?? ($b['phonePrefix'] ?? '+32'), $b['customer']['phone'] ?? ($b['phone'] ?? ''));
       if ($guestPhone === '') { $guestPhone = null; $guestPfx = null; }
+    }
+
+    // 4-quater. LIVRAISON BUREAU — éligibilité + cut-off vérifiés SERVEUR (jamais
+    //   l'état affiché du front) : site actif + rattaché à une tournée + tournée
+    //   active + roule ce jour + pas de fermeture + avant cut-off (heure locale
+    //   boutique). Un panier ouvert à 15h58 et validé à 16h03 est refusé ici.
+    if ($mode === 'delivery' && !empty($dl['siteId'])) {
+      $edc = office_delivery_check($dl['siteId'], $b['deliveryDate'] ?? date('Y-m-d'), $b['customerId'] ?? null);
+      if (!$edc['ok']) json_out(['error' => $edc['error'], 'code' => 'office_delivery'], 409);
     }
 
     // 5. Total final.
@@ -1012,6 +1060,38 @@ function dispatch($m, $p) {
     if (!$u) json_out(['error' => 'Non connecté.'], 401);
     json_out(['user' => $u]);
   }
+
+  /* ── Éligibilité livraison bureau du client connecté pour une date donnée.
+     Le FRONT ne montre l'option QUE si eligible=true (confort) ; la vérité est
+     re-vérifiée serveur à la commande (office_delivery_check). Renvoie les sites
+     rattachés (sur une tournée), leur état commandable et le site par défaut. ── */
+  if ($m === 'GET' && $p === '/auth/office-delivery') {
+    $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    $date = qp('date') ?: date('Y-m-d');
+    $offices = user_office_ids($id);
+    $sites = [];
+    if ($offices) {
+      $ph = implode(',', array_fill(0, count($offices), '?'));
+      $sites = rows("SELECT id, name, address, tournee_id AS tourId, is_default AS isDefault
+                       FROM ws_office_delivery_sites
+                      WHERE office_client_id IN ($ph) AND active = 1 AND tournee_id IS NOT NULL
+                      ORDER BY is_default DESC, name", $offices);
+    }
+    foreach ($sites as &$st) {
+      $chk = tour_orderable((int) $st['tourId'], $date);
+      $st['id']        = (int) $st['id'];
+      $st['tourId']    = (int) $st['tourId'];
+      $st['isDefault'] = (bool) $st['isDefault'];
+      $st['orderable'] = !empty($chk['ok']);
+      $st['reason']    = empty($chk['ok']) ? ($chk['reason'] ?? null) : null;
+      $st['cutoffs']   = $chk['cutoffs'] ?? [];
+    }
+    unset($st);
+    $default = null;
+    foreach ($sites as $st) if ($st['isDefault']) { $default = $st['id']; break; }
+    if ($default === null && count($sites) === 1) $default = $sites[0]['id'];
+    json_out(['eligible' => count($sites) > 0, 'sites' => $sites, 'defaultSiteId' => $default, 'date' => $date]);
+  }
   if ($m === 'PATCH' && $p === '/auth/me') {
     $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
     $b = body(); $map = ['name' => 'firstName', 'surname' => 'lastName'];
@@ -1106,6 +1186,14 @@ function dispatch($m, $p) {
         [$b['productId'], $b['shopId'], $b['date'] ?? date('Y-m-d'), $b['mode'] ?? 'collect', (int) $b['qtyTotal']]);
       json_out(['ok' => true]);
     }
+    // Géocoder un site de livraison (prêt-à-brancher : inactif tant que
+    // ws_param('google_geocode_key') est vide — voir geocode_site()).
+    if ($m === 'POST' && $p === '/admin/geocode-site') {
+      $b = body();
+      $sid = (int) ($b['siteId'] ?? 0);
+      if (!$sid) json_out(['error' => 'siteId requis'], 400);
+      json_out(geocode_site($sid));
+    }
     // Commandes (liste)
     if ($m === 'GET' && $p === '/admin/orders') {
       $s = qp('shopId');
@@ -1195,6 +1283,121 @@ function dispatch($m, $p) {
 /* Fenêtres de livraison (créneaux) d'un bureau pour une date, via SA tournée.
    Lit ws_tour_availability (une ligne par fenêtre : window_label morning/afternoon)
    pour le jour ISO de la date. Calcule `orderable` côté serveur d'après cutoff_time. */
+/* ── Livraison bureau : éligibilité + cut-off (le SITE fait foi pour la tournée).
+   Chaîne : user -> bureau (ws_offices) -> site (ws_office_delivery_sites) ->
+   tournée (ws_tours). Toutes ces règles sont vérifiées SERVEUR à la commande. ── */
+
+/* Bureaux (ws_offices.id) rattachés à un client : client.office_id, la liaison
+   PWA (pwa_client_office -> site.office_client_id), et l'e-mail rattaché
+   (ws_office_emails). Sert au contrôle d'appartenance d'un site. */
+function user_office_ids($cid) {
+  if (!$cid) return [];
+  $ids = [];
+  try { $r = row("SELECT office_id, email FROM client WHERE id=?", [$cid]);
+        if ($r && $r['office_id']) $ids[] = (int) $r['office_id']; } catch (Throwable $e) { $r = null; }
+  try {
+    foreach (rows("SELECT s.office_client_id AS oid FROM pwa_client_office co
+                     JOIN pwa_offices po ON po.id = co.office_id
+                     JOIN ws_office_delivery_sites s ON s.id = CAST(po.office_ref AS UNSIGNED) AND s.id > 0
+                    WHERE co.client_id = ?", [$cid]) as $x) if (!empty($x['oid'])) $ids[] = (int) $x['oid'];
+  } catch (Throwable $e) {}
+  try {
+    if (!empty($r['email']))
+      foreach (rows("SELECT office_id FROM ws_office_emails WHERE email=? AND active=1",
+                    [strtolower(trim($r['email']))]) as $x) $ids[] = (int) $x['office_id'];
+  } catch (Throwable $e) {}
+  return array_values(array_unique(array_filter($ids)));
+}
+
+/* Une tournée est-elle commandable pour une date de livraison donnée ?
+   - tournée active
+   - pas de fermeture ponctuelle ce jour (ws_tour_closures)
+   - roule ce jour de semaine (ws_tour_availability, au moins une fenêtre)
+   - avant le cut-off (modèle JOUR DE LIVRAISON MÊME), en HEURE LOCALE boutique
+     (ws_shops.timezone) — jamais une heure naïve serveur. */
+function tour_orderable($tourId, $deliveryDate) {
+  $t = row("SELECT shop_id, active FROM ws_tours WHERE id=?", [$tourId]);
+  if (!$t || !$t['active']) return ['ok' => false, 'reason' => 'Tournée indisponible'];
+  $shop = (int) $t['shop_id'];
+  if (row("SELECT 1 AS x FROM ws_tour_closures WHERE tour_id=? AND closure_date=? LIMIT 1", [$tourId, $deliveryDate]))
+    return ['ok' => false, 'reason' => 'Tournée fermée ce jour'];
+  // Fuseau boutique : ws_shops.timezone si la colonne existe (capacité), sinon
+  // Europe/Brussels — correct pour toutes les boutiques belges du réseau.
+  $tzName = 'Europe/Brussels';
+  if (col_exists('ws_shops', 'timezone')) {
+    $tzr = row("SELECT timezone FROM ws_shops WHERE id=?", [$shop]);
+    if ($tzr && !empty($tzr['timezone'])) $tzName = $tzr['timezone'];
+  }
+  try { $zone = new DateTimeZone($tzName); } catch (Throwable $e) { $zone = new DateTimeZone('Europe/Brussels'); }
+  $now = new DateTime('now', $zone);
+  $today = $now->format('Y-m-d');
+  try { $dow = (int) (new DateTime($deliveryDate, $zone))->format('N'); }
+  catch (Throwable $e) { return ['ok' => false, 'reason' => 'Date invalide']; }
+  $wins = rows("SELECT TIME_FORMAT(cutoff_time,'%H:%i') AS cutoff FROM ws_tour_availability
+                 WHERE tour_id=? AND shop_id=? AND delivery_day=? AND active=1 ORDER BY delivery_start",
+               [$tourId, $shop, $dow]);
+  if (!$wins) return ['ok' => false, 'reason' => 'Pas de tournée ce jour'];
+  if ($deliveryDate < $today) return ['ok' => false, 'reason' => 'Date passée'];
+  if ($deliveryDate === $today) {
+    $nowHm = $now->format('H:i'); $open = false;
+    foreach ($wins as $w) if ($nowHm < $w['cutoff']) { $open = true; break; }
+    if (!$open) return ['ok' => false, 'reason' => 'Cut-off dépassé', 'cutoffs' => array_column($wins, 'cutoff')];
+  }
+  return ['ok' => true, 'cutoffs' => array_column($wins, 'cutoff')];
+}
+
+/* Contrôle complet d'un site de livraison pour une commande : existence/actif,
+   rattaché à une tournée, appartenance au compte (si connecté), et commandable. */
+function office_delivery_check($siteId, $deliveryDate, $cid) {
+  if (!$siteId) return ['ok' => false, 'error' => 'Site de livraison requis'];
+  $s = row("SELECT id, office_client_id, client_id, tournee_id, active FROM ws_office_delivery_sites WHERE id=?", [$siteId]);
+  if (!$s || !$s['active'])      return ['ok' => false, 'error' => 'Site de livraison indisponible'];
+  if (empty($s['tournee_id']))   return ['ok' => false, 'error' => 'Site non rattaché à une tournée'];
+  // Appartenance : un compte connecté ne peut commander sur un site rattaché à
+  // un bureau QUE s'il appartient à ce bureau — ou si le site est le sien
+  // (client_id). On NE fait jamais confiance à l'id passé : vérif en base à
+  // chaque fois. Un compte sans aucun bureau ne « débloque » donc rien.
+  if ($cid && $s['office_client_id'] !== null) {
+    $ownsSite = ((int) ($s['client_id'] ?? 0) === (int) $cid);
+    if (!$ownsSite && !in_array((int) $s['office_client_id'], user_office_ids($cid), true))
+      return ['ok' => false, 'error' => 'Site non autorisé pour ce compte'];
+  }
+  $t = tour_orderable((int) $s['tournee_id'], $deliveryDate);
+  return $t['ok'] ? ['ok' => true] : ['ok' => false, 'error' => $t['reason']];
+}
+
+/* Géocodage Google d'un site (prêt-à-brancher). INACTIF tant que
+   ws_param.google_geocode_key n'est pas posé — un site sans géocodage reste
+   livrable (juste sans point sur la carte) : ne bloque jamais une commande.
+   À appeler à la CRÉATION/MODIFICATION de l'adresse d'un site (pas à l'affichage :
+   l'API est payante et lente). Écrit lat/lng/place_id/adresse formatée + statut. */
+function geocode_site($siteId) {
+  $key = ws_param('google_geocode_key', '');
+  if ($key === '') return ['ok' => false, 'reason' => 'no_key'];   // désactivé
+  $s = row("SELECT id, address FROM ws_office_delivery_sites WHERE id=?", [$siteId]);
+  if (!$s || empty($s['address'])) return ['ok' => false, 'reason' => 'no_address'];
+  $url = 'https://maps.googleapis.com/maps/api/geocode/json?address='
+       . urlencode($s['address']) . '&key=' . urlencode($key);
+  $ch = curl_init($url);
+  curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10]);
+  $res = curl_exec($ch); curl_close($ch);
+  $d = $res ? json_decode($res, true) : null;
+  $status = 'failed'; $lat = null; $lng = null; $pid = null; $fmt = null;
+  if (is_array($d) && ($d['status'] ?? '') === 'OK' && !empty($d['results'])) {
+    $r0 = $d['results'][0];
+    $lat = $r0['geometry']['location']['lat'] ?? null;
+    $lng = $r0['geometry']['location']['lng'] ?? null;
+    $pid = $r0['place_id'] ?? null;                        // survit aux changements de libellé
+    $fmt = $r0['formatted_address'] ?? null;
+    $status = (count($d['results']) > 1) ? 'ambiguous' : 'success';
+  }
+  q("UPDATE ws_office_delivery_sites
+        SET latitude=?, longitude=?, google_place_id=?, google_formatted_address=?,
+            geocoded_at=NOW(), geocode_status=?
+      WHERE id=?", [$lat, $lng, $pid, $fmt, $status, $siteId]);
+  return ['ok' => $status !== 'failed', 'status' => $status];
+}
+
 function slots_for_office($officeId, $date) {
   if (!$officeId) return [];
   $off = row("SELECT o.tour_id, t.shop_id FROM ws_offices o
