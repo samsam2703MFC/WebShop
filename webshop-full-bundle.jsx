@@ -3428,9 +3428,6 @@ function ShopFrame({ variant }) {
   // Voucher state — may be pre-filled by deep link
   const [voucherInput, setVoucherInput] = useState(_deep.voucher || '');
   const [voucherApplied, setVoucherApplied] = useState(null);
-  const [deepLinkBanner, setDeepLinkBanner] = useState(
-    _deep.shopId || _deep.voucher || _deep.cat ? _deep : null
-  );
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [date, setDate] = useState(() => { const t = new Date(); t.setHours(0,0,0,0); return t; });
   // Delivery cutoff: no same-day delivery after 10:00. Re-evaluated every minute.
@@ -4002,25 +3999,6 @@ function ShopFrame({ variant }) {
         deliveryFeeResult={deliveryFeeResult}
         officeSites={officeSites} selectedSiteId={selectedSiteId} setSelectedSiteId={setSelectedSiteId}
       />
-      {deepLinkBanner && (
-        <div className="ws-deeplink" role="status">
-          <div className="ws-deeplink__copy">
-            <strong>Lien direct reçu</strong>
-            <span>
-              {deepLinkBanner.shopId && shops.find((s) => s.id === deepLinkBanner.shopId) && (
-                <>Boutique · <em>{shops.find((s) => s.id === deepLinkBanner.shopId).name}</em></>
-              )}
-              {deepLinkBanner.cat && deepLinkBanner.cat !== 'all' && (
-                <> · Catégorie <em>{deepLinkBanner.cat}</em></>
-              )}
-              {deepLinkBanner.voucher && (
-                <> · Code <em>{deepLinkBanner.voucher}</em> prêt à appliquer</>
-              )}
-            </span>
-          </div>
-          <button className="ws-deeplink__x" onClick={() => setDeepLinkBanner(null)} aria-label="Fermer">×</button>
-        </div>
-      )}
       {prefNudge && (
         <div className="ws-pref-nudge" role="dialog" aria-label="Mettre à jour la boutique préférée">
           <div className="ws-pref-nudge__body">
