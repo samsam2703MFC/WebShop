@@ -1350,12 +1350,16 @@ function tour_orderable($tourId, $deliveryDate) {
    rattaché à une tournée, appartenance au compte (si connecté), et commandable. */
 function office_delivery_check($siteId, $deliveryDate, $cid) {
   if (!$siteId) return ['ok' => false, 'error' => 'Site de livraison requis'];
-  $s = row("SELECT id, office_client_id, tournee_id, active FROM ws_office_delivery_sites WHERE id=?", [$siteId]);
+  $s = row("SELECT id, office_client_id, client_id, tournee_id, active FROM ws_office_delivery_sites WHERE id=?", [$siteId]);
   if (!$s || !$s['active'])      return ['ok' => false, 'error' => 'Site de livraison indisponible'];
   if (empty($s['tournee_id']))   return ['ok' => false, 'error' => 'Site non rattaché à une tournée'];
+  // Appartenance : un compte connecté ne peut commander sur un site rattaché à
+  // un bureau QUE s'il appartient à ce bureau — ou si le site est le sien
+  // (client_id). On NE fait jamais confiance à l'id passé : vérif en base à
+  // chaque fois. Un compte sans aucun bureau ne « débloque » donc rien.
   if ($cid && $s['office_client_id'] !== null) {
-    $mine = user_office_ids($cid);
-    if ($mine && !in_array((int) $s['office_client_id'], $mine, true))
+    $ownsSite = ((int) ($s['client_id'] ?? 0) === (int) $cid);
+    if (!$ownsSite && !in_array((int) $s['office_client_id'], user_office_ids($cid), true))
       return ['ok' => false, 'error' => 'Site non autorisé pour ce compte'];
   }
   $t = tour_orderable((int) $s['tournee_id'], $deliveryDate);
