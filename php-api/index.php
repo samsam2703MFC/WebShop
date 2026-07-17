@@ -1114,6 +1114,19 @@ function user_payload($id) {
       if ($r3 && !empty($r3['oid'])) $officeId = $r3['oid'];
     } catch (Throwable $e) { /* table absente — repli ignoré */ }
   }
+  // Site de livraison lié côté PWA : le « bureau » de la PWA est un site
+  // ws_office_delivery_sites, parfois SANS entreprise ws_offices associée
+  // (office_client_id NULL). Exposé tel quel pour que le profil webshop affiche
+  // la même carte bureau que la PWA, même quand la chaîne vers ws_offices est
+  // vide.
+  $officeSite = null;
+  try {
+    $officeSite = row("SELECT s.id, s.name, s.address, s.shop_id AS shopId, s.active
+                         FROM pwa_client_office co
+                         JOIN pwa_offices po ON po.id = co.office_id
+                         JOIN ws_office_delivery_sites s ON CAST(s.id AS CHAR) = po.office_ref
+                        WHERE co.client_id = ? LIMIT 1", [$u['id']]);
+  } catch (Throwable $e) { /* tables legacy absentes */ }
   // Société liée (modèle « company link » de la PWA) : client.company_client_id
   // pointe vers une LIGNE client société (is_b2b=1) qui porte les vraies données
   // de facturation ; les colonnes société de la personne sont alors NULL. On
@@ -1140,6 +1153,7 @@ function user_payload($id) {
     'webshopUser' => (bool) ($u['webshop_user'] ?? 0),
     'pwaUser' => (bool) ($u['pwa_user'] ?? 0),
     'officeId' => $officeId,
+    'officeSite' => $officeSite,
     'preferredShopId' => $u['preferred_shop_id'] ?? null,
     'lang' => $u['locale'] ?? ($u['preferred_lang'] ?? 'fr'),
     'isBusiness' => (bool) ($u['is_b2b'] ?? ($u['is_business'] ?? 0)),
