@@ -2016,6 +2016,16 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
   );
 }
 
+// Badge discret d'état d'une section repliée du profil : vert quand la donnée
+// est renseignée, gris neutre sinon (tout le monde n'a pas de société/bureau).
+function FoldBadge({ ok, label, emptyLabel }) {
+  return (
+    <span className={'ws-acc__fold-badge' + (ok ? ' is-ok' : ' is-empty')}>
+      {ok ? (label || '✓') : (emptyLabel || '—')}
+    </span>
+  );
+}
+
 function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdateUser, shops, currentShopId, onChangePreferredShop, office, tour }) {
   const [form, setForm] = useState({
     firstName: user?.firstName || '',
@@ -2288,8 +2298,12 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         </aside>
       )}
 
-      <form className="ws-acc__section" onSubmit={saveProfile}>
-        <div className="ws-acc__section-h">Mes informations</div>
+      {/* Sections repliées par défaut : badge discret = donnée renseignée ou non. */}
+      <details className="ws-acc__section ws-acc__fold">
+        <summary className="ws-acc__section-h ws-acc__fold-sum">Mes informations
+          <FoldBadge ok={!!(form.firstName && form.lastName)} emptyLabel="à compléter" />
+        </summary>
+      <form onSubmit={saveProfile}>
         <div className="ws-acc__form">
           <label className="ws-acc__field">
             <span className="ws-acc__field-label">Prénom</span>
@@ -2332,8 +2346,11 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         </label>
 
         {form.isBusiness && (
-          <details className="ws-acc__invoice" open>
-            <summary className="ws-acc__invoice-sum">Facturation entreprise</summary>
+          <details className="ws-acc__invoice">
+            <summary className="ws-acc__invoice-sum">Facturation entreprise
+              <FoldBadge ok={vies.status === 'ok' || !!form.invoice.vat}
+                label={vies.status === 'ok' ? 'Vérifiée' : 'Renseignée'} emptyLabel="à compléter" />
+            </summary>
             <div className="ws-acc__invoice-body">
               <div className="ws-acc__form ws-acc__form--vat">
                 <label className="ws-acc__field ws-acc__field--country">
@@ -2396,9 +2413,12 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           {savedFlash && <span className="ws-acc__saved">✓ Enregistré</span>}
         </div>
       </form>
+      </details>
 
-      <div className="ws-acc__section">
-        <div className="ws-acc__section-h">Préférences</div>
+      <details className="ws-acc__section ws-acc__fold">
+        <summary className="ws-acc__section-h ws-acc__fold-sum">Préférences
+          <FoldBadge ok={!!form.preferredShopId || !!form.fidelityApp?.active} />
+        </summary>
 
         {/* Preferred shop ----------------------------------------------- */}
         <div className="ws-acc__row">
@@ -2447,7 +2467,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             <span className="ws-acc__toggle-track" aria-hidden="true"><span className="ws-acc__toggle-thumb"/></span>
           </label>
         </div>
-      </div>
+      </details>
 
       <FidelityLinkPanel
         open={fidOpen}
@@ -2455,8 +2475,11 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         onClose={() => setFidOpen(false)}
       />
 
-      <div className="ws-acc__section">
-        <div className="ws-acc__section-h">Mon bureau</div>
+      <details className="ws-acc__section ws-acc__fold">
+        <summary className="ws-acc__section-h ws-acc__fold-sum">Mon bureau
+          <FoldBadge ok={status !== 'unlinked' || !!user.officeSite}
+            label={status === 'active' || (status === 'unlinked' && user.officeSite) ? 'Lié' : 'En attente'} emptyLabel="aucun" />
+        </summary>
 
         {officeStep === 'idle' && status === 'active' && (
           <div className="ws-acc__card ws-acc__card--ok">
@@ -2483,7 +2506,21 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           </div>
         )}
 
-        {officeStep === 'idle' && status === 'unlinked' && (
+        {/* Bureau lié côté PWA = un SITE de livraison (ws_office_delivery_sites),
+            parfois sans entreprise ws_offices associée : on l'affiche quand même,
+            avec les mêmes données que la carte bureau de la PWA. */}
+        {officeStep === 'idle' && status === 'unlinked' && user.officeSite && (
+          <div className="ws-acc__card ws-acc__card--ok">
+            <div className="ws-acc__card-row"><span className="ws-acc__k">Bureau</span><span className="ws-acc__v">{user.officeSite.name}</span></div>
+            {user.officeSite.address && <div className="ws-acc__card-row"><span className="ws-acc__k">Adresse</span><span className="ws-acc__v">{user.officeSite.address}</span></div>}
+            <div className={'ws-acc__badge' + (Number(user.officeSite.active) ? '' : ' ws-acc__badge--pending')}>
+              {Number(user.officeSite.active) ? 'Validé' : 'En attente de validation'}
+            </div>
+            <p className="ws-acc__note">Proposé par défaut comme « Livraison au bureau » lors du paiement.</p>
+          </div>
+        )}
+
+        {officeStep === 'idle' && status === 'unlinked' && !user.officeSite && (
           <div className="ws-acc__card ws-acc__card--empty">
             <p className="ws-acc__note">Aucun bureau associé. Liez-vous à un bureau approuvé ou demandez l'ajout du vôtre.</p>
             <button className="ws-cta ws-cta--block" onClick={chooseLinkAnother}>Lier un bureau</button>
@@ -2586,11 +2623,13 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             </div>
           </div>
         )}
-      </div>
+      </details>
 
       {linkedCompanies.length > 0 && (
-        <div className="ws-acc__section">
-          <div className="ws-acc__section-h">Comptes entreprise (livraison bureau)</div>
+        <details className="ws-acc__section ws-acc__fold">
+          <summary className="ws-acc__section-h ws-acc__fold-sum">Comptes entreprise (livraison bureau)
+            <FoldBadge ok label={String(linkedCompanies.length)} />
+          </summary>
           {linkedCompanies.map((c) => (
             <div key={c.id} className="ws-acc__card ws-acc__card--ok">
               <div className="ws-acc__card-row"><span className="ws-acc__k">Entreprise</span><span className="ws-acc__v">{c.name}</span></div>
@@ -2598,14 +2637,14 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
               <div className="ws-acc__card-row"><span className="ws-acc__k">Facturation</span><span className="ws-acc__v">{c.deferredBilling ? 'Sur compte (différée)' : 'Paiement direct'}</span></div>
             </div>
           ))}
-        </div>
+        </details>
       )}
 
       {window.LangMenu && (
-        <div className="ws-acc__section">
-          <div className="ws-acc__section-h">Langue</div>
+        <details className="ws-acc__section ws-acc__fold">
+          <summary className="ws-acc__section-h ws-acc__fold-sum">Langue</summary>
           <window.LangMenu />
-        </div>
+        </details>
       )}
 
       <div className="ws-acc__foot">
