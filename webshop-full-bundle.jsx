@@ -2016,6 +2016,168 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
   );
 }
 
+// =========================================================================
+// MON COMPTE — onglets. Le toggle DÉRIVE ses positions de cette liste (jamais
+// en dur) : un onglet s'ajoute sans refonte. La visibilité de « Fidélité » est
+// pilotée par ws_param.fidelity_tab_enabled (GET /config) — masquable en prod
+// et révélable sans redéploiement. L'onglet actif survit au rafraîchissement.
+// =========================================================================
+const ACCOUNT_TABS = [
+  { key: 'profil',   label: 'Profil' },
+  { key: 'achats',   label: 'Mes achats' },
+  { key: 'fidelite', label: 'Fidélité', configFlag: 'fidelityTabEnabled' },
+];
+const ACCOUNT_TAB_LS = 'ws.accountTab';
+
+// Onglet Fidélité : coquille volontairement explicite — pas d'écran nu ni de
+// compteur à zéro qui laisserait croire que le client a perdu ses points.
+function FideliteShell() {
+  return (
+    <div className="ws-acc__section">
+      <div className="ws-acc__section-h">Fidélité</div>
+      <div className="ws-acc__card ws-acc__card--empty">
+        <p className="ws-acc__note"><strong>Votre programme de fidélité arrive bientôt.</strong> Points, avantages et récompenses vous attendront ici — vos achats d'aujourd'hui compteront.</p>
+      </div>
+    </div>
+  );
+}
+
+// =========================================================================
+// MON COMPTE — onglet « Mes achats » : UNE liste qui fusionne tickets et
+// factures. Une même ligne = ticket, ticket avec facture demandée, ou facture
+// (état enrichi du même achat — jamais une seconde entrée). Le webshop n'émet
+// AUCUNE facture : il écrit to_invoice + le destinataire, et affiche ce que
+// l'ERP du franchisé a poussé (numéro, PDF). Le contrôle de demande n'apparaît
+// que si la colonne to_invoice existe en base (capacité serveur).
+// =========================================================================
+const PURCHASE_FILTERS = [
+  { key: 'all',       label: 'Tous' },
+  { key: 'none',      label: 'Sans facture' },
+  { key: 'requested', label: 'Facture demandée' },
+  { key: 'invoiced',  label: 'Facturé' },
+];
+function AccountPurchases({ user }) {
+  const [filter, setFilter]   = useState('all');
+  const [page, setPage]       = useState(1);
+  const [meta, setMeta]       = useState({ total: 0, canRequestInvoice: false, invoiceNotice: '' });
+  const [items, setItems]     = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busyRef, setBusyRef] = useState('');
+  const [notice, setNotice]   = useState('');
+  const [err, setErr]         = useState('');
+  const PER = 10;
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    Promise.resolve(window.WSAuth && window.WSAuth.listPurchases
+      ? window.WSAuth.listPurchases({ filter, page, perPage: PER })
+      : { items: [], total: 0 })
+      .then((d) => {
+        if (!alive || !d) return;
+        setMeta({ total: d.total || 0, canRequestInvoice: !!d.canRequestInvoice, invoiceNotice: d.invoiceNotice || '' });
+        setItems((prev) => (page === 1 ? (d.items || []) : prev.concat(d.items || [])));
+      })
+      .catch(() => {})
+      .then(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [filter, page]);
+  function switchFilter(f) { setFilter(f); setPage(1); setNotice(''); setErr(''); }
+  async function toggleInvoice(it, want, beOverride) {
+    setBusyRef(it.ref); setErr('');
+    // Destinataire : société liée par défaut, sinon l'utilisateur lui-même
+    // (un particulier peut demander une facture à son nom). Jamais de saisie
+    // libre — le serveur re-vérifie l'appartenance.
+    const be = want ? (beOverride || it.billingEntityId || user.companyClientId || user.id) : null;
+    const r = await window.WSAuth.requestInvoice({ ref: it.ref, want, billingEntityId: be });
+    setBusyRef('');
+    if (r.ok) {
+      setItems((list) => list.map((x) => (x.ref === it.ref
+        ? { ...x, state: want ? 'requested' : 'open', toInvoice: want ? 1 : 0, billingEntityId: want ? be : null }
+        : x)));
+      // Dit AU MOMENT de la demande — la facture n'apparaît qu'au batch mensuel.
+      if (want && r.notice) setNotice(r.notice);
+    } else {
+      setErr(r.error || 'Échec de la demande.');
+    }
+  }
+  const fmtDate = (s) => {
+    try {
+      const d = new Date(String(s).replace(' ', 'T'));
+      return d.toLocaleDateString('fr-BE') + ' · ' + d.toLocaleTimeString('fr-BE', { hour: '2-digit', minute: '2-digit' });
+    } catch (_) { return String(s || ''); }
+  };
+  const fmtEur = (n) => ((n === null || n === undefined) ? '—' : Number(n).toFixed(2).replace('.', ',') + ' €');
+  const badge = (st) => (st === 'invoiced'
+    ? <span className="ws-acc__badge">Facturé</span>
+    : st === 'requested'
+      ? <span className="ws-acc__badge ws-acc__badge--pending">Facture demandée</span>
+      : null);
+  const hasMore = items.length < (meta.total || 0);
+  return (
+    <div className="ws-acc__section">
+      <div className="ws-acc__section-h">Mes achats</div>
+      {/* Filtre discret — remplace un onglet « Mes factures » : le client qui
+          veut ses factures pour son comptable filtre sur « Facturé ». */}
+      <div className="ws-toggle" role="tablist" aria-label="Filtrer les achats">
+        {PURCHASE_FILTERS.map((f) => (
+          <button key={f.key} type="button" role="tab" aria-selected={filter === f.key}
+            className={'ws-toggle__opt' + (filter === f.key ? ' is-active' : '')}
+            onClick={() => switchFilter(f.key)}>{f.label}</button>
+        ))}
+      </div>
+      {notice && <p className="ws-acc__hint">🧾 {notice}</p>}
+      {err && <p className="ws-acc__vat-msg ws-acc__vat-msg--err">⚠ {err}</p>}
+      {loading && items.length === 0 && <p className="ws-acc__hint">Chargement…</p>}
+      {!loading && items.length === 0 && (
+        <div className="ws-acc__card ws-acc__card--empty">
+          <p className="ws-acc__note">Aucun achat sur les 12 derniers mois{filter !== 'all' ? ' pour ce filtre' : ''}.</p>
+        </div>
+      )}
+      {items.map((it) => (
+        <div key={it.source + '-' + it.ref} className="ws-acc__card">
+          <div className="ws-acc__card-row"><span className="ws-acc__k">{it.ref}</span><span className="ws-acc__v">{badge(it.state)}</span></div>
+          <div className="ws-acc__card-row"><span className="ws-acc__k">{it.shop || '—'}</span><span className="ws-acc__v">{fmtDate(it.at)}</span></div>
+          <div className="ws-acc__card-row">
+            <span className="ws-acc__k">{Number(it.items) || 0} article{Number(it.items) > 1 ? 's' : ''}</span>
+            <span className="ws-acc__v">{fmtEur(it.invoiceTotal != null ? it.invoiceTotal : it.total)}</span>
+          </div>
+          {it.state === 'invoiced' && (
+            <div className="ws-acc__card-row"><span className="ws-acc__k">Facture</span>
+              <span className="ws-acc__v">{it.invoiceNo}{it.pdfUrl ? <> · <a href={it.pdfUrl}>PDF</a></> : null}</span></div>
+          )}
+          {meta.canRequestInvoice && it.source === 'ticket' && it.state !== 'invoiced' && (
+            <label className="ws-acc__toggle" aria-label="Voulez-vous une facture ?">
+              <input type="checkbox" checked={it.state === 'requested'}
+                disabled={it.state === 'closed' || busyRef === it.ref}
+                onChange={(e) => toggleInvoice(it, e.target.checked)} />
+              <span className="ws-acc__toggle-track" aria-hidden="true"><span className="ws-acc__toggle-thumb"/></span>
+              <span className="ws-acc__toggle-label">
+                {it.state === 'closed' ? 'Délai de demande dépassé' : 'Voulez-vous une facture ?'}
+              </span>
+            </label>
+          )}
+          {meta.canRequestInvoice && it.source === 'ticket' && it.state === 'requested' && user.companyClientId && (
+            <div className="ws-acc__select-row">
+              <select className="ws-acc__input" aria-label="Société de facturation"
+                value={String(it.billingEntityId || user.companyClientId)}
+                disabled={busyRef === it.ref}
+                onChange={(e) => toggleInvoice(it, true, Number(e.target.value))}>
+                <option value={String(user.companyClientId)}>{user.company || 'Ma société'}</option>
+                <option value={String(user.id)}>À mon nom</option>
+              </select>
+            </div>
+          )}
+        </div>
+      ))}
+      {hasMore && (
+        <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={() => setPage((p) => p + 1)}>
+          Voir plus
+        </button>
+      )}
+    </div>
+  );
+}
+
 function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdateUser, shops, currentShopId, onChangePreferredShop, office, tour }) {
   const [form, setForm] = useState({
     firstName: user?.firstName || '',
@@ -2063,6 +2225,77 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   const [sitePicked, setSitePicked] = useState('');
   const [siteBusy, setSiteBusy] = useState(false);
   const [siteErr, setSiteErr] = useState('');
+  // Onglets (l'actif survit au rafraîchissement) + config serveur (flags).
+  const [cfg, setCfg] = useState({ fidelityTabEnabled: true });
+  const [tab, setTab] = useState(() => {
+    try { return localStorage.getItem(ACCOUNT_TAB_LS) || 'profil'; } catch (_) { return 'profil'; }
+  });
+  // Sociétés de facturation : flux d'ajout (VIES ou sans TVA) — jamais
+  // d'édition en place d'une société existante.
+  const [companyStep, setCompanyStep] = useState('idle'); // 'idle' | 'vies' | 'novat'
+  const [addVat, setAddVat] = useState({ country: 'BE', vat: '' });
+  const [addNo, setAddNo]   = useState({ name: '', address: '', postalCode: '', city: '' });
+  const [companyBusy, setCompanyBusy] = useState(false);
+  const [companyErr, setCompanyErr]   = useState('');
+  // Sécurité : changement de mot de passe.
+  const [pw1, setPw1] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwMsg, setPwMsg]   = useState(null);
+
+  // Config serveur (liste blanche ws_param) à l'ouverture de la modale.
+  useEffect(() => {
+    let alive = true;
+    if (!open || !window.WSAuth || typeof window.WSAuth.config !== 'function') return;
+    Promise.resolve(window.WSAuth.config())
+      .then((c) => { if (alive && c) setCfg((prev) => ({ ...prev, ...c })); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [open]);
+  const visibleTabs = ACCOUNT_TABS.filter((t) => !t.configFlag || cfg[t.configFlag] !== false);
+  const activeTab = visibleTabs.some((t) => t.key === tab) ? tab : 'profil';
+  function selectTab(k) {
+    setTab(k);
+    try { localStorage.setItem(ACCOUNT_TAB_LS, k); } catch (_) {}
+  }
+
+  async function addByVies() {
+    setCompanyBusy(true); setCompanyErr('');
+    const r = await window.WSAuth.billingVerify({ vat: addVat.vat, country: addVat.country });
+    setCompanyBusy(false);
+    if (r.ok && r.user) {
+      if (typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
+      setCompanyStep('idle'); setAddVat({ country: 'BE', vat: '' });
+    } else {
+      setCompanyErr((r.error && (r.error.message || r.error)) || 'Vérification indisponible, réessayez plus tard.');
+    }
+  }
+  async function addNoVat() {
+    setCompanyBusy(true); setCompanyErr('');
+    const r = await window.WSAuth.addCompanyNoVat(addNo);
+    setCompanyBusy(false);
+    if (r.ok && r.user) {
+      if (typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
+      setCompanyStep('idle'); setAddNo({ name: '', address: '', postalCode: '', city: '' });
+    } else {
+      setCompanyErr(r.error || "Échec de l'ajout.");
+    }
+  }
+  async function removeCompany() {
+    // Archivage : on délie seulement — la fiche société reste en base (les
+    // factures émises la référencent et doivent rester lisibles).
+    setCompanyBusy(true);
+    const r = await window.WSAuth.unlinkCompany();
+    setCompanyBusy(false);
+    if (r.ok && r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
+  }
+  async function savePassword() {
+    setPwBusy(true); setPwMsg(null);
+    const r = await window.WSAuth.changePassword({ password: pw1 });
+    setPwBusy(false);
+    if (r.ok) { setPwMsg({ ok: true, text: 'Mot de passe mis à jour.' }); setPw1(''); setPw2(''); }
+    else setPwMsg({ ok: false, text: r.error || 'Échec.' });
+  }
 
   // re-sync the form whenever a different user is loaded into the modal
   useEffect(() => {
@@ -2288,11 +2521,11 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     // Persist to the backend (customer profile) when the API is wired.
     if (window.WSAuth && typeof window.WSAuth.updateMe === 'function') {
       try {
+        // Coordonnées uniquement : les données société ne s'éditent JAMAIS ici
+        // (voir section « Sociétés de facturation » — le serveur les ignore).
         const r = await window.WSAuth.updateMe({
           firstName: form.firstName, lastName: form.lastName,
-          phone: form.phone, company: form.company,
-          postalCode: form.postalCode, isBusiness: !!form.isBusiness,
-          invoice: form.invoice,
+          phone: form.phone, postalCode: form.postalCode,
         });
         if (r && r.ok && r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
       } catch (_) {}
@@ -2306,6 +2539,19 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       <h2 className="ws-modal__title">Bonjour <em>{form.firstName || user.firstName}</em>.</h2>
       <p className="ws-modal__lede">{user.email}</p>
 
+      {/* Onglets — positions dérivées d'ACCOUNT_TABS, actif persisté. */}
+      <div className="ws-toggle" role="tablist" aria-label="Sections de mon compte">
+        {visibleTabs.map((t) => (
+          <button key={t.key} type="button" role="tab" aria-selected={activeTab === t.key}
+            className={'ws-toggle__opt' + (activeTab === t.key ? ' is-active' : '')}
+            onClick={() => selectTab(t.key)}>{t.label}</button>
+        ))}
+      </div>
+
+      {activeTab === 'achats' && <AccountPurchases user={user} />}
+      {activeTab === 'fidelite' && <FideliteShell />}
+
+      {activeTab === 'profil' && <>
       {form.fidelityApp?.active && (
         <aside className="ws-fidinfo" role="note" aria-label="Information application fidélité">
           <div className="ws-fidinfo__icon" aria-hidden="true">
@@ -2333,7 +2579,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       )}
 
       <form className="ws-acc__section" onSubmit={saveProfile}>
-        <div className="ws-acc__section-h">Mes informations</div>
+        <div className="ws-acc__section-h">Coordonnées</div>
         <div className="ws-acc__form">
           <label className="ws-acc__field">
             <span className="ws-acc__field-label">Prénom</span>
@@ -2344,11 +2590,6 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             <span className="ws-acc__field-label">Nom</span>
             <input type="text" className="ws-acc__input" value={form.lastName}
               onChange={(e) => setField('lastName', e.target.value)} placeholder="Nom" />
-          </label>
-          <label className="ws-acc__field ws-acc__field--full">
-            <span className="ws-acc__field-label">Entreprise</span>
-            <input type="text" className="ws-acc__input" value={form.company}
-              onChange={(e) => setField('company', e.target.value)} placeholder="Nom de l'entreprise" />
           </label>
           <label className="ws-acc__field ws-acc__field--full">
             <span className="ws-acc__field-label">E-mail</span>
@@ -2368,78 +2609,131 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           </label>
         </div>
 
-        <label className="ws-acc__toggle">
-          <input type="checkbox" checked={form.isBusiness}
-            onChange={(e) => setField('isBusiness', e.target.checked)} />
-          <span className="ws-acc__toggle-track" aria-hidden="true"><span className="ws-acc__toggle-thumb"/></span>
-          <span className="ws-acc__toggle-label">Je fais des achats pour une entreprise / avec facturation</span>
-        </label>
-
-        {form.isBusiness && (
-          <details className="ws-acc__invoice" open>
-            <summary className="ws-acc__invoice-sum">Facturation entreprise</summary>
-            <div className="ws-acc__invoice-body">
-              <div className="ws-acc__form ws-acc__form--vat">
-                <label className="ws-acc__field ws-acc__field--country">
-                  <span className="ws-acc__field-label">Pays</span>
-                  <select className="ws-acc__input" value={form.invoice.country}
-                    onChange={(e) => setInvoiceField('country', e.target.value)}>
-                    {['BE','NL','FR','DE','LU','IT','ES','AT','PT','IE','FI','SE','DK','PL','CZ'].map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </label>
-                <label className="ws-acc__field ws-acc__field--vat">
-                  <span className="ws-acc__field-label">Numéro de TVA</span>
-                  <div className="ws-acc__vatrow">
-                    <input type="text" className="ws-acc__input" value={form.invoice.vat}
-                      onChange={(e) => setInvoiceField('vat', e.target.value)}
-                      placeholder="0123456789" autoComplete="off" />
-                    <button type="button" className="ws-acc__vat-btn"
-                      disabled={vies.status === 'loading' || !form.invoice.vat}
-                      onClick={checkVat}>
-                      {vies.status === 'loading' ? 'Vérification…' : 'Vérifier (VIES)'}
-                    </button>
-                  </div>
-                </label>
-              </div>
-              {vies.status === 'ok' && <p className="ws-acc__vat-msg ws-acc__vat-msg--ok">✓ {vies.message}</p>}
-              {vies.status === 'invalid' && <p className="ws-acc__vat-msg ws-acc__vat-msg--err">⚠ {vies.message}</p>}
-              {vies.status === 'unavailable' && (
-                <p className="ws-acc__vat-msg ws-acc__vat-msg--err">
-                  ⚠ {vies.message} <button type="button" className="ws-acc__retry" onClick={checkVat}>Réessayer</button>
-                </p>
-              )}
-              <div className="ws-acc__form">
-                <label className="ws-acc__field ws-acc__field--full">
-                  <span className="ws-acc__field-label">Raison sociale</span>
-                  <input type="text" className="ws-acc__input" value={form.invoice.name}
-                    onChange={(e) => setInvoiceField('name', e.target.value)} placeholder="Nom légal" />
-                </label>
-                <label className="ws-acc__field ws-acc__field--full">
-                  <span className="ws-acc__field-label">Adresse</span>
-                  <input type="text" className="ws-acc__input" value={form.invoice.address}
-                    onChange={(e) => setInvoiceField('address', e.target.value)} placeholder="Rue et numéro" />
-                </label>
-                <label className="ws-acc__field">
-                  <span className="ws-acc__field-label">Code postal</span>
-                  <input type="text" className="ws-acc__input" value={form.invoice.postalCode}
-                    onChange={(e) => setInvoiceField('postalCode', e.target.value)} placeholder="1000" />
-                </label>
-                <label className="ws-acc__field">
-                  <span className="ws-acc__field-label">Ville</span>
-                  <input type="text" className="ws-acc__input" value={form.invoice.city}
-                    onChange={(e) => setInvoiceField('city', e.target.value)} placeholder="Bruxelles" />
-                </label>
-              </div>
-              <p className="ws-acc__hint">Les champs manquants peuvent être complétés manuellement.</p>
-            </div>
-          </details>
-        )}
-
         <div className="ws-acc__form-foot">
           <button type="submit" className="ws-cta">Enregistrer</button>
           {savedFlash && <span className="ws-acc__saved">✓ Enregistré</span>}
         </div>
       </form>
+
+      {/* ── Sociétés de facturation ─────────────────────────────────────
+          Données IMPORTÉES (VIES ou saisie encadrée à l'AJOUT) — jamais de
+          champs de saisie pour une société existante : présentation en
+          lecture seule, règle appliquée aussi côté serveur (PATCH /auth/me
+          ignore ces clés). Retrait = archivage, la fiche reste en base. */}
+      <div className="ws-acc__section">
+        <div className="ws-acc__section-h">Sociétés de facturation</div>
+        {(user.companyClientId || user.company) && (
+          <div className="ws-acc__card ws-acc__card--ok">
+            <div className="ws-acc__card-row"><span className="ws-acc__k">Raison sociale</span><span className="ws-acc__v">{user.invoice?.name || user.company}</span></div>
+            <div className="ws-acc__card-row"><span className="ws-acc__k">N° TVA</span><span className="ws-acc__v">{user.invoice?.vat || 'Non assujettie'}</span></div>
+            {(user.invoice?.address || user.invoice?.city) && (
+              <div className="ws-acc__card-row"><span className="ws-acc__k">Adresse</span>
+                <span className="ws-acc__v">{[user.invoice?.address, [user.invoice?.postalCode, user.invoice?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</span></div>
+            )}
+            {user.invoice?.viesVerified && <div className="ws-acc__badge">✓ Vérifiée VIES</div>}
+            <p className="ws-acc__hint">Société par défaut pour vos demandes de facture. Pas d'édition libre : re-vérification VIES (réimporte les données) ou retrait puis ajout d'une nouvelle société.</p>
+            <div className="ws-acc__row-foot">
+              <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('vies'); setCompanyErr(''); }} disabled={companyBusy}>Re-vérifier (VIES)</button>
+              <button type="button" className="ws-acc__unplug" onClick={removeCompany} disabled={companyBusy}>Retirer</button>
+            </div>
+          </div>
+        )}
+        {!(user.companyClientId || user.company) && companyStep === 'idle' && (
+          <div className="ws-acc__card ws-acc__card--empty">
+            <p className="ws-acc__note">Aucune société liée à votre compte.</p>
+            <button className="ws-cta ws-cta--block" onClick={() => { setCompanyStep('vies'); setCompanyErr(''); }}>Ajouter une société</button>
+          </div>
+        )}
+        {companyStep === 'vies' && (
+          <div className="ws-acc__card">
+            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Ajouter par n° TVA — import VIES</div>
+            <div className="ws-acc__form ws-acc__form--vat">
+              <label className="ws-acc__field ws-acc__field--country">
+                <span className="ws-acc__field-label">Pays</span>
+                <select className="ws-acc__input" value={addVat.country}
+                  onChange={(e) => setAddVat((v) => ({ ...v, country: e.target.value }))}>
+                  {['BE','NL','FR','DE','LU','IT','ES','AT','PT','IE','FI','SE','DK','PL','CZ'].map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </label>
+              <label className="ws-acc__field ws-acc__field--vat">
+                <span className="ws-acc__field-label">Numéro de TVA</span>
+                <input type="text" className="ws-acc__input" value={addVat.vat}
+                  onChange={(e) => setAddVat((v) => ({ ...v, vat: e.target.value }))}
+                  placeholder="0123456789" autoComplete="off" />
+              </label>
+            </div>
+            <p className="ws-acc__hint">Raison sociale et adresse seront importées automatiquement depuis VIES.</p>
+            {companyErr && <p className="ws-acc__vat-msg ws-acc__vat-msg--err">⚠ {companyErr}</p>}
+            <div className="ws-acc__row-foot">
+              <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('idle'); setCompanyErr(''); }}>Annuler</button>
+              <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('novat'); setCompanyErr(''); }}>Sans n° TVA</button>
+              <button type="button" className="ws-cta" disabled={companyBusy || !addVat.vat} onClick={addByVies}>
+                {companyBusy ? 'Vérification…' : 'Vérifier et importer'}
+              </button>
+            </div>
+          </div>
+        )}
+        {companyStep === 'novat' && (
+          <div className="ws-acc__card">
+            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Ajouter sans n° TVA (ASBL, association, particulier)</div>
+            <div className="ws-acc__form">
+              <label className="ws-acc__field ws-acc__field--full">
+                <span className="ws-acc__field-label">Raison sociale</span>
+                <input type="text" className="ws-acc__input" value={addNo.name}
+                  onChange={(e) => setAddNo((v) => ({ ...v, name: e.target.value }))} />
+              </label>
+              <label className="ws-acc__field ws-acc__field--full">
+                <span className="ws-acc__field-label">Adresse</span>
+                <input type="text" className="ws-acc__input" value={addNo.address}
+                  onChange={(e) => setAddNo((v) => ({ ...v, address: e.target.value }))} />
+              </label>
+              <label className="ws-acc__field">
+                <span className="ws-acc__field-label">Code postal</span>
+                <input type="text" className="ws-acc__input" value={addNo.postalCode}
+                  onChange={(e) => setAddNo((v) => ({ ...v, postalCode: e.target.value }))} />
+              </label>
+              <label className="ws-acc__field">
+                <span className="ws-acc__field-label">Ville</span>
+                <input type="text" className="ws-acc__input" value={addNo.city}
+                  onChange={(e) => setAddNo((v) => ({ ...v, city: e.target.value }))} />
+              </label>
+            </div>
+            <p className="ws-acc__hint">Entité non assujettie : le n° TVA de la facture restera vide. La TVA belge reste due — aucune exonération à l'achat.</p>
+            {companyErr && <p className="ws-acc__vat-msg ws-acc__vat-msg--err">⚠ {companyErr}</p>}
+            <div className="ws-acc__row-foot">
+              <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('idle'); setCompanyErr(''); }}>Annuler</button>
+              <button type="button" className="ws-cta" disabled={companyBusy || !addNo.name} onClick={addNoVat}>Ajouter</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Sécurité ── */}
+      <div className="ws-acc__section">
+        <div className="ws-acc__section-h">Sécurité</div>
+        <div className="ws-acc__form">
+          <label className="ws-acc__field">
+            <span className="ws-acc__field-label">Nouveau mot de passe</span>
+            <input type="password" className="ws-acc__input" value={pw1}
+              onChange={(e) => setPw1(e.target.value)} autoComplete="new-password" />
+          </label>
+          <label className="ws-acc__field">
+            <span className="ws-acc__field-label">Confirmation</span>
+            <input type="password" className="ws-acc__input" value={pw2}
+              onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" />
+          </label>
+        </div>
+        {pwMsg && (
+          <p className={'ws-acc__vat-msg ' + (pwMsg.ok ? 'ws-acc__vat-msg--ok' : 'ws-acc__vat-msg--err')}>
+            {pwMsg.ok ? '✓ ' : '⚠ '}{pwMsg.text}
+          </p>
+        )}
+        <div className="ws-acc__form-foot">
+          <button type="button" className="ws-cta" disabled={pwBusy || pw1.length < 6 || pw1 !== pw2} onClick={savePassword}>
+            Changer le mot de passe
+          </button>
+        </div>
+      </div>
 
       <div className="ws-acc__section">
         <div className="ws-acc__section-h">Préférences</div>
@@ -2699,6 +2993,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           <window.LangMenu />
         </div>
       )}
+      </>}
 
       <div className="ws-acc__foot">
         <button className="ws-acc__logout" onClick={() => { onLogout(); onClose(); }}>Se déconnecter</button>

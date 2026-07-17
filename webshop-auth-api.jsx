@@ -160,6 +160,87 @@
       }
     },
 
+    /* ── Config front (ws_param en liste blanche) : flag onglet Fidélité… ── */
+    async config() {
+      if (!api.endpoint) return { fidelityTabEnabled: true };
+      try {
+        const base = api.endpoint.replace(/\/auth\/?$/, '');
+        const r = await fetch(`${base}/config`, { credentials: 'include' });
+        if (r.ok) return await r.json();
+      } catch (_) {}
+      return { fidelityTabEnabled: true };
+    },
+
+    /* ── Mes achats : liste unifiée tickets + commandes (12 mois, paginée) ── */
+    async listPurchases({ filter, page, perPage } = {}) {
+      if (!api.endpoint) return { items: [], total: 0, canRequestInvoice: false };
+      try {
+        const qs = new URLSearchParams();
+        if (filter) qs.set('filter', filter);
+        if (page) qs.set('page', String(page));
+        if (perPage) qs.set('perPage', String(perPage));
+        const r = await fetch(`${api.endpoint}/purchases?${qs}`, { credentials: 'include', headers: authHeaders() });
+        if (r.ok) return await r.json();
+      } catch (_) {}
+      return { items: [], total: 0, canRequestInvoice: false };
+    },
+
+    /* ── Demande de facture (to_invoice 1/0 + destinataire) sur un ticket ── */
+    async requestInvoice({ ref, want, billingEntityId }) {
+      if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
+      try {
+        const r = await fetch(`${api.endpoint}/purchases/request-invoice`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ ref, want: want ? 1 : 0, billingEntityId: billingEntityId ?? null }),
+        });
+        const j = await r.json();
+        if (r.ok) return { ok: true, notice: j.notice };
+        return { ok: false, error: j.error || 'Échec de la demande.' };
+      } catch (_) { return { ok: false, error: 'Réseau indisponible.' }; }
+    },
+
+    /* ── Sécurité : changement de mot de passe de la session ── */
+    async changePassword({ password }) {
+      if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
+      try {
+        const r = await fetch(`${api.endpoint}/password`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ password }),
+        });
+        const j = await r.json();
+        return r.ok ? { ok: true } : { ok: false, error: j.error || 'Échec.' };
+      } catch (_) { return { ok: false, error: 'Réseau indisponible.' }; }
+    },
+
+    /* ── Société sans n° TVA (non assujettie) / archivage du lien ── */
+    async addCompanyNoVat({ name, address, postalCode, city }) {
+      if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
+      try {
+        const r = await fetch(`${api.endpoint}/billing-company`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ name, address, postalCode, city }),
+        });
+        const j = await r.json();
+        if (r.ok) return { ok: true, user: j.user };
+        return { ok: false, error: j.error || 'Échec de l\'ajout.' };
+      } catch (_) { return { ok: false, error: 'Réseau indisponible.' }; }
+    },
+    async unlinkCompany() {
+      if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
+      try {
+        const r = await fetch(`${api.endpoint}/billing-company/unlink`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        });
+        const j = await r.json();
+        if (r.ok) return { ok: true, user: j.user };
+        return { ok: false, error: j.error || 'Échec.' };
+      } catch (_) { return { ok: false, error: 'Réseau indisponible.' }; }
+    },
+
     /* ── Logout ─────────────────────────────────────────────────────── */
     async logout() {
       if (api.endpoint) {

@@ -49,6 +49,18 @@ function dispatch($m, $p) {
   /* ── Health ── */
   if ($m === 'GET' && $p === '/health') { db()->query('SELECT 1'); json_out(['ok' => true]); }
 
+  /* ── Config front (clés ws_param en liste blanche — jamais la table entière).
+     Pilote notamment la visibilité de l'onglet Fidélité (masquable en prod sans
+     redéploiement : ws_param.fidelity_tab_enabled = '0') et le délai de demande
+     de facture (invoice_request_deadline : 'end_of_month' par défaut, ou un
+     nombre de jours). ── */
+  if ($m === 'GET' && $p === '/config') {
+    json_out([
+      'fidelityTabEnabled'     => ws_param('fidelity_tab_enabled', '1') !== '0',
+      'invoiceRequestDeadline' => ws_param('invoice_request_deadline', 'end_of_month'),
+    ]);
+  }
+
   /* ── Shops / Brand ── */
   if ($m === 'GET' && $p === '/shops') {
     json_out(rows("SELECT id, slug, name, city, email, phone, accent, tint, logo_url,
@@ -834,6 +846,167 @@ function dispatch($m, $p) {
     q("INSERT INTO pwa_client_office (client_id, office_id) VALUES (?,?)", [$id, $poid]);
     json_out(['user' => user_payload($id)]);
   }
+  /* ── Mes achats : liste UNIFIÉE tickets (pwa_purchases) + commandes webshop
+     (ws_orders) de l'utilisateur de session, 12 derniers mois, paginée. Chaque
+     ligne porte un état dérivé : open (ticket) | requested (facture demandée) |
+     invoiced (facturé, verrouillé) | closed (délai passé). L'appartenance est
+     TOUJOURS vérifiée en base (client_id/customer_id = auth_uid). ── */
+  if ($m === 'GET' && $p === '/auth/purchases') {
+    $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    $filter = qp('filter') ?: 'all';                                   // all | none | requested | invoiced
+    $page   = max(1, (int) (qp('page') ?: 1));
+    $per    = min(50, max(5, (int) (qp('perPage') ?: 10)));
+    $canReq = col_exists('pwa_purchases', 'to_invoice');               // capacité : colonne migrée ?
+    $hasBe  = col_exists('pwa_purchases', 'billing_entity_id');
+    $hasFrz = col_exists('pwa_purchases', 'frozen_at');
+    $hasPdf = col_exists('pwa_invoices', 'pdf_path');
+    $items  = [];
+    try {                                                              // tickets (ERP/PWA)
+      $items = array_merge($items, rows(
+        "SELECT p.purchase_code AS ref, p.store AS shop,
+                COALESCE(p.occurred_at, p.created_at) AS at,
+                (SELECT COUNT(*) FROM pwa_purchase_items it WHERE it.purchase_id = p.id) AS items,
+                (SELECT COALESCE(SUM(it.qty * it.unit_price), 0) FROM pwa_purchase_items it WHERE it.purchase_id = p.id)
+                  - COALESCE(p.discount, 0) AS total,
+                " . ($canReq ? "COALESCE(p.to_invoice,0)" : "0") . " AS toInvoice,
+                " . ($hasBe  ? "p.billing_entity_id"       : "NULL") . " AS billingEntityId,
+                " . ($hasFrz ? "p.frozen_at"               : "NULL") . " AS frozenAt,
+                i.invoice_no AS invoiceNo, i.total_ttc AS invoiceTotal,
+                " . ($hasPdf ? "i.pdf_path" : "NULL") . " AS pdfPath,
+                'ticket' AS source
+           FROM pwa_purchases p LEFT JOIN pwa_invoices i ON i.id = p.invoice_id
+          WHERE p.client_id = ? AND COALESCE(p.occurred_at, p.created_at) >= DATE_SUB(NOW(), INTERVAL 12 MONTH)",
+        [$id]));
+    } catch (Throwable $e) { /* tables PWA absentes */ }
+    try {                                                              // commandes webshop
+      $items = array_merge($items, rows(
+        "SELECT o.order_ref AS ref, s.name AS shop, o.created_at AS at,
+                (SELECT COUNT(*) FROM ws_order_lines l WHERE l.order_id = o.id) AS items,
+                o.total AS total, 0 AS toInvoice, NULL AS billingEntityId, NULL AS frozenAt,
+                NULL AS invoiceNo, NULL AS invoiceTotal, NULL AS pdfPath, 'order' AS source
+           FROM ws_orders o LEFT JOIN ws_shops s ON s.id = o.shop_id
+          WHERE o.customer_id = ? AND o.created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)",
+        [$id]));
+    } catch (Throwable $e) { /* — */ }
+    usort($items, function ($a, $b) { return strcmp((string) $b['at'], (string) $a['at']); });
+    $mode = ws_param('invoice_request_deadline', 'end_of_month');
+    foreach ($items as &$it) {
+      $dl = invoice_deadline((string) $it['at'], $mode);
+      $it['state'] = $it['invoiceNo'] ? 'invoiced'
+        : (((int) $it['toInvoice']) === 1 ? 'requested'
+        : (time() > $dl ? 'closed' : 'open'));
+      $it['locked']   = $it['state'] === 'invoiced' || $it['state'] === 'closed' || !empty($it['frozenAt']);
+      $it['deadline'] = date('Y-m-d', $dl);
+      unset($it['frozenAt'], $it['pdfPath']); // pdf servi via endpoint authentifié uniquement
+    }
+    unset($it);
+    if ($filter !== 'all') {
+      $map = ['none' => ['open', 'closed'], 'requested' => ['requested'], 'invoiced' => ['invoiced']];
+      $keep = $map[$filter] ?? null;
+      if ($keep) $items = array_values(array_filter($items, function ($x) use ($keep) { return in_array($x['state'], $keep, true); }));
+    }
+    $total = count($items);
+    $items = array_slice($items, ($page - 1) * $per, $per);
+    json_out([
+      'items' => $items, 'total' => $total, 'page' => $page, 'perPage' => $per,
+      'canRequestInvoice' => $canReq,
+      // Annoncé AU MOMENT de la demande : la facture n'apparaît qu'au batch
+      // mensuel du franchisé — sinon le client la cherche dès le lendemain.
+      'invoiceNotice' => 'Votre facture sera émise par la boutique en début de mois prochain.',
+    ]);
+  }
+
+  /* ── Demande de facture sur un ticket : écrit to_invoice (1/0) + le
+     destinataire billing_entity_id. REFUS EN BASE (pas sur l'état affiché) si
+     déjà facturé, gelé par le batch ERP, ou délai dépassé. 501 si la colonne
+     to_invoice n'est pas encore migrée (voir rapport de schéma). ── */
+  if ($m === 'POST' && $p === '/auth/purchases/request-invoice') {
+    $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    if (!col_exists('pwa_purchases', 'to_invoice')) {
+      json_out(['error' => "Fonction indisponible : colonne pwa_purchases.to_invoice absente en base (voir rapport de schéma)."], 501);
+    }
+    $b    = body();
+    $ref  = (string) ($b['ref'] ?? '');
+    $want = !empty($b['want']) ? 1 : 0;
+    $hasFrz = col_exists('pwa_purchases', 'frozen_at');
+    $t = row("SELECT id, invoice_id, COALESCE(occurred_at, created_at) AS at" .
+             ($hasFrz ? ", frozen_at" : ", NULL AS frozen_at") .
+             " FROM pwa_purchases WHERE purchase_code = ? AND client_id = ? LIMIT 1", [$ref, $id]);
+    if (!$t) json_out(['error' => 'Ticket introuvable.'], 404);        // appartenance vérifiée en base
+    if (!empty($t['invoice_id'])) json_out(['error' => 'Ticket déjà facturé — modification refusée.'], 409);
+    if (!empty($t['frozen_at']))  json_out(['error' => 'Facturation du mois en cours par la boutique — modification refusée.'], 409);
+    if (time() > invoice_deadline((string) $t['at'], ws_param('invoice_request_deadline', 'end_of_month'))) {
+      json_out(['error' => 'Délai dépassé pour ce ticket.'], 409);
+    }
+    $sets = 'to_invoice=?'; $vals = [$want];
+    if (col_exists('pwa_purchases', 'billing_entity_id')) {
+      $be = $b['billingEntityId'] ?? null;
+      if ($want && $be !== null && $be !== '') {
+        // Le destinataire doit appartenir au compte : sa société liée, ou
+        // l'utilisateur lui-même (particulier). Jamais un id arbitraire.
+        $mine = ((int) $be === (int) $id)
+          || row("SELECT 1 AS ok FROM client WHERE id = ? AND id = (SELECT company_client_id FROM client WHERE id = ?)",
+                 [(int) $be, $id]);
+        if (!$mine) json_out(['error' => 'Destinataire non autorisé.'], 403);
+        $sets .= ', billing_entity_id=?'; $vals[] = (int) $be;
+      } elseif (!$want) {
+        $sets .= ', billing_entity_id=NULL';
+      }
+    }
+    // Garde anti-course : la clause WHERE re-vérifie l'état AU MOMENT de
+    // l'écriture (jamais l'état affiché dans le navigateur).
+    $vals[] = (int) $t['id'];
+    q("UPDATE pwa_purchases SET $sets WHERE id = ? AND invoice_id IS NULL" .
+      ($hasFrz ? " AND frozen_at IS NULL" : ""), $vals);
+    $chk = row("SELECT invoice_id" . ($hasFrz ? ", frozen_at" : ", NULL AS frozen_at") .
+               " FROM pwa_purchases WHERE id = ?", [(int) $t['id']]);
+    if ($chk && (!empty($chk['invoice_id']) || !empty($chk['frozen_at']))) {
+      json_out(['error' => 'Ticket verrouillé entre-temps (facturé ou gelé) — modification refusée.'], 409);
+    }
+    json_out(['ok' => true, 'notice' => 'Votre facture sera émise par la boutique en début de mois prochain.']);
+  }
+
+  /* ── Sécurité : changement de mot de passe de la session (auth requise). ── */
+  if ($m === 'POST' && $p === '/auth/password') {
+    $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    $pass = (string) (body()['password'] ?? '');
+    if (strlen($pass) < 6) json_out(['error' => 'Mot de passe trop court (min. 6 caractères).'], 400);
+    q("UPDATE client SET password_hash = ? WHERE id = ?", [password_hash($pass, PASSWORD_BCRYPT), $id]);
+    json_out(['ok' => true]);
+  }
+
+  /* ── Sociétés de facturation : ajout SANS n° TVA (ASBL, association,
+     particulier assimilé) — raison sociale + adresse saisies à l'AJOUT
+     uniquement, champ TVA vide (entité non assujettie ; la TVA belge reste due,
+     seule la case n° TVA de la facture restera vide). NB : schéma actuel
+     mono-société (client.company_client_id) — le multi-sociétés + is_default
+     figurent au rapport de schéma. ── */
+  if ($m === 'POST' && $p === '/auth/billing-company') {
+    $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    $b    = body();
+    $name = trim((string) ($b['name'] ?? ''));
+    if ($name === '') json_out(['error' => 'Raison sociale requise.'], 400);
+    $addr = trim((string) ($b['address'] ?? ''));
+    $pc   = trim((string) ($b['postalCode'] ?? ''));
+    $city = trim((string) ($b['city'] ?? ''));
+    $ms   = (int) ((row("SELECT id_main_shop FROM client WHERE id = ?", [$id])['id_main_shop'] ?? 0) ?: 1);
+    q("INSERT INTO client (id_main_shop, is_b2b, company_name, invoice_name, invoice_address,
+                           invoice_postal_code, invoice_city, active, source_channel)
+       VALUES (?,1,?,?,?,?,?,1,'webshop')",
+      [$ms, $name, $name, $addr ?: null, $pc ?: null, $city ?: null]);
+    $co = (int) db()->lastInsertId();
+    q("UPDATE client SET company_client_id = ?, is_b2b = 1 WHERE id = ?", [$co, $id]);
+    json_out(['user' => user_payload($id)]);
+  }
+  /* « Retirer » = ARCHIVAGE : on délie (company_client_id NULL), la ligne
+     société n'est JAMAIS supprimée — les factures émises la référencent
+     (pwa_invoices.company_client_id, snapshot) et doivent rester lisibles. */
+  if ($m === 'POST' && $p === '/auth/billing-company/unlink') {
+    $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    q("UPDATE client SET company_client_id = NULL WHERE id = ?", [$id]);
+    json_out(['user' => user_payload($id)]);
+  }
+
   if ($m === 'GET' && $p === '/auth/me') {
     $id = auth_uid(); $u = $id ? user_payload($id) : null;
     if (!$u) json_out(['error' => 'Non connecté.'], 401);
@@ -851,20 +1024,12 @@ function dispatch($m, $p) {
       $sets[] = 'phone_prefix=?'; $vals[] = ($nat !== '' ? $pfx : null);
       $sets[] = 'phone_e164=?';   $vals[] = ($e164 ?: null);
     }
-    // Entreprise + facturation : persistées dans la table `client` partagée avec
-    // la PWA. Si une fiche société est liée (company_client_id, modèle PWA),
-    // les champs société vont sur CETTE ligne — c'est elle que les deux profils
-    // affichent ; sinon sur la personne (comptes non migrés).
-    $cc = 0;
-    try { $cc = (int) (row("SELECT company_client_id AS cc FROM client WHERE id=?", [$id])['cc'] ?? 0); }
-    catch (Throwable $e) { /* colonne absente */ }
-    $csets = []; $cvals = [];                       // cible : fiche société liée
-    $addCo = function ($col, $v) use ($cc, &$csets, &$cvals, &$sets, &$vals) {
-      if ($cc) { $csets[] = "$col=?"; $cvals[] = $v; } else { $sets[] = "$col=?"; $vals[] = $v; }
-    };
-    if (array_key_exists('company', $b))    { $addCo('company_name', ($b['company'] !== '' ? $b['company'] : null)); }
-    if (array_key_exists('postalCode', $b)) { $sets[] = 'zip=?';    $vals[] = ($b['postalCode'] !== '' ? $b['postalCode'] : null); }
-    if (array_key_exists('isBusiness', $b)) { $sets[] = 'is_b2b=?'; $vals[] = $b['isBusiness'] ? 1 : 0; }
+    // DONNÉES SOCIÉTÉ NON ÉDITABLES ICI (règle serveur, pas seulement du grisé
+    // CSS) : raison sociale, TVA et adresse de facturation atterrissent sur un
+    // document fiscal — elles viennent de VIES (/auth/billing-verify) ou d'une
+    // saisie encadrée à l'AJOUT (/auth/billing-company), jamais d'une édition
+    // libre. Les clés company / invoice / isBusiness envoyées ici sont ignorées.
+    if (array_key_exists('postalCode', $b)) { $sets[] = 'zip=?'; $vals[] = ($b['postalCode'] !== '' ? $b['postalCode'] : null); }
     // Préférences éditées dans le profil : persistées pour être visibles depuis
     // la PWA aussi (colonnes partagées). Sans ça, ces choix restaient locaux au
     // navigateur et se perdaient au rechargement.
@@ -885,22 +1050,7 @@ function dispatch($m, $p) {
         $sets[] = 'fidelity_linked_at=?'; $vals[] = $lv;
       }
     }
-    if (isset($b['invoice']) && is_array($b['invoice'])) {
-      $inv  = $b['invoice'];
-      $imap = [
-        'invoice_country'     => 'country',
-        'tax_number'          => 'vat',
-        'invoice_name'        => 'name',
-        'invoice_address'     => 'address',
-        'invoice_postal_code' => 'postalCode',
-        'invoice_city'        => 'city',
-      ];
-      foreach ($imap as $col => $k) {
-        if (array_key_exists($k, $inv)) { $addCo($col, ($inv[$k] !== '' ? $inv[$k] : null)); }
-      }
-    }
-    if ($sets)  { $vals[]  = $id; q("UPDATE client SET " . implode(',', $sets)  . " WHERE id=?", $vals); }
-    if ($csets) { $cvals[] = $cc; q("UPDATE client SET " . implode(',', $csets) . " WHERE id=?", $cvals); }
+    if ($sets) { $vals[] = $id; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $vals); }
     json_out(['user' => user_payload($id)]);
   }
 
@@ -1214,6 +1364,10 @@ function user_payload($id) {
     'preferredShopId' => $u['preferred_shop_id'] ?? null,
     'lang' => $u['locale'] ?? ($u['preferred_lang'] ?? 'fr'),
     'isBusiness' => (bool) ($u['is_b2b'] ?? ($u['is_business'] ?? 0)),
+    // Id de la fiche société liée : sert de billing_entity_id lors d'une
+    // demande de facture (le serveur re-vérifie l'appartenance à l'écriture).
+    'companyClientId' => isset($u['company_client_id']) && $u['company_client_id'] !== null
+      ? (int) $u['company_client_id'] : null,
     // Facturation entreprise : fiche société liée (company_client_id) en
     // priorité, sinon les colonnes de la personne. Mêmes valeurs que le profil
     // PWA (repo_client_public / client_normalize).
@@ -1246,6 +1400,42 @@ function user_payload($id) {
  * clé/valeur les plus courantes ET une colonne dédiée, chacune isolée en
  * try/catch. Repli : la RACINE du serveur — le webshop vit sous /webshop/, donc
  * `<scheme>://<host>/` pointe sur le PWA. Toujours surchargeable via ws_param. */
+/* Lecture d'un paramètre ws_param (clé/valeur). Repli silencieux sur $default. */
+function ws_param($key, $default = null) {
+  try {
+    $r = row("SELECT param_value AS v FROM ws_param WHERE param_key = ? LIMIT 1", [$key]);
+    if ($r && $r['v'] !== null && $r['v'] !== '') return (string) $r['v'];
+  } catch (Throwable $e) { /* table absente */ }
+  return $default;
+}
+
+/* Détection de colonne (information_schema, mémoïsée). Les fonctionnalités qui
+ * dépendent d'une colonne non encore migrée (ex. pwa_purchases.to_invoice) se
+ * désactivent proprement au lieu d'échouer — et s'activent dès que la colonne
+ * est ajoutée en base, sans redéploiement. */
+function col_exists($table, $col) {
+  static $cache = [];
+  $k = "$table.$col";
+  if (!array_key_exists($k, $cache)) {
+    try {
+      $cache[$k] = (bool) row(
+        "SELECT 1 AS ok FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1",
+        [$table, $col]);
+    } catch (Throwable $e) { $cache[$k] = false; }
+  }
+  return $cache[$k];
+}
+
+/* Date limite de demande de facture pour un ticket : dernier jour du mois du
+ * ticket (le franchisé facture en fin de mois), ou N jours si ws_param
+ * invoice_request_deadline est numérique. Jamais en dur dans les appels. */
+function invoice_deadline($atStr, $mode) {
+  $ts = strtotime((string) $atStr) ?: time();
+  if (preg_match('/^\d+$/', (string) $mode)) return strtotime('+' . (int) $mode . ' days', $ts);
+  return strtotime(date('Y-m-t 23:59:59', $ts)); // 'end_of_month' (défaut)
+}
+
 function pwa_url() {
   $tries = [
     "SELECT param_value AS v FROM ws_param WHERE param_key = 'pwa_url' LIMIT 1",
@@ -1280,12 +1470,12 @@ function vies_lookup($rawVat) {
   $res = false; $http = 0;
   if (function_exists('curl_init')) {
     $ch = curl_init($url);
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 12, CURLOPT_HTTPHEADER => ['Accept: application/json']]);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_HTTPHEADER => ['Accept: application/json']]);
     $res  = curl_exec($ch);
     $http = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
   } else {
-    $ctx = stream_context_create(['http' => ['timeout' => 12, 'header' => 'Accept: application/json']]);
+    $ctx = stream_context_create(['http' => ['timeout' => 10, 'header' => 'Accept: application/json']]);
     $res  = @file_get_contents($url, false, $ctx);
     $http = $res !== false ? 200 : 0;
   }
