@@ -126,30 +126,34 @@ function dispatch($m, $p) {
     ]);
   }
 
-  /* ── Catalog ── */
+  /* ── Catalog ──
+     SOURCE DES PRODUITS = ws_products (catalogue actif). ws_product_shops
+     n'est PLUS un filtre obligatoire : une ligne d'assortiment sert seulement
+     de métadonnée par boutique (no_delivery, ou exclusion EXPLICITE via
+     active=0). Sans ligne, le produit est vendu tel quel. */
   if ($m === 'GET' && $p === '/catalog/categories') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    // N'expose une catégorie que si elle a >=1 produit DISPONIBLE dans cette
-    // boutique (produit actif + présent dans l'assortiment ws_product_shops).
+    // N'expose une catégorie que si elle a >=1 produit actif du catalogue non
+    // explicitement exclu de cette boutique.
     $cats = rows("SELECT c.id, c.slug, c.label, c.img, c.sort_order
                     FROM ws_categories c
                    WHERE c.active = 1 AND (c.shop_id = ? OR c.shop_id IS NULL)
                      AND EXISTS (SELECT 1 FROM ws_products p
-                                   JOIN ws_product_shops ps ON ps.product_id = p.id
-                                                           AND ps.shop_id = ? AND ps.active = 1
-                                  WHERE p.cat_id = c.id AND p.active = 1)
+                                   LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
+                                  WHERE p.cat_id = c.id AND p.active = 1
+                                    AND (ps.product_id IS NULL OR ps.active = 1))
                    ORDER BY c.sort_order, c.label", [$s, $s]);
     // Rattache les sous-catégories (ws_category_subs) à chaque catégorie -> c.subs[]
-    // (le front lit activeCat.subs pour afficher la bande de sous-catégories).
-    // Même règle : on n'expose qu'une sous-catégorie qui a >=1 produit dispo ici.
+    // (le front lit activeCat.subs pour la ligne de nav). Même règle : on
+    // n'expose qu'une sous-catégorie qui a >=1 produit du catalogue ici.
     $subs = rows("SELECT sub.id, sub.category_id, sub.slug, sub.label, sub.img, sub.sort_order
                     FROM ws_category_subs sub
                     JOIN ws_categories c ON c.id = sub.category_id
                    WHERE sub.active = 1 AND (c.shop_id = ? OR c.shop_id IS NULL)
                      AND EXISTS (SELECT 1 FROM ws_products p
-                                   JOIN ws_product_shops ps ON ps.product_id = p.id
-                                                           AND ps.shop_id = ? AND ps.active = 1
-                                  WHERE p.sub_cat_id = sub.id AND p.active = 1)
+                                   LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
+                                  WHERE p.sub_cat_id = sub.id AND p.active = 1
+                                    AND (ps.product_id IS NULL OR ps.active = 1))
                    ORDER BY sub.sort_order, sub.label", [$s, $s]);
     $byCat = [];
     foreach ($subs as $x) { $byCat[$x['category_id']][] = $x; }
@@ -170,12 +174,13 @@ function dispatch($m, $p) {
                       COALESCE(pp.price, p.price) AS price, ps.no_delivery,
                       (SELECT JSON_ARRAYAGG(allergen) FROM ws_product_allergens a WHERE a.product_id = p.id) AS allergens
                  FROM ws_products p
-                 JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ? AND ps.active = 1
+                 LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
                  LEFT JOIN ws_product_prices pp ON pp.product_id = p.id AND pp.shop_id = ? AND pp.active = 1
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
                  LEFT JOIN ws_tags t ON t.id = p.tag_id
                  LEFT JOIN ws_season se ON se.id = p.season_id
-                WHERE p.active = 1 ORDER BY c.sort_order, p.name", [$s, $s]);
+                WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)
+                ORDER BY c.sort_order, p.name", [$s, $s]);
     foreach ($r as &$x) {
       $x['portions'] = (bool) $x['portions'];
       $x['cross_portion'] = (bool) $x['cross_portion'];
