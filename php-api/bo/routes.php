@@ -97,6 +97,48 @@ function bo_resource_route($m, $bo, $rest) {
            LEFT JOIN ws_shops sh ON sh.id = r.shop_id
           WHERE $w AND r.status = 'pending' ORDER BY r.created_at DESC LIMIT 200", $p));
     }
+
+    if ($rest === 'incidents') {                 // incidents & litiges (ws_incidents)
+      [$iw, $ip] = bo_shop_where($sess, 'i.shop_id');
+      $status = qp('status');                    // open | in_progress | resolved (optionnel)
+      $params = $ip;
+      if ($status !== null) { $iw .= " AND i.status = ?"; $params[] = $status; }
+      json_out(rows(
+        "SELECT i.id, i.shop_id, i.order_ref, i.type, i.severity, i.status, i.title,
+                i.description, i.created_at, i.resolved_at, sh.name AS shop
+           FROM ws_incidents i LEFT JOIN ws_shops sh ON sh.id = i.shop_id
+          WHERE $iw ORDER BY (i.status='open') DESC, i.created_at DESC LIMIT 300", $params));
+    }
+
+    if ($rest === 'rentability') {               // agrégat calculé (commandes × coûts)
+      $from = qp('from', date('Y-m-01'));
+      $to   = qp('to',   date('Y-m-d'));
+      $agg = row("SELECT COUNT(*) n, COALESCE(SUM(total),0) rev, COALESCE(AVG(total),0) avg_basket,
+                         COUNT(DISTINCT tour_id) tours
+                    FROM ws_orders WHERE $w AND delivery_date BETWEEN ? AND ?",
+                 array_merge($p, [$from, $to]));
+      // Paramètres de coût (ws_param) — repli sur des valeurs neutres si absents.
+      $costs = [
+        'prep'   => (float) ws_param('cost_prep_per_order',   '0'),
+        'emb'    => (float) ws_param('cost_packaging_unit',   '0'),
+        'carb'   => (float) ws_param('cost_fuel_per_km',      '0'),
+        'struct' => (float) ws_param('cost_struct_per_tour',  '0'),
+        'charg'  => (float) ws_param('cost_labor_per_tour',   '0'),
+      ];
+      $orders = (int) $agg['n'];
+      $revenue = (float) $agg['rev'];
+      $variable = $orders * ($costs['prep'] + $costs['emb']);
+      $fixed    = (int) $agg['tours'] * ($costs['struct'] + $costs['charg']);
+      json_out([
+        'from' => $from, 'to' => $to,
+        'orders' => $orders, 'revenue' => $revenue,
+        'avgBasket' => round((float) $agg['avg_basket'], 2),
+        'tours' => (int) $agg['tours'],
+        'costs' => $costs,
+        'estimatedCost' => round($variable + $fixed, 2),
+        'estimatedMargin' => round($revenue - $variable - $fixed, 2),
+      ]);
+    }
     return; // aucune autre route franchisé
   }
 
