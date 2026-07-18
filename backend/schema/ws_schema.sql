@@ -551,6 +551,18 @@ CREATE TABLE ws_tour_availability (
   FOREIGN KEY (shop_id) REFERENCES ws_shops(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Fermetures ponctuelles d'une tournée à une date donnée (exception au planning
+-- récurrent ws_tour_availability). Lue par tour_orderable() (php-api).
+-- (Reflète la structure réelle en base : reason VARCHAR(120), sans autre champ.)
+CREATE TABLE ws_tour_closures (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  tour_id       INT NOT NULL,
+  closure_date  DATE NOT NULL,
+  reason        VARCHAR(120),                 -- motif optionnel (férié, congé chauffeur…)
+  UNIQUE KEY uq_tour_closure (tour_id, closure_date),
+  FOREIGN KEY (tour_id) REFERENCES ws_tours(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- NOTE: the ERP B2B client → route mapping is now merged into
 -- ws_office_delivery_sites (columns client_id + tournee_id + shop_id + active).
 -- The standalone ws_clientb2bdelivery table has been removed.
