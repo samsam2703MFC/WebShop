@@ -319,7 +319,8 @@ function dispatch($m, $p) {
     if ($sub < (float) $v['min_order']) json_out(['ok' => false, 'message' => "Minimum {$v['min_order']} €"]);
     $disc = $v['type'] === 'percent' ? round($sub * (float) $v['value']) / 100
           : ($v['type'] === 'fixed' ? (float) $v['value'] : 0);
-    json_out(['ok' => true, 'discount' => $disc, 'voucher' => ['code' => $v['code'], 'type' => $v['type'], 'value' => (float) $v['value']], 'message' => 'Code appliqué']);
+    json_out(['ok' => true, 'discount' => $disc, 'freeDelivery' => ($v['type'] === 'free_delivery'),
+              'voucher' => ['code' => $v['code'], 'type' => $v['type'], 'value' => (float) $v['value']], 'message' => 'Code appliqué']);
   }
 
   /* Moyens de paiement autorisés — par boutique ET par profil (guest/registered/
@@ -644,8 +645,8 @@ function dispatch($m, $p) {
     }
     $webshopDisc = round($webshopDisc, 2);
 
-    // 3. Bon de réduction (ws_vouchers) — validé serveur.
-    $voucherCode = null; $voucherDisc = 0;
+    // 3. Bon de réduction (lu via la vue ws_vouchers = modèle ERP, canal WS) — validé serveur.
+    $voucherCode = null; $voucherDisc = 0; $voucherFreeDelivery = false;
     if (!empty($b['voucher'])) {
       $v = row("SELECT code, type, value, min_order FROM ws_vouchers
                  WHERE code=? AND active=1 AND (expires_at IS NULL OR expires_at>NOW())
@@ -655,6 +656,8 @@ function dispatch($m, $p) {
         $voucherCode = $v['code'];
         $voucherDisc = $v['type'] === 'percent' ? round($baseV * (float) $v['value']) / 100
                      : ($v['type'] === 'fixed' ? (float) $v['value'] : 0);
+        // Bon « port offert » : pas de remise monétaire — on offre les frais de livraison (§4 ci-dessous).
+        $voucherFreeDelivery = ($v['type'] === 'free_delivery');
       }
     }
     $voucherDisc = round($voucherDisc, 2);
@@ -673,7 +676,7 @@ function dispatch($m, $p) {
         $paymentType = $fr['payment_type'] ?: 'immediate';
         $freeMin = (float) $fr['free_delivery_minimum'];
         $afterDisc = $subtotal - $promo - $webshopDisc - $voucherDisc;
-        $isFree = !$fr['always_charge'] && ($fr['free_delivery'] || ($freeMin > 0 && $afterDisc >= $freeMin));
+        $isFree = !$fr['always_charge'] && ($fr['free_delivery'] || $voucherFreeDelivery || ($freeMin > 0 && $afterDisc >= $freeMin));
         if (!$isFree) { $feeAmount = (float) $fr['fee_amount']; $feeApplied = $feeAmount > 0 ? 1 : 0; }
       }
     }
@@ -806,7 +809,27 @@ function dispatch($m, $p) {
           [$l['qty'], $l['productId'], $shop, $stockDate, $mode]);
       }
       if ($cap) q("UPDATE ws_slot_capacity SET current_orders = current_orders + 1, current_items = current_items + ? WHERE id=?", [$totalQty, $cap['id']]);
-      if ($voucherCode) q("UPDATE ws_vouchers SET used_count = used_count + 1 WHERE code=?", [$voucherCode]);
+      // Usage du bon via le modèle ERP (ws_vouchers est désormais une vue non-inscriptible) :
+      // incrément voucher_code.usage_count + redemption tracée (canal WS, idempotence request_key).
+      if ($voucherCode) {
+        $vref = row("SELECT vco.id AS code_id, vco.id_voucher_campaign AS campaign_id, vc.id_promotion AS promotion_id
+                       FROM voucher_code vco JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
+                      WHERE vco.code = ? LIMIT 1", [$voucherCode]);
+        if ($vref) {
+          q("UPDATE voucher_code SET usage_count = usage_count + 1 WHERE id = ?", [$vref['code_id']]);
+          // id_shop est NOT NULL + FK -> franchisee_shop ; ws_shops.id = franchisee_shop.id.
+          // On n'insère la redemption que si le shop existe côté ERP (sinon on ne bloque pas la commande).
+          $fsOk = row("SELECT 1 AS x FROM franchisee_shop WHERE id = ? LIMIT 1", [$shop]);
+          if ($fsOk) {
+            q("INSERT INTO voucher_redemption
+                 (id_voucher_code, id_voucher_campaign, id_promotion, id_transaction, id_shop,
+                  id_customer, id_employee, discount_value, status, channel, request_key)
+               VALUES (?,?,?, NULL, ?, ?, NULL, ?, 'CONFIRMED', 'WS', ?)",
+              [$vref['code_id'], $vref['campaign_id'], $vref['promotion_id'], $shop,
+               $b['customerId'] ?? null, $voucherDisc, 'WS-ORDER-'.$oid]);
+          }
+        }
+      }
       $pdo->commit();
     } catch (Throwable $e) {
       if ($pdo->inTransaction()) $pdo->rollBack();
@@ -1573,14 +1596,58 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/franchisor/voucher') {
       $b = body(); $code = strtoupper(trim($b['code'] ?? ''));
       if ($code === '') json_out(['error' => 'code requis'], 400);
-      q("INSERT INTO ws_vouchers (code, type, value, min_order, max_uses, expires_at, active)
-         VALUES (?,?,?,?,?,?,?)
-         ON DUPLICATE KEY UPDATE type=VALUES(type), value=VALUES(value), min_order=VALUES(min_order),
-                                 max_uses=VALUES(max_uses), expires_at=VALUES(expires_at), active=VALUES(active)",
-        [$code, $b['type'] ?? 'percent', (float) ($b['value'] ?? 0), (float) ($b['min_order'] ?? 0),
-         isset($b['max_uses']) && $b['max_uses'] !== '' ? (int) $b['max_uses'] : null,
-         !empty($b['expires_at']) ? $b['expires_at'] : null, isset($b['active']) ? (!empty($b['active']) ? 1 : 0) : 1]);
-      $audit('voucher.upsert', 'ws_vouchers', null, null, ['code' => $code]);
+      // Upsert dans le modèle ERP (ws_vouchers est désormais une vue) : bon marque réseau
+      // (SHARED, id_shop NULL), remise portée par promotion_order_discount, canal WS.
+      $type    = in_array($b['type'] ?? 'percent', ['percent','fixed','free_delivery'], true) ? $b['type'] : 'percent';
+      $kindMap = ['percent'=>'PERCENT','fixed'=>'FIXED','free_delivery'=>'FREE_DELIVERY'];
+      $kind    = $kindMap[$type];
+      $value   = $type === 'free_delivery' ? null : (float) ($b['value'] ?? 0);
+      $minOrd  = (float) ($b['min_order'] ?? 0);
+      $maxUses = isset($b['max_uses']) && $b['max_uses'] !== '' ? (int) $b['max_uses'] : null;
+      $exp     = !empty($b['expires_at']) ? $b['expires_at'] : null;
+      $active  = isset($b['active']) ? (!empty($b['active']) ? 1 : 0) : 1;
+      $status  = $active ? 'ACTIVE' : 'DRAFT';
+      $cstatus = $active ? 'ACTIVE' : 'DISABLED';
+      $idBrand = (int) ($b['id_brand'] ?? 1);
+      $pdo = db();
+      $pdo->beginTransaction();
+      try {
+        $ex = row("SELECT vco.id AS code_id, vc.id AS campaign_id, vc.id_promotion AS promotion_id
+                     FROM voucher_code vco JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
+                    WHERE vco.code = ? LIMIT 1", [$code]);
+        if ($ex) {
+          q("UPDATE promotion SET status=?, valid_to=? WHERE id=?", [$status, $exp, $ex['promotion_id']]);
+          q("UPDATE promotion_order_discount SET discount_kind=?, discount_value=?, min_order_amount=? WHERE id_promotion=?",
+            [$kind, $value, $minOrd, $ex['promotion_id']]);
+          q("UPDATE voucher_campaign SET valid_to=?, usage_limit_total=?, id_brand=? WHERE id=?",
+            [$exp, $maxUses, $idBrand, $ex['campaign_id']]);
+          q("UPDATE voucher_code SET status=?, valid_to=?, usage_limit=? WHERE id=?",
+            [$cstatus, $exp, $maxUses, $ex['code_id']]);
+          q("INSERT IGNORE INTO voucher_campaign_channel (id_voucher_campaign, channel) VALUES (?, 'WS')", [$ex['campaign_id']]);
+        } else {
+          q("INSERT INTO promotion (name, description, promotion_type, status, priority, is_exclusive,
+                 valid_from, valid_to, is_repeatable, shop_scope_type, activation_mode, soft_delete)
+             VALUES (?, 'Bon marque (franchisor)', 'ORDER_DISCOUNT', ?, 0, 0, NULL, ?, 0, 'ALL_SHOPS', 'VOUCHER_ONLY', 0)",
+            ['Webshop — '.$code, $status, $exp]);
+          $pid = $pdo->lastInsertId();
+          q("INSERT INTO promotion_order_discount (id_promotion, discount_kind, discount_value, min_order_amount)
+             VALUES (?,?,?,?)", [$pid, $kind, $value, $minOrd]);
+          q("INSERT INTO voucher_campaign (id_promotion, name, planned_promotion_type, status, code_type,
+                 valid_from, valid_to, usage_limit_total, usage_limit_per_code, usage_limit_per_customer,
+                 requires_customer, id_brand, id_shop)
+             VALUES (?,?, 'ORDER_DISCOUNT', ?, 'SHARED', NULL, ?, ?, NULL, NULL, 0, ?, NULL)",
+            [$pid, 'Webshop — '.$code, $status, $exp, $maxUses, $idBrand]);
+          $cid = $pdo->lastInsertId();
+          q("INSERT INTO voucher_code (id_voucher_campaign, code, status, valid_from, valid_to, usage_limit, usage_count)
+             VALUES (?,?,?, NULL, ?, ?, 0)", [$cid, $code, $cstatus, $exp, $maxUses]);
+          q("INSERT INTO voucher_campaign_channel (id_voucher_campaign, channel) VALUES (?, 'WS')", [$cid]);
+        }
+        $pdo->commit();
+      } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+      }
+      $audit('voucher.upsert', 'voucher_code', null, null, ['code' => $code]);
       json_out(['ok' => true]);
     }
 
