@@ -255,7 +255,22 @@ function dispatch($m, $p) {
         $sl['choices'] = rows("SELECT id, label, img, delta, sort_order
                                  FROM ws_bundle_slot_choices WHERE slot_id = ? AND active = 1
                                 ORDER BY sort_order, id", [$sl['id']]);
-        foreach ($sl['choices'] as &$ch) { $ch['delta'] = (float) $ch['delta']; }
+        foreach ($sl['choices'] as &$ch) {
+          $ch['delta'] = (float) $ch['delta'];
+          // Image du choix : le builder ne stocke qu'un repère de couleur
+          // ('a'..'d'), pas une vraie image. Si le libellé correspond à un
+          // produit, on renvoie l'image de SA catégorie (ws_categories.img) —
+          // sinon on renvoie null pour que le front bascule en line-art plutôt
+          // que d'afficher une image cassée (<img src="a">).
+          $img = trim((string) ($ch['img'] ?? ''));
+          if ($img === '' || !preg_match('#^(https?:)?/|^data:#i', $img)) {
+            $cat = row("SELECT c.img FROM ws_products p
+                          JOIN ws_categories c ON c.id = p.cat_id
+                         WHERE p.name = ? AND c.img IS NOT NULL AND c.img <> ''
+                         LIMIT 1", [$ch['label']]);
+            $ch['img'] = ($cat && $cat['img']) ? $cat['img'] : null;
+          }
+        }
         unset($ch);
       }
       unset($sl);
