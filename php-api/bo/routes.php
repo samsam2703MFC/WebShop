@@ -24,7 +24,7 @@ function bo_resource_route($m, $bo, $rest) {
   if ($rest === 'scope') {
     json_out(['bo' => $bo, 'role' => $sess['role'], 'shops' => bo_scope_shop_ids($sess)]);
   }
-  if ($rest === 'shops') {
+  if ($rest === 'shops' && $bo !== 'franchisor') {   // liste simple (franchisé, scopée)
     [$w, $p] = bo_shop_where($sess, 'id');
     json_out(rows("SELECT id, slug, name, city, active FROM ws_shops WHERE $w ORDER BY name", $p));
   }
@@ -155,6 +155,20 @@ function bo_resource_route($m, $bo, $rest) {
         'ordersToday'  => (int) ($ord['n'] ?? 0),
         'revenueToday' => (float) ($ord['rev'] ?? 0),
       ]);
+    }
+    if ($rest === 'shops') {                     // réseau : CA agrégé depuis ws_orders + adoption
+      $from = qp('from', date('Y-m-01'));        // CA mois-à-date par défaut
+      json_out(rows(
+        "SELECT s.id, s.slug, s.name, s.city, s.active,
+                (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o
+                   WHERE o.shop_id = s.id AND o.delivery_mode = 'collect'  AND o.delivery_date >= ?) AS ca_shop,
+                (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o
+                   WHERE o.shop_id = s.id AND o.delivery_mode = 'delivery' AND o.delivery_date >= ?) AS ca_office,
+                (SELECT COUNT(*) FROM ws_products p WHERE p.brand_mandatory = 1 AND p.active = 1) AS mand_total,
+                (SELECT COUNT(*) FROM ws_product_shops ps
+                   JOIN ws_products p ON p.id = ps.product_id
+                  WHERE ps.shop_id = s.id AND ps.active = 1 AND p.brand_mandatory = 1 AND p.active = 1) AS mand_carried
+           FROM ws_shops s ORDER BY s.name", [$from, $from]));
     }
     if ($rest === 'catalog') {
       json_out([
