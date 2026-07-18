@@ -159,14 +159,19 @@ function bo_resource_route($m, $bo, $rest) {
       json_out($out);
     }
 
-    if ($rest === 'live') {                       // suivi : avancement RÉEL (ws_orders) par tournée
+    if ($rest === 'live') {                       // suivi : télémétrie (ws_tour_tracking) + avancement réel
       $date  = qp('date', date('Y-m-d'));
       json_out(rows(
         "SELECT t.id, t.name,
                 (SELECT COUNT(*) FROM ws_orders o WHERE o.tour_id = t.id AND o.delivery_date = ?) AS total,
                 (SELECT COUNT(*) FROM ws_orders o WHERE o.tour_id = t.id AND o.delivery_date = ?
-                   AND o.delivered_at IS NOT NULL) AS done
-           FROM ws_tours t WHERE $w AND t.active = 1 ORDER BY t.name",
+                   AND o.delivered_at IS NOT NULL) AS done,
+                tk.driver_name, tk.vehicle, tk.status, tk.lat, tk.lng,
+                tk.next_label, tk.next_city, tk.eta, tk.drift_minutes,
+                tk.stops_done, tk.stops_total, tk.updated_at
+           FROM ws_tours t
+           LEFT JOIN ws_tour_tracking tk ON tk.tour_id = t.id
+          WHERE $w AND t.active = 1 ORDER BY t.name",
         array_merge([$date, $date], $p)));
     }
 
