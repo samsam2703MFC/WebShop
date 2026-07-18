@@ -4364,6 +4364,30 @@ function ShopFrame({ variant }) {
   }
 
   const [detailProduct, setDetailProduct] = useState(null);
+  // Le catalogue (grille) ne porte que le drapeau has_menu_options, pas la
+  // composition. Quand on ouvre un produit déclencheur (menu), on récupère à la
+  // demande son arbre formule → étapes → choix (ws_bundles) et on l'attache en
+  // available_bundles pour que le composer s'affiche. Sans ça, un menu ne
+  // montrait jamais ses étapes côté webshop.
+  const bundleCache = React.useRef({});
+  const openProductDetail = React.useCallback((p) => {
+    if (!p) return;
+    if (p.has_menu_options && !p.available_bundles &&
+        window.WSCatalog && typeof window.WSCatalog.listBundles === 'function') {
+      const cached = bundleCache.current[p.id];
+      if (cached) { setDetailProduct({ ...p, available_bundles: cached }); return; }
+      setDetailProduct(p); // ouvre tout de suite ; le composer apparaît dès l'arrivée des étapes
+      window.WSCatalog.listBundles({ productId: p.id })
+        .then((bundles) => {
+          const list = Array.isArray(bundles) ? bundles : [];
+          bundleCache.current[p.id] = list;
+          setDetailProduct((cur) => (cur && cur.id === p.id ? { ...cur, available_bundles: list } : cur));
+        })
+        .catch(() => {});
+      return;
+    }
+    setDetailProduct(p);
+  }, []);
   function handleAddConfigured(line) {
     const product = allProducts.find((p) => p.id === line.productId);
     setBasket((b) => [...b, {
@@ -4470,7 +4494,7 @@ function ShopFrame({ variant }) {
             {products.map((p) => {
               const bqty = basket.filter((l) => l.productId === p.id).reduce((t, l) => t + l.qty, 0);
               const stock = productStock[p.id] || null;
-              return <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpen={setDetailProduct} mode={mode} basketQty={bqty} stock={stock} platsBadge={mode === 'delivery' && selectedSlot === 'soir' && p.cat === 'plats'}/>;
+              return <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpen={openProductDetail} mode={mode} basketQty={bqty} stock={stock} platsBadge={mode === 'delivery' && selectedSlot === 'soir' && p.cat === 'plats'}/>;
             })}
           </div>
         </main>
