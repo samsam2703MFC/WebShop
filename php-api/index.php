@@ -62,8 +62,8 @@ function dispatch($m, $p) {
       // retour). Ce ne sont PAS des lignes de category — juste des références
       // média (même bibliothèque que les icônes de catégorie), changeables via
       // ws_param sans redéploiement.
-      'categoryNavAllIcon'     => ws_param('category_nav_all_icon',  '/webshop/assets/category_icons/nav-all.svg'),
-      'categoryNavBackIcon'    => ws_param('category_nav_back_icon', '/webshop/assets/category_icons/nav-back.svg'),
+      'categoryNavAllIcon'     => ws_param('category_nav_all_icon',  '/webshop/assets/all.png'),
+      'categoryNavBackIcon'    => ws_param('category_nav_back_icon', '/webshop/assets/back.png'),
     ]);
   }
 
