@@ -29,6 +29,18 @@ phase par phase, avec contrôle go/no-go (cf. `RUNBOOK-shops-unify.md`).
 | Phase 3 | `pending/0011_shops_unify_phase3_views_flat.sql` | Renomme `ws_shops`/`lp_shops` → `_legacy` + **vues** de compat **réécrites pour le schéma à plat**. |
 | Phase 4 | `backend/schema/migrate-unify-shops-phase4.sql` | DROP legacy — manuel, destructif, plus tard. |
 
+### ⚠️ La vue ws_shops doit être FIDÈLE (toutes les boutiques, pas seulement webshop_enabled=1)
+La vue reprend `WHERE legacy_ws_id IS NOT NULL` (= les 5 boutiques venues de `ws_shops`),
+**pas** `WHERE webshop_enabled = 1`. Raison : plusieurs liens résolvent une boutique **par
+id ou par nom** sur `ws_shops` et casseraient pour une boutique à `webshop_enabled=0` :
+- **PWA** (`latelier-by-pwa/public/api/repo.php` → `repo_ws_shop_id`) : nom → `ws_shops.id`
+  pour `wsShopId` + bureaux B2B (`repo_offices`).
+- **Webshop** : `/brand?shopId=`, remise commande (`SELECT … FROM ws_shops WHERE id=?`),
+  et le back-office (`bo/routes.php` : listes + jointures incidents/commandes).
+Les lectures qui ne veulent que les actives appliquent déjà `active=1` (ex. `GET /shops`).
+Le reste des liens PWA/webshop utilise déjà `shops` directement (`/webshop-link`,
+`repo_shops`, `repo_webshop_url`, validation preferred_shop) → non impactés.
+
 ### Prérequis avant Phase 3
 - Phase 2 (et 2b) faites (aucune FK sur `ws_shops`/`lp_shops`).
 - Les **lectures** webshop de `ws_shops` (`GET /shops`, `/brand`, remise commande, jointures) passeront

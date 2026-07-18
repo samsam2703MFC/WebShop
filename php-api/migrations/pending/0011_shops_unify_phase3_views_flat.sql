@@ -19,16 +19,22 @@ SET @has_lp := (SELECT COUNT(*) FROM information_schema.tables
 SET @s := IF(@has_lp=1, 'RENAME TABLE lp_shops TO lp_shops_legacy', 'DO 0');
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
--- 2) VUE de compat ws_shops : boutiques webshop, colonnes à l'identique de l'origine.
---    Mappe discount_type/value (à plat dans shops) -> webshop_discount_type/value (contrat legacy).
+-- 2) VUE de compat ws_shops : remplaçant FIDÈLE de l'ancienne table (TOUTES les
+--    boutiques qui en venaient = legacy_ws_id IS NOT NULL), PAS un filtre webshop_enabled.
+--    Sinon les résolutions par id/nom (PWA repo_ws_shop_id, /brand, back-office,
+--    remises) perdraient les boutiques à webshop_enabled=0 (ex. Gembloux/popup).
+--    Les lectures qui ne veulent que les actives appliquent déjà leur propre active=1.
+--    Mappe discount_type/value (à plat) -> webshop_discount_type/value ; expose aussi
+--    webshop_enabled + contrat (colonnes présentes sur l'ancienne table via 0003/0004).
 CREATE OR REPLACE VIEW ws_shops AS
 SELECT id, slug, id_brand, name, legal_name, email, phone, street, street_num,
        zip, city, country_code, vat, opening_time, closing_time, accent, tint, logo_url,
        discount_type  AS webshop_discount_type,
        discount_value AS webshop_discount_value,
+       webshop_enabled, contrat,
        active
   FROM shops
- WHERE webshop_enabled = 1;
+ WHERE legacy_ws_id IS NOT NULL;
 
 -- 3) VUE de compat lp_shops : vitrines landing, colonnes à l'identique de lp_shops (schéma à plat).
 SET @s := IF(@has_lp=1,
