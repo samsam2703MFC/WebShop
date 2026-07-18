@@ -126,6 +126,50 @@ function bo_resource_route($m, $bo, $rest) {
           WHERE $w AND r.status = 'pending' ORDER BY r.created_at DESC LIMIT 200", $p));
     }
 
+    if ($rest === 'dashboard-tree') {            // arbre tournée › zone › site(office) › utilisateur
+      $date  = qp('date', date('Y-m-d'));
+      $tours = rows("SELECT id, name, zone_id FROM ws_tours WHERE $w AND active = 1 ORDER BY name", $p);
+      $out = [];
+      foreach ($tours as $t) {
+        $zone = $t['zone_id'] ? row("SELECT name FROM ws_delivery_zones WHERE id = ?", [$t['zone_id']]) : null;
+        $rws = rows(
+          "SELECT o.office_client_id AS oid, f.name AS office_name, f.city AS ville,
+                  COALESCE(NULLIF(TRIM(CONCAT_WS(' ', c.first_name, c.last_name)),''), o.guest_name, 'Client') AS cust,
+                  COUNT(*) AS cmd
+             FROM ws_orders o
+             LEFT JOIN ws_offices    f ON f.id = o.office_client_id
+             LEFT JOIN ws_customers  c ON c.id = o.customer_id
+            WHERE o.tour_id = ? AND o.delivery_date = ?
+            GROUP BY o.office_client_id, o.customer_id, cust, office_name, ville
+            ORDER BY office_name", [(int) $t['id'], $date]);
+        $sites = [];
+        foreach ($rws as $r) {
+          $k = (string) ($r['oid'] ?? '0');
+          if (!isset($sites[$k])) $sites[$k] = [
+            'libelle' => $r['office_name'] ?: 'Sans office', 'ville' => $r['ville'] ?: '',
+            'cutoff' => '', 'office' => $r['office_name'] ?: '—', 'users' => [],
+          ];
+          $sites[$k]['users'][] = ['nom' => $r['cust'], 'cmd' => (int) $r['cmd']];
+        }
+        $out[] = [
+          'nom' => $t['name'], 'chauffeur' => '—', 'statutLabel' => '',
+          'zones' => [['nom' => $zone['name'] ?? 'Zone', 'sites' => array_values($sites)]],
+        ];
+      }
+      json_out($out);
+    }
+
+    if ($rest === 'live') {                       // suivi : avancement RÉEL (ws_orders) par tournée
+      $date  = qp('date', date('Y-m-d'));
+      json_out(rows(
+        "SELECT t.id, t.name,
+                (SELECT COUNT(*) FROM ws_orders o WHERE o.tour_id = t.id AND o.delivery_date = ?) AS total,
+                (SELECT COUNT(*) FROM ws_orders o WHERE o.tour_id = t.id AND o.delivery_date = ?
+                   AND o.delivered_at IS NOT NULL) AS done
+           FROM ws_tours t WHERE $w AND t.active = 1 ORDER BY t.name",
+        array_merge([$date, $date], $p)));
+    }
+
     if ($rest === 'incidents') {                 // incidents & litiges (ws_incidents)
       [$iw, $ip] = bo_shop_where($sess, 'i.shop_id');
       $status = qp('status');                    // open | in_progress | resolved (optionnel)
