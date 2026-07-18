@@ -1219,6 +1219,216 @@ function dispatch($m, $p) {
     json_out(['ok' => true, 'orderId' => (int) $o['id'], 'checkoutUrl' => $sess['url']]);
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     Console marque (franchisor) — lecture réseau. Toutes gardées admin.
+     Renvoie exactement les shapes attendues par le back-office franchisor
+     (window.BOServer.table(name)) : aucune adaptation côté front.
+     ══════════════════════════════════════════════════════════════════════ */
+  if (strpos($p, '/franchisor/') === 0) {
+    require_admin();
+
+    $eurk = function ($n) { return number_format(round($n / 1000)) . ' k€'; };
+    $tblExists = function ($t) { return (bool) row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", [$t]); };
+    $hasOrders = $tblExists('ws_orders');
+
+    // KPIs réseau — agrégés depuis ws_orders / ws_shops quand dispo.
+    if ($m === 'GET' && $p === '/franchisor/kpis') {
+      $activeShops = (int) (row("SELECT COUNT(*) n FROM ws_shops WHERE active=1")['n'] ?? 0);
+      $totalShops  = (int) (row("SELECT COUNT(*) n FROM ws_shops")['n'] ?? 0);
+      $caMonth = $caCollect = $caDeliv = 0.0; $ordToday = 0; $caPrev = 0.0;
+      if ($hasOrders) {
+        $caMonth   = (float) (row("SELECT COALESCE(SUM(total),0) s FROM ws_orders WHERE created_at >= DATE_FORMAT(NOW(),'%Y-%m-01')")['s'] ?? 0);
+        $caPrev    = (float) (row("SELECT COALESCE(SUM(total),0) s FROM ws_orders WHERE created_at >= DATE_FORMAT(NOW() - INTERVAL 1 MONTH,'%Y-%m-01') AND created_at < DATE_FORMAT(NOW(),'%Y-%m-01')")['s'] ?? 0);
+        $caCollect = (float) (row("SELECT COALESCE(SUM(total),0) s FROM ws_orders WHERE mode='collect'  AND created_at >= DATE_FORMAT(NOW(),'%Y-%m-01')")['s'] ?? 0);
+        $caDeliv   = (float) (row("SELECT COALESCE(SUM(total),0) s FROM ws_orders WHERE mode='delivery' AND created_at >= DATE_FORMAT(NOW(),'%Y-%m-01')")['s'] ?? 0);
+        $ordToday  = (int)   (row("SELECT COUNT(*) n FROM ws_orders WHERE DATE(created_at)=CURDATE()")['n'] ?? 0);
+      }
+      $pct = $caPrev > 0 ? round(($caMonth - $caPrev) / $caPrev * 100, 1) : 0;
+      $up  = $pct >= 0;
+      $adoption = $totalShops > 0 ? round(100 * $activeShops / $totalShops) : 0;
+      json_out([
+        ['label' => 'CA réseau (mois)',     'value' => $eurk($caMonth),   'valColor' => 'var(--color-text)',    'delta' => ($up ? '▲ +' : '▼ ') . str_replace('.', ',', (string) $pct) . ' %', 'deltaColor' => $up ? '#2d7a3e' : 'var(--color-primary)'],
+        ['label' => 'CA boutique',          'value' => $eurk($caCollect), 'valColor' => 'var(--color-primary)', 'delta' => 'collecte', 'deltaColor' => 'var(--color-text-muted)'],
+        ['label' => 'CA livraison bureau',  'value' => $eurk($caDeliv),   'valColor' => '#C87A3F',              'delta' => 'livraison', 'deltaColor' => 'var(--color-text-muted)'],
+        ['label' => 'Boutiques actives',    'value' => $activeShops . ' / ' . $totalShops, 'valColor' => 'var(--color-text)', 'delta' => 'réseau', 'deltaColor' => 'var(--color-text-muted)'],
+        ['label' => 'Commandes du jour',    'value' => (string) $ordToday, 'valColor' => 'var(--color-text)',   'delta' => "aujourd'hui", 'deltaColor' => 'var(--color-text-muted)'],
+        ['label' => 'Adoption whitelist',   'value' => $adoption . ' %',   'valColor' => 'var(--color-text)',    'delta' => 'boutiques en ligne', 'deltaColor' => 'var(--color-text-muted)'],
+      ]);
+    }
+
+    // Boutiques du réseau — identité réelle + CA agrégé par mode.
+    if ($m === 'GET' && $p === '/franchisor/shops') {
+      $shops = rows("SELECT id, name, city, accent, active, contrat, webshop_enabled FROM ws_shops ORDER BY name");
+      $out = [];
+      foreach ($shops as $s) {
+        $caShop = $caOffice = 0;
+        if ($hasOrders) {
+          $caShop   = (float) (row("SELECT COALESCE(SUM(total),0) s FROM ws_orders WHERE shop_id=? AND mode='collect'  AND created_at >= DATE_FORMAT(NOW(),'%Y-%m-01')", [$s['id']])['s'] ?? 0);
+          $caOffice = (float) (row("SELECT COALESCE(SUM(total),0) s FROM ws_orders WHERE shop_id=? AND mode='delivery' AND created_at >= DATE_FORMAT(NOW(),'%Y-%m-01')", [$s['id']])['s'] ?? 0);
+        }
+        $out[] = [
+          'id' => (string) $s['id'], 'nom' => $s['name'], 'ville' => $s['city'] ?: '—',
+          'web' => (bool) $s['webshop_enabled'], 'contrat' => $s['contrat'] ?: 'Franchise', 'act' => (bool) $s['active'],
+          'caShop' => $caShop, 'caOffice' => $caOffice,
+          'adoption' => (bool) $s['webshop_enabled'] ? 100 : 0,
+          'accent' => $s['accent'] ?: 'var(--color-primary)',
+        ];
+      }
+      json_out($out);
+    }
+
+    // Catalogue — arbre catégories › produits (réel) avec gouvernance marque.
+    if ($m === 'GET' && $p === '/franchisor/catalog') {
+      $totalShops = (int) (row("SELECT COUNT(*) n FROM ws_shops WHERE active=1")['n'] ?? 0);
+      $hasPS = $tblExists('ws_product_shops');
+      $cats = rows("SELECT id, label, COALESCE(menu_default,0) AS menu_default FROM ws_categories WHERE active=1 ORDER BY sort_order, label");
+      $out = [];
+      foreach ($cats as $c) {
+        $prods = rows("SELECT p.id, p.name AS nom, p.price AS prix, p.active,
+                              COALESCE(p.brand_whitelist,1) AS bw, COALESCE(p.brand_mandatory,0) AS bm,
+                              se.name AS saison
+                         FROM ws_products p LEFT JOIN ws_season se ON se.id = p.season_id
+                        WHERE p.cat_id = ? AND p.active = 1 ORDER BY p.name", [$c['id']]);
+        $rows2 = [];
+        foreach ($prods as $p2) {
+          // Adoption = % boutiques qui ne l'excluent PAS explicitement (ws_product_shops.active=0).
+          $ad = 0;
+          if ($totalShops > 0) {
+            $excl = $hasPS ? (int) (row("SELECT COUNT(*) n FROM ws_product_shops WHERE product_id=? AND active=0", [$p2['id']])['n'] ?? 0) : 0;
+            $ad = (int) round(100 * max(0, $totalShops - $excl) / $totalShops);
+          }
+          $rows2[] = [
+            'id' => (string) $p2['id'], 'nom' => $p2['nom'], 'prix' => (float) $p2['prix'],
+            'statut' => $p2['active'] ? 'Publié' : 'Brouillon',
+            'bw' => (bool) $p2['bw'], 'bm' => (bool) $p2['bm'],
+            'ad' => $ad, 'saison' => $p2['saison'] ?: null,
+          ];
+        }
+        if ($rows2) $out[] = ['cat' => $c['label'], 'prods' => $rows2];
+      }
+      json_out($out);
+    }
+
+    // Menus & formules — DB du menu builder (ws_products menu + ws_bundles→slots→choices).
+    if ($m === 'GET' && $p === '/franchisor/menus') {
+      $db = ['_categories' => new stdClass()];
+      $cats = rows("SELECT label, COALESCE(menu_default,0) AS menu_default FROM ws_categories WHERE active=1");
+      $catObj = [];
+      foreach ($cats as $c) $catObj[$c['label']] = ['menu_default' => (int) $c['menu_default']];
+      $db['_categories'] = $catObj ?: new stdClass();
+      // Produits « menu » : override posé, OU catégorie armée, OU ayant des bundles.
+      $prods = rows("SELECT p.id, p.name, p.price, COALESCE(p.base_cost,0) AS base_cost,
+                            p.menu_override, c.label AS category
+                       FROM ws_products p
+                       LEFT JOIN ws_categories c ON c.id = p.cat_id
+                      WHERE p.active = 1 AND (
+                            p.menu_override IN ('on','off')
+                         OR COALESCE(c.menu_default,0) = 1
+                         OR EXISTS (SELECT 1 FROM ws_bundles b WHERE b.product_id = p.id))
+                      ORDER BY p.name");
+      foreach ($prods as $p2) {
+        $pid = (string) $p2['id'];
+        $bundles = rows("SELECT id, name, description, price_modifier, sort_order, active
+                           FROM ws_bundles WHERE product_id = ? ORDER BY sort_order, id", [$p2['id']]);
+        foreach ($bundles as &$b) {
+          $b['id'] = (string) $b['id'];
+          $b['price_modifier'] = (float) $b['price_modifier'];
+          $b['sort_order'] = (int) $b['sort_order'];
+          $b['active'] = (bool) $b['active'];
+          $slots = rows("SELECT id, label, required, COALESCE(kind,'single') AS kind,
+                                COALESCE(min_select,1) AS min_select, COALESCE(max_select,1) AS max_select,
+                                sort_order, active
+                           FROM ws_bundle_slots WHERE bundle_id = ? ORDER BY sort_order, id", [$b['id']]);
+          foreach ($slots as &$sl) {
+            $sl['id'] = (string) $sl['id'];
+            $sl['required'] = (bool) $sl['required'];
+            $sl['min_select'] = (int) $sl['min_select'];
+            $sl['max_select'] = (int) $sl['max_select'];
+            $sl['sort_order'] = (int) $sl['sort_order'];
+            $sl['active'] = (bool) $sl['active'];
+            $chs = rows("SELECT id, label, img, delta, COALESCE(cost,0) AS cost, sort_order, active
+                           FROM ws_bundle_slot_choices WHERE slot_id = ? ORDER BY sort_order, id", [$sl['id']]);
+            foreach ($chs as &$ch) {
+              $ch['id'] = (string) $ch['id'];
+              $ch['img'] = $ch['img'] ?: '';
+              $ch['delta'] = (float) $ch['delta'];
+              $ch['cost'] = (float) $ch['cost'];
+              $ch['sort_order'] = (int) $ch['sort_order'];
+              $ch['active'] = (bool) $ch['active'];
+            }
+            unset($ch);
+            $sl['choices'] = $chs;
+          }
+          unset($sl);
+          $b['slots'] = $slots;
+        }
+        unset($b);
+        $db[$pid] = [
+          'productName'  => $p2['name'],
+          'category'     => $p2['category'] ?: '',
+          'menuOverride' => $p2['menu_override'] !== null ? $p2['menu_override'] : null,
+          'basePrice'    => (float) $p2['price'],
+          'baseCost'     => (float) $p2['base_cost'],
+          'bundles'      => $bundles,
+        ];
+      }
+      json_out($db);
+    }
+
+    // Bons marque (ws_vouchers, réseau = shop_id NULL).
+    if ($m === 'GET' && $p === '/franchisor/vouchers') {
+      $vs = rows("SELECT code, type, value, expires_at FROM ws_vouchers WHERE active=1 ORDER BY code");
+      $out = [];
+      foreach ($vs as $v) {
+        $val = $v['type'] === 'percent' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' %'
+             : ($v['type'] === 'fixed' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' €' : $v['type']);
+        $out[] = ['code' => $v['code'], 'valeur' => $val, 'type' => $v['type'],
+                  'validite' => $v['expires_at'] ? ('jusqu\'au ' . substr($v['expires_at'], 0, 10)) : 'permanent'];
+      }
+      json_out($out);
+    }
+
+    // Règles de prix réseau (ws_pricing_rules, shop_id NULL).
+    if ($m === 'GET' && $p === '/franchisor/pricing-rules') {
+      $rs = rows("SELECT rule_type, label, x, y, threshold FROM ws_pricing_rules WHERE active=1 AND shop_id IS NULL ORDER BY id");
+      $out = [];
+      foreach ($rs as $r) {
+        $effet = $r['rule_type'] === 'cross_portion' ? ((int) $r['x'] . ' achetés → ' . (int) $r['y'] . ' offert(s)') : (string) ($r['threshold'] ?? '—');
+        $out[] = ['nom' => $r['label'] ?: $r['rule_type'], 'cible' => $r['rule_type'], 'effet' => $effet];
+      }
+      json_out($out);
+    }
+
+    // Paramètres marque (ws_param clé/valeur).
+    if ($m === 'GET' && $p === '/franchisor/params') {
+      $ps = rows("SELECT param_key, param_value FROM ws_param ORDER BY param_key");
+      $out = [];
+      foreach ($ps as $x) $out[] = ['cle' => $x['param_key'], 'type' => 'text', 'val' => $x['param_value']];
+      json_out($out);
+    }
+
+    // Modèles d'email.
+    if ($m === 'GET' && $p === '/franchisor/email-templates') {
+      json_out(rows("SELECT cle, langue, sujet FROM ws_email_templates WHERE active=1 ORDER BY cle, langue"));
+    }
+
+    // Utilisateurs & rôles (RBAC).
+    if ($m === 'GET' && $p === '/franchisor/users') {
+      $us = rows("SELECT nom, email, role, portee, active FROM bo_users ORDER BY role='Franchise', nom");
+      foreach ($us as &$u) { $u['act'] = (bool) $u['active']; unset($u['active']); }
+      unset($u);
+      json_out($us);
+    }
+
+    // Journal d'audit.
+    if ($m === 'GET' && $p === '/franchisor/audit') {
+      $as = rows("SELECT DATE_FORMAT(ts,'%d/%m %H:%i') AS ts, actor AS user, verb, entity, shop FROM bo_audit ORDER BY ts DESC LIMIT 50");
+      json_out($as);
+    }
+
+    json_out(['error' => 'Not found', 'path' => $p], 404);
+  }
+
   /* ── Back-office admin (protégé par admin_token) ── */
   if (strpos($p, '/admin/') === 0) {
     require_admin();
