@@ -9,13 +9,13 @@ But : `voucher_campaign` / `voucher_code` deviennent la **seule source de vérit
 |---|---|---|---|
 | 1 | `0005_voucher_unify_schema.sql` | Schéma : dimensions + tables + FK | ✅ (au déploiement) |
 | 2 | `0006_voucher_unify_data.sql` | Migration des 2 bons (transaction, idempotent) | ✅ |
-| 3 | `pending/0007_ws_vouchers_compat_view.sql` | Rename legacy + VUE `ws_vouchers` | ⏸️ **retenu** (sous-dossier) — à sortir dans `migrations/` et déployer **AVEC** le code Étape 4 |
+| 3 | `0007_ws_vouchers_compat_view.sql` | Rename legacy + VUE `ws_vouchers` | ✅ (déployé AVEC le code Étape 4) |
 | — | `rollback/000{5,6,7}_*_rollback.sql` | Retour arrière (jouer 7→6→5) | ❌ (sous-dossier ignoré) |
 
-> ⚠️ **Séquencement** : `0007` transforme `ws_vouchers` en **vue non-inscriptible**. La
-> poser avant le code Étape 4 ferait échouer les écritures webshop (incrément `used_count`,
-> upsert franchisor). Elle reste donc dans `pending/` jusqu'à ce que le code Étape 4 lise/écrive
-> via le modèle ERP ; on la déplacera alors dans `migrations/` pour un déploiement coordonné.
+> ✅ **Étape 4 livrée** : le code webshop écrit désormais via le modèle ERP
+> (`voucher_code.usage_count` + `voucher_redemption`) et l'upsert franchisor cible
+> `promotion/voucher_campaign/voucher_code` ; `free_delivery` offre réellement le port.
+> `0007` (bascule en vue) est donc déployé **en même temps** que ce code.
 
 `migrate.sh` applique chaque `migrations/*.sql` **une fois** (suivi `ws_schema_migrations`),
 dans l'ordre des noms. **Un merge sur `main` déclenche l'application en prod** via
