@@ -116,6 +116,8 @@ CREATE TABLE ws_products (
   cross_portion    BOOLEAN DEFAULT FALSE,
   has_menu_options BOOLEAN DEFAULT FALSE,
   active           BOOLEAN DEFAULT TRUE,
+  brand_webshop    TINYINT(1) NOT NULL DEFAULT 1,  -- accepté par la marque pour le webshop (whitelist réseau)
+  brand_mandatory  TINYINT(1) NOT NULL DEFAULT 0,  -- produit obligatoire imposé marque (non désactivable par le shop)
   FOREIGN KEY (cat_id)     REFERENCES ws_categories(id),
   FOREIGN KEY (sub_cat_id) REFERENCES ws_category_subs(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -231,6 +233,7 @@ CREATE TABLE ws_offices (
   status      VARCHAR(20)  DEFAULT 'pending',
   deferred_billing_enabled BOOLEAN DEFAULT FALSE,  -- commande sur compte (facturation)
   contract_url             VARCHAR(255),           -- contrat rattaché au compte
+  referrer_client_id       INT,                     -- apporteur (client.id ERP) — posé 1x à la création depuis une demande ; FK ajoutée en prod
   drop_minutes DECIMAL(5,2) NOT NULL DEFAULT 5.00, -- coût-temps dépôt (min), payé 1x/bureau
   active      BOOLEAN DEFAULT TRUE,
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -371,13 +374,16 @@ CREATE TABLE ws_order_lines (
 CREATE TABLE ws_vouchers (
   id          INT AUTO_INCREMENT PRIMARY KEY,
   code        VARCHAR(50) UNIQUE NOT NULL,
-  type        VARCHAR(20) NOT NULL,
+  shop_id     INT NULL,                    -- NULL = bon marque/réseau ; sinon bon local du shop
+  id_brand    INT NOT NULL DEFAULT 1,      -- marque cible d'un bon réseau
+  type        VARCHAR(20) NOT NULL,        -- percent|fixed|... ; 'add_office' = onboarding bureau
   value       DECIMAL(10,2),
   min_order   DECIMAL(10,2) DEFAULT 0,
   max_uses    INT,
   used_count  INT DEFAULT 0,
   expires_at  TIMESTAMP NULL DEFAULT NULL,
-  active      BOOLEAN DEFAULT TRUE
+  active      BOOLEAN DEFAULT TRUE,
+  FOREIGN KEY (shop_id) REFERENCES ws_shops(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE ws_calendar_rules (
@@ -580,6 +586,29 @@ CREATE TABLE ws_office_delivery_settings (
   FOREIGN KEY (office_id) REFERENCES ws_offices(id),
   FOREIGN KEY (shop_id)   REFERENCES ws_shops(id),
   FOREIGN KEY (tour_id)   REFERENCES ws_tours(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Demandes de rattachement à un bureau (Prompt 2) : un utilisateur connecté sans
+-- office_id demande la livraison bureau. Table LÉGÈRE (jamais une ligne ws_offices
+-- 'pending'). Résolue par le franchisé -> linked / created / rejected.
+-- client_id = client.id (ERP, réf logique) ; shop_id = routage seul (réaffectable).
+CREATE TABLE ws_office_join_requests (
+  id                 INT AUTO_INCREMENT PRIMARY KEY,
+  client_id          INT NOT NULL,                            -- client.id (ERP) — depuis la session
+  shop_id            INT NOT NULL,                            -- routage (boutique webshop), réaffectable
+  office_name_raw    VARCHAR(200) NOT NULL,
+  address_raw        VARCHAR(250) NOT NULL,
+  status             VARCHAR(12) NOT NULL DEFAULT 'pending',  -- pending | linked | created | rejected
+  resolved_office_id INT NULL,
+  reject_reason      VARCHAR(200) NULL,
+  resolved_by        INT NULL,
+  created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  resolved_at        TIMESTAMP NULL DEFAULT NULL,
+  KEY idx_ojr_client_status (client_id, status),              -- plafond 3 pending / client
+  KEY idx_ojr_shop_status  (shop_id, status),                 -- file du franchisé
+  FOREIGN KEY (shop_id)            REFERENCES ws_shops(id),
+  FOREIGN KEY (resolved_office_id) REFERENCES ws_offices(id)
+  -- FK (client_id) -> client(id) ajoutée en prod (table ERP, hors ce schéma)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE ws_delivery_fee_rules (
