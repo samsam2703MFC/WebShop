@@ -24,10 +24,10 @@ phase par phase, avec contrôle go/no-go (cf. `RUNBOOK-shops-unify.md`).
 
 | Étape | Fichier | Effet |
 |---|---|---|
-| Phase 2 | `pending/0009_shops_unify_phase2_fk_repoint.sql` | Repointe les **21 FK** `ws_*` → `shops` (agnostique au schéma : lit `information_schema`). Valide tel quel car `shops.id == ws_shops.id`. |
-| Phase 2b | `pending/0010_shops_unify_phase2b_landing_fk.sql` | FK landing (`lp_shop_hours/services`) — seulement si `lp_shops` est une table ici (coordonner repo `landing`). |
-| Phase 3 | `pending/0011_shops_unify_phase3_views_flat.sql` | Renomme `ws_shops`/`lp_shops` → `_legacy` + **vues** de compat **réécrites pour le schéma à plat**. |
-| Phase 4 | `backend/schema/migrate-unify-shops-phase4.sql` | DROP legacy — manuel, destructif, plus tard. |
+| ~~Phase 2~~ | ~~`pending/0009…`~~ | **Sans objet** : aucune FK ne référence `ws_shops` en prod (vérifié = 0) → rien à repointer. |
+| ~~Phase 2b~~ | — | **Sans objet** : `lp_shops` (module landing) supprimé depuis longtemps → aucune bascule landing. |
+| Phase 3 | `pending/0011_shops_unify_phase3_views_flat.sql` | Renomme `ws_shops` → `_legacy` + **vue** de compat fidèle (schéma à plat, `legacy_ws_id IS NOT NULL`). **Fait en prod.** |
+| Phase 4 | `backend/schema/migrate-unify-shops-phase4.sql` | DROP `ws_shops_legacy` — manuel, destructif, plus tard. |
 
 ### ⚠️ La vue ws_shops doit être FIDÈLE (toutes les boutiques, pas seulement webshop_enabled=1)
 La vue reprend `WHERE legacy_ws_id IS NOT NULL` (= les 5 boutiques venues de `ws_shops`),
