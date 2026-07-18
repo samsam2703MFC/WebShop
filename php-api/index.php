@@ -1213,11 +1213,14 @@ function dispatch($m, $p) {
     $eurk = function ($n) { return number_format(round($n / 1000)) . ' k€'; };
     $tblExists = function ($t) { return (bool) row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", [$t]); };
     $hasOrders = $tblExists('ws_orders');
+    // Source boutiques : table unifiée `shops` (webshop_enabled/active réels),
+    // repli legacy `ws_shops`. $SHOPS est contrôlé (jamais une entrée client).
+    $SHOPS = $tblExists('shops') ? 'shops' : 'ws_shops';
 
-    // KPIs réseau — agrégés depuis ws_orders / ws_shops quand dispo.
+    // KPIs réseau — agrégés depuis ws_orders / shops quand dispo.
     if ($m === 'GET' && $p === '/franchisor/kpis') {
-      $activeShops = (int) (row("SELECT COUNT(*) n FROM ws_shops WHERE active=1")['n'] ?? 0);
-      $totalShops  = (int) (row("SELECT COUNT(*) n FROM ws_shops")['n'] ?? 0);
+      $activeShops = (int) (row("SELECT COUNT(*) n FROM $SHOPS WHERE active=1")['n'] ?? 0);
+      $totalShops  = (int) (row("SELECT COUNT(*) n FROM $SHOPS")['n'] ?? 0);
       $caMonth = $caCollect = $caDeliv = 0.0; $ordToday = 0; $caPrev = 0.0;
       if ($hasOrders) {
         $caMonth   = (float) (row("SELECT COALESCE(SUM(total),0) s FROM ws_orders WHERE created_at >= DATE_FORMAT(NOW(),'%Y-%m-01')")['s'] ?? 0);
@@ -1239,9 +1242,11 @@ function dispatch($m, $p) {
       ]);
     }
 
-    // Boutiques du réseau — identité réelle + CA agrégé par mode.
+    // Boutiques du réseau — identité + toggle Webshop RÉELS depuis `shops`.
     if ($m === 'GET' && $p === '/franchisor/shops') {
-      $shops = rows("SELECT id, name, city, accent, active, contrat, webshop_enabled FROM ws_shops ORDER BY name");
+      // `contrat` n'existe pas encore en base (donnée franchisor à saisir via
+      // les écritures) → renvoyé vide tant que non défini. accent depuis shops.
+      $shops = rows("SELECT id, name, city, accent, active, webshop_enabled FROM $SHOPS ORDER BY name");
       $out = [];
       foreach ($shops as $s) {
         $caShop = $caOffice = 0;
@@ -1251,7 +1256,7 @@ function dispatch($m, $p) {
         }
         $out[] = [
           'id' => (string) $s['id'], 'nom' => $s['name'], 'ville' => $s['city'] ?: '—',
-          'web' => (bool) $s['webshop_enabled'], 'contrat' => $s['contrat'] ?: 'Franchise', 'act' => (bool) $s['active'],
+          'web' => (bool) $s['webshop_enabled'], 'contrat' => '—', 'act' => (bool) $s['active'],
           'caShop' => $caShop, 'caOffice' => $caOffice,
           'adoption' => (bool) $s['webshop_enabled'] ? 100 : 0,
           'accent' => $s['accent'] ?: 'var(--color-primary)',
@@ -1262,7 +1267,7 @@ function dispatch($m, $p) {
 
     // Catalogue — arbre catégories › produits (réel) avec gouvernance marque.
     if ($m === 'GET' && $p === '/franchisor/catalog') {
-      $totalShops = (int) (row("SELECT COUNT(*) n FROM ws_shops WHERE active=1")['n'] ?? 0);
+      $totalShops = (int) (row("SELECT COUNT(*) n FROM $SHOPS WHERE active=1")['n'] ?? 0);
       $hasPS = $tblExists('ws_product_shops');
       $cats = rows("SELECT id, label, COALESCE(menu_default,0) AS menu_default FROM ws_categories WHERE active=1 ORDER BY sort_order, label");
       $out = [];
@@ -1402,7 +1407,7 @@ function dispatch($m, $p) {
       $us = rows("SELECT u.display_name AS nom, u.email, u.role, u.active,
                          CASE WHEN u.role='siege' THEN 'Réseau complet'
                               ELSE COALESCE((SELECT GROUP_CONCAT(sh.name SEPARATOR ', ')
-                                               FROM bo_user_shops bus JOIN ws_shops sh ON sh.id = bus.shop_id
+                                               FROM bo_user_shops bus JOIN $SHOPS sh ON sh.id = bus.shop_id
                                               WHERE bus.user_id = u.id), '—') END AS portee
                     FROM bo_users u ORDER BY u.role='franchise', u.display_name");
       foreach ($us as &$u) {
@@ -1422,7 +1427,7 @@ function dispatch($m, $p) {
                             COALESCE(sh.name,'Réseau') AS shop
                        FROM bo_audit a
                        LEFT JOIN bo_users u ON u.id = a.user_id
-                       LEFT JOIN ws_shops sh ON sh.id = a.shop_id
+                       LEFT JOIN $SHOPS sh ON sh.id = a.shop_id
                       ORDER BY a.created_at DESC LIMIT 50"));
     }
 
