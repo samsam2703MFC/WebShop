@@ -1568,7 +1568,12 @@ function dispatch($m, $p) {
       $pdo = db();
       $pdo->beginTransaction();
       try {
-        q("UPDATE ws_products SET menu_override=?, base_cost=? WHERE id=?", [$ov, (float) ($b['baseCost'] ?? 0), $pid]);
+        // Prix de base du menu = ws_products.price (éditable). base_cost + override menu.
+        if (array_key_exists('basePrice', $b)) {
+          q("UPDATE ws_products SET menu_override=?, base_cost=?, price=? WHERE id=?", [$ov, (float) ($b['baseCost'] ?? 0), (float) $b['basePrice'], $pid]);
+        } else {
+          q("UPDATE ws_products SET menu_override=?, base_cost=? WHERE id=?", [$ov, (float) ($b['baseCost'] ?? 0), $pid]);
+        }
         q("DELETE c FROM ws_bundle_slot_choices c JOIN ws_bundle_slots s ON s.id=c.slot_id JOIN ws_bundles bu ON bu.id=s.bundle_id WHERE bu.product_id=?", [$pid]);
         q("DELETE s FROM ws_bundle_slots s JOIN ws_bundles bu ON bu.id=s.bundle_id WHERE bu.product_id=?", [$pid]);
         q("DELETE FROM ws_bundles WHERE product_id=?", [$pid]);
