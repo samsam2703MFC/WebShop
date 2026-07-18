@@ -347,11 +347,17 @@ CREATE TABLE ws_orders (
   free_delivery_minimum     DECIMAL(8,2) DEFAULT 0,
   tournee_stop_id           INT,
   delivery_mode             VARCHAR(20) DEFAULT 'collect',
+  tour_id                   INT,                     -- tournée dénormalisée (perf ops) — FK ws_tours
+  delivered_at              TIMESTAMP NULL DEFAULT NULL, -- horodatage remise
+  delivery_proof            VARCHAR(255),            -- preuve remise (URL signature/photo)
+  prep_by                   INT,                     -- préparateur (réf logique)
+  KEY idx_ops_day (shop_id, delivery_date, status),  -- files opérationnelles du jour
   FOREIGN KEY (shop_id)                 REFERENCES ws_shops(id),
   FOREIGN KEY (customer_id)             REFERENCES ws_customers(id),
   FOREIGN KEY (slot_id)                 REFERENCES ws_slots(id),
   FOREIGN KEY (office_client_id)        REFERENCES ws_offices(id),
-  FOREIGN KEY (office_delivery_site_id) REFERENCES ws_office_delivery_sites(id)
+  FOREIGN KEY (office_delivery_site_id) REFERENCES ws_office_delivery_sites(id),
+  FOREIGN KEY (tour_id)                 REFERENCES ws_tours(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE ws_order_lines (
