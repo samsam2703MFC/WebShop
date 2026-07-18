@@ -1554,6 +1554,43 @@ function dispatch($m, $p) {
       json_out(['ok' => true, 'invite' => true]);
     }
 
+    // Menu builder — remplace transactionnellement TOUT l'arbre d'un produit
+    // (ws_bundles → slots → choices) + champs menu du produit. Évite la désync
+    // d'ids : le front édite en local, on réécrit l'arbre en base à chaque save.
+    if ($m === 'POST' && $p === '/franchisor/menu') {
+      $b = body(); $pid = (int) ($b['productId'] ?? 0);
+      if (!$pid) json_out(['error' => 'productId requis'], 400);
+      $ov = isset($b['menuOverride']) && in_array($b['menuOverride'], ['on','off'], true) ? $b['menuOverride'] : null;
+      $bundles = is_array($b['bundles'] ?? null) ? $b['bundles'] : [];
+      $pdo = db();
+      $pdo->beginTransaction();
+      try {
+        q("UPDATE ws_products SET menu_override=?, base_cost=? WHERE id=?", [$ov, (float) ($b['baseCost'] ?? 0), $pid]);
+        q("DELETE c FROM ws_bundle_slot_choices c JOIN ws_bundle_slots s ON s.id=c.slot_id JOIN ws_bundles bu ON bu.id=s.bundle_id WHERE bu.product_id=?", [$pid]);
+        q("DELETE s FROM ws_bundle_slots s JOIN ws_bundles bu ON bu.id=s.bundle_id WHERE bu.product_id=?", [$pid]);
+        q("DELETE FROM ws_bundles WHERE product_id=?", [$pid]);
+        foreach ($bundles as $bi => $bu) {
+          q("INSERT INTO ws_bundles (product_id, name, description, price_modifier, sort_order, active) VALUES (?,?,?,?,?,?)",
+            [$pid, (string) ($bu['name'] ?? ''), (string) ($bu['description'] ?? ''), (float) ($bu['price_modifier'] ?? 0), $bi, !empty($bu['active']) ? 1 : 0]);
+          $bid = (int) $pdo->lastInsertId();
+          foreach (is_array($bu['slots'] ?? null) ? $bu['slots'] : [] as $si => $sl) {
+            $kind = in_array($sl['kind'] ?? 'single', ['single','multi'], true) ? $sl['kind'] : 'single';
+            q("INSERT INTO ws_bundle_slots (bundle_id, label, required, kind, min_select, max_select, sort_order, active) VALUES (?,?,?,?,?,?,?,?)",
+              [$bid, (string) ($sl['label'] ?? ''), !empty($sl['required']) ? 1 : 0, $kind,
+               (int) ($sl['min_select'] ?? ($kind === 'single' ? 1 : 0)), (int) ($sl['max_select'] ?? 1), $si, !empty($sl['active']) ? 1 : 0]);
+            $sid = (int) $pdo->lastInsertId();
+            foreach (is_array($sl['choices'] ?? null) ? $sl['choices'] : [] as $ci => $ch) {
+              q("INSERT INTO ws_bundle_slot_choices (slot_id, label, img, delta, cost, sort_order, active) VALUES (?,?,?,?,?,?,?)",
+                [$sid, (string) ($ch['label'] ?? ''), (string) ($ch['img'] ?? ''), (float) ($ch['delta'] ?? 0), (float) ($ch['cost'] ?? 0), $ci, !empty($ch['active']) ? 1 : 0]);
+            }
+          }
+        }
+        $pdo->commit();
+      } catch (Throwable $e) { $pdo->rollBack(); json_out(['error' => 'échec sauvegarde menu'], 500); }
+      $audit('menu.save', 'ws_bundles', $pid, null, ['bundles' => count($bundles)]);
+      json_out(['ok' => true]);
+    }
+
     json_out(['error' => 'Not found', 'path' => $p], 404);
   }
 
