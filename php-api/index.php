@@ -207,9 +207,40 @@ function dispatch($m, $p) {
   // Menu / bundle d'un produit : ws_bundles -> slots -> choices (imbriqué).
   if ($m === 'GET' && $p === '/catalog/bundles') {
     $pid = qp('productId'); if (!$pid) json_out([]);
+    // Résolution du produit porteur de la composition :
+    //  - si le produit a SA propre formule -> on la sert (menu produit).
+    //  - sinon, si son menu est armé par la CATÉGORIE (menu_default, non
+    //    surchargé 'off'), on sert la composition « modèle » de la catégorie
+    //    = la formule du produit de cette catégorie qui la porte. Ainsi TOUS
+    //    les produits d'une catégorie déclencheur partagent LE MÊME menu ;
+    //    l'étape 1 étant le produit choisi par le client (implicite).
+    $srcPid = $pid;
+    $own = row("SELECT 1 AS x FROM ws_bundles WHERE product_id = ? AND active = 1 LIMIT 1", [$pid]);
+    if (!$own) {
+      $meta = row("SELECT p.cat_id, p.menu_override, COALESCE(c.menu_default, 0) AS menu_default
+                     FROM ws_products p
+                     LEFT JOIN ws_categories c ON c.id = p.cat_id
+                    WHERE p.id = ? LIMIT 1", [$pid]);
+      $armed = $meta && $meta['cat_id'] !== null && (
+        $meta['menu_override'] === 'on' ||
+        ($meta['menu_override'] === null && (int) $meta['menu_default'] === 1)
+      );
+      if ($armed) {
+        // Produit « modèle » de la catégorie : celui qui porte une formule.
+        // On privilégie un produit explicitement menu ('on'), puis le plus
+        // petit id — déterministe.
+        $tpl = row("SELECT b.product_id
+                      FROM ws_bundles b
+                      JOIN ws_products tp ON tp.id = b.product_id AND tp.active = 1
+                     WHERE b.active = 1 AND tp.cat_id = ?
+                     ORDER BY (tp.menu_override = 'on') DESC, b.product_id
+                     LIMIT 1", [$meta['cat_id']]);
+        if ($tpl) $srcPid = $tpl['product_id'];
+      }
+    }
     $bundles = rows("SELECT id, name, description, price_modifier, sort_order
                        FROM ws_bundles WHERE product_id = ? AND active = 1
-                      ORDER BY sort_order, id", [$pid]);
+                      ORDER BY sort_order, id", [$srcPid]);
     foreach ($bundles as &$b) {
       $b['price_modifier'] = (float) $b['price_modifier'];
       $slots = rows("SELECT id, label, required, min_select, max_select, sort_order
