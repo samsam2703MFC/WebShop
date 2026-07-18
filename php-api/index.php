@@ -1289,11 +1289,12 @@ function dispatch($m, $p) {
       $cats = rows("SELECT id, label, COALESCE(menu_default,0) AS menu_default FROM ws_categories WHERE active=1 ORDER BY sort_order, label");
       $out = [];
       foreach ($cats as $c) {
+        // Le franchisor gère l'assortiment : on renvoie AUSSI les produits inactifs
+        // (le toggle « Webshop » = ws_products.active, il faut pouvoir les réactiver).
         $prods = rows("SELECT p.id, p.name AS nom, p.price AS prix, p.active,
-                              COALESCE(p.brand_whitelist,1) AS bw, COALESCE(p.brand_mandatory,0) AS bm,
-                              se.name AS saison
+                              COALESCE(p.brand_mandatory,0) AS bm, se.name AS saison
                          FROM ws_products p LEFT JOIN ws_season se ON se.id = p.season_id
-                        WHERE p.cat_id = ? AND p.active = 1 ORDER BY p.name", [$c['id']]);
+                        WHERE p.cat_id = ? ORDER BY p.name", [$c['id']]);
         $rows2 = [];
         foreach ($prods as $p2) {
           // Adoption = % boutiques qui ne l'excluent PAS explicitement (ws_product_shops.active=0).
@@ -1305,7 +1306,7 @@ function dispatch($m, $p) {
           $rows2[] = [
             'id' => (string) $p2['id'], 'nom' => $p2['nom'], 'prix' => (float) $p2['prix'],
             'statut' => $p2['active'] ? 'Publié' : 'Brouillon',
-            'bw' => (bool) $p2['bw'], 'bm' => (bool) $p2['bm'],
+            'bw' => (bool) $p2['active'], 'bm' => (bool) $p2['bm'],
             'ad' => $ad, 'saison' => $p2['saison'] ?: null,
           ];
         }
@@ -1478,6 +1479,7 @@ function dispatch($m, $p) {
       $b = body(); $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['error' => 'id requis'], 400);
       $sets = []; $vals = [];
+      if (array_key_exists('active', $b))          { $sets[] = 'active=?';          $vals[] = !empty($b['active']) ? 1 : 0; }  // « Webshop » = visibilité webshop réelle
       if (array_key_exists('brand_whitelist', $b)) { $sets[] = 'brand_whitelist=?'; $vals[] = !empty($b['brand_whitelist']) ? 1 : 0; }
       if (array_key_exists('brand_mandatory', $b)) { $sets[] = 'brand_mandatory=?'; $vals[] = !empty($b['brand_mandatory']) ? 1 : 0; }
       if (array_key_exists('price', $b))           { $sets[] = 'price=?';           $vals[] = (float) $b['price']; }
@@ -1495,6 +1497,7 @@ function dispatch($m, $p) {
       $b = body(); $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['error' => 'id requis'], 400);
       if (array_key_exists('menu_default', $b)) q("UPDATE ws_categories SET menu_default=? WHERE id=?", [!empty($b['menu_default']) ? 1 : 0, $id]);
+      if (array_key_exists('active', $b))          q("UPDATE ws_products SET active=? WHERE cat_id=?", [!empty($b['active']) ? 1 : 0, $id]);  // cascade « Webshop » catégorie
       if (array_key_exists('brand_whitelist', $b)) q("UPDATE ws_products SET brand_whitelist=? WHERE cat_id=?", [!empty($b['brand_whitelist']) ? 1 : 0, $id]);
       if (array_key_exists('brand_mandatory', $b)) q("UPDATE ws_products SET brand_mandatory=? WHERE cat_id=?", [!empty($b['brand_mandatory']) ? 1 : 0, $id]);
       $audit('category.update', 'ws_categories', $id, null, $b);
