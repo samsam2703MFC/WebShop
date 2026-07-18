@@ -1309,7 +1309,7 @@ function dispatch($m, $p) {
             'ad' => $ad, 'saison' => $p2['saison'] ?: null,
           ];
         }
-        if ($rows2) $out[] = ['cat' => $c['label'], 'prods' => $rows2];
+        if ($rows2) $out[] = ['id' => (int) $c['id'], 'cat' => $c['label'], 'prods' => $rows2];
       }
       json_out($out);
     }
