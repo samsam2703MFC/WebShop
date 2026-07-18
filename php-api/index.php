@@ -1317,7 +1317,7 @@ function dispatch($m, $p) {
     if ($m === 'GET' && $p === '/franchisor/catalog') {
       $totalShops = (int) (row("SELECT COUNT(*) n FROM $SHOPS WHERE active=1")['n'] ?? 0);
       $hasPS = $tblExists('ws_product_shops');
-      $cats = rows("SELECT id, label, COALESCE(menu_default,0) AS menu_default FROM ws_categories WHERE active=1 ORDER BY sort_order, label");
+      $cats = rows("SELECT id, label, img, COALESCE(menu_default,0) AS menu_default FROM ws_categories WHERE active=1 ORDER BY sort_order, label");
       $out = [];
       foreach ($cats as $c) {
         // Le franchisor gère l'assortiment : on renvoie AUSSI les produits inactifs
@@ -1341,7 +1341,7 @@ function dispatch($m, $p) {
             'ad' => $ad, 'saison' => $p2['saison'] ?: null,
           ];
         }
-        if ($rows2) $out[] = ['id' => (int) $c['id'], 'cat' => $c['label'], 'prods' => $rows2];
+        if ($rows2) $out[] = ['id' => (int) $c['id'], 'cat' => $c['label'], 'img' => $c['img'] ?: null, 'prods' => $rows2];
       }
       json_out($out);
     }
