@@ -210,13 +210,40 @@ CREATE TABLE ws_assortments (
   FOREIGN KEY (shop_id) REFERENCES ws_shops(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Zones de livraison (référentiel) — reflète la structure réelle en prod.
+CREATE TABLE ws_delivery_zones (
+  id         INT AUTO_INCREMENT PRIMARY KEY,
+  name       VARCHAR(80) NOT NULL,
+  sort_order INT DEFAULT 0,
+  active     TINYINT(1) DEFAULT 1,
+  UNIQUE KEY uq_zone_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE ws_tours (
-  id        INT AUTO_INCREMENT PRIMARY KEY,
-  shop_id   INT,
-  name      VARCHAR(100) NOT NULL,
-  max_items INT,                    -- cap items par route (NULL = illimité). Cap fin par créneau : ws_tour_availability.max_items
-  active    BOOLEAN DEFAULT TRUE,
-  FOREIGN KEY (shop_id) REFERENCES ws_shops(id)
+  id             INT AUTO_INCREMENT PRIMARY KEY,
+  shop_id        INT,
+  zone_id        INT,                     -- zone principale (ws_delivery_zones)
+  zone_secondary VARCHAR(120),            -- zone(s) secondaire(s), libellé libre
+  name           VARCHAR(100) NOT NULL,
+  max_items      INT,                    -- cap items par route (NULL = illimité). Cap fin par créneau : ws_tour_availability.max_items
+  active         BOOLEAN DEFAULT TRUE,
+  FOREIGN KEY (shop_id) REFERENCES ws_shops(id),
+  FOREIGN KEY (zone_id) REFERENCES ws_delivery_zones(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Demandes de zone non desservie (capture des visiteurs hors périmètre livraison).
+CREATE TABLE ws_zone_requests (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  postal_code VARCHAR(12) NOT NULL,
+  city        VARCHAR(120),
+  company     VARCHAR(200),
+  headcount   INT,
+  email       VARCHAR(200),
+  status      VARCHAR(16) NOT NULL DEFAULT 'new',   -- new | ... (traitement siège)
+  source_ip   VARCHAR(45),
+  created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_zone_req_cp (postal_code, created_at),
+  KEY idx_zone_req_ip (source_ip, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE ws_offices (
