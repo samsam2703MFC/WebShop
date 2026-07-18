@@ -77,3 +77,8 @@ function send_order_email($ref, $lines, $total, $to) {
   $headers = "From: $from\r\nContent-Type: text/plain; charset=utf-8\r\n";
   @mail($to, "Confirmation de commande $ref", $body, $headers);
 }
+
+/* Back-offices Franchise Buddy (franchisé / franchiseur) — sessions isolées.
+ * Additif : ne charge que des définitions de fonctions ; n'affecte aucune route
+ * existante tant qu'aucune requête « /bo/… » n'arrive (voir index.php). */
+require __DIR__ . '/bo/bootstrap.php';

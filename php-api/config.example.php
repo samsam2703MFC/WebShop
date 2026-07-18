@@ -25,4 +25,27 @@ return [
   'stripe_secret'    => getenv('WS_STRIPE_SECRET') ?: '',
   'checkout_success' => getenv('WS_CHECKOUT_SUCCESS') ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html?paid=1',
   'checkout_cancel'  => getenv('WS_CHECKOUT_CANCEL')  ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html?canceled=1',
+
+  /* ── Back-offices Franchise Buddy : deux sessions TOTALEMENT isolées ──────────
+   * Chaque BO a SON secret HMAC (jetons non interchangeables) et SON cookie.
+   * Génère deux secrets longs et DIFFÉRENTS :  openssl rand -hex 32
+   * En prod : cookie_secure = true (HTTPS obligatoire) ; cookie_domain vide =
+   * cookie « host-only ». Pour des sous-domaines dédiés (bo-franchise.… /
+   * bo-siege.…), tu peux fixer un domaine et/ou des login_url absolus. */
+  'bo' => [
+    'franchisee' => [
+      'secret'    => getenv('FB_FRANCHISEE_SECRET') ?: 'change-me-franchisee-32o-min',
+      'cookie'    => getenv('FB_FRANCHISEE_COOKIE') ?: 'fb_franchisee_session',
+      'login_url' => getenv('FB_FRANCHISEE_LOGIN')  ?: '/bo/franchisee/login',
+    ],
+    'franchisor' => [
+      'secret'    => getenv('FB_FRANCHISOR_SECRET') ?: 'change-me-franchisor-32o-min',
+      'cookie'    => getenv('FB_FRANCHISOR_COOKIE') ?: 'fb_franchisor_session',
+      'login_url' => getenv('FB_FRANCHISOR_LOGIN')  ?: '/bo/franchisor/login',
+    ],
+    // '' = cookie host-only (recommandé si une seule app). Sinon '.tondomaine.be'.
+    'cookie_domain' => getenv('FB_COOKIE_DOMAIN') ?: '',
+    // true en prod (HTTPS). Mettre 0 UNIQUEMENT pour un test local en http.
+    'cookie_secure' => (getenv('FB_COOKIE_SECURE') ?: '1') !== '0',
+  ],
 ];

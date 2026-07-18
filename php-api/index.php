@@ -46,6 +46,12 @@ function dispatch($m, $p) {
     return null;
   };
 
+  /* ── Back-offices Franchise Buddy (sessions isolées franchisé / franchiseur) ──
+     Tout « /bo/… » est routé par bo_dispatch() ; chaque route y est protégée par
+     son guard require_bo(). Placé en tête pour ne jamais retomber sur une route
+     publique. ── */
+  if (strpos($p, '/bo/') === 0) { bo_dispatch($m, $p); json_out(['error' => 'Not found', 'path' => $p], 404); }
+
   /* ── Health ── */
   if ($m === 'GET' && $p === '/health') { db()->query('SELECT 1'); json_out(['ok' => true]); }
 
