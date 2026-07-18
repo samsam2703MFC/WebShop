@@ -167,8 +167,8 @@
     async config() {
       const FALLBACK = {
         fidelityTabEnabled: true,
-        categoryNavAllIcon: '/webshop/assets/category_icons/nav-all.svg',
-        categoryNavBackIcon: '/webshop/assets/category_icons/nav-back.svg',
+        categoryNavAllIcon: '/webshop/assets/all.png',
+        categoryNavBackIcon: '/webshop/assets/back.png',
       };
       if (!api.endpoint) return FALLBACK;
       try {
