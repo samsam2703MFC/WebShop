@@ -1322,15 +1322,15 @@ function dispatch($m, $p) {
       $catObj = [];
       foreach ($cats as $c) $catObj[$c['label']] = ['menu_default' => (int) $c['menu_default']];
       $db['_categories'] = $catObj ?: new stdClass();
-      // Produits « menu » : override posé, OU catégorie armée, OU ayant des bundles.
+      // Un « menu » = un produit qui a RÉELLEMENT une composition (ws_bundles).
+      // Ni « catégorie armée » ni « toggle on sans formule » ne créent un menu :
+      // sinon la liste se remplit de tous les produits à chaque refresh.
       $prods = rows("SELECT p.id, p.name, p.price, COALESCE(p.base_cost,0) AS base_cost,
                             p.menu_override, c.label AS category
                        FROM ws_products p
                        LEFT JOIN ws_categories c ON c.id = p.cat_id
-                      WHERE p.active = 1 AND (
-                            p.menu_override IN ('on','off')
-                         OR COALESCE(c.menu_default,0) = 1
-                         OR EXISTS (SELECT 1 FROM ws_bundles b WHERE b.product_id = p.id))
+                      WHERE p.active = 1
+                        AND EXISTS (SELECT 1 FROM ws_bundles b WHERE b.product_id = p.id)
                       ORDER BY p.name");
       foreach ($prods as $p2) {
         $pid = (string) $p2['id'];
