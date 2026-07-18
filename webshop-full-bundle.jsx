@@ -320,6 +320,17 @@ function authRegister({ email, password, firstName, lastName }) {
 }
 function getOffice(id) { return id ? _AUTH_STORE.offices[id] : null; }
 function getTour(id)   { return id ? W_TOURS[id] : null; }
+function submitOfficeRequest({ user, companyName, contactName, phone, email }) {
+  const id = 'off-req-' + Date.now();
+  const office = {
+    id, name: companyName, contact: contactName, phone,
+    email: (email || user?.email || '').trim().toLowerCase(),
+    address: null, tourId: null, status: 'pending',
+  };
+  _AUTH_STORE.offices[id] = office;
+  if (user) { user.officeId = id; _AUTH_STORE.users[user.email] = { ...user }; }
+  return office;
+}
 
 // =========================================================================
 // SHARED PRIMITIVES
@@ -1756,6 +1767,81 @@ function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, us
   );
 }
 
+// Variant B — Medium: full colored brand bar above navbar
+function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens,
+                   collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays }) {
+  return (
+    <>
+      <div className="ws-shopbar" style={{ background: 'var(--color-primary)' }}>
+        <div className="ws-shopbar__inner">
+          <span className="ws-shopbar__pin"><Pict d={ICONS.pin} s={12}/></span>
+          <span className="ws-shopbar__name">Vous commandez chez · <strong>{shop.name}</strong></span>
+          <span className="ws-shopbar__city">{shop.city} · {shop.address}</span>
+          <button className="ws-shopbar__switch" onClick={onSwitchShop}>
+            Changer de boutique <Pict d={ICONS.switch} s={12}/>
+          </button>
+        </div>
+      </div>
+      <header className="ws-nav ws-nav--B">
+        <div className="ws-nav__left">
+          <span className="ws-nav__brand">L'Atelier By</span>
+          <DatePill mode={mode} value={date} onChange={onDate} shopId={shop.id}
+            collectCutoffPassed={collectCutoffPassed} collectCutoffLabel={collectCutoffLabel}
+            deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}
+            minLeadDays={minLeadDays}/>
+          <ModePills mode={mode} onChange={onMode}
+            collectCutoffPassed={collectCutoffPassed} collectCutoffLabel={collectCutoffLabel}
+            deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}/>
+        </div>
+        <div className="ws-nav__right">
+          {window.LangChip && <window.LangChip />}
+          {window.AllergenNavButton && <window.AllergenNavButton onClick={onAllergens}/>}
+          <button className="ws-nav__icon" aria-label="Compte"><Pict d={ICONS.user} s={15}/></button>
+          <button className="ws-nav__icon ws-nav__cart" aria-label="Panier">
+            <Pict d={ICONS.bag} s={15}/>
+            {cartCount > 0 && <span className="ws-nav__cart-badge">{cartCount}</span>}
+          </button>
+        </div>
+      </header>
+    </>
+  );
+}
+
+// Variant C — Strong: full per-shop accent. Brand wordmark, navbar background, CTA, focus rings all picked up.
+function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens,
+                   collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays }) {
+  return (
+    <header className="ws-nav ws-nav--C" style={{ '--shop-accent': shop.accent }}>
+      <div className="ws-nav__left">
+        <div className="ws-nav__brandwrap">
+          <span className="ws-nav__brand" style={{ color: shop.accent }}>L'Atelier By</span>
+          <button className="ws-nav__shopplate" onClick={onSwitchShop} style={{ color: shop.accent, borderColor: shop.accent }}>
+            <Pict d={ICONS.pin} s={11}/>
+            <span>{shop.name}</span>
+            <span className="ws-nav__shopplate-city">· {shop.city}</span>
+            <Pict d={ICONS.chev} s={10}/>
+          </button>
+        </div>
+        <DatePill mode={mode} value={date} onChange={onDate} shopId={shop.id}
+          collectCutoffPassed={collectCutoffPassed} collectCutoffLabel={collectCutoffLabel}
+          deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}
+          minLeadDays={minLeadDays}/>
+        <ModePills mode={mode} onChange={onMode}
+          collectCutoffPassed={collectCutoffPassed} collectCutoffLabel={collectCutoffLabel}
+          deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}/>
+      </div>
+      <div className="ws-nav__right">
+        {window.LangChip && <window.LangChip />}
+        {window.AllergenNavButton && <window.AllergenNavButton onClick={onAllergens}/>}
+        <button className="ws-nav__icon" aria-label="Compte"><Pict d={ICONS.user} s={15}/></button>
+        <button className="ws-nav__icon ws-nav__cart" aria-label="Panier">
+          <Pict d={ICONS.bag} s={15}/>
+          {cartCount > 0 && <span className="ws-nav__cart-badge">{cartCount}</span>}
+        </button>
+      </div>
+    </header>
+  );
+}
 
 // =========================================================================
 // AUTH MODALS — login / register, account, office request
@@ -3466,6 +3552,18 @@ function SlotIcon({ name, size = 15 }) {
   );
 }
 
+// Single derived CTA — renders ONLY what the server returns in `cta`
+// (label/theme/icon). No horaire, couleur, or libellé hardcoded here.
+function SlotCTA({ cta, onClick }) {
+  if (!cta) return null;
+  return (
+    <button type="button" className="ws-slotcta" data-slot-theme={cta.theme} onClick={onClick}>
+      <span className="ws-slotcta__ic"><SlotIcon name={cta.icon} size={16}/></span>
+      <span>{cta.label}</span>
+    </button>
+  );
+}
+
 // Sticky segmented control — shown only when the office has 2+ orderable slots.
 function SlotSegmented({ slots, selected, onSelect }) {
   if (!slots || slots.length < 2) return null;
@@ -3838,12 +3936,13 @@ function ShopFrame({ variant }) {
     return () => { alive = false; };
   }, []);
   const [officeSlots, setOfficeSlots] = React.useState([]);
+  const [slotCta, setSlotCta] = React.useState(null);
   const [selectedSlot, setSelectedSlot] = React.useState(null);
   const [pendingSlot, setPendingSlot] = React.useState(null);
   React.useEffect(() => {
     let alive = true;
     const api = window.WSSlots || window.WSAvailability;
-    if (mode !== 'delivery' || !api || !(api.listSlots || api.nextSlot)) { setOfficeSlots([]); return; }
+    if (mode !== 'delivery' || !api || !(api.listSlots || api.nextSlot)) { setOfficeSlots([]); setSlotCta(null); return; }
     const officeId = (user && user.officeId) || null;
     const iso = date instanceof Date ? date.toISOString().slice(0, 10) : '';
     Promise.all([
@@ -3853,8 +3952,9 @@ function ShopFrame({ variant }) {
       if (!alive) return;
       const list = (slots || []).filter((s) => s && s.orderable !== false);
       setOfficeSlots(list);
+      setSlotCta(next && next.cta ? next.cta : (list[0] && list[0].cta) || null);
       setSelectedSlot((cur) => cur || (next && next.slot_type) || (list[0] && list[0].slot_type) || null);
-    }).catch(() => { if (alive) setOfficeSlots([]); });
+    }).catch(() => { if (alive) { setOfficeSlots([]); setSlotCta(null); } });
     return () => { alive = false; };
   }, [mode, user, date]);
   // One cart = one route. Changing slot drops items unavailable on the target.
@@ -4274,7 +4374,7 @@ function ShopFrame({ variant }) {
     stockReserve(line.productId, line.qty || 1);
   }
 
-  const Nav = NavbarA;
+  const Nav = variant === 'A' ? NavbarA : variant === 'B' ? NavbarB : NavbarC;
 
   // Auto-switch back to collect if delivery cutoff passes while already in delivery mode.
   React.useEffect(() => {
@@ -4341,6 +4441,22 @@ function ShopFrame({ variant }) {
 
       <div className="ws-body">
         <main className="ws-main" ref={mainScrollRef} onScroll={updateScrollState}>
+          {variant === 'C' && (
+            <div className="ws-hero" style={{ '--shop-accent': shop.accent }}>
+              <div className="ws-hero__copy">
+                <span className="ws-hero__eyebrow">Campagne · Printemps 2026</span>
+                <h1 className="ws-hero__slogan">On prend.<br/>On divise.<br/><em style={{ color: 'var(--color-primary)' }}>On goûte.</em></h1>
+                <p className="ws-hero__lede">4 parts achetées · 1 offerte. Disponible en boutique pour la collecte aujourd'hui.</p>
+              </div>
+              <div className="ws-hero__chip" style={{ background: 'var(--color-primary)' }}>
+                <span>{shop.name}</span>
+                <span className="ws-hero__chip-sub">{shop.city}</span>
+              </div>
+            </div>
+          )}
+
+          {/* page head removed */}
+
           {mode === 'delivery' && officeSlots.length >= 2 && (
             <SlotSegmented slots={officeSlots} selected={selectedSlot} onSelect={(t) => requestSlotChange(t)}/>
           )}
