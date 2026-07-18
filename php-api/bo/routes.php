@@ -245,15 +245,30 @@ function bo_resource_route($m, $bo, $rest) {
   /* ── FRANCHISEUR — réseau / marque ──────────────────────────────────── */
   if ($bo === 'franchisor') {
     if ($rest === 'dashboard') {
-      $date = qp('date', date('Y-m-d'));
+      $date  = qp('date', date('Y-m-d'));
+      $from  = date('Y-m-01');
       $shops = row("SELECT COUNT(*) n, SUM(active=1) act FROM ws_shops");
       $ord   = row("SELECT COUNT(*) n, COALESCE(SUM(total),0) rev FROM ws_orders WHERE delivery_date = ?", [$date]);
+      $mon   = row("SELECT COALESCE(SUM(total),0) ca,
+                           COALESCE(SUM(CASE WHEN delivery_mode='collect'  THEN total END),0) ca_shop,
+                           COALESCE(SUM(CASE WHEN delivery_mode='delivery' THEN total END),0) ca_office
+                      FROM ws_orders WHERE delivery_date >= ?", [$from]);
+      $ad = row("SELECT
+          (SELECT COUNT(*) FROM ws_product_shops ps JOIN ws_products p ON p.id = ps.product_id
+             WHERE ps.active=1 AND p.brand_mandatory=1 AND p.active=1) AS carried,
+          (SELECT COUNT(*) FROM ws_products WHERE brand_mandatory=1 AND active=1)
+            * (SELECT COUNT(*) FROM ws_shops WHERE active=1) AS tot");
+      $tot = (int) ($ad['tot'] ?? 0);
       json_out([
-        'date'         => $date,
-        'shops'        => (int) ($shops['n'] ?? 0),
-        'shopsActive'  => (int) ($shops['act'] ?? 0),
-        'ordersToday'  => (int) ($ord['n'] ?? 0),
-        'revenueToday' => (float) ($ord['rev'] ?? 0),
+        'date'          => $date,
+        'shops'         => (int) ($shops['n'] ?? 0),
+        'shopsActive'   => (int) ($shops['act'] ?? 0),
+        'ordersToday'   => (int) ($ord['n'] ?? 0),
+        'revenueToday'  => (float) ($ord['rev'] ?? 0),
+        'caMonth'       => (float) ($mon['ca'] ?? 0),
+        'caShopMonth'   => (float) ($mon['ca_shop'] ?? 0),
+        'caOfficeMonth' => (float) ($mon['ca_office'] ?? 0),
+        'adoption'      => $tot > 0 ? (int) round(((int) $ad['carried']) / $tot * 100) : 0,
       ]);
     }
     if ($rest === 'shops') {                     // réseau : CA agrégé depuis ws_orders + adoption
