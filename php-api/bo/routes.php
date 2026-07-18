@@ -139,6 +139,34 @@ function bo_resource_route($m, $bo, $rest) {
         'estimatedMargin' => round($revenue - $variable - $fixed, 2),
       ]);
     }
+
+    if ($rest === 'rentability-tree') {          // arbre tournée › office : CA réel, coûts estimés
+      $from = qp('from', date('Y-m-01'));
+      $to   = qp('to',   date('Y-m-d'));
+      $prep = (float) ws_param('cost_prep_per_order', '0');
+      $emb  = (float) ws_param('cost_packaging_unit', '0');
+      $tours = rows("SELECT id, name FROM ws_tours WHERE $w AND active = 1 ORDER BY name", $p);
+      $out = [];
+      foreach ($tours as $t) {
+        $offices = rows(
+          "SELECT f.id, f.name,
+                  (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o
+                     WHERE o.office_client_id = f.id AND o.delivery_date BETWEEN ? AND ?) AS ca,
+                  (SELECT COUNT(*) FROM ws_orders o
+                     WHERE o.office_client_id = f.id AND o.delivery_date BETWEEN ? AND ?) AS n
+             FROM ws_offices f WHERE f.tour_id = ? AND f.active = 1 ORDER BY f.name",
+          [$from, $to, $from, $to, $t['id']]);
+        $sites = array_map(function ($f) use ($prep, $emb) {
+          return ['nom' => $f['name'], 'offices' => [[
+            'nom'   => 'CA net',
+            'ca'    => (float) $f['ca'],
+            'couts' => round(((int) $f['n']) * ($prep + $emb), 2),   // coûts variables estimés (ws_param)
+          ]]];
+        }, $offices);
+        $out[] = ['nom' => $t['name'], 'sites' => $sites];
+      }
+      json_out($out);
+    }
     return; // aucune autre route franchisé
   }
 
