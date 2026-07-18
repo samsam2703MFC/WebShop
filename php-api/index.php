@@ -1217,28 +1217,10 @@ function dispatch($m, $p) {
   if (strpos($p, '/admin/') === 0) {
     require_admin();
 
-    // Catégories (Menu Builder) — id, label, menu_default, nb produits
-    if ($m === 'GET' && $p === '/admin/categories') {
-      json_out(rows("SELECT c.id, c.label, c.sort_order, c.active, c.menu_default,
-                            (SELECT COUNT(*) FROM ws_products p WHERE p.cat_id=c.id AND p.active=1) AS product_count
-                       FROM ws_categories c ORDER BY c.sort_order, c.label"));
-    }
-    // Produits — pour la gestion + Menu Builder. Filtres ?q= (nom) & ?categoryId=.
-    // Renvoie menu_override brut ET has_menu_options RÉSOLU (déclencheur effectif).
+    // Produits (tous) — pour la gestion
     if ($m === 'GET' && $p === '/admin/products') {
-      $q = trim((string) qp('q'));
-      $cat = (int) (qp('categoryId') ?: 0);
-      $where = ['1=1']; $args = [];
-      if ($q !== '')  { $where[] = 'p.name LIKE ?';   $args[] = '%' . $q . '%'; }
-      if ($cat)       { $where[] = 'p.cat_id = ?';    $args[] = $cat; }
-      $sql = "SELECT p.id, p.cat_id, c.label AS category, p.name, p.price, p.active,
-                     p.menu_override,
-                     COALESCE(CASE p.menu_override WHEN 'on' THEN 1 WHEN 'off' THEN 0 END, c.menu_default, 0) AS has_menu_options,
-                     c.menu_default AS category_menu_default,
-                     (SELECT COUNT(*) FROM ws_bundles b WHERE b.product_id=p.id AND b.active=1) AS bundle_count
-                FROM ws_products p LEFT JOIN ws_categories c ON c.id=p.cat_id
-               WHERE " . implode(' AND ', $where) . " ORDER BY p.name LIMIT 400";
-      json_out(rows($sql, $args));
+      json_out(rows("SELECT p.id, p.cat_id, c.label AS category, p.name, p.price, p.active
+                       FROM ws_products p LEFT JOIN ws_categories c ON c.id=p.cat_id ORDER BY p.name"));
     }
     // Créer / modifier un produit
     if ($m === 'POST' && $p === '/admin/products') {

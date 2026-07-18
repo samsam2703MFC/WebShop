@@ -35,16 +35,5 @@ export default defineConfig({
       workbox: { globPatterns: ['**/*.{js,css,html,png,svg,woff2}'] },
     }),
   ],
-  build: {
-    outDir: 'dist',
-    chunkSizeWarningLimit: 2500,
-    // Deux entrées : le webshop (index.html) et le back office Menu Builder
-    // (admin.html). Vite construit les deux ; chacune a son point de montage.
-    rollupOptions: {
-      input: {
-        main: 'index.html',
-        admin: 'admin.html',
-      },
-    },
-  },
+  build: { outDir: 'dist', chunkSizeWarningLimit: 2500 },
 });
