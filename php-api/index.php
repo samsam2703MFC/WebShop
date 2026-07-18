@@ -1390,23 +1390,40 @@ function dispatch($m, $p) {
       json_out($out);
     }
 
-    // Modèles d'email.
+    // Modèles d'email (ws_email_templates : tpl_key/lang/subject, marque=1).
     if ($m === 'GET' && $p === '/franchisor/email-templates') {
-      json_out(rows("SELECT cle, langue, sujet FROM ws_email_templates WHERE active=1 ORDER BY cle, langue"));
+      json_out(rows("SELECT tpl_key AS cle, lang AS langue, subject AS sujet
+                       FROM ws_email_templates WHERE active=1 AND id_brand=1
+                      ORDER BY tpl_key, lang"));
     }
 
-    // Utilisateurs & rôles (RBAC).
+    // Utilisateurs & rôles (bo_users + portée bo_user_shops).
     if ($m === 'GET' && $p === '/franchisor/users') {
-      $us = rows("SELECT nom, email, role, portee, active FROM bo_users ORDER BY role='Franchise', nom");
-      foreach ($us as &$u) { $u['act'] = (bool) $u['active']; unset($u['active']); }
+      $us = rows("SELECT u.display_name AS nom, u.email, u.role, u.active,
+                         CASE WHEN u.role='siege' THEN 'Réseau complet'
+                              ELSE COALESCE((SELECT GROUP_CONCAT(sh.name SEPARATOR ', ')
+                                               FROM bo_user_shops bus JOIN ws_shops sh ON sh.id = bus.shop_id
+                                              WHERE bus.user_id = u.id), '—') END AS portee
+                    FROM bo_users u ORDER BY u.role='franchise', u.display_name");
+      foreach ($us as &$u) {
+        $u['role'] = $u['role'] === 'siege' ? 'Siège' : 'Franchise';
+        $u['act'] = (bool) $u['active']; unset($u['active']);
+      }
       unset($u);
       json_out($us);
     }
 
-    // Journal d'audit.
+    // Journal d'audit (bo_audit + acteur bo_users + boutique ws_shops).
     if ($m === 'GET' && $p === '/franchisor/audit') {
-      $as = rows("SELECT DATE_FORMAT(ts,'%d/%m %H:%i') AS ts, actor AS user, verb, entity, shop FROM bo_audit ORDER BY ts DESC LIMIT 50");
-      json_out($as);
+      json_out(rows("SELECT DATE_FORMAT(a.created_at,'%d/%m %H:%i') AS ts,
+                            COALESCE(u.display_name,'—') AS user,
+                            a.action AS verb,
+                            TRIM(CONCAT(COALESCE(a.entity,''), IF(a.entity_id IS NOT NULL, CONCAT(' #', a.entity_id), ''))) AS entity,
+                            COALESCE(sh.name,'Réseau') AS shop
+                       FROM bo_audit a
+                       LEFT JOIN bo_users u ON u.id = a.user_id
+                       LEFT JOIN ws_shops sh ON sh.id = a.shop_id
+                      ORDER BY a.created_at DESC LIMIT 50"));
     }
 
     json_out(['error' => 'Not found', 'path' => $p], 404);
