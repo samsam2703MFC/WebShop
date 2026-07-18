@@ -1261,9 +1261,9 @@ function dispatch($m, $p) {
 
     // Boutiques du réseau — identité + toggle Webshop RÉELS depuis `shops`.
     if ($m === 'GET' && $p === '/franchisor/shops') {
-      // `contrat` n'existe pas encore en base (donnée franchisor à saisir via
-      // les écritures) → renvoyé vide tant que non défini. accent depuis shops.
-      $shops = rows("SELECT id, name, city, accent, active, webshop_enabled FROM $SHOPS ORDER BY name");
+      // `contrat` (colonne shops ajoutée en 0004) éditable via l'écriture boutique ;
+      // '—' tant que non défini. accent/webshop_enabled/active depuis shops.
+      $shops = rows("SELECT id, name, city, accent, active, webshop_enabled, contrat FROM $SHOPS ORDER BY name");
       $out = [];
       foreach ($shops as $s) {
         $caShop = $caOffice = 0;
@@ -1273,7 +1273,7 @@ function dispatch($m, $p) {
         }
         $out[] = [
           'id' => (string) $s['id'], 'nom' => $s['name'], 'ville' => $s['city'] ?: '—',
-          'web' => (bool) $s['webshop_enabled'], 'contrat' => '—', 'act' => (bool) $s['active'],
+          'web' => (bool) $s['webshop_enabled'], 'contrat' => ($s['contrat'] ?? '') !== '' ? $s['contrat'] : '—', 'act' => (bool) $s['active'],
           'caShop' => $caShop, 'caOffice' => $caOffice,
           'adoption' => (bool) $s['webshop_enabled'] ? 100 : 0,
           'accent' => $s['accent'] ?: 'var(--color-primary)',
@@ -1446,6 +1446,112 @@ function dispatch($m, $p) {
                        LEFT JOIN bo_users u ON u.id = a.user_id
                        LEFT JOIN $SHOPS sh ON sh.id = a.shop_id
                       ORDER BY a.created_at DESC LIMIT 50"));
+    }
+
+    /* ══════════ ÉCRITURES (persistées en DB + tracées dans bo_audit) ══════════
+       Auth : admin_token pour l'instant (user_id NULL en audit) ; l'acteur réel
+       sera renseigné quand l'auth SSO/bo_users sera branchée. */
+    $ip = $_SERVER['REMOTE_ADDR'] ?? null;
+    $audit = function ($action, $entity, $entityId = null, $shopId = null, $payload = null) use ($ip) {
+      q("INSERT INTO bo_audit (user_id, action, entity, entity_id, shop_id, payload, ip)
+         VALUES (NULL, ?, ?, ?, ?, ?, ?)",
+        [$action, $entity, $entityId, $shopId, $payload !== null ? json_encode($payload, JSON_UNESCAPED_UNICODE) : null, $ip]);
+    };
+
+    // Boutique : contrat / toggle Webshop / actif.
+    if ($m === 'POST' && $p === '/franchisor/shop') {
+      $b = body(); $id = (int) ($b['id'] ?? 0);
+      if (!$id) json_out(['error' => 'id requis'], 400);
+      $sets = []; $vals = [];
+      if (array_key_exists('contrat', $b))         { $sets[] = 'contrat=?';         $vals[] = (string) $b['contrat']; }
+      if (array_key_exists('webshop_enabled', $b)) { $sets[] = 'webshop_enabled=?'; $vals[] = !empty($b['webshop_enabled']) ? 1 : 0; }
+      if (array_key_exists('active', $b))          { $sets[] = 'active=?';          $vals[] = !empty($b['active']) ? 1 : 0; }
+      if (!$sets) json_out(['error' => 'rien à modifier'], 400);
+      $vals[] = $id;
+      q("UPDATE $SHOPS SET " . implode(', ', $sets) . " WHERE id=?", $vals);
+      $audit('shop.update', 'shops', $id, $id, $b);
+      json_out(['ok' => true]);
+    }
+
+    // Produit : flags de gouvernance marque + prix réf. + override menu.
+    if ($m === 'POST' && $p === '/franchisor/product') {
+      $b = body(); $id = (int) ($b['id'] ?? 0);
+      if (!$id) json_out(['error' => 'id requis'], 400);
+      $sets = []; $vals = [];
+      if (array_key_exists('brand_whitelist', $b)) { $sets[] = 'brand_whitelist=?'; $vals[] = !empty($b['brand_whitelist']) ? 1 : 0; }
+      if (array_key_exists('brand_mandatory', $b)) { $sets[] = 'brand_mandatory=?'; $vals[] = !empty($b['brand_mandatory']) ? 1 : 0; }
+      if (array_key_exists('price', $b))           { $sets[] = 'price=?';           $vals[] = (float) $b['price']; }
+      if (array_key_exists('base_cost', $b))       { $sets[] = 'base_cost=?';       $vals[] = (float) $b['base_cost']; }
+      if (array_key_exists('menu_override', $b))   { $sets[] = 'menu_override=?';    $vals[] = in_array($b['menu_override'], ['on','off'], true) ? $b['menu_override'] : null; }
+      if (!$sets) json_out(['error' => 'rien à modifier'], 400);
+      $vals[] = $id;
+      q("UPDATE ws_products SET " . implode(', ', $sets) . " WHERE id=?", $vals);
+      $audit('product.update', 'ws_products', $id, null, $b);
+      json_out(['ok' => true]);
+    }
+
+    // Catégorie : menu par défaut (+ cascade optionnelle des flags aux produits).
+    if ($m === 'POST' && $p === '/franchisor/category') {
+      $b = body(); $id = (int) ($b['id'] ?? 0);
+      if (!$id) json_out(['error' => 'id requis'], 400);
+      if (array_key_exists('menu_default', $b)) q("UPDATE ws_categories SET menu_default=? WHERE id=?", [!empty($b['menu_default']) ? 1 : 0, $id]);
+      if (array_key_exists('brand_whitelist', $b)) q("UPDATE ws_products SET brand_whitelist=? WHERE cat_id=?", [!empty($b['brand_whitelist']) ? 1 : 0, $id]);
+      if (array_key_exists('brand_mandatory', $b)) q("UPDATE ws_products SET brand_mandatory=? WHERE cat_id=?", [!empty($b['brand_mandatory']) ? 1 : 0, $id]);
+      $audit('category.update', 'ws_categories', $id, null, $b);
+      json_out(['ok' => true]);
+    }
+
+    // Paramètre marque (ws_param).
+    if ($m === 'POST' && $p === '/franchisor/param') {
+      $b = body(); $cle = (string) ($b['cle'] ?? '');
+      if ($cle === '') json_out(['error' => 'cle requise'], 400);
+      q("INSERT INTO ws_param (param_key, param_value) VALUES (?,?)
+         ON DUPLICATE KEY UPDATE param_value=VALUES(param_value)", [$cle, (string) ($b['val'] ?? '')]);
+      $audit('param.update', 'ws_param', null, null, $b);
+      json_out(['ok' => true]);
+    }
+
+    // Modèle d'email (upsert par tpl_key×lang×marque).
+    if ($m === 'POST' && $p === '/franchisor/email-template') {
+      $b = body();
+      $k = (string) ($b['cle'] ?? ''); $lg = (string) ($b['langue'] ?? 'FR');
+      if ($k === '') json_out(['error' => 'cle requise'], 400);
+      q("INSERT INTO ws_email_templates (tpl_key, lang, subject, body_html, id_brand, active)
+         VALUES (?,?,?,?,1,1)
+         ON DUPLICATE KEY UPDATE subject=VALUES(subject), body_html=VALUES(body_html), active=1",
+        [$k, $lg, (string) ($b['sujet'] ?? ''), (string) ($b['corps'] ?? '')]);
+      $audit('email_template.upsert', 'ws_email_templates', null, null, ['cle' => $k, 'langue' => $lg]);
+      json_out(['ok' => true]);
+    }
+
+    // Bon marque (ws_vouchers).
+    if ($m === 'POST' && $p === '/franchisor/voucher') {
+      $b = body(); $code = strtoupper(trim($b['code'] ?? ''));
+      if ($code === '') json_out(['error' => 'code requis'], 400);
+      q("INSERT INTO ws_vouchers (code, type, value, min_order, max_uses, expires_at, active)
+         VALUES (?,?,?,?,?,?,?)
+         ON DUPLICATE KEY UPDATE type=VALUES(type), value=VALUES(value), min_order=VALUES(min_order),
+                                 max_uses=VALUES(max_uses), expires_at=VALUES(expires_at), active=VALUES(active)",
+        [$code, $b['type'] ?? 'percent', (float) ($b['value'] ?? 0), (float) ($b['min_order'] ?? 0),
+         isset($b['max_uses']) && $b['max_uses'] !== '' ? (int) $b['max_uses'] : null,
+         !empty($b['expires_at']) ? $b['expires_at'] : null, isset($b['active']) ? (!empty($b['active']) ? 1 : 0) : 1]);
+      $audit('voucher.upsert', 'ws_vouchers', null, null, ['code' => $code]);
+      json_out(['ok' => true]);
+    }
+
+    // Utilisateur back-office — INVITATION (password_hash '' = à définir).
+    if ($m === 'POST' && $p === '/franchisor/user') {
+      $b = body(); $email = strtolower(trim($b['email'] ?? ''));
+      if (!filter_var($email, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'email invalide'], 400);
+      $role = (($b['role'] ?? '') === 'Siège' || ($b['role'] ?? '') === 'siege') ? 'siege' : 'franchise';
+      $active = isset($b['active']) ? (!empty($b['active']) ? 1 : 0) : 1;
+      q("INSERT INTO bo_users (email, password_hash, display_name, role, active)
+         VALUES (?, '', ?, ?, ?)
+         ON DUPLICATE KEY UPDATE display_name=VALUES(display_name), role=VALUES(role), active=VALUES(active)",
+        [$email, (string) ($b['nom'] ?? ''), $role, $active]);
+      $uid = (int) db()->lastInsertId();
+      $audit('user.invite', 'bo_users', $uid ?: null, null, ['email' => $email, 'role' => $role]);
+      json_out(['ok' => true, 'invite' => true]);
     }
 
     json_out(['error' => 'Not found', 'path' => $p], 404);
