@@ -170,7 +170,14 @@ function dispatch($m, $p) {
                       p.name, p.description,
                       t.tag AS badge, t.slug AS tag_slug, t.bg_color AS tag_bg, t.text_color AS tag_text,
                       se.slug AS season, se.name AS season_name, se.img AS season_img,
-                      p.portions, p.cross_portion, p.has_menu_options,
+                      p.portions, p.cross_portion,
+                      -- Menu déclenché par la catégorie (menu_default), surchargé par
+                      -- le produit (menu_override 'on'/'off'/NULL=hérite). has_menu_options
+                      -- est RÉSOLU serveur : le front et /orders reçoivent la valeur finale.
+                      COALESCE(
+                        CASE p.menu_override WHEN 'on' THEN 1 WHEN 'off' THEN 0 END,
+                        c.menu_default, 0
+                      ) AS has_menu_options,
                       COALESCE(pp.price, p.price) AS price, ps.no_delivery,
                       (SELECT JSON_ARRAYAGG(allergen) FROM ws_product_allergens a WHERE a.product_id = p.id) AS allergens
                  FROM ws_products p
@@ -199,11 +206,15 @@ function dispatch($m, $p) {
                       ORDER BY sort_order, id", [$pid]);
     foreach ($bundles as &$b) {
       $b['price_modifier'] = (float) $b['price_modifier'];
-      $slots = rows("SELECT id, label, required, sort_order
+      $slots = rows("SELECT id, label, required, min_select, max_select, sort_order
                        FROM ws_bundle_slots WHERE bundle_id = ? AND active = 1
                       ORDER BY sort_order, id", [$b['id']]);
       foreach ($slots as &$sl) {
         $sl['required'] = (bool) $sl['required'];
+        // Sélection : min/max (choisir 1 / jusqu'à N / au moins 1). Repli sûr si
+        // NULL (anciennes lignes) : single obligatoire/facultatif d'après required.
+        $sl['min_select'] = $sl['min_select'] !== null ? (int) $sl['min_select'] : ($sl['required'] ? 1 : 0);
+        $sl['max_select'] = $sl['max_select'] !== null ? (int) $sl['max_select'] : 1;
         $sl['choices'] = rows("SELECT id, label, img, delta, sort_order
                                  FROM ws_bundle_slot_choices WHERE slot_id = ? AND active = 1
                                 ORDER BY sort_order, id", [$sl['id']]);
@@ -1249,6 +1260,142 @@ function dispatch($m, $p) {
       if (!$sid) json_out(['error' => 'siteId requis'], 400);
       json_out(geocode_site($sid));
     }
+
+    /* ═══ MENU BUILDER — déclencheur (b) + formules ═══
+       Déclencheur : catégorie menu_default, produit menu_override.
+       Contenu : ws_bundles -> ws_bundle_slots -> ws_bundle_slot_choices.
+       On NE fait jamais confiance à un id passé : chaque écriture enfant
+       re-vérifie en base l'appartenance à son parent. */
+
+    // Déclencheur catégorie : menu_default (0/1)
+    if ($m === 'POST' && $p === '/admin/category-menu') {
+      $b = body(); $cid = (int) ($b['categoryId'] ?? 0);
+      if (!$cid || !row("SELECT 1 AS x FROM ws_categories WHERE id=?", [$cid])) json_out(['error' => 'Catégorie introuvable'], 404);
+      q("UPDATE ws_categories SET menu_default=? WHERE id=?", [!empty($b['menuDefault']) ? 1 : 0, $cid]);
+      json_out(['ok' => true, 'categoryId' => $cid, 'menuDefault' => !empty($b['menuDefault'])]);
+    }
+    // Override produit : 'on' | 'off' | null (= hérite)
+    if ($m === 'POST' && $p === '/admin/product-menu') {
+      $b = body(); $pid = (int) ($b['productId'] ?? 0);
+      if (!$pid || !row("SELECT 1 AS x FROM ws_products WHERE id=?", [$pid])) json_out(['error' => 'Produit introuvable'], 404);
+      $ov = $b['menuOverride'] ?? null;
+      if (!in_array($ov, ['on', 'off', null], true)) json_out(['error' => "menuOverride doit être 'on', 'off' ou null"], 400);
+      q("UPDATE ws_products SET menu_override=? WHERE id=?", [$ov, $pid]);
+      json_out(['ok' => true, 'productId' => $pid, 'menuOverride' => $ov]);
+    }
+
+    // Arbre complet d'un produit (INACTIFS INCLUS — édition)
+    if ($m === 'GET' && $p === '/admin/bundles') {
+      $pid = (int) (qp('productId') ?: 0);
+      if (!$pid) json_out(['error' => 'productId requis'], 400);
+      $bundles = rows("SELECT id, name, description, price_modifier, sort_order, active
+                         FROM ws_bundles WHERE product_id=? ORDER BY sort_order, id", [$pid]);
+      foreach ($bundles as &$bd) {
+        $bd['price_modifier'] = (float) $bd['price_modifier'];
+        $bd['active'] = (bool) $bd['active'];
+        $slots = rows("SELECT id, label, required, min_select, max_select, sort_order, active
+                         FROM ws_bundle_slots WHERE bundle_id=? ORDER BY sort_order, id", [$bd['id']]);
+        foreach ($slots as &$sl) {
+          $sl['required'] = (bool) $sl['required'];
+          $sl['min_select'] = $sl['min_select'] !== null ? (int) $sl['min_select'] : ($sl['required'] ? 1 : 0);
+          $sl['max_select'] = $sl['max_select'] !== null ? (int) $sl['max_select'] : 1;
+          $sl['active'] = (bool) $sl['active'];
+          $sl['choices'] = rows("SELECT id, label, img, delta, sort_order, active
+                                   FROM ws_bundle_slot_choices WHERE slot_id=? ORDER BY sort_order, id", [$sl['id']]);
+          foreach ($sl['choices'] as &$ch) { $ch['delta'] = (float) $ch['delta']; $ch['active'] = (bool) $ch['active']; }
+          unset($ch);
+        }
+        unset($sl);
+        $bd['slots'] = $slots;
+      }
+      unset($bd);
+      json_out($bundles);
+    }
+
+    // Upsert formule (ws_bundles) — rattachée à un produit vérifié
+    if ($m === 'POST' && $p === '/admin/bundles') {
+      $b = body(); $pid = (int) ($b['productId'] ?? 0);
+      if (!$pid || !row("SELECT 1 AS x FROM ws_products WHERE id=?", [$pid])) json_out(['error' => 'Produit introuvable'], 404);
+      $name = trim((string) ($b['name'] ?? ''));
+      $pm = (float) ($b['priceModifier'] ?? 0);
+      $so = (int) ($b['sortOrder'] ?? 0);
+      $act = array_key_exists('active', $b) ? (!empty($b['active']) ? 1 : 0) : 1;
+      if (!empty($b['id'])) {
+        // Modif : l'id doit appartenir à CE produit (jamais confiance à l'id passé).
+        $ex = row("SELECT id FROM ws_bundles WHERE id=? AND product_id=?", [(int) $b['id'], $pid]);
+        if (!$ex) json_out(['error' => 'Formule non rattachée à ce produit'], 404);
+        q("UPDATE ws_bundles SET name=?, description=?, price_modifier=?, sort_order=?, active=? WHERE id=?",
+          [$name, $b['description'] ?? null, $pm, $so, $act, (int) $b['id']]);
+        json_out(['ok' => true, 'id' => (int) $b['id']]);
+      }
+      if ($name === '') json_out(['error' => 'name requis'], 400);
+      q("INSERT INTO ws_bundles (product_id, name, description, price_modifier, sort_order, active) VALUES (?,?,?,?,?,?)",
+        [$pid, $name, $b['description'] ?? null, $pm, $so, $act]);
+      json_out(['ok' => true, 'id' => (int) db()->lastInsertId()], 201);
+    }
+
+    // Upsert étape (ws_bundle_slots) — rattachée à une formule vérifiée
+    if ($m === 'POST' && $p === '/admin/bundle-slots') {
+      $b = body(); $bid = (int) ($b['bundleId'] ?? 0);
+      if (!$bid || !row("SELECT 1 AS x FROM ws_bundles WHERE id=?", [$bid])) json_out(['error' => 'Formule introuvable'], 404);
+      $label = trim((string) ($b['label'] ?? ''));
+      $req = !empty($b['required']) ? 1 : 0;
+      // min/max cohérents : max>=1, min>=0, min<=max, required => min>=1.
+      $max = max(1, (int) ($b['maxSelect'] ?? 1));
+      $min = max(0, (int) ($b['minSelect'] ?? ($req ? 1 : 0)));
+      if ($min > $max) $min = $max;
+      if ($req && $min < 1) $min = 1;
+      $so = (int) ($b['sortOrder'] ?? 0);
+      $act = array_key_exists('active', $b) ? (!empty($b['active']) ? 1 : 0) : 1;
+      if (!empty($b['id'])) {
+        $ex = row("SELECT id FROM ws_bundle_slots WHERE id=? AND bundle_id=?", [(int) $b['id'], $bid]);
+        if (!$ex) json_out(['error' => 'Étape non rattachée à cette formule'], 404);
+        q("UPDATE ws_bundle_slots SET label=?, required=?, min_select=?, max_select=?, sort_order=?, active=? WHERE id=?",
+          [$label, $req, $min, $max, $so, $act, (int) $b['id']]);
+        json_out(['ok' => true, 'id' => (int) $b['id']]);
+      }
+      if ($label === '') json_out(['error' => 'label requis'], 400);
+      q("INSERT INTO ws_bundle_slots (bundle_id, label, required, min_select, max_select, sort_order, active) VALUES (?,?,?,?,?,?,?)",
+        [$bid, $label, $req, $min, $max, $so, $act]);
+      json_out(['ok' => true, 'id' => (int) db()->lastInsertId()], 201);
+    }
+
+    // Upsert choix (ws_bundle_slot_choices) — rattaché à une étape vérifiée
+    if ($m === 'POST' && $p === '/admin/bundle-choices') {
+      $b = body(); $sid = (int) ($b['slotId'] ?? 0);
+      if (!$sid || !row("SELECT 1 AS x FROM ws_bundle_slots WHERE id=?", [$sid])) json_out(['error' => 'Étape introuvable'], 404);
+      $label = trim((string) ($b['label'] ?? ''));
+      $delta = (float) ($b['delta'] ?? 0);
+      $so = (int) ($b['sortOrder'] ?? 0);
+      $act = array_key_exists('active', $b) ? (!empty($b['active']) ? 1 : 0) : 1;
+      if (!empty($b['id'])) {
+        $ex = row("SELECT id FROM ws_bundle_slot_choices WHERE id=? AND slot_id=?", [(int) $b['id'], $sid]);
+        if (!$ex) json_out(['error' => 'Choix non rattaché à cette étape'], 404);
+        q("UPDATE ws_bundle_slot_choices SET label=?, img=?, delta=?, sort_order=?, active=? WHERE id=?",
+          [$label, $b['img'] ?? null, $delta, $so, $act, (int) $b['id']]);
+        json_out(['ok' => true, 'id' => (int) $b['id']]);
+      }
+      if ($label === '') json_out(['error' => 'label requis'], 400);
+      q("INSERT INTO ws_bundle_slot_choices (slot_id, label, img, delta, sort_order, active) VALUES (?,?,?,?,?,?)",
+        [$sid, $label, $b['img'] ?? null, $delta, $so, $act]);
+      json_out(['ok' => true, 'id' => (int) db()->lastInsertId()], 201);
+    }
+
+    // Réordonnancement générique (batch) : entité + [{id, sortOrder}] — chaque id
+    // re-vérifié dans sa table (jamais confiance à l'id passé).
+    if ($m === 'POST' && $p === '/admin/bundle-reorder') {
+      $b = body();
+      $map = ['bundle' => 'ws_bundles', 'slot' => 'ws_bundle_slots', 'choice' => 'ws_bundle_slot_choices'];
+      $ent = $b['entity'] ?? '';
+      if (!isset($map[$ent])) json_out(['error' => "entity doit être bundle|slot|choice"], 400);
+      $tbl = $map[$ent]; $n = 0;
+      foreach (($b['order'] ?? []) as $it) {
+        $id = (int) ($it['id'] ?? 0); if (!$id) continue;
+        q("UPDATE $tbl SET sort_order=? WHERE id=?", [(int) ($it['sortOrder'] ?? 0), $id]); $n++;
+      }
+      json_out(['ok' => true, 'updated' => $n]);
+    }
+
     // Commandes (liste)
     if ($m === 'GET' && $p === '/admin/orders') {
       $s = qp('shopId');
