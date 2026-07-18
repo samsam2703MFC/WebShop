@@ -89,6 +89,34 @@ function bo_resource_route($m, $bo, $rest) {
           ORDER BY c.label, pr.name", array_merge($p, [$date])));
     }
 
+    if ($rest === 'catalog') {                   // catalogue + stock du jour, arbre catégorie › produit
+      $date = qp('date', date('Y-m-d'));
+      [$sw, $sp] = bo_shop_where($sess, 'st.shop_id');
+      $cats = rows("SELECT id, label FROM ws_categories WHERE active = 1 ORDER BY sort_order, label");
+      $out = [];
+      foreach ($cats as $c) {
+        $prods = rows(
+          "SELECT p.id, p.name, p.brand_mandatory,
+                  COALESCE(SUM(CASE WHEN st.mode='delivery' THEN st.qty_total END),0) AS online,
+                  COALESCE(SUM(CASE WHEN st.mode='collect'  THEN st.qty_total END),0) AS shop
+             FROM ws_products p
+             LEFT JOIN ws_product_stock st
+                    ON st.product_id = p.id AND st.date = ? AND st.active = 1 AND $sw
+            WHERE p.cat_id = ? AND p.active = 1
+            GROUP BY p.id, p.name, p.brand_mandatory ORDER BY p.name",
+          array_merge([$date], $sp, [$c['id']]));
+        $out[] = [
+          'cat'     => $c['label'],
+          'catMand' => (bool) array_filter($prods, fn($p) => (int) $p['brand_mandatory']),
+          'prods'   => array_map(fn($p) => [
+            'nom' => $p['name'], 'mand' => (bool) $p['brand_mandatory'],
+            'online' => (int) $p['online'], 'shop' => (int) $p['shop'], 'min' => 0,
+          ], $prods),
+        ];
+      }
+      json_out($out);
+    }
+
     if ($rest === 'b2b') {                       // demandes d'office en attente
       json_out(rows(
         "SELECT r.id, r.shop_id, r.office_name_raw AS office, r.address_raw AS address,
