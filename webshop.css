@@ -269,6 +269,20 @@
 [data-slot-theme="evening"]          { --slot-bg: var(--old-copper);      --slot-fg: var(--color-on-evening); --slot-bd: transparent; }
 [data-slot-theme="next-day"]         { --slot-bg: var(--color-surface);   --slot-fg: var(--color-text); --slot-bd: var(--color-secondary); }
 
+/* Single derived CTA (from /next-slot) */
+.ws-slotcta {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 11px 16px; border-radius: 10px;
+  background: var(--slot-bg); color: var(--slot-fg);
+  border: 1.5px solid var(--slot-bd);
+  font-size: 13.5px; font-weight: 600; letter-spacing: .005em;
+  cursor: pointer; width: 100%; justify-content: center;
+  transition: filter 120ms ease, transform 80ms ease;
+}
+.ws-slotcta:hover { filter: brightness(0.97); }
+.ws-slotcta:active { transform: translateY(1px); }
+.ws-slotcta__ic { flex: 0 0 auto; display: grid; place-items: center; }
+.ws-slotcta__sub { font-weight: 400; opacity: .85; font-size: 11.5px; }
 
 /* Sticky segmented control (2+ slots) */
 .ws-slotseg {
@@ -492,8 +506,21 @@
   background: #fff; color: var(--cat-accent);
 }
 
-/* Subcategory tiles — same anatomy as categories, smaller + lighter */
+/* Subcategory strip — same anatomy, smaller + lighter */
 .ws-cats-wrap { display: flex; flex-direction: column; gap: 0; }
+.ws-subcats__rule {
+  margin: 6px 0 10px;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--color-border-tertiary) 12%, var(--color-border-tertiary) 88%, transparent);
+  opacity: .5;
+}
+.ws-subcats {
+  display: flex; gap: 8px;
+  overflow-x: auto;
+  padding: 0 0 12px;
+  scrollbar-width: none;
+}
+.ws-subcats::-webkit-scrollbar { display: none; }
 .ws-subcat {
   flex: 0 0 auto;
   background: transparent; border: 0;

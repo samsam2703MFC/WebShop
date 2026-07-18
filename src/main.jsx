@@ -4,6 +4,7 @@
    ReactDOM are injected into every file by vite.config esbuild.jsxInject. */
 
 // Styles
+import '../admin.css';
 import '../webshop.css';
 import '../webshop-detail.css';
 import '../webshop-i18n.css';
