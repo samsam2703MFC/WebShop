@@ -1382,9 +1382,12 @@ function dispatch($m, $p) {
         // (le toggle « Webshop » = ws_products.active, il faut pouvoir les réactiver).
         $prods = rows("SELECT p.id, p.name AS nom, p.price AS prix, p.active,
                               COALESCE(p.brand_mandatory,0) AS bm,
-                              COALESCE(p.office_delivery,1) AS od, se.name AS saison
-                         FROM ws_products p LEFT JOIN ws_season se ON se.id = p.season_id
-                        WHERE p.cat_id = ? ORDER BY p.name", [$c['id']]);
+                              COALESCE(p.office_delivery,1) AS od,
+                              p.sub_cat_id AS sub_id, sub.label AS sub, se.name AS saison
+                         FROM ws_products p
+                         LEFT JOIN ws_category_subs sub ON sub.id = p.sub_cat_id
+                         LEFT JOIN ws_season se ON se.id = p.season_id
+                        WHERE p.cat_id = ? ORDER BY sub.sort_order, sub.label, p.name", [$c['id']]);
         $rows2 = [];
         foreach ($prods as $p2) {
           // Adoption = % boutiques qui ne l'excluent PAS explicitement (ws_product_shops.active=0).
@@ -1398,6 +1401,7 @@ function dispatch($m, $p) {
             'statut' => $p2['active'] ? 'Publié' : 'Brouillon',
             'bw' => (bool) $p2['active'], 'bm' => (bool) $p2['bm'],
             'od' => (bool) $p2['od'], // disponible en livraison bureau (« apricot »)
+            'sub' => $p2['sub'] ?: null, 'sub_id' => $p2['sub_id'] !== null ? (int) $p2['sub_id'] : null,
             'ad' => $ad, 'saison' => $p2['saison'] ?: null,
           ];
         }
