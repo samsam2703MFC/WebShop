@@ -107,6 +107,19 @@ jobs:
             -e "ssh -p ${{ vars.SSH_PORT || '22' }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
             dist/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ vars.WEB_ROOT || '/var/www/html' }}/"
 
+      # Renseigne ws_products.img d'après les photos déposées sous assets/product_pictures/
+      # (idempotent, non destructif). À FAIRE APRÈS le déploiement du front (les photos
+      # arrivent avec dist/). Toute nouvelle photo {id}.png|jpg est ainsi câblée à son
+      # produit sans SQL manuel, pour tous les consommateurs (webshop, PWA).
+      - name: Sync product photos → ws_products.img (idempotent)
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "php '${{ vars.WEB_ROOT || '/var/www/html' }}/api/sync_product_images.php'"
+
       # Standalone B2B landing page — shipped as-is (NOT part of the PWA build).
       # The public URL /landing is an Apache alias to /var/www/latelierby-landing
       # (see the server's catch-all vhost: `Alias /landing /var/www/latelierby-landing`),
