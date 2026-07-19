@@ -652,7 +652,26 @@ function dispatch($m, $p) {
                  WHERE code=? AND active=1 AND (expires_at IS NULL OR expires_at>NOW())
                    AND (max_uses IS NULL OR used_count<max_uses) LIMIT 1", [strtoupper(trim($b['voucher']))]);
       $baseV = $subtotal - $promo - $webshopDisc;
-      if ($v && $baseV >= (float) $v['min_order']) {
+      // Ciblage (0009) : un bon CUSTOMER/OFFICE/GROUP n'est applicable que si le client de
+      // la commande appartient à la cible. NETWORK / bon legacy hors modèle -> pas de restriction.
+      $eligible = true;
+      if ($v) {
+        $tg = row("SELECT vc.target_kind, vc.target_id, vco.id_customer
+                     FROM voucher_code vco JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
+                    WHERE vco.code = ? LIMIT 1", [strtoupper(trim($b['voucher']))]);
+        if ($tg && ($tg['target_kind'] ?? 'NETWORK') !== 'NETWORK') {
+          $cid = isset($b['customerId']) && $b['customerId'] !== '' ? (int) $b['customerId'] : null;
+          if ($tg['target_kind'] === 'CUSTOMER') {
+            $eligible = $cid !== null && (int) $tg['id_customer'] === $cid;
+          } elseif ($tg['target_kind'] === 'OFFICE') {
+            $off = $cid !== null ? row("SELECT office_id FROM client WHERE id=?", [$cid]) : null;
+            $eligible = $off && $off['office_id'] !== null && (int) $off['office_id'] === (int) $tg['target_id'];
+          } else { // GROUP : enforcement à câbler quand le lien client<->b2b_client_type sera fourni
+            $eligible = false;
+          }
+        }
+      }
+      if ($v && $baseV >= (float) $v['min_order'] && $eligible) {
         $voucherCode = $v['code'];
         $voucherDisc = $v['type'] === 'percent' ? round($baseV * (float) $v['value']) / 100
                      : ($v['type'] === 'fixed' ? (float) $v['value'] : 0);
@@ -1593,6 +1612,24 @@ function dispatch($m, $p) {
     }
 
     // Bon marque (ws_vouchers).
+    // Recherche client — bon ciblé PERSONNE (mail / nom / téléphone).
+    if ($m === 'GET' && $p === '/franchisor/clients') {
+      $qq = trim((string) qp('q'));
+      if (mb_strlen($qq) < 2) json_out([]);
+      $like = '%'.$qq.'%';
+      json_out(rows("SELECT id, name, email, phone FROM client
+                      WHERE active=1 AND (name LIKE ? OR email LIKE ? OR phone LIKE ? OR phone_e164 LIKE ?)
+                      ORDER BY name LIMIT 20", [$like, $like, $like, $like]));
+    }
+    // Recherche entreprise / bureau livré — bon ciblé OFFICE (nom / ville).
+    if ($m === 'GET' && $p === '/franchisor/offices') {
+      $qq = trim((string) qp('q'));
+      $like = '%'.$qq.'%';
+      json_out(rows("SELECT id, name, city FROM ws_offices
+                      WHERE active=1 AND (? = '' OR name LIKE ? OR city LIKE ?)
+                      ORDER BY name LIMIT 30", [$qq, $like, $like]));
+    }
+
     if ($m === 'POST' && $p === '/franchisor/voucher') {
       $b = body(); $code = strtoupper(trim($b['code'] ?? ''));
       if ($code === '') json_out(['error' => 'code requis'], 400);
@@ -1609,6 +1646,14 @@ function dispatch($m, $p) {
       $status  = $active ? 'ACTIVE' : 'DRAFT';
       $cstatus = $active ? 'ACTIVE' : 'DISABLED';
       $idBrand = (int) ($b['id_brand'] ?? 1);
+      // Ciblage (0009) : NETWORK (défaut) | CUSTOMER (client.id) | OFFICE (ws_offices.id) | GROUP (b2b_client_type.id).
+      // L'appartenance est vérifiée à la redemption (webshop). CUSTOMER pose aussi voucher_code.id_customer.
+      $tkind = strtoupper(trim($b['target_kind'] ?? 'NETWORK'));
+      if (!in_array($tkind, ['NETWORK','CUSTOMER','OFFICE','GROUP'], true)) $tkind = 'NETWORK';
+      $tid   = ($tkind !== 'NETWORK' && isset($b['target_id']) && $b['target_id'] !== '') ? (int) $b['target_id'] : null;
+      if ($tkind !== 'NETWORK' && $tid === null) json_out(['error' => 'target_id requis pour un bon ciblé'], 400);
+      $reqCust = $tkind === 'CUSTOMER' ? 1 : 0;
+      $custId  = $tkind === 'CUSTOMER' ? $tid : null;
       $pdo = db();
       $pdo->beginTransaction();
       try {
@@ -1619,10 +1664,10 @@ function dispatch($m, $p) {
           q("UPDATE promotion SET status=?, valid_to=? WHERE id=?", [$status, $exp, $ex['promotion_id']]);
           q("UPDATE promotion_order_discount SET discount_kind=?, discount_value=?, min_order_amount=? WHERE id_promotion=?",
             [$kind, $value, $minOrd, $ex['promotion_id']]);
-          q("UPDATE voucher_campaign SET valid_to=?, usage_limit_total=?, id_brand=? WHERE id=?",
-            [$exp, $maxUses, $idBrand, $ex['campaign_id']]);
-          q("UPDATE voucher_code SET status=?, valid_to=?, usage_limit=? WHERE id=?",
-            [$cstatus, $exp, $maxUses, $ex['code_id']]);
+          q("UPDATE voucher_campaign SET valid_to=?, usage_limit_total=?, id_brand=?, target_kind=?, target_id=?, requires_customer=? WHERE id=?",
+            [$exp, $maxUses, $idBrand, $tkind, $tid, $reqCust, $ex['campaign_id']]);
+          q("UPDATE voucher_code SET status=?, valid_to=?, usage_limit=?, id_customer=? WHERE id=?",
+            [$cstatus, $exp, $maxUses, $custId, $ex['code_id']]);
           q("INSERT IGNORE INTO voucher_campaign_channel (id_voucher_campaign, channel) VALUES (?, 'WS')", [$ex['campaign_id']]);
         } else {
           q("INSERT INTO promotion (name, description, promotion_type, status, priority, is_exclusive,
@@ -1634,12 +1679,12 @@ function dispatch($m, $p) {
              VALUES (?,?,?,?)", [$pid, $kind, $value, $minOrd]);
           q("INSERT INTO voucher_campaign (id_promotion, name, planned_promotion_type, status, code_type,
                  valid_from, valid_to, usage_limit_total, usage_limit_per_code, usage_limit_per_customer,
-                 requires_customer, id_brand, id_shop)
-             VALUES (?,?, 'ORDER_DISCOUNT', ?, 'SHARED', NULL, ?, ?, NULL, NULL, 0, ?, NULL)",
-            [$pid, 'Webshop — '.$code, $status, $exp, $maxUses, $idBrand]);
+                 requires_customer, id_brand, id_shop, target_kind, target_id)
+             VALUES (?,?, 'ORDER_DISCOUNT', ?, 'SHARED', NULL, ?, ?, NULL, NULL, ?, ?, NULL, ?, ?)",
+            [$pid, 'Webshop — '.$code, $status, $exp, $maxUses, $reqCust, $idBrand, $tkind, $tid]);
           $cid = $pdo->lastInsertId();
-          q("INSERT INTO voucher_code (id_voucher_campaign, code, status, valid_from, valid_to, usage_limit, usage_count)
-             VALUES (?,?,?, NULL, ?, ?, 0)", [$cid, $code, $cstatus, $exp, $maxUses]);
+          q("INSERT INTO voucher_code (id_voucher_campaign, code, status, valid_from, valid_to, usage_limit, usage_count, id_customer)
+             VALUES (?,?,?, NULL, ?, ?, 0, ?)", [$cid, $code, $cstatus, $exp, $maxUses, $custId]);
           q("INSERT INTO voucher_campaign_channel (id_voucher_campaign, channel) VALUES (?, 'WS')", [$cid]);
         }
         $pdo->commit();
