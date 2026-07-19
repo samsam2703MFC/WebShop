@@ -27,24 +27,26 @@ if (is_dir($dir)) {
 }
 $files = count($byId);
 
-$matched = 0; $set = 0; $alreadyOk = 0; $skippedCustom = 0; $noProduct = $files;
+$matched = 0; $set = 0; $alreadyOk = 0; $replacedLegacy = 0; $noProduct = $files;
 if ($byId) {
   $in = implode(',', array_map('intval', array_keys($byId)));
   $rows = $pdo->query("SELECT id, img FROM ws_products WHERE id IN ($in)")->fetchAll(PDO::FETCH_ASSOC);
   $matched = count($rows);
   $noProduct = $files - $matched;
+  // La photo déposée FAIT AUTORITÉ : si un {id}.png|jpg existe, il DEVIENT
+  // ws_products.img (elle a été uploadée exprès comme photo produit). On remplace
+  // donc aussi les anciennes valeurs `img` (legacy) pour les produits concernés.
+  // On ne touche JAMAIS un produit sans fichier → aucune image cassée.
   $upd = $pdo->prepare("UPDATE ws_products SET img=? WHERE id=?");
   foreach ($rows as $r) {
     $want = $byId[(int) $r['id']];
     $cur = $r['img'];
     if ($cur === $want) { $alreadyOk++; continue; }
-    if ($cur === null || $cur === '' || strpos($cur, 'assets/product_pictures/') === 0) {
-      $upd->execute([$want, (int) $r['id']]); $set++;
-    } else {
-      $skippedCustom++; // img personnalisée → on ne l'écrase pas
-    }
+    $upd->execute([$want, (int) $r['id']]);
+    $set++;
+    if ($cur !== null && $cur !== '' && strpos($cur, 'assets/product_pictures/') !== 0) $replacedLegacy++;
   }
 }
 echo "sync_product_images: $files fichier(s) ; $matched produit(s) correspondant(s) ; "
-   . "$set mis à jour, $alreadyOk déjà OK, $skippedCustom ignoré(s) (img perso) ; "
+   . "$set mis à jour (dont $replacedLegacy ancienne(s) img remplacée(s)), $alreadyOk déjà OK ; "
    . "$noProduct fichier(s) SANS produit correspondant.\n";
