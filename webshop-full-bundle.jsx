@@ -4187,8 +4187,16 @@ function ShopFrame({ variant }) {
   // de la grille — même source, jamais deux vérités.
   const slotFiltered = useMemo(() => {
     let src = allProducts;
-    if (mode === 'delivery' && selectedSlot) {
-      src = src.filter((p) => !Array.isArray(p.available_slots) || p.available_slots.includes(selectedSlot));
+    if (mode === 'delivery') {
+      // Canal livraison bureau (« apricot ») : n'exposer QUE les produits activés
+      // pour ce canal côté marque (ws_products.office_delivery). C'est un vrai
+      // filtre : les produits désactivés disparaissent de la grille ET de la nav
+      // (catégories/sous-catégories vides masquées). Absent/undefined = disponible
+      // (rétro-compat seed). Indépendant du click & collect.
+      src = src.filter((p) => p.office_delivery !== false);
+      if (selectedSlot) {
+        src = src.filter((p) => !Array.isArray(p.available_slots) || p.available_slots.includes(selectedSlot));
+      }
     }
     return src;
   }, [allProducts, mode, selectedSlot]);
