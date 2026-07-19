@@ -37,6 +37,23 @@ try {
   json_out($out, 500);
 }
 
+/* Photos produits présentes sur le disque (id -> URL), servies sous
+   /webshop/assets/product_pictures/. Scandir une seule fois par requête : permet
+   de résoudre l'image d'un produit PAR CONVENTION ({id}.png|jpg) sans dépendre de
+   ws_products.img — toute photo déposée (git ou SFTP) apparaît automatiquement. */
+function product_photo_files() {
+  static $map = null;
+  if ($map !== null) return $map;
+  $map = [];
+  $dir = __DIR__ . '/../assets/product_pictures';
+  if (is_dir($dir)) {
+    foreach (scandir($dir) ?: [] as $f) {
+      if (preg_match('/^(\d+)\.(png|jpe?g|webp)$/i', $f, $mm)) $map[$mm[1]] = 'assets/product_pictures/' . $f;
+    }
+  }
+  return $map;
+}
+
 /* ─────────────────────────── Routes ─────────────────────────── */
 function dispatch($m, $p) {
   // helper de matching avec :param
@@ -173,7 +190,7 @@ function dispatch($m, $p) {
     // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
     $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id,
                       p.cat_id AS cat, p.sub_cat_id AS subCat, c.label AS category,
-                      p.name, p.description,
+                      p.name, p.description, p.img,
                       t.tag AS badge, t.slug AS tag_slug, t.bg_color AS tag_bg, t.text_color AS tag_text,
                       se.slug AS season, se.name AS season_name, se.img AS season_img,
                       p.portions, p.cross_portion,
@@ -195,7 +212,12 @@ function dispatch($m, $p) {
                  LEFT JOIN ws_season se ON se.id = p.season_id
                 WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)
                 ORDER BY c.sort_order, p.name", [$s, $s]);
+    $photos = product_photo_files();
     foreach ($r as &$x) {
+      // Image produit : ws_products.img si renseignée, sinon résolue par convention
+      // (assets/product_pictures/{id}.png|jpg) si le fichier existe ; sinon null
+      // (le front affiche l'illustration line-art de repli).
+      $x['img'] = !empty($x['img']) ? $x['img'] : ($photos[$x['id']] ?? null);
       $x['portions'] = (bool) $x['portions'];
       $x['cross_portion'] = (bool) $x['cross_portion'];
       $x['has_menu_options'] = (bool) $x['has_menu_options'];
@@ -1380,7 +1402,7 @@ function dispatch($m, $p) {
       foreach ($cats as $c) {
         // Le franchisor gère l'assortiment : on renvoie AUSSI les produits inactifs
         // (le toggle « Webshop » = ws_products.active, il faut pouvoir les réactiver).
-        $prods = rows("SELECT p.id, p.name AS nom, p.price AS prix, p.active,
+        $prods = rows("SELECT p.id, p.name AS nom, p.price AS prix, p.active, p.img,
                               COALESCE(p.brand_mandatory,0) AS bm,
                               COALESCE(p.office_delivery,1) AS od,
                               p.sub_cat_id AS sub_id, sub.label AS sub, se.name AS saison
@@ -1388,6 +1410,7 @@ function dispatch($m, $p) {
                          LEFT JOIN ws_category_subs sub ON sub.id = p.sub_cat_id
                          LEFT JOIN ws_season se ON se.id = p.season_id
                         WHERE p.cat_id = ? ORDER BY sub.sort_order, sub.label, p.name", [$c['id']]);
+        $photos = product_photo_files();
         $rows2 = [];
         foreach ($prods as $p2) {
           // Adoption = % boutiques qui ne l'excluent PAS explicitement (ws_product_shops.active=0).
@@ -1402,6 +1425,7 @@ function dispatch($m, $p) {
             'bw' => (bool) $p2['active'], 'bm' => (bool) $p2['bm'],
             'od' => (bool) $p2['od'], // disponible en livraison bureau (« apricot »)
             'sub' => $p2['sub'] ?: null, 'sub_id' => $p2['sub_id'] !== null ? (int) $p2['sub_id'] : null,
+            'photo' => (!empty($p2['img']) || isset($photos[$p2['id']])), // a une photo produit
             'ad' => $ad, 'saison' => $p2['saison'] ?: null,
           ];
         }
