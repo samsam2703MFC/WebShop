@@ -214,10 +214,11 @@ function dispatch($m, $p) {
                 ORDER BY c.sort_order, p.name", [$s, $s]);
     $photos = product_photo_files();
     foreach ($r as &$x) {
-      // Image produit : ws_products.img si renseignée, sinon résolue par convention
-      // (assets/product_pictures/{id}.png|jpg) si le fichier existe ; sinon null
-      // (le front affiche l'illustration line-art de repli).
-      $x['img'] = !empty($x['img']) ? $x['img'] : ($photos[$x['id']] ?? null);
+      // Image produit : la photo déposée (assets/product_pictures/{id}.png|jpg) FAIT
+      // AUTORITÉ si le fichier existe (c'est la vraie photo produit, uploadée
+      // exprès) ; sinon on retombe sur ws_products.img (legacy) ; sinon null (le
+      // front affiche l'illustration line-art de repli).
+      $x['img'] = $photos[$x['id']] ?? ($x['img'] ?: null);
       $x['portions'] = (bool) $x['portions'];
       $x['cross_portion'] = (bool) $x['cross_portion'];
       $x['has_menu_options'] = (bool) $x['has_menu_options'];
