@@ -21,7 +21,9 @@ name: Deploy to server (SSH / rsync)
 #   Notes:
 #   • config.php is gitignored → it is NEVER uploaded, so the server's real
 #     config.php (with DB credentials) is preserved across every deploy.
-#   • rsync runs WITHOUT --delete, so nothing on the server is wiped.
+#   • rsync runs WITHOUT --delete, so nothing on the server is wiped — EXCEPT a
+#     targeted --delete on the migrations/ folder only (no secrets there), so
+#     retired migrations can't linger and wedge migrate.sh.
 #   • SECURITY: prefer a dedicated non-root deploy user + SSH key over the root
 #     password. To switch to a key, replace the sshpass lines with an ssh-agent
 #     key and drop SSH_PASSWORD.
@@ -71,6 +73,20 @@ jobs:
           sshpass -e rsync -rltDz --omit-dir-times \
             -e "ssh -p ${{ vars.SSH_PORT || '22' }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
             php-api/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ vars.WEB_ROOT || '/var/www/html' }}/api/"
+
+      # Purge les migrations OBSOLÈTES côté serveur : le rsync principal n'utilise
+      # pas --delete (pour préserver config.php à la racine de l'API), donc un
+      # fichier de migration retiré du repo restait sur le serveur et pouvait
+      # bloquer migrate.sh (fail-fast) — c'est ce qui est arrivé avec
+      # 0008_shops_unify_phase1.sql. Ce rsync ciblé --delete sur le SEUL dossier
+      # migrations/ (aucun secret n'y vit) fait du repo la source de vérité.
+      - name: Prune stale server-side migrations (repo = source of truth)
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e rsync -rltDz --omit-dir-times --delete \
+            -e "ssh -p ${{ vars.SSH_PORT || '22' }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+            php-api/migrations/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ vars.WEB_ROOT || '/var/www/html' }}/api/migrations/"
 
       # Applique les migrations SQL non encore jouées (idempotent, versionné).
       # migrate.sh vient d'être rsyncé avec l'API ; il lit config.php pour les creds.

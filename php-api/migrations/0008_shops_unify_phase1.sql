@@ -1,0 +1,14 @@
+-- 0008_shops_unify_phase1 — RETIRÉE / NEUTRALISÉE (no-op volontaire).
+--
+-- Cette migration (schéma `shops` à colonne JSON `webshop_config`) a été
+-- ABANDONNÉE : la table `shops` de prod a en réalité un schéma PLAT, et
+-- l'unification shops a été faite directement en prod (cf. SHOPS_UNIFY_NOTES).
+-- La version d'origine échouait avec « ERROR 1054 Unknown column 'webshop_config' »
+-- et, comme le rsync de déploiement n'utilise pas --delete, le fichier cassé
+-- restait sur le serveur et BLOQUAIT migrate.sh (fail-fast) à chaque déploiement,
+-- empêchant l'application de 0009 (voucher target) et 0010 (office_delivery).
+--
+-- On réintroduit donc ce nom de fichier en NO-OP idempotent : le rsync écrase la
+-- version cassée du serveur, migrate.sh l'exécute une fois (succès), l'enregistre,
+-- puis poursuit la file. NE RIEN faire d'autre ici.
+DO 0;
