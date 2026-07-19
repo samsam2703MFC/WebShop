@@ -1601,6 +1601,19 @@ function dispatch($m, $p) {
       json_out(['ok' => true]);
     }
 
+    // Sous-catégorie : cascade des flags de pilotage aux produits de la sous-catégorie
+    // (ws_products.sub_cat_id). Mêmes flags que la catégorie, portée plus fine.
+    if ($m === 'POST' && $p === '/franchisor/subcategory') {
+      $b = body(); $id = (int) ($b['id'] ?? ($b['sub_id'] ?? 0));
+      if (!$id) json_out(['error' => 'id requis'], 400);
+      if (array_key_exists('active', $b))          q("UPDATE ws_products SET active=? WHERE sub_cat_id=?", [!empty($b['active']) ? 1 : 0, $id]);           // « Webshop »
+      if (array_key_exists('office_delivery', $b)) q("UPDATE ws_products SET office_delivery=? WHERE sub_cat_id=?", [!empty($b['office_delivery']) ? 1 : 0, $id]); // « Bureau »
+      if (array_key_exists('brand_mandatory', $b)) q("UPDATE ws_products SET brand_mandatory=? WHERE sub_cat_id=?", [!empty($b['brand_mandatory']) ? 1 : 0, $id]);
+      if (array_key_exists('menu_override', $b))   q("UPDATE ws_products SET menu_override=? WHERE sub_cat_id=?", [in_array($b['menu_override'], ['on','off'], true) ? $b['menu_override'] : null, $id]);
+      $audit('subcategory.update', 'ws_category_subs', $id, null, $b);
+      json_out(['ok' => true]);
+    }
+
     // Paramètre marque (ws_param).
     if ($m === 'POST' && $p === '/franchisor/param') {
       $b = body(); $cle = (string) ($b['cle'] ?? '');
