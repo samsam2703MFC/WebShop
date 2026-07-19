@@ -835,7 +835,10 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
 
   // ── Derived (after hooks) ─────────────────────────────────────────────
   const accentVar = mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)';
-  const deliveryBlocked = mode === 'delivery' && !!product?.no_delivery;
+  // Bloqué en livraison bureau (« apricot ») si le produit n'est pas livré par la
+  // boutique (no_delivery) OU s'il est désactivé pour ce canal côté marque
+  // (office_delivery === false). Absent/undefined = disponible (rétro-compat).
+  const deliveryBlocked = mode === 'delivery' && (!!product?.no_delivery || product?.office_delivery === false);
   // qty_available from ws_product_stock API; falls back to delivery_stock on product seed
   const qtyAvailable = stock ? stock.qty_available : (typeof product?.delivery_stock === 'number' ? product.delivery_stock : null);
   const deliveryStockLeft = mode === 'delivery' && qtyAvailable !== null ? Math.max(0, qtyAvailable) : null;
@@ -1282,7 +1285,9 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
   const price = p.price;
   const hasOptions = !!(p.options || p.bundle || p.upsells);
   const isDelivery = mode === 'delivery';
-  const deliveryBlocked = isDelivery && !!p.no_delivery;
+  // Canal livraison bureau (« apricot ») : bloqué si non livré par la boutique
+  // (no_delivery) ou désactivé marque pour ce canal (office_delivery === false).
+  const deliveryBlocked = isDelivery && (!!p.no_delivery || p.office_delivery === false);
   // qty_available from ws_product_stock API; falls back to delivery_stock on product seed
   const qtyAvailable = stock ? stock.qty_available : (typeof p.delivery_stock === 'number' ? p.delivery_stock : null);
   const deliveryStockLeft = isDelivery && qtyAvailable !== null
