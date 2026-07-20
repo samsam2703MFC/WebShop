@@ -51,10 +51,13 @@
       }
       return (window._CATALOG_SEED && window._CATALOG_SEED.categories) || [];
     },
-    async listProducts({ shopId, cat } = {}) {
+    async listProducts({ shopId, cat, mode } = {}) {
       if (api.endpoint) {
         try {
-          const r = await fetch(`${api.endpoint}/products?shopId=${encodeURIComponent(shopId||'')}&cat=${encodeURIComponent(cat||'')}`, { credentials: 'include' });
+          // `mode=delivery` → l'API exclut serveur-side les produits non éligibles
+          // à la livraison bureau (source unique du filtre, cf. /catalog/products).
+          const modeQs = mode ? `&mode=${encodeURIComponent(mode)}` : '';
+          const r = await fetch(`${api.endpoint}/products?shopId=${encodeURIComponent(shopId||'')}&cat=${encodeURIComponent(cat||'')}${modeQs}`, { credentials: 'include' });
           if (r.ok) return await r.json();
         } catch (_) {}
       }

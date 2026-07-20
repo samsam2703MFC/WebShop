@@ -186,6 +186,15 @@ function dispatch($m, $p) {
   }
   if ($m === 'GET' && $p === '/catalog/products') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+    // Filtre livraison bureau PARTAGÉ (source unique) : en mode 'delivery'/'office',
+    // on EXCLUT serveur-side les produits non éligibles au canal bureau
+    // (office_delivery=0), pour que TOUT front (webshop online, webshop après
+    // handoff PWA, PWA, …) reçoive exactement la même liste — sans dépendre d'un
+    // filtrage client ni d'un état résiduel. Sans mode → liste complète (les flags
+    // office_delivery/no_delivery restent exposés pour l'UI).
+    $mode = strtolower((string) (qp('mode') ?: ''));
+    $deliveryWhere = in_array($mode, ['delivery', 'office', 'apricot'], true)
+      ? ' AND COALESCE(p.office_delivery,1) = 1' : '';
     // `badge` (texte) a été migré en FK tag_id -> ws_tags ; on expose le libellé
     // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
     $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id,
@@ -210,7 +219,7 @@ function dispatch($m, $p) {
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
                  LEFT JOIN ws_tags t ON t.id = p.tag_id
                  LEFT JOIN ws_season se ON se.id = p.season_id
-                WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)
+                WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)$deliveryWhere
                 ORDER BY c.sort_order, p.name", [$s, $s]);
     $photos = product_photo_files();
     foreach ($r as &$x) {
