@@ -3826,7 +3826,7 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
         ))}
       </div>
 
-      {isOffice && (
+      {profile !== 'guest' && (
         <div className="ws-co-invoice">
           <label className="ws-co-invoice__check">
             <input type="checkbox" checked={invoice} onChange={(e) => setInvoice(e.target.checked)}/>
