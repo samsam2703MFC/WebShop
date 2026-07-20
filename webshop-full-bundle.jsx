@@ -3203,8 +3203,9 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const defaultPayment = (deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : 'bancontact';
   const [payment, setPayment] = useState(defaultPayment);
 
-  // B2B « commander pour une entreprise » + note libre de commande.
+  // B2B « commander pour une entreprise » + remarque + PO (facturation pro).
   const [orderNote, setOrderNote] = useState('');
+  const [poNumber, setPoNumber] = useState('');
   const [companies, setCompanies] = useState([]);
   const [companyId, setCompanyId] = useState('');
   const [onAccount, setOnAccount] = useState(false);
@@ -3216,12 +3217,21 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
     } else setCompanies([]);
     return () => { alive = false; };
   }, [open, user && user.email]);
+  // « Demander une facture nominative » coché → on sélectionne automatiquement la
+  // société liée à l'utilisateur (companyClientId), sinon sa première société.
+  // On n'écrase jamais un choix déjà fait.
+  useEffect(() => {
+    if (invoice && !companyId && companies.length) {
+      const own = companies.find((c) => String(c.id) === String(user && user.companyClientId)) || companies[0];
+      if (own) setCompanyId(String(own.id));
+    }
+  }, [invoice, companies]);
 
   // Reset when reopened
   useEffect(() => {
     if (open) {
       setStep(1); setSlot(null); setInvoice(false); setVat(''); setForceAuth(false); setPaying(false); setPayErr(null);
-      setOrderNote(''); setCompanyId(''); setOnAccount(false);
+      setOrderNote(''); setPoNumber(''); setCompanyId(''); setOnAccount(false);
       setPayment((deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : 'bancontact');
     }
   }, [open]);
@@ -3278,7 +3288,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           delivery_mode:               'office_delivery',
         } : null,
         total,
-        invoice: invoice ? { requested: true, vat } : null,
+        invoice: invoice ? { requested: true, vat, po: poNumber || null, note: orderNote || null } : null,
       };
       const result = window.WSOrders
         ? await window.WSOrders.place(payload)
@@ -3407,11 +3417,22 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
               );
             })()}
 
-            <label className="ws-field ws-b2b__field">
-              <span>Note (facultatif)</span>
-              <textarea value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2}
-                        placeholder="Instructions, occasion…" />
-            </label>
+            {/* Remarque + PO# — visibles UNIQUEMENT si « Demander une facture
+                nominative » est coché (facturation professionnelle). */}
+            {invoice && (
+              <>
+                <label className="ws-field ws-b2b__field">
+                  <span>Remarque (facultatif)</span>
+                  <textarea value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2}
+                            placeholder="Remarque à faire figurer sur la facture, instructions…" />
+                </label>
+                <label className="ws-field ws-b2b__field">
+                  <span>PO# (bon de commande)</span>
+                  <input type="text" value={poNumber} onChange={(e) => setPoNumber(e.target.value)}
+                         placeholder="Votre numéro de PO / commande" />
+                </label>
+              </>
+            )}
           </div>
           </>
         )}
