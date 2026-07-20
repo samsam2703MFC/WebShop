@@ -54,6 +54,54 @@ function product_photo_files() {
   return $map;
 }
 
+/* Prix de vente magasin (source de vérité = ERP). La table ERP `shop_product`
+ * (même base atelierby_db) porte le prix par boutique : `portion_price` pour un
+ * couple (id_shop, id_product). Clés de liaison : id_product = ws_products.id et
+ * id_shop = ws_shops.id (= id boutique Franchise Buddy). C'est le prix RÉELLEMENT
+ * pratiqué en magasin ; il fait autorité sur le prix répliqué côté ws_
+ * (ws_product_prices / ws_products.price).
+ *
+ * Renvoie une map [id_product => portion_price(float)] pour la boutique donnée,
+ * restreinte aux ids demandés. DÉFENSIF : on sonde une fois la présence de
+ * shop_product.portion_price ; si la table/colonne est absente (environnement
+ * sans l'ERP), ou si la boutique ne correspond à rien, on renvoie [] → l'appelant
+ * garde son repli ws_. Aucun prix erroné, jamais de catalogue/commande cassés.
+ *
+ * shop_product n'a pas d'unicité (id_shop, id_product) → on retient une ligne
+ * déterministe (plus petit `id`) par produit. */
+function erp_shop_prices($shopId, array $ids) {
+  static $ok = null;
+  if (!$ids) return [];
+  if ($ok === null) {
+    $ok = false;
+    try {
+      $c = row("SELECT COUNT(*) n FROM information_schema.columns
+                 WHERE table_schema = DATABASE()
+                   AND table_name = 'shop_product' AND column_name = 'portion_price'");
+      $ok = $c && (int) $c['n'] > 0;
+    } catch (Throwable $e) {
+      $ok = false;
+    }
+  }
+  if (!$ok) return [];
+  $in = implode(',', array_map('intval', $ids));
+  $out = [];
+  try {
+    $rows = rows("SELECT id_product AS pid, portion_price
+                    FROM shop_product
+                   WHERE id_shop = ? AND id_product IN ($in)
+                   ORDER BY id_product, id", [$shopId]);
+    foreach ($rows as $r) {
+      $pid = (int) $r['pid'];
+      if (!array_key_exists($pid, $out)) $out[$pid] = (float) $r['portion_price'];
+    }
+  } catch (Throwable $e) {
+    error_log('[ws] prix magasin ERP indisponible: ' . $e->getMessage());
+    return [];
+  }
+  return $out;
+}
+
 /* ─────────────────────────── Routes ─────────────────────────── */
 function dispatch($m, $p) {
   // helper de matching avec :param
@@ -272,6 +320,19 @@ function dispatch($m, $p) {
         // Modèle allergènes ERP indisponible (table absente, id_recipe manquant…) :
         // on garde le repli ws_product_allergens. Le catalogue n'est jamais cassé.
         error_log('[ws] allergènes ERP indisponibles: ' . $e->getMessage());
+      }
+    }
+    // Prix magasin RÉEL (ERP shop_product.portion_price par boutique) : fait
+    // autorité sur COALESCE(ws_product_prices, ws_products.price). Le prix facturé
+    // par /orders est aligné sur la MÊME source (cf. erp_shop_prices). Repli ws_
+    // si la boutique n'a pas de ligne shop_product (ou ERP indisponible).
+    if ($r) {
+      $store = erp_shop_prices($s, array_map(static fn($p2) => (int) $p2['id'], $r));
+      if ($store) {
+        foreach ($r as &$x) {
+          if (isset($store[(int) $x['id']])) $x['price'] = $store[(int) $x['id']];
+        }
+        unset($x);
       }
     }
     json_out($r);
@@ -683,16 +744,21 @@ function dispatch($m, $p) {
     $dl['tourneeStopId']  = $dl['tourneeStopId']  ?? ($dl['tournee_stop_id']           ?? null);
 
     // 1. Lignes + sous-total (prix serveur), avec le flag promo croisée + note produit.
+    //    Prix facturé = MÊME source que l'affichage catalogue : prix magasin ERP
+    //    (shop_product.portion_price) s'il existe pour cette boutique, sinon repli
+    //    sur COALESCE(ws_product_prices, ws_products.price). Aligné sur /catalog.
     $subtotal = 0; $lines = [];
+    $storePrices = erp_shop_prices($shop, array_map(static fn($it) => (int) ($it['productId'] ?? 0), $basket));
     foreach ($basket as $it) {
       $p2 = row("SELECT p.id, p.name, p.cross_portion, COALESCE(pp.price, p.price) AS price
                    FROM ws_products p LEFT JOIN ws_product_prices pp ON pp.product_id=p.id AND pp.shop_id=? AND pp.active=1
                   WHERE p.id=? AND p.active=1", [$shop, $it['productId'] ?? 0]);
       if (!$p2) continue;
+      $unit = isset($storePrices[(int) $p2['id']]) ? $storePrices[(int) $p2['id']] : (float) $p2['price'];
       $qty = max(1, (int) ($it['qty'] ?? 1));
-      $subtotal += (float) $p2['price'] * $qty;
+      $subtotal += $unit * $qty;
       $lines[] = ['productId' => $p2['id'], 'name' => $p2['name'], 'qty' => $qty,
-                  'unit' => (float) $p2['price'], 'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion'],
+                  'unit' => $unit, 'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion'],
                   'note' => isset($it['note']) ? mb_substr((string) $it['note'], 0, 255) : null];
     }
     if (!count($lines)) json_out(['error' => 'aucun produit valide'], 400);
