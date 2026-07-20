@@ -1,24 +1,13 @@
 -- 0012 — Tables de configuration de la Console franchisé (app DC).
--- Trois tables lues par le back-office franchisé qui n'existaient pas encore
+-- Deux tables lues par le back-office franchisé qui n'existaient pas encore
 -- dans le schéma. Tant qu'elles sont absentes, les endpoints /franchisee/*
 -- correspondants renvoient [] et le front garde son seed ; après cette
 -- migration, la donnée devient pilotée par la base.
+-- (ws_delivery_fee_rules existe déjà dans ws_schema.sql — l'endpoint lit la
+--  table réelle, rien à créer ici.)
 -- Idempotent MySQL 8 (CREATE TABLE IF NOT EXISTS + INSERT IGNORE).
 
--- 1) Barème de frais de livraison en cascade (site → bureau → tournée → boutique).
-CREATE TABLE IF NOT EXISTS ws_delivery_fee_rules (
-  id          INT AUTO_INCREMENT PRIMARY KEY,
-  shop_id     INT NULL,                          -- NULL = toutes boutiques
-  level       ENUM('site','office','tour','shop') NOT NULL,
-  target      VARCHAR(160) NOT NULL,             -- libellé de la cible (site/bureau/tournée)
-  free_from   DECIMAL(10,2) NULL,                -- franco (NULL = aucun)
-  amount      DECIMAL(10,2) NOT NULL DEFAULT 0,  -- frais appliqués sous le franco
-  payment     VARCHAR(60) NULL,                  -- mode de règlement des frais
-  active      BOOLEAN NOT NULL DEFAULT TRUE,
-  sort_order  INT NOT NULL DEFAULT 0
-);
-
--- 2) Zone de chalandise définie par le franchiseur (lecture seule côté franchisé).
+-- 1) Zone de chalandise définie par le franchiseur (lecture seule côté franchisé).
 CREATE TABLE IF NOT EXISTS ws_franchisor_catchment (
   id         INT AUTO_INCREMENT PRIMARY KEY,
   name       VARCHAR(160) NOT NULL,
@@ -50,7 +39,3 @@ INSERT IGNORE INTO ws_franchisor_catchment (id, name, postcodes, exclusive) VALU
       '1000 · 1020 · 1030 · 1040 · 1050 · 1060 · 1070 · 1080 · 1081 · 1082 · 1083 · 1090 · 1120 · 1130 · 1140 · 1150 · 1160 · 1170 · 1180 · 1190 · 1200 · 1210', TRUE),
   (2, 'Brabant flamand — périphérie', '1600 · 1700 · 1800 · 1930 · 1932 · 3000 · 3001 · 3010 · 3020', TRUE),
   (3, 'Brabant wallon nord', '1300 · 1310 · 1320 · 1340 · 1348 · 1400 · 1410 · 1420', FALSE);
-
-INSERT IGNORE INTO ws_delivery_fee_rules (id, level, target, free_from, amount, payment, sort_order) VALUES
-  (1, 'shop', 'Toutes livraisons', 80.00, 4.50, 'Comptant', 40),
-  (2, 'tour', 'Tournée Centre-ville', 120.00, 5.00, 'Selon bureau', 30);

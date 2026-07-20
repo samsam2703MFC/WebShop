@@ -2320,19 +2320,31 @@ function dispatch($m, $p) {
       json_out(array_map(fn ($x) => ['cle' => $x['param_key'], 'type' => 'text', 'val' => $x['param_value']], $ps));
     }
 
-    // ── Barème de frais en cascade (ws_delivery_fee_rules — migration 0012). ──
+    // ── Barème de frais en cascade (ws_delivery_fee_rules — table réelle du schéma). ──
     if ($m === 'GET' && $p === '/franchisee/ws-delivery-fee-rules') {
       if (!$tblExists('ws_delivery_fee_rules')) json_out([]);
-      $sw = $shopId ? "(shop_id = " . (int) $shopId . " OR shop_id IS NULL)" : '1=1';
-      $rs = rows("SELECT level, target, free_from, amount, payment FROM ws_delivery_fee_rules
-                   WHERE $sw AND active=1 ORDER BY sort_order, id LIMIT 100");
-      $lvl = ['site' => 'Site', 'office' => 'Bureau', 'tour' => 'Tournée', 'shop' => 'Boutique'];
-      json_out(array_map(fn ($r) => [
-        'niveau'   => $lvl[$r['level']] ?? $r['level'], 'cible' => $r['target'],
-        'franco'   => $r['free_from'] !== null ? number_format((float) $r['free_from'], 0, ',', ' ') . ' €' : '—',
-        'montant'  => number_format((float) $r['amount'], 2, ',', ' ') . ' €',
-        'paiement' => $r['payment'] ?: '—',
-      ], $rs));
+      $sw = $shopId ? "(r.shop_id = " . (int) $shopId . " OR r.shop_id IS NULL)" : '1=1';
+      $rs = rows("SELECT r.level, r.free_delivery, r.always_charge, r.fee_amount,
+                         r.free_delivery_minimum, r.payment_type,
+                         s.name AS site_name, f.name AS office_name, t.name AS tour_name
+                    FROM ws_delivery_fee_rules r
+                    LEFT JOIN ws_office_delivery_sites s ON s.id = r.site_id
+                    LEFT JOIN ws_offices f ON f.id = r.office_client_id
+                    LEFT JOIN ws_tours   t ON t.id = r.tour_id
+                   WHERE $sw AND r.active=1
+                   ORDER BY FIELD(r.level,'site','office','tour','shop','global'), r.id LIMIT 100");
+      $lvl  = ['site' => 'Site', 'office' => 'Bureau', 'tour' => 'Tournée', 'shop' => 'Boutique', 'global' => 'Boutique'];
+      $pay  = ['immediate' => 'Comptant', 'deferred' => 'Différé', 'office' => 'Facturé au bureau'];
+      json_out(array_map(function ($r) use ($lvl, $pay) {
+        $cible = $r['site_name'] ?: ($r['office_name'] ?: ($r['tour_name'] ?: 'Toutes livraisons'));
+        $montant = $r['free_delivery'] ? 'Offert'
+                 : number_format((float) $r['fee_amount'], 2, ',', ' ') . ' €' . ($r['always_charge'] ? ' (toujours)' : '');
+        return ['niveau' => $lvl[$r['level']] ?? $r['level'], 'cible' => $cible,
+                'franco' => ((float) $r['free_delivery_minimum']) > 0
+                            ? number_format((float) $r['free_delivery_minimum'], 0, ',', ' ') . ' €' : '—',
+                'montant' => $montant,
+                'paiement' => $pay[$r['payment_type']] ?? ($r['payment_type'] ?: '—')];
+      }, $rs));
     }
 
     // ── Zone de chalandise marque (ws_franchisor_catchment — migration 0012). ──
