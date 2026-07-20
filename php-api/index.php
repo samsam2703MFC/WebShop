@@ -239,6 +239,41 @@ function dispatch($m, $p) {
       $x['price'] = (float) $x['price'];
       $x['allergens'] = $x['allergens'] ? json_decode($x['allergens']) : [];
     }
+    unset($x);
+    // Allergènes RÉELS (source de vérité = ERP, même base atelierby_db) : dérivés du
+    // modèle recette → matières → allergènes. Clé de liaison : ws_products.id =
+    // product.id (produits semés depuis l'ERP avec le même identifiant). Calcul en
+    // direct ici (JOIN live) ; la ligne ws_product_allergens décodée ci-dessus sert
+    // de REPLI si le modèle ERP est indisponible → aucun 500 catalogue.
+    // LEFT JOIN (comme la requête ERP de référence) : un produit présent dans
+    // `product` mais sans allergène renvoie codes=NULL → liste vide FAISANT AUTORITÉ ;
+    // un id absent de `product` (pas de correspondance ERP) conserve le repli ws_.
+    if ($r) {
+      $ids = array_map(static fn($p2) => (int) $p2['id'], $r);
+      $in = implode(',', $ids);
+      try {
+        $erp = rows("SELECT erp.id AS pid, GROUP_CONCAT(DISTINCT al.code) AS codes
+                       FROM product erp
+                       LEFT JOIN flattened_recipe_ingredient fri ON fri.id_recipe = erp.id_recipe
+                       LEFT JOIN material_allergen_connection mac ON mac.id_material = fri.id_material
+                       LEFT JOIN allergen al ON al.id = mac.id_allergen
+                      WHERE erp.id IN ($in)
+                      GROUP BY erp.id");
+        $byId = [];
+        foreach ($erp as $a) {
+          $byId[(int) $a['pid']] = $a['codes'] === null ? []
+            : array_values(array_filter(array_map('trim', explode(',', (string) $a['codes'])), 'strlen'));
+        }
+        foreach ($r as &$x) {
+          if (array_key_exists((int) $x['id'], $byId)) $x['allergens'] = $byId[(int) $x['id']];
+        }
+        unset($x);
+      } catch (Throwable $e) {
+        // Modèle allergènes ERP indisponible (table absente, id_recipe manquant…) :
+        // on garde le repli ws_product_allergens. Le catalogue n'est jamais cassé.
+        error_log('[ws] allergènes ERP indisponibles: ' . $e->getMessage());
+      }
+    }
     json_out($r);
   }
   // Menu / bundle d'un produit : ws_bundles -> slots -> choices (imbriqué).
