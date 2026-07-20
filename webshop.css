@@ -3480,3 +3480,30 @@
   .ws-toggle__opt.is-active { background: rgba(255,255,255,.16); box-shadow: none; }
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Mode LIVRAISON (mobile ≤1024px) — boutons d'action principaux du parcours en
+   Abricot Pastel #F2C9A0 : ajout produit « + », bouton panier, « Passer au
+   paiement », « Continuer » et le bouton de l'étape coordonnées. Drapeau
+   body.ws-mode-delivery posé par le front quand mode === 'delivery'. Hors
+   livraison : aucune de ces règles ne s'applique (couleurs inchangées).
+   !important + sélecteurs qualifiés : battent le background inline du bouton
+   « Passer au paiement » et le background du bouton panier (tabbar).
+   ───────────────────────────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  body.ws-mode-delivery .ws-add,
+  body.ws-mode-delivery .ws-basket .ws-cta,
+  body.ws-mode-delivery .ws-checkout .ws-cta,
+  body.ws-mode-delivery .ws-tabbar .ws-tabbar__btn--cart {
+    background: #F2C9A0 !important;
+    color: #5b3a1a !important;      /* texte/icône lisible sur le pastel */
+  }
+  body.ws-mode-delivery .ws-tabbar .ws-tabbar__btn--cart {
+    box-shadow: 0 4px 12px rgba(242,201,160,.5) !important;
+  }
+  body.ws-mode-delivery .ws-add:active,
+  body.ws-mode-delivery .ws-basket .ws-cta:active,
+  body.ws-mode-delivery .ws-checkout .ws-cta:active,
+  body.ws-mode-delivery .ws-tabbar .ws-tabbar__btn--cart:active {
+    background: #ecbd8d !important; /* état pressé, teinte plus soutenue */
+  }
+}
