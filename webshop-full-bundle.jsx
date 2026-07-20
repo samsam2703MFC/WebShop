@@ -4209,6 +4209,12 @@ function ShopFrame({ variant }) {
   const assortment = assortmentId ? assortments.find((a) => a.id === assortmentId) : null;
   const seedProducts = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
   const [allProducts, setAllProducts] = React.useState(seedProducts);
+  // Mode livraison : marque <body> pour recolorer (CSS, mobile) les boutons
+  // d'action principaux du parcours en Abricot Pastel. Retiré hors livraison.
+  React.useEffect(() => {
+    try { document.body.classList.toggle('ws-mode-delivery', mode === 'delivery'); } catch (_) {}
+    return () => { try { document.body.classList.remove('ws-mode-delivery'); } catch (_) {} };
+  }, [mode]);
   React.useEffect(() => {
     let alive = true;
     (async () => {
