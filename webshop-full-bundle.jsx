@@ -3432,9 +3432,13 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             {(() => {
               const c = companies.find((x) => String(x.id) === String(companyId));
               const bName = (user && (user.invoice?.name || user.company)) || (c && c.name) || '';
-              const bAddr = (user && user.invoice)
+              const uAddr = (user && user.invoice)
                 ? [user.invoice.address, [user.invoice.postalCode, user.invoice.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')
                 : '';
+              const cAddr = c
+                ? [c.address, [c.postalCode, c.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')
+                : '';
+              const bAddr = uAddr || cAddr; // fiche user d'abord, sinon adresse société (API /companies)
               if (!bName && !bAddr) return null;
               return (
                 <div className="ws-b2b__bill" role="note">
