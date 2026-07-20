@@ -2378,6 +2378,282 @@ function dispatch($m, $p) {
       json_out($out);
     }
 
+    /* ── Écrans TDB / prep / suivi / validations / stock / assortiment ──
+       (ex-littéraux JSX dé-hardcodés — servis depuis les vraies tables). */
+
+    // Tournées du jour (TDB) — ws_tours + commandes du jour + tracking.
+    if ($m === 'GET' && $p === '/franchisee/fr-tdb-tournees') {
+      if (!$tblExists('ws_tours') || !$hasOrders) json_out([]);
+      $hasTk = $tblExists('ws_tour_tracking');
+      $hasAv = $tblExists('ws_tour_availability');
+      $rs = rows("SELECT t.id, t.name" . ($hasTk ? ", tk.driver_name, tk.vehicle, tk.stops_done" : ", NULL AS driver_name, NULL AS vehicle, 0 AS stops_done") . ",
+                         (SELECT COUNT(DISTINCT o.office_client_id) FROM ws_orders o WHERE o.tour_id=t.id AND o.delivery_date=?) AS pts,
+                         (SELECT COUNT(*) FROM ws_orders o WHERE o.tour_id=t.id AND o.delivery_date=?) AS colis
+                    FROM ws_tours t" . ($hasTk ? " LEFT JOIN ws_tour_tracking tk ON tk.tour_id=t.id" : "") . "
+                   WHERE " . $scope('t.shop_id') . " AND t.active=1 ORDER BY t.name", [$today, $today]);
+      $out = [];
+      foreach ($rs as $t) {
+        if (!(int) $t['colis']) continue;   // tournée sans commande aujourd'hui → hors TDB
+        $dep = '—';
+        if ($hasAv) {
+          $av = row("SELECT TIME_FORMAT(MIN(delivery_start),'%H:%i') s FROM ws_tour_availability WHERE tour_id=? AND active=1", [(int) $t['id']]);
+          if ($av && $av['s']) $dep = $av['s'];
+        }
+        $out[] = ['nom' => $t['name'], 'chauffeur' => $t['driver_name'] ?: '— non assigné',
+                  'vehicule' => $t['vehicle'] ?: '—', 'nbPoints' => (int) $t['pts'], 'colis' => (int) $t['colis'],
+                  'depart' => $dep, 'statut' => ((int) $t['stops_done']) > 0 ? 'Prête' : 'En préparation'];
+      }
+      json_out($out);
+    }
+
+    // Arbre TDB : tournée › zone › sites (+ commandes du jour par site).
+    if ($m === 'GET' && $p === '/franchisee/fr-tdb-tree') {
+      if (!$tblExists('ws_tours') || !$tblExists('ws_office_delivery_sites') || !$hasOrders) json_out([]);
+      $hasTk = $tblExists('ws_tour_tracking');
+      $hasZ  = $tblExists('ws_delivery_zones');
+      $tours = rows("SELECT t.id, t.name" . ($hasZ ? ", z.name AS zone" : ", NULL AS zone") .
+                    ($hasTk ? ", tk.driver_name, tk.stops_done" : ", NULL AS driver_name, 0 AS stops_done") . "
+                      FROM ws_tours t" . ($hasZ ? " LEFT JOIN ws_delivery_zones z ON z.id=t.zone_id" : "") .
+                    ($hasTk ? " LEFT JOIN ws_tour_tracking tk ON tk.tour_id=t.id" : "") . "
+                     WHERE " . $scope('t.shop_id') . " AND t.active=1 ORDER BY t.name", []);
+      $out = [];
+      foreach ($tours as $t) {
+        $sites = rows(
+          "SELECT s.name AS libelle, COALESCE(s.address,'—') AS ville, s.contact_name, f.name AS office,
+                  (SELECT COUNT(*) FROM ws_orders o WHERE o.delivery_site_id = s.id AND o.delivery_date = ?) AS cmd
+             FROM ws_office_delivery_sites s LEFT JOIN ws_offices f ON f.id = s.office_client_id
+            WHERE s.tournee_id = ? AND s.active = 1 ORDER BY s.name", [$today, (int) $t['id']]);
+        $sites = array_values(array_filter($sites, fn ($s2) => (int) $s2['cmd'] > 0));
+        if (!$sites) continue;
+        $out[] = ['nom' => $t['name'], 'chauffeur' => $t['driver_name'] ?: '— non assigné',
+                  'statut' => ((int) $t['stops_done']) > 0 ? 'Prête' : 'En préparation',
+                  'zones' => [['nom' => $t['zone'] ?: $t['name'], 'sites' => array_map(fn ($s2) => [
+                    'libelle' => $s2['libelle'], 'ville' => $s2['ville'], 'cutoff' => '—',
+                    'office' => $s2['office'] ?: '—',
+                    'users' => [['nom' => $s2['contact_name'] ?: ($s2['office'] ?: '—'), 'cmd' => (int) $s2['cmd']]],
+                  ], $sites)]]];
+      }
+      json_out($out);
+    }
+
+    // Bon de chargement (prep) — colis du jour groupés par site.
+    if ($m === 'GET' && $p === '/franchisee/fr-prep-points') {
+      if (!$tblExists('ws_office_delivery_sites') || !$hasOrders) json_out([]);
+      $rs = rows("SELECT s.name AS libelle, COUNT(*) AS colis
+                    FROM ws_orders o JOIN ws_office_delivery_sites s ON s.id = o.delivery_site_id
+                   WHERE " . $scope('o.shop_id') . " AND o.delivery_date = ?
+                   GROUP BY s.id, s.name ORDER BY COUNT(*) DESC LIMIT 30", [$today]);
+      $i = 0;
+      json_out(array_map(function ($r) use (&$i) {
+        $i++;
+        return ['ordre' => $i, 'libelle' => $r['libelle'], 'colisTxt' => ((int) $r['colis']) . ' colis'];
+      }, $rs));
+    }
+
+    // Suivi live — table chauffeurs (télémétrie réelle ; ETA sans source → «—»).
+    if ($m === 'GET' && $p === '/franchisee/fr-live-table') {
+      if (!$tblExists('ws_tour_tracking') || !$tblExists('ws_tours')) json_out([]);
+      $rs = rows("SELECT tk.driver_name, tk.vehicle, tk.stops_done, tk.stops_total, t.name
+                    FROM ws_tour_tracking tk JOIN ws_tours t ON t.id = tk.tour_id
+                   WHERE " . $scope('t.shop_id') . " AND tk.driver_name IS NOT NULL ORDER BY t.name LIMIT 20");
+      $palette = ['#8D1D2C', '#3B3468', '#2d7a3e', '#C87A3F'];
+      $i = 0;
+      json_out(array_map(function ($r) use (&$i, $palette) {
+        $short = trim(preg_replace('/^Tourn[ée]e\s+/u', '', (string) $r['name']));
+        return ['color' => $palette[$i++ % 4], 'nom' => $r['driver_name'], 'vehicule' => $r['vehicle'] ?: '—',
+                'tournee' => preg_split('/[\s\/]+/u', $short)[0] ?: $r['name'],
+                'avancement' => ((int) $r['stops_done']) . '/' . max(1, (int) $r['stops_total']),
+                'next' => '—', 'nextVille' => '—', 'eta' => '—', 'drift' => '—',
+                'statut' => ((int) $r['stops_done']) > 0 ? 'En route' : 'En attente'];
+      }, $rs));
+    }
+
+    // Comptes Office en attente de validation — ws_offices.status='pending'.
+    if ($m === 'GET' && $p === '/franchisee/fr-validations') {
+      if (!$tblExists('ws_offices')) json_out([]);
+      $rs = rows("SELECT id, name, email, vat, DATE_FORMAT(created_at,'%d/%m') AS d FROM ws_offices
+                   WHERE status='pending' ORDER BY created_at DESC LIMIT 50");
+      json_out(array_map(function ($r) {
+        $init = strtoupper(mb_substr($r['name'], 0, 1) . (preg_match('/\s(\S)/u', $r['name'], $mm) ? $mm[1] : ''));
+        return ['id' => 'p' . $r['id'], 'init' => $init, 'raison' => $r['name'], 'email' => $r['email'] ?: '—',
+                'segment' => 'horeca', 'tva' => $r['vat'] ?: '—',
+                'vies' => $r['vat'] ? 'ok' : 'pending', 'date' => $r['d']];
+      }, $rs));
+    }
+
+    // Demandes de rattachement bureau — ws_office_join_requests (pending).
+    if ($m === 'GET' && $p === '/franchisee/fr-join-requests') {
+      if (!$tblExists('ws_office_join_requests')) json_out([]);
+      $rs = rows("SELECT r.id, r.office_name_raw, r.address_raw,
+                         (SELECT f.name FROM ws_offices f WHERE f.name LIKE CONCAT('%', LEFT(r.office_name_raw, 12), '%') LIMIT 1) AS proche
+                    FROM ws_office_join_requests r
+                   WHERE " . $scope('r.shop_id') . " AND r.status='pending' ORDER BY r.created_at DESC LIMIT 50");
+      json_out(array_map(fn ($r) => ['id' => 'jr' . $r['id'], 'client' => 'Client #' . $r['id'],
+        'demande' => '« Rattacher à ' . $r['office_name_raw'] . ' »',
+        'proche' => $r['proche'] ? ($r['proche'] . ' (' . $r['address_raw'] . ')') : ($r['office_name_raw'] . ' (' . $r['address_raw'] . ')'),
+        'dup' => (bool) $r['proche']], $rs));
+    }
+
+    // Stock du jour — catalogue catégories › produits (online/en shop/seuil).
+    if ($m === 'GET' && $p === '/franchisee/fr-stock-catalog') {
+      if (!$tblExists('ws_product_stock') || !$tblExists('ws_products')) json_out([]);
+      $rs = rows("SELECT c.label AS cat, pr.name, pr.brand_mandatory,
+                         SUM(CASE WHEN st.mode='delivery' THEN st.qty_total - st.qty_reserved - st.qty_sold ELSE 0 END) AS online,
+                         SUM(CASE WHEN st.mode<>'delivery' OR st.mode IS NULL THEN st.qty_total - st.qty_reserved - st.qty_sold ELSE 0 END) AS shopq
+                    FROM ws_product_stock st
+                    JOIN ws_products pr ON pr.id = st.product_id
+                    LEFT JOIN ws_categories c ON c.id = pr.cat_id
+                   WHERE " . $scope('st.shop_id') . " AND st.date = ? AND st.active = 1
+                   GROUP BY c.label, pr.id, pr.name, pr.brand_mandatory
+                   ORDER BY c.label, pr.name LIMIT 400", [$today]);
+      $cats = [];
+      foreach ($rs as $r) {
+        $cat = $r['cat'] ?: 'Autres';
+        $cats[$cat]['cat'] = $cat;
+        $cats[$cat]['catMand'] = ($cats[$cat]['catMand'] ?? false) || (bool) $r['brand_mandatory'];
+        $cats[$cat]['prods'][] = ['nom' => $r['name'], 'mand' => (bool) $r['brand_mandatory'],
+          'online' => max(0, (int) $r['online']), 'shop' => max(0, (int) $r['shopq']),
+          'min' => (int) ws_param('stock.default_min_threshold', '10')];
+      }
+      json_out(array_values($cats));
+    }
+
+    // Assortiment — ws_products × ws_product_shops (actif / sans livraison / verrou marque).
+    if ($m === 'GET' && $p === '/franchisee/fr-assortiment') {
+      if (!$tblExists('ws_products')) json_out([]);
+      $hasPS = $shopId && $tblExists('ws_product_shops');
+      $rs = rows("SELECT pr.name, c.label AS cat, pr.brand_mandatory" .
+                 ($hasPS ? ", ps.active AS ps_active, ps.no_delivery" : ", NULL AS ps_active, NULL AS no_delivery") . "
+                    FROM ws_products pr LEFT JOIN ws_categories c ON c.id = pr.cat_id" .
+                 ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") . "
+                   WHERE pr.active = 1 ORDER BY c.label, pr.name LIMIT 400");
+      json_out(array_map(fn ($r) => ['nom' => $r['name'], 'cat' => $r['cat'] ?: '—',
+        'locked' => (bool) $r['brand_mandatory'],
+        'defA' => $r['ps_active'] !== null ? (bool) $r['ps_active'] : true,
+        'defND' => $r['no_delivery'] !== null ? (bool) $r['no_delivery'] : false], $rs));
+    }
+
+    // Dispo par catégorie — ws_categories (délai/cut-off par défaut ws_param).
+    if ($m === 'GET' && $p === '/franchisee/fr-dispo-cats') {
+      if (!$tblExists('ws_categories')) json_out([]);
+      $rs = rows("SELECT slug, label, active FROM ws_categories WHERE " . $scope('shop_id') . " OR shop_id IS NULL ORDER BY sort_order, label LIMIT 50");
+      $cut = ws_param('order.cutoff_default', '17:00');
+      json_out(array_map(fn ($r) => ['key' => $r['slug'] ?: $r['label'], 'nom' => $r['label'],
+        'delai' => '1', 'cut' => $cut, 'def' => (bool) $r['active']], $rs));
+    }
+
+    /* Sans source serveur (analytique/telemetrie absentes) → [] ⇒ seed :
+       fr-live-eta (ETA par point), fr-renta-kpis (KPIs consolidés analytique),
+       fr-cout-params (libellés de config des coûts — valeurs via /params). */
+    if ($m === 'GET' && ($p === '/franchisee/fr-live-eta'
+                      || $p === '/franchisee/fr-renta-kpis'
+                      || $p === '/franchisee/fr-cout-params')) {
+      json_out([]);
+    }
+
+    /* ── Écritures ──────────────────────────────────────────────────────── */
+
+    // État BO persisté (tables sans mapping typé) — lu par hydrate() en overlay.
+    if ($m === 'GET' && $p === '/franchisee/bo-store') {
+      if (!$tblExists('ws_bo_store')) json_out((object) []);
+      $rs = rows("SELECT tbl, payload FROM ws_bo_store WHERE shop_scope = ?", [$shopId ?: 0]);
+      $out = [];
+      foreach ($rs as $r) { $v = json_decode($r['payload'], true); if (is_array($v)) $out[$r['tbl']] = $v; }
+      json_out($out ?: (object) []);
+    }
+
+    // BOServer.save(table) → typé quand le mapping est propre, sinon ws_bo_store.
+    if ($m === 'POST' && $p === '/franchisee/save') {
+      $b = body();
+      $tbl  = (string) ($b['table'] ?? '');
+      $rows2 = $b['rows'] ?? null;
+      if ($tbl === '' || !is_array($rows2)) json_out(['error' => 'table + rows requis'], 400);
+      if (strlen(json_encode($rows2)) > 500000) json_out(['error' => 'payload trop grand'], 413);
+
+      // Tables de config à remplacement intégral (petites, non référencées).
+      if ($tbl === 'ws_franchisor_catchment' && $tblExists('ws_franchisor_catchment')) {
+        q("DELETE FROM ws_franchisor_catchment");
+        foreach ($rows2 as $r) q("INSERT INTO ws_franchisor_catchment (name, postcodes, exclusive, active) VALUES (?,?,?,1)",
+          [(string) ($r['name'] ?? '—'), (string) ($r['cp'] ?? ''), !empty($r['exclusif']) ? 1 : 0]);
+        json_out(['ok' => true, 'mode' => 'typed', 'n' => count($rows2)]);
+      }
+      if ($tbl === 'b2b_client_company_department' && $tblExists('b2b_client_company_department')) {
+        q("DELETE FROM b2b_client_company_department");
+        foreach ($rows2 as $r) q("INSERT INTO b2b_client_company_department (client_id, company, site, office, name, effectif, contact) VALUES (?,?,?,?,?,?,?)",
+          [(string) ($r['client_id'] ?? ($r['id_client'] ?? '—')), $r['company'] ?? null, $r['site'] ?? null,
+           $r['office'] ?? null, (string) ($r['dept'] ?? ($r['name'] ?? '—')), (int) ($r['effectif'] ?? 1), $r['contact'] ?? null]);
+        json_out(['ok' => true, 'mode' => 'typed', 'n' => count($rows2)]);
+      }
+      if ($tbl === 'ws_tour_closures' && $tblExists('ws_tour_closures')) {
+        q("DELETE FROM ws_tour_closures");
+        foreach ($rows2 as $r) {
+          $d = null;
+          if (preg_match('#^(\d{2})/(\d{2})/(\d{4})$#', (string) ($r['date'] ?? ''), $mm)) $d = "$mm[3]-$mm[2]-$mm[1]";
+          if (!$d) continue;
+          $tourId = null;
+          if (!empty($r['tour']) && !preg_match('/^toutes/i', (string) $r['tour']) && $tblExists('ws_tours')) {
+            $tr = row("SELECT id FROM ws_tours WHERE name=? LIMIT 1", [(string) $r['tour']]);
+            if ($tr) $tourId = (int) $tr['id'];
+          }
+          q("INSERT INTO ws_tour_closures (tour_id, closure_date, reason) VALUES (?,?,?)",
+            [$tourId, $d, (string) ($r['motif'] ?? '')]);
+        }
+        json_out(['ok' => true, 'mode' => 'typed', 'n' => count($rows2)]);
+      }
+
+      // Défaut : journal JSON par table + boutique (repris par hydrate()).
+      if (!$tblExists('ws_bo_store')) json_out(['ok' => false, 'error' => 'ws_bo_store absente (migration 0013)'], 501);
+      q("INSERT INTO ws_bo_store (shop_scope, tbl, payload) VALUES (?,?,?)
+           ON DUPLICATE KEY UPDATE payload = VALUES(payload)",
+        [$shopId ?: 0, $tbl, json_encode($rows2, JSON_UNESCAPED_UNICODE)]);
+      json_out(['ok' => true, 'mode' => 'store']);
+    }
+
+    // Onboarding B2B (wizard 7 étapes) — création réelle bureau + site + départements (+ voucher).
+    if ($m === 'POST' && $p === '/franchisee/onboard-office') {
+      if (!$tblExists('ws_offices')) json_out(['error' => 'ws_offices absente'], 501);
+      $b = body();
+      $raison = trim((string) ($b['raison'] ?? ''));
+      if ($raison === '') json_out(['error' => 'raison sociale requise'], 400);
+      $tourId = null;
+      if (!empty($b['tour']) && $tblExists('ws_tours')) {
+        $tr = row("SELECT id FROM ws_tours WHERE name=? LIMIT 1", [(string) $b['tour']]);
+        if ($tr) $tourId = (int) $tr['id'];
+      }
+      q("INSERT INTO ws_offices (tour_id, name, address, contact, email, phone, vat, status, deferred_billing_enabled, drop_minutes, active" . ($shopId ? ", shop_id" : "") . ")
+          VALUES (?,?,?,?,?,?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
+        [$tourId, $raison, (string) ($b['adr'] ?? ''), (string) ($b['contactNom'] ?? ''),
+         (string) ($b['contactEmail'] ?? ''), (string) ($b['contactTel'] ?? ''), (string) ($b['tva'] ?? ''),
+         'validated', (stripos((string) ($b['paiement'] ?? ''), 'compt') === false) ? 1 : 0,
+         (float) ($b['drop'] ?? 5)]);
+      $officeId = (int) db()->lastInsertId();
+      if ($tblExists('ws_office_delivery_sites')) {
+        q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, tournee_id, site_access_minutes, active" . ($shopId ? ", shop_id" : "") . ")
+            VALUES (?,?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
+          [$officeId, $raison . ' — ' . ((string) ($b['office'] ?? 'Site')), (string) ($b['adr'] ?? ''),
+           (string) ($b['etage'] ?? ''), $tourId, (float) ($b['acc'] ?? 6)]);
+      }
+      if (!empty($b['departements']) && is_array($b['departements']) && $tblExists('b2b_client_company_department')) {
+        foreach ($b['departements'] as $d) {
+          q("INSERT INTO b2b_client_company_department (client_id, company, site, office, name, effectif, contact) VALUES (?,?,?,?,?,?,?)",
+            ['OF-' . $officeId, $raison, (string) ($b['adr'] ?? ''), (string) ($b['office'] ?? ''),
+             (string) ($d['dept'] ?? '—'), (int) ($d['effectif'] ?? 1), (string) ($b['contactEmail'] ?? '')]);
+        }
+      }
+      $voucherCreated = false;
+      $vc = strtoupper(trim((string) ($b['voucher']['code'] ?? '')));
+      if ($vc !== '') {
+        // ws_vouchers peut être une VUE (modèle ERP) — n'insérer que si table de base.
+        $isBase = row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_vouchers' AND table_type='BASE TABLE'");
+        if ($isBase) {
+          q("INSERT IGNORE INTO ws_vouchers (code, type, value, active" . ($shopId ? ", shop_id" : "") . ") VALUES (?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
+            [$vc, 'add_office', 0]);
+          $voucherCreated = true;
+        }
+      }
+      json_out(['ok' => true, 'office_id' => $officeId, 'voucher_created' => $voucherCreated]);
+    }
+
     json_out(['error' => 'Not found', 'path' => $p], 404);
   }
 
