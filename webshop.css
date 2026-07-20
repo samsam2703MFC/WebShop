@@ -3524,12 +3524,19 @@
 .ws-b2b__bill-name { font-size: 13px; font-weight: 600; color: var(--color-text, #1f1612); }
 .ws-b2b__bill-addr { font-size: 12.5px; color: #6b5d52; }
 
-/* Petit « i » d'info à côté de « Demander une facture nominative » (client non B2B) :
-   le ticket est un A4 façon facture. Tooltip natif via l'attribut title. */
+/* « Demander une facture nominative » (client non B2B) : petit « i » d'info qui
+   ouvre une infobulle au TAP (mobile-friendly), fermée au tap extérieur. */
+.ws-co-invoice__row { display: flex; align-items: center; gap: 6px; }
 .ws-co-invoice__i {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 15px; height: 15px; margin-left: 6px; flex: none;
-  border-radius: 50%; border: 1px solid rgba(20,14,10,.35);
-  font: 700 10px/1 Georgia, "Times New Roman", serif; font-style: italic;
-  color: #6b5d52; cursor: help; vertical-align: middle;
+  width: 18px; height: 18px; flex: none; padding: 0;
+  border-radius: 50%; border: 1px solid rgba(20,14,10,.35); background: transparent;
+  font: 700 11px/1 Georgia, "Times New Roman", serif; font-style: italic;
+  color: #6b5d52; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.ws-co-invoice__i.is-open { background: #1f1612; border-color: #1f1612; color: #fff; }
+.ws-co-invoice__tip {
+  margin-top: 8px; background: #1f1612; color: #fff;
+  font-size: 12px; line-height: 1.45; padding: 9px 11px; border-radius: 9px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.22);
 }

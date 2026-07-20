@@ -3731,6 +3731,15 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
                          deliveryFee, deliveryFeeResult, profile, companyId }) {
   const [voucherErr, setVoucherErr] = useState(null);
   const [voucherLoading, setVoucherLoading] = useState(false);
+  // Infobulle « facture nominative » : ouverte au TAP, fermée au tap extérieur.
+  const [infoOpen, setInfoOpen] = useState(false);
+  const infoRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!infoOpen) return;
+    const off = (e) => { if (infoRef.current && !infoRef.current.contains(e.target)) setInfoOpen(false); };
+    document.addEventListener('pointerdown', off, true);
+    return () => document.removeEventListener('pointerdown', off, true);
+  }, [infoOpen]);
   const paymentMethods = usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId);
   // Si le moyen sélectionné n'est plus proposé (profil/boutique), prendre le premier dispo.
   useEffect(() => {
@@ -3859,15 +3868,23 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
       </div>
 
       {profile !== 'guest' && (
-        <div className="ws-co-invoice">
-          <label className="ws-co-invoice__check">
-            <input type="checkbox" checked={invoice} onChange={(e) => setInvoice(e.target.checked)}/>
-            <span>{isB2B ? 'Demander une facture' : 'Demander une facture nominative'}</span>
+        <div className="ws-co-invoice" ref={infoRef}>
+          <div className="ws-co-invoice__row">
+            <label className="ws-co-invoice__check">
+              <input type="checkbox" checked={invoice} onChange={(e) => setInvoice(e.target.checked)}/>
+              <span>{isB2B ? 'Demander une facture' : 'Demander une facture nominative'}</span>
+            </label>
             {!isB2B && (
-              <span className="ws-co-invoice__i" role="img" aria-label="Information"
-                    title="Ticket au format A4, présenté comme une facture — établi à votre nom (facture nominative).">i</span>
+              <button type="button" className={`ws-co-invoice__i${infoOpen ? ' is-open' : ''}`}
+                      aria-label="À propos de la facture nominative" aria-expanded={infoOpen}
+                      onClick={() => setInfoOpen((v) => !v)}>i</button>
             )}
-          </label>
+          </div>
+          {!isB2B && infoOpen && (
+            <div className="ws-co-invoice__tip" role="note">
+              Ticket au format A4, présenté comme une facture — établi à votre nom (facture nominative).
+            </div>
+          )}
         </div>
       )}
 
