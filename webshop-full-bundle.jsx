@@ -3256,6 +3256,8 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
 
   const isOffice = mode === 'delivery' && user && office;
   const isGuest = !user;
+  // Client relié à un B2B ? (a au moins une société liée, ou un id société ERP).
+  const isB2B = companies.length > 0 || !!(user && user.companyClientId);
   // Profil de paiement : société (companyId) > enregistré (user) > visiteur (guest).
   const checkoutProfile = companyId ? 'company' : (user ? 'registered' : 'guest');
 
@@ -3370,7 +3372,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             deliveryFee={deliveryFee} deliveryFeeResult={deliveryFeeResult}
             payment={payment} setPayment={setPayment}
             profile={checkoutProfile} companyId={companyId || null}
-            isOffice={isOffice} invoice={invoice} setInvoice={setInvoice} vat={vat} setVat={setVat}
+            isOffice={isOffice} isB2B={isB2B} invoice={invoice} setInvoice={setInvoice} vat={vat} setVat={setVat}
             shopId={shop && shop.id}
             voucherInput={voucherInput} setVoucherInput={setVoucherInput}
             voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
@@ -3431,7 +3433,9 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
                 depuis la fiche utilisateur (user.invoice) / la société. */}
             {(() => {
               const c = companies.find((x) => String(x.id) === String(companyId));
-              const bName = (user && (user.invoice?.name || user.company)) || (c && c.name) || '';
+              const persName = user ? [user.firstName, user.lastName].filter(Boolean).join(' ') : '';
+              const bName = (user && (user.invoice?.name || user.company)) || (c && c.name) || persName || '';
+              const bVat = (c && c.vat) || (user && user.invoice && user.invoice.vat) || vat || '';
               const uAddr = (user && user.invoice)
                 ? [user.invoice.address, [user.invoice.postalCode, user.invoice.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')
                 : '';
@@ -3439,11 +3443,12 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
                 ? [c.address, [c.postalCode, c.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')
                 : '';
               const bAddr = uAddr || cAddr; // fiche user d'abord, sinon adresse société (API /companies)
-              if (!bName && !bAddr) return null;
+              if (!bName && !bVat && !bAddr) return null;
               return (
                 <div className="ws-b2b__bill" role="note">
                   <span className="ws-b2b__bill-k">Facturé à</span>
                   {bName && <span className="ws-b2b__bill-name">{bName}</span>}
+                  {bVat && <span className="ws-b2b__bill-addr">N° TVA · {bVat}</span>}
                   {bAddr && <span className="ws-b2b__bill-addr">{bAddr}</span>}
                 </div>
               );
@@ -3721,7 +3726,7 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
   );
 }
 
-function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, isOffice, invoice, setInvoice, vat, setVat,
+function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, isOffice, isB2B, invoice, setInvoice, vat, setVat,
                          shopId, mode, voucherInput, setVoucherInput, voucherApplied, setVoucherApplied, voucherDiscount,
                          deliveryFee, deliveryFeeResult, profile, companyId }) {
   const [voucherErr, setVoucherErr] = useState(null);
@@ -3857,11 +3862,12 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
         <div className="ws-co-invoice">
           <label className="ws-co-invoice__check">
             <input type="checkbox" checked={invoice} onChange={(e) => setInvoice(e.target.checked)}/>
-            <span>Demander une facture nominative</span>
+            <span>{isB2B ? 'Demander une facture' : 'Demander une facture nominative'}</span>
+            {!isB2B && (
+              <span className="ws-co-invoice__i" role="img" aria-label="Information"
+                    title="Ticket au format A4, présenté comme une facture — établi à votre nom (facture nominative).">i</span>
+            )}
           </label>
-          {invoice && (
-            <label className="ws-field"><span>N° de TVA</span><input value={vat} onChange={(e) => setVat(e.target.value)} placeholder="BE0123.456.789"/></label>
-          )}
         </div>
       )}
 
