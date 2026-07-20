@@ -3923,21 +3923,50 @@ function ShopFrame({ variant }) {
   // SSO handoff PWA -> webshop : si l'URL porte ?handoff=<jeton>, on l'échange
   // contre une session webshop, puis on retire le jeton de l'URL (usage unique,
   // ne doit pas rester visible/partageable).
+  //
+  // AVANT le login token, on force un HARD REFRESH pour repartir d'un état 100%
+  // propre : une session/onglet précédent laisse en mémoire (état React) et en
+  // localStorage un contexte résiduel (jeton, boutique active, mode, office/site,
+  // LISTE PRODUITS déjà chargée) qui « colle » et empêche les filtres livraison
+  // de s'appliquer comme sur le webshop online. Le reload wipe tout l'état React
+  // en mémoire (panier, mode, listes) et re-fetch le catalogue de la bonne
+  // boutique ; on purge aussi la session cliente résiduelle. Garde one-shot via
+  // sessionStorage pour ne jamais boucler (le ?handoff survit au reload).
   React.useEffect(() => {
     let alive = true;
-    try {
-      const p = new URLSearchParams(window.location.search);
-      const token = p.get('handoff');
-      if (!token || !window.WSAuth || typeof window.WSAuth.handoff !== 'function') return;
-      window.WSAuth.handoff(token).then((r) => {
-        if (alive && r && r.ok && r.user) setUser(r.user);
-        try {
-          p.delete('handoff');
-          const qs = p.toString();
-          window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
-        } catch (_) {}
-      }).catch(() => {});
-    } catch (_) {}
+    let token = null;
+    try { token = new URLSearchParams(window.location.search).get('handoff'); } catch (_) {}
+    if (!token || !window.WSAuth || typeof window.WSAuth.handoff !== 'function') return;
+
+    const CLEAN_FLAG = 'ws_handoff_clean';
+    // Déjà « nettoyé » ? Si sessionStorage est indisponible (navigation privée
+    // stricte), on considère nettoyé → on saute le refresh plutôt que de boucler.
+    let cleaned = true;
+    try { cleaned = sessionStorage.getItem(CLEAN_FLAG) === '1'; } catch (_) { cleaned = true; }
+    if (!cleaned) {
+      // 1er passage : purge la session résiduelle + hard refresh — mais UNIQUEMENT
+      // si le drapeau one-shot a bien pu être persisté (sinon on boucle à l'infini).
+      let persisted = false;
+      try { sessionStorage.setItem(CLEAN_FLAG, '1'); persisted = sessionStorage.getItem(CLEAN_FLAG) === '1'; } catch (_) {}
+      if (persisted) {
+        try { localStorage.removeItem('ws_auth_token'); } catch (_) {} // drop la session précédente
+        window.location.reload();                                       // hard refresh (l'URL garde ?handoff)
+        return;
+      }
+      // persistance impossible → on continue sans refresh (pas de boucle).
+    }
+    // État frais garanti → on procède au login token.
+    try { sessionStorage.removeItem(CLEAN_FLAG); } catch (_) {}
+
+    window.WSAuth.handoff(token).then((r) => {
+      if (alive && r && r.ok && r.user) setUser(r.user);
+      try {
+        const p = new URLSearchParams(window.location.search);
+        p.delete('handoff');
+        const qs = p.toString();
+        window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+      } catch (_) {}
+    }).catch(() => {});
     return () => { alive = false; };
   }, []);
   const [officeSlots, setOfficeSlots] = React.useState([]);
