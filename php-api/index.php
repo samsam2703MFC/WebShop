@@ -2320,14 +2320,37 @@ function dispatch($m, $p) {
       json_out(array_map(fn ($x) => ['cle' => $x['param_key'], 'type' => 'text', 'val' => $x['param_value']], $ps));
     }
 
-    /* Tables sans source serveur honnête aujourd'hui → [] (le front garde son
-       seed, cf. MIGRATION_NOTES « en attente ») : ws_delivery_fee_rules (barème
-       en cascade), ws_franchisor_catchment (zone de chalandise marque),
-       ws_product_availability (règles produit). */
-    if ($m === 'GET' && ($p === '/franchisee/ws-delivery-fee-rules'
-                      || $p === '/franchisee/ws-franchisor-catchment'
-                      || $p === '/franchisee/ws-product-availability')) {
-      json_out([]);
+    // ── Barème de frais en cascade (ws_delivery_fee_rules — migration 0012). ──
+    if ($m === 'GET' && $p === '/franchisee/ws-delivery-fee-rules') {
+      if (!$tblExists('ws_delivery_fee_rules')) json_out([]);
+      $sw = $shopId ? "(shop_id = " . (int) $shopId . " OR shop_id IS NULL)" : '1=1';
+      $rs = rows("SELECT level, target, free_from, amount, payment FROM ws_delivery_fee_rules
+                   WHERE $sw AND active=1 ORDER BY sort_order, id LIMIT 100");
+      $lvl = ['site' => 'Site', 'office' => 'Bureau', 'tour' => 'Tournée', 'shop' => 'Boutique'];
+      json_out(array_map(fn ($r) => [
+        'niveau'   => $lvl[$r['level']] ?? $r['level'], 'cible' => $r['target'],
+        'franco'   => $r['free_from'] !== null ? number_format((float) $r['free_from'], 0, ',', ' ') . ' €' : '—',
+        'montant'  => number_format((float) $r['amount'], 2, ',', ' ') . ' €',
+        'paiement' => $r['payment'] ?: '—',
+      ], $rs));
+    }
+
+    // ── Zone de chalandise marque (ws_franchisor_catchment — migration 0012). ──
+    if ($m === 'GET' && $p === '/franchisee/ws-franchisor-catchment') {
+      if (!$tblExists('ws_franchisor_catchment')) json_out([]);
+      $rs = rows("SELECT id, name, postcodes, exclusive FROM ws_franchisor_catchment WHERE active=1 ORDER BY id");
+      json_out(array_map(fn ($r) => ['id' => (int) $r['id'], 'name' => $r['name'],
+        'cp' => $r['postcodes'] ?: '—', 'exclusif' => (bool) $r['exclusive']], $rs));
+    }
+
+    // ── Règles de dispo produit (ws_product_availability_rules — migration 0012). ──
+    if ($m === 'GET' && $p === '/franchisee/ws-product-availability') {
+      if (!$tblExists('ws_product_availability_rules')) json_out([]);
+      $sw = $shopId ? "(shop_id = " . (int) $shopId . " OR shop_id IS NULL)" : '1=1';
+      $rs = rows("SELECT product, category, rule FROM ws_product_availability_rules
+                   WHERE $sw AND active=1 ORDER BY product LIMIT 200");
+      json_out(array_map(fn ($r) => ['produit' => $r['product'],
+        'cat' => $r['category'] ?: '—', 'rule' => $r['rule']], $rs));
     }
 
     json_out(['error' => 'Not found', 'path' => $p], 404);
