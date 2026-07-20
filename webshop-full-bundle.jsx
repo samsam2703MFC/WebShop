@@ -3226,6 +3226,15 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       if (own) setCompanyId(String(own.id));
     }
   }, [invoice, companies]);
+  // …et on PRÉ-REMPLIT les données B2B de la fiche utilisateur : le N° de TVA de la
+  // société sélectionnée, sinon celui enregistré sur le compte (user.invoice.vat).
+  // On n'écrase pas une saisie manuelle en cours.
+  useEffect(() => {
+    if (!invoice || vat) return;
+    const c = companies.find((x) => String(x.id) === String(companyId));
+    const preVat = (c && c.vat) || (user && user.invoice && user.invoice.vat) || '';
+    if (preVat) setVat(preVat);
+  }, [invoice, companyId, companies]);
 
   // Reset when reopened
   useEffect(() => {
