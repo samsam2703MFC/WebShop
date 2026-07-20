@@ -4205,11 +4205,15 @@ function ShopFrame({ variant }) {
     let alive = true;
     (async () => {
       if (!window.WSCatalog) return;
-      const list = await window.WSCatalog.listProducts({ shopId });
+      // On passe le `mode` : en livraison bureau, l'API renvoie DÉJÀ la liste
+      // filtrée (produits éligibles) — filtre partagé, identique online et après
+      // handoff PWA, sans dépendre de l'état client. Le filtre client résiduel
+      // (slotFiltered) reste comme repli (seed/démo ou API sans le paramètre).
+      const list = await window.WSCatalog.listProducts({ shopId, mode });
       if (alive && list && list.length) setAllProducts(list);
     })();
     return () => { alive = false; };
-  }, [shopId]);
+  }, [shopId, mode]);
   // Source commune GRILLE + LIGNE DE NAV : le catalogue restreint au créneau
   // et à la date en cours. La règle d'affichage de la nav (« n'afficher que ce
   // qui contient au moins un produit disponible ») est ainsi exactement celle
