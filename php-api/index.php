@@ -54,37 +54,6 @@ function product_photo_files() {
   return $map;
 }
 
-/* Gate « produit vendable sur le webshop ». La table ERP `product` (master, même
- * base atelierby_db, clé product.id = ws_products.id) porte le drapeau `webshop`
- * (1 = à afficher sur le webshop consommateur ; 0/absent = article interne :
- * matière, prépa, emballage…). `ws_products` ayant été peuplé depuis TOUTE la
- * table ERP `product`, sans ce gate le webshop affiche aussi les articles
- * internes. On renvoie un fragment SQL corrélé (alias produit `p`) à injecter
- * dans les WHERE catalogue.
- *
- * DÉFENSIF : on sonde une fois la présence de la colonne `product.webshop` ; si
- * elle est absente (environnement sans la table ERP), le fragment est VIDE →
- * aucun filtrage, le catalogue n'est jamais cassé. Le fragment n'utilise que
- * `p.id`, donc il s'injecte tel quel dans /catalog/products ET dans les
- * sous-requêtes EXISTS de /catalog/categories (mêmes alias `p`). */
-function webshop_gate_sql() {
-  static $sql = null;
-  if ($sql !== null) return $sql;
-  $sql = '';
-  try {
-    $c = row("SELECT COUNT(*) n FROM information_schema.columns
-               WHERE table_schema = DATABASE()
-                 AND table_name = 'product' AND column_name = 'webshop'");
-    if ($c && (int) $c['n'] > 0) {
-      $sql = ' AND EXISTS (SELECT 1 FROM product erpw WHERE erpw.id = p.id'
-           . ' AND COALESCE(erpw.webshop,0) = 1)';
-    }
-  } catch (Throwable $e) {
-    $sql = '';
-  }
-  return $sql;
-}
-
 /* ─────────────────────────── Routes ─────────────────────────── */
 function dispatch($m, $p) {
   // helper de matching avec :param
@@ -188,16 +157,14 @@ function dispatch($m, $p) {
   if ($m === 'GET' && $p === '/catalog/categories') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
     // N'expose une catégorie que si elle a >=1 produit actif du catalogue non
-    // explicitement exclu de cette boutique — ET vendable sur le webshop (gate),
-    // pour qu'une catégorie ne contenant que des articles internes disparaisse.
-    $gate = webshop_gate_sql();
+    // explicitement exclu de cette boutique.
     $cats = rows("SELECT c.id, c.slug, c.label, c.img, c.sort_order
                     FROM ws_categories c
                    WHERE c.active = 1 AND (c.shop_id = ? OR c.shop_id IS NULL)
                      AND EXISTS (SELECT 1 FROM ws_products p
                                    LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
                                   WHERE p.cat_id = c.id AND p.active = 1
-                                    AND (ps.product_id IS NULL OR ps.active = 1)$gate)
+                                    AND (ps.product_id IS NULL OR ps.active = 1))
                    ORDER BY c.sort_order, c.label", [$s, $s]);
     // Rattache les sous-catégories (ws_category_subs) à chaque catégorie -> c.subs[]
     // (le front lit activeCat.subs pour la ligne de nav). Même règle : on
@@ -209,7 +176,7 @@ function dispatch($m, $p) {
                      AND EXISTS (SELECT 1 FROM ws_products p
                                    LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
                                   WHERE p.sub_cat_id = sub.id AND p.active = 1
-                                    AND (ps.product_id IS NULL OR ps.active = 1)$gate)
+                                    AND (ps.product_id IS NULL OR ps.active = 1))
                    ORDER BY sub.sort_order, sub.label", [$s, $s]);
     $byCat = [];
     foreach ($subs as $x) { $byCat[$x['category_id']][] = $x; }
@@ -228,9 +195,6 @@ function dispatch($m, $p) {
     $mode = strtolower((string) (qp('mode') ?: ''));
     $deliveryWhere = in_array($mode, ['delivery', 'office', 'apricot'], true)
       ? ' AND COALESCE(p.office_delivery,1) = 1' : '';
-    // N'exposer que les produits VENDABLES sur le webshop (drapeau ERP
-    // product.webshop=1) — exclut les matières/prépa/emballages internes.
-    $gate = webshop_gate_sql();
     // `badge` (texte) a été migré en FK tag_id -> ws_tags ; on expose le libellé
     // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
     $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id,
@@ -255,7 +219,7 @@ function dispatch($m, $p) {
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
                  LEFT JOIN ws_tags t ON t.id = p.tag_id
                  LEFT JOIN ws_season se ON se.id = p.season_id
-                WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)$deliveryWhere$gate
+                WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)$deliveryWhere
                 ORDER BY c.sort_order, p.name", [$s, $s]);
     $photos = product_photo_files();
     foreach ($r as &$x) {
