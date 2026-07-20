@@ -601,7 +601,8 @@ function dispatch($m, $p) {
   if ($m === 'GET' && $p === '/companies') {
     $email = strtolower(trim(qp('email') ?: ''));
     if ($email === '') json_out([]);
-    json_out(rows("SELECT o.id, o.name, o.vat, o.deferred_billing_enabled AS deferredBilling
+    json_out(rows("SELECT o.id, o.name, o.vat, o.deferred_billing_enabled AS deferredBilling,
+                          o.address, o.postal_code AS postalCode, o.city
                      FROM ws_office_emails e JOIN ws_offices o ON o.id = e.office_id
                     WHERE e.email = ? AND e.active = 1 AND o.active = 1 AND o.status = 'validated'
                     ORDER BY o.name", [$email]));
@@ -627,6 +628,11 @@ function dispatch($m, $p) {
     $mode = $b['mode'] ?? 'collect';
     $dl = is_array($b['delivery'] ?? null) ? $b['delivery'] : [];
     $note = isset($b['note']) ? mb_substr((string) $b['note'], 0, 500) : null;  // note commande
+    // Facturation : « Demander une facture nominative » → invoice:{requested,vat,po}.
+    $inv          = is_array($b['invoice'] ?? null) ? $b['invoice'] : null;
+    $invRequested = ($inv && !empty($inv['requested'])) ? 1 : 0;
+    $poNumber     = ($inv && isset($inv['po']) && $inv['po'] !== '') ? mb_substr((string) $inv['po'], 0, 100) : null;
+    $invVat       = ($inv && isset($inv['vat']) && $inv['vat'] !== '') ? mb_substr((string) $inv['vat'], 0, 40) : null;
 
     // Compatibilité avec le payload du front (imbriqué / snake_case) : on normalise.
     $b['customerId']   = $b['customerId']   ?? ($b['customer']['id']    ?? null);
@@ -848,14 +854,16 @@ function dispatch($m, $p) {
             subtotal, promo_amount, webshop_discount, voucher_code, voucher_discount, total,
             payment_method, payment_status, lang, note, delivery_mode,
             office_client_id, office_delivery_site_id, office_delivery_site_name, tournee_stop_id,
-            payment_type, delivery_fee_applied, delivery_fee_amount, free_delivery_minimum)
-         VALUES (?,?,?, ?,?,?,?, ?, ?, ?,?,?, ?,?,?,?,?,?, ?, 'pending', ?, ?, ?, ?,?,?,?, ?,?,?,?)",
+            payment_type, delivery_fee_applied, delivery_fee_amount, free_delivery_minimum,
+            po_number, invoice_requested, invoice_vat)
+         VALUES (?,?,?, ?,?,?,?, ?, ?, ?,?,?, ?,?,?,?,?,?, ?, 'pending', ?, ?, ?, ?,?,?,?, ?,?,?,?, ?,?,?)",
         [$ref, $shop, $b['customerId'] ?? null, $guestEmail, $guestName, $guestPhone, $guestPfx, $mode, $orderStatus,
          $b['slotId'] ?? null, $b['slotLabel'] ?? null, $b['deliveryDate'] ?? null,
          $subtotal, $promo, $webshopDisc, $voucherCode, $voucherDisc, $total,
          $paymentMethod, $b['lang'] ?? 'fr', $note, $mode === 'delivery' ? 'office_delivery' : 'collect',
          $officeClientId, $dl['siteId'] ?? null, $dl['siteName'] ?? null, $dl['tourneeStopId'] ?? null,
-         $paymentType, $feeApplied, $feeAmount, $freeMin]);
+         $paymentType, $feeApplied, $feeAmount, $freeMin,
+         $poNumber, $invRequested, $invVat]);
       $oid = $pdo->lastInsertId();
       foreach ($lines as $l) {
         q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note) VALUES (?,?,?,?,?,?,?)",
