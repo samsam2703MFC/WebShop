@@ -3959,7 +3959,15 @@ function ShopFrame({ variant }) {
     try { sessionStorage.removeItem(CLEAN_FLAG); } catch (_) {}
 
     window.WSAuth.handoff(token).then((r) => {
-      if (alive && r && r.ok && r.user) setUser(r.user);
+      if (alive && r && r.ok && r.user) {
+        setUser(r.user);
+        // Transfert PWA : un client B2B (rattaché à un office) atterrit
+        // DIRECTEMENT en mode Livraison bureau. L'office puis son site par défaut
+        // sont ensuite auto-sélectionnés par les effets [user.officeId]/[userOffice],
+        // et le catalogue est re-fetché avec mode=delivery (liste éligible, filtre
+        // serveur). Un client sans office reste en Collecte.
+        if (r.user.officeId) setMode('delivery');
+      }
       try {
         const p = new URLSearchParams(window.location.search);
         p.delete('handoff');
