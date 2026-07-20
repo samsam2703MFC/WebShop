@@ -335,6 +335,10 @@ function dispatch($m, $p) {
         unset($x);
       }
     }
+    // Règle : on n'affiche QUE les produits à prix non nul (> 0). Un produit dont le
+    // prix effectif (magasin ERP, ou repli ws_) vaut 0 n'est pas vendable → masqué.
+    // Appliqué APRÈS la surcharge du prix magasin pour couvrir les deux sources.
+    $r = array_values(array_filter($r, static fn($x) => (float) $x['price'] > 0));
     json_out($r);
   }
   // Menu / bundle d'un produit : ws_bundles -> slots -> choices (imbriqué).
