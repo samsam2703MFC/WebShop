@@ -2343,14 +2343,27 @@ function dispatch($m, $p) {
         'cp' => $r['postcodes'] ?: '—', 'exclusif' => (bool) $r['exclusive']], $rs));
     }
 
-    // ── Règles de dispo produit (ws_product_availability_rules — migration 0012). ──
+    // ── Dispo produit — exceptions réelles : ws_products.active (réseau) +
+    //    ws_product_shops.active / no_delivery (boutique). Pas de table dédiée.
     if ($m === 'GET' && $p === '/franchisee/ws-product-availability') {
-      if (!$tblExists('ws_product_availability_rules')) json_out([]);
-      $sw = $shopId ? "(shop_id = " . (int) $shopId . " OR shop_id IS NULL)" : '1=1';
-      $rs = rows("SELECT product, category, rule FROM ws_product_availability_rules
-                   WHERE $sw AND active=1 ORDER BY product LIMIT 200");
-      json_out(array_map(fn ($r) => ['produit' => $r['product'],
-        'cat' => $r['category'] ?: '—', 'rule' => $r['rule']], $rs));
+      if (!$tblExists('ws_products')) json_out([]);
+      $out = [];
+      $off = rows("SELECT pr.name, c.label AS cat FROM ws_products pr
+                     LEFT JOIN ws_categories c ON c.id = pr.cat_id
+                    WHERE pr.active = 0 ORDER BY pr.name LIMIT 200");
+      foreach ($off as $r) $out[] = ['produit' => $r['name'], 'cat' => $r['cat'] ?: '—', 'rule' => 'Désactivé (réseau)'];
+      if ($shopId && $tblExists('ws_product_shops')) {
+        $loc = rows("SELECT pr.name, c.label AS cat, ps.active AS ps_active, ps.no_delivery
+                       FROM ws_product_shops ps
+                       JOIN ws_products pr ON pr.id = ps.product_id
+                       LEFT JOIN ws_categories c ON c.id = pr.cat_id
+                      WHERE ps.shop_id = " . (int) $shopId . " AND pr.active = 1
+                        AND (ps.active = 0 OR ps.no_delivery = 1)
+                      ORDER BY pr.name LIMIT 200");
+        foreach ($loc as $r) $out[] = ['produit' => $r['name'], 'cat' => $r['cat'] ?: '—',
+          'rule' => !$r['ps_active'] ? 'Désactivé boutique' : 'Sans livraison'];
+      }
+      json_out($out);
     }
 
     json_out(['error' => 'Not found', 'path' => $p], 404);

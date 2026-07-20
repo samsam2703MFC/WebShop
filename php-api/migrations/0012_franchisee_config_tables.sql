@@ -1,5 +1,5 @@
 -- 0012 — Tables de configuration de la Console franchisé (app DC).
--- Quatre tables lues par le back-office franchisé qui n'existaient pas encore
+-- Trois tables lues par le back-office franchisé qui n'existaient pas encore
 -- dans le schéma. Tant qu'elles sont absentes, les endpoints /franchisee/*
 -- correspondants renvoient [] et le front garde son seed ; après cette
 -- migration, la donnée devient pilotée par la base.
@@ -27,17 +27,10 @@ CREATE TABLE IF NOT EXISTS ws_franchisor_catchment (
   active     BOOLEAN NOT NULL DEFAULT TRUE
 );
 
--- 3) Règles de disponibilité produit (exceptions écrasant la catégorie).
-CREATE TABLE IF NOT EXISTS ws_product_availability_rules (
-  id         INT AUTO_INCREMENT PRIMARY KEY,
-  shop_id    INT NULL,
-  product    VARCHAR(160) NOT NULL,              -- libellé produit (ou lien futur ws_products.id)
-  category   VARCHAR(120) NULL,
-  rule       VARCHAR(120) NOT NULL,              -- ex. « Sur devis », « Saisonnier », « Délai spécifique »
-  active     BOOLEAN NOT NULL DEFAULT TRUE
-);
+-- (Pas de table de règles produit : la disponibilité produit vit déjà dans
+--  ws_products.active + ws_product_shops.active / no_delivery.)
 
--- 4) Départements ↔ delivery site ↔ office (cible de la synchro ERP clientb2b).
+-- 3) Départements ↔ delivery site ↔ office (cible de la synchro ERP clientb2b).
 CREATE TABLE IF NOT EXISTS b2b_client_company_department (
   id         INT AUTO_INCREMENT PRIMARY KEY,
   client_id  VARCHAR(40) NOT NULL,               -- code client ERP
