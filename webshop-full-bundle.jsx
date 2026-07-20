@@ -3376,6 +3376,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
             voucherDiscount={voucherDiscount}
           />
+          {invoice && (
           <div className="ws-b2b">
             <div className="ws-b2b__head">
               <span className="ws-b2b__icon" aria-hidden="true">
@@ -3426,23 +3427,36 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
               );
             })()}
 
-            {/* Remarque + PO# — visibles UNIQUEMENT si « Demander une facture
-                nominative » est coché (facturation professionnelle). */}
-            {invoice && (
-              <>
-                <label className="ws-field ws-b2b__field">
-                  <span>Remarque (facultatif)</span>
-                  <textarea value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2}
-                            placeholder="Remarque à faire figurer sur la facture, instructions…" />
-                </label>
-                <label className="ws-field ws-b2b__field">
-                  <span>PO# (bon de commande)</span>
-                  <input type="text" value={poNumber} onChange={(e) => setPoNumber(e.target.value)}
-                         placeholder="Votre numéro de PO / commande" />
-                </label>
-              </>
-            )}
+            {/* Récap facturation : raison sociale + adresse (lecture seule),
+                depuis la fiche utilisateur (user.invoice) / la société. */}
+            {(() => {
+              const c = companies.find((x) => String(x.id) === String(companyId));
+              const bName = (user && (user.invoice?.name || user.company)) || (c && c.name) || '';
+              const bAddr = (user && user.invoice)
+                ? [user.invoice.address, [user.invoice.postalCode, user.invoice.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')
+                : '';
+              if (!bName && !bAddr) return null;
+              return (
+                <div className="ws-b2b__bill" role="note">
+                  <span className="ws-b2b__bill-k">Facturé à</span>
+                  {bName && <span className="ws-b2b__bill-name">{bName}</span>}
+                  {bAddr && <span className="ws-b2b__bill-addr">{bAddr}</span>}
+                </div>
+              );
+            })()}
+
+            <label className="ws-field ws-b2b__field">
+              <span>Remarque (facultatif)</span>
+              <textarea value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2}
+                        placeholder="Remarque à faire figurer sur la facture, instructions…" />
+            </label>
+            <label className="ws-field ws-b2b__field">
+              <span>PO# (bon de commande)</span>
+              <input type="text" value={poNumber} onChange={(e) => setPoNumber(e.target.value)}
+                     placeholder="Votre numéro de PO / commande" />
+            </label>
           </div>
+          )}
           </>
         )}
       </div>

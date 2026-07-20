@@ -3507,3 +3507,19 @@
     background: #ecbd8d !important; /* état pressé, teinte plus soutenue */
   }
 }
+
+/* Récap « Facturé à » (raison sociale + adresse) dans la zone Entreprise & note,
+   affiché quand « Demander une facture nominative » est coché. Lecture seule. */
+.ws-b2b__bill {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--color-bg, #faf7f2);
+  border: 1px solid rgba(20,14,10,.08);
+  border-radius: 10px;
+  padding: 10px 12px; margin-top: 4px;
+}
+.ws-b2b__bill-k {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+  color: #8a7d72; margin-bottom: 2px;
+}
+.ws-b2b__bill-name { font-size: 13px; font-weight: 600; color: var(--color-text, #1f1612); }
+.ws-b2b__bill-addr { font-size: 12.5px; color: #6b5d52; }
