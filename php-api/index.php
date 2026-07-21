@@ -1894,17 +1894,9 @@ function dispatch($m, $p) {
           'name' => $f['name'], 'cp' => $f['cp'], 'city' => $f['city'],
           'shop_id' => $f['shop_id'] !== null ? (int) $f['shop_id'] : null, 'ca' => (float) $f['ca']];
       }
-      // Particuliers — bleu. CP de facturation ; CA via l'identité consolidée client.
-      if (row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_customers'")) {
-        $priv = rows("SELECT c.id, c.first_name, c.last_name, c.invoice_postal_code AS cp, c.invoice_city AS city,
-                             c.preferred_shop_id AS shop_id,
-                             (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.customer_id = COALESCE(c.client_id, c.id)) AS ca
-                        FROM ws_customers c LIMIT 3000");
-        foreach ($priv as $c) $out['clients'][] = ['id' => 'p' . $c['id'], 'type' => 'private',
-          'name' => trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? '')) ?: ('Client #' . $c['id']),
-          'cp' => $c['cp'], 'city' => $c['city'],
-          'shop_id' => $c['shop_id'] !== null ? (int) $c['shop_id'] : null, 'ca' => (float) $c['ca']];
-      }
+      // Particuliers — bleu. Identité unifiée `client` : zip/localité collectés
+      // partout (repli facturation), rattachement preferred_shop_id → id_main_shop.
+      foreach (geo_private_clients() as $c) $out['clients'][] = $c;
       // Franchisés (RBAC) : bo_users rôle franchise + portée bo_user_shops.
       if (row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='bo_users'")) {
         $frs = rows("SELECT u.id, COALESCE(u.display_name, u.email) AS name FROM bo_users u WHERE u.role='franchise' AND u.active=1 ORDER BY name");
@@ -2728,16 +2720,9 @@ function dispatch($m, $p) {
           'name' => $f['name'], 'cp' => $f['cp'], 'city' => $f['city'],
           'shop_id' => $f['shop_id'] !== null ? (int) $f['shop_id'] : null, 'ca' => (float) $f['ca']];
       }
-      if ($tblExists('ws_customers')) {
-        $priv = rows("SELECT c.id, c.first_name, c.last_name, c.invoice_postal_code AS cp, c.invoice_city AS city,
-                             c.preferred_shop_id AS shop_id,
-                             (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.customer_id = COALESCE(c.client_id, c.id)) AS ca
-                        FROM ws_customers c" . ($shopId ? " WHERE c.preferred_shop_id = " . (int) $shopId : "") . " LIMIT 3000");
-        foreach ($priv as $c) $out['clients'][] = ['id' => 'p' . $c['id'], 'type' => 'private',
-          'name' => trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? '')) ?: ('Client #' . $c['id']),
-          'cp' => $c['cp'], 'city' => $c['city'],
-          'shop_id' => $c['shop_id'] !== null ? (int) $c['shop_id'] : null, 'ca' => (float) $c['ca']];
-      }
+      // Particuliers de MA boutique — identité unifiée `client` (zip/localité
+      // collectés partout), rattachement preferred_shop_id → id_main_shop.
+      foreach (geo_private_clients($shopId ?: null) as $c) $out['clients'][] = $c;
       json_out($out);
     }
 
@@ -3595,6 +3580,46 @@ function col_exists($table, $col) {
     } catch (Throwable $e) { $cache[$k] = false; }
   }
   return $cache[$k];
+}
+
+/* Particuliers de l'analyse géographique (franchisor + franchisee) — source :
+ * l'identité unifiée `client` (zip + localité collectés partout : webshop, PWA,
+ * modal de rattrapage), repli sur le CP de facturation quand zip est vide, et
+ * repli complet sur la table legacy ws_customers si `client` n'existe pas.
+ * Rattachement boutique : preferred_shop_id si défini, sinon id_main_shop —
+ * c'est ce COALESCE qui sert aussi de filtre pour la vue cloisonnée franchisé. */
+function geo_private_clients($shopId = null) {
+  $tbl = function ($t) { return (bool) row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", [$t]); };
+  $out = [];
+  if ($tbl('client')) {
+    $fn = col_exists('client', 'name') ? 'c.name' : (col_exists('client', 'first_name') ? 'c.first_name' : 'NULL');
+    $ln = col_exists('client', 'surname') ? 'c.surname' : (col_exists('client', 'last_name') ? 'c.last_name' : 'NULL');
+    $cpExpr = col_exists('client', 'invoice_postal_code') ? "COALESCE(NULLIF(c.zip,''), c.invoice_postal_code)" : "NULLIF(c.zip,'')";
+    $cityFallback = col_exists('client', 'invoice_city') ? 'c.invoice_city' : 'NULL';
+    $cityExpr = col_exists('client', 'locality') ? "COALESCE(NULLIF(c.locality,''), $cityFallback)" : $cityFallback;
+    $shopExpr = col_exists('client', 'preferred_shop_id') ? 'COALESCE(c.preferred_shop_id, c.id_main_shop)' : 'c.id_main_shop';
+    // Les fiches société (company link PWA) ne sont pas des particuliers.
+    $notB2b = col_exists('client', 'is_b2b') ? 'COALESCE(c.is_b2b,0)=0'
+            : (col_exists('client', 'is_business') ? 'COALESCE(c.is_business,0)=0' : '1=1');
+    $caExpr = $tbl('ws_orders') ? "(SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.customer_id = c.id)" : '0';
+    $priv = rows("SELECT c.id, $fn AS first_name, $ln AS last_name, $cpExpr AS cp, $cityExpr AS city,
+                         $shopExpr AS shop_id, $caExpr AS ca
+                    FROM client c
+                   WHERE COALESCE(c.active,1)=1 AND $notB2b" .
+                 ($shopId ? " AND $shopExpr = " . (int) $shopId : "") . " LIMIT 3000");
+  } elseif ($tbl('ws_customers')) {
+    $priv = rows("SELECT c.id, c.first_name, c.last_name, c.invoice_postal_code AS cp, c.invoice_city AS city,
+                         c.preferred_shop_id AS shop_id,
+                         (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.customer_id = COALESCE(c.client_id, c.id)) AS ca
+                    FROM ws_customers c" . ($shopId ? " WHERE c.preferred_shop_id = " . (int) $shopId : "") . " LIMIT 3000");
+  } else {
+    return [];
+  }
+  foreach ($priv as $c) $out[] = ['id' => 'p' . $c['id'], 'type' => 'private',
+    'name' => trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? '')) ?: ('Client #' . $c['id']),
+    'cp' => $c['cp'], 'city' => $c['city'],
+    'shop_id' => $c['shop_id'] !== null ? (int) $c['shop_id'] : null, 'ca' => (float) $c['ca']];
+  return $out;
 }
 
 /* Collecte du code postal client (exigence « partout ») — helpers partagés
