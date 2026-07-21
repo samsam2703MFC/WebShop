@@ -2313,11 +2313,17 @@ function dispatch($m, $p) {
       }, $rs));
     }
 
-    // ── Paramètres (ws_param clé/valeur — franchisor-style). ──
+    // ── Paramètres (ws_param clé/valeur) — '0'/'1' exposés en bool (toggles UI). ──
     if ($m === 'GET' && $p === '/franchisee/params') {
       if (!$tblExists('ws_param')) json_out([]);
       $ps = rows("SELECT param_key, param_value FROM ws_param ORDER BY param_key");
-      json_out(array_map(fn ($x) => ['cle' => $x['param_key'], 'type' => 'text', 'val' => $x['param_value']], $ps));
+      json_out(array_map(function ($x) {
+        $v = (string) $x['param_value'];
+        if (in_array($v, ['0', '1', 'true', 'false'], true)) {
+          return ['cle' => $x['param_key'], 'type' => 'bool', 'val' => ($v === '1' || $v === 'true')];
+        }
+        return ['cle' => $x['param_key'], 'type' => 'text', 'val' => $v];
+      }, $ps));
     }
 
     // ── Barème de frais en cascade (ws_delivery_fee_rules — table réelle du schéma). ──
@@ -2599,6 +2605,21 @@ function dispatch($m, $p) {
             [$tourId, $d, (string) ($r['motif'] ?? '')]);
         }
         json_out(['ok' => true, 'mode' => 'typed', 'n' => count($rows2)]);
+      }
+
+      // Paramètres → UPSERT ws_param (config partagée : upsert par clé, jamais de delete).
+      if ($tbl === 'params' && $tblExists('ws_param')) {
+        $n = 0;
+        foreach ($rows2 as $r) {
+          $cle = trim((string) ($r['cle'] ?? ''));
+          if ($cle === '' || strlen($cle) > 100) continue;
+          $val = $r['val'] ?? ($r['def'] ?? '');
+          if (is_bool($val)) $val = $val ? '1' : '0';
+          q("INSERT INTO ws_param (param_key, param_value) VALUES (?,?)
+               ON DUPLICATE KEY UPDATE param_value = VALUES(param_value)", [$cle, (string) $val]);
+          $n++;
+        }
+        json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
       }
 
       // Défaut : journal JSON par table + boutique (repris par hydrate()).
