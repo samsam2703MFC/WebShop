@@ -1855,6 +1855,45 @@ function dispatch($m, $p) {
                       ORDER BY name LIMIT 30", [$qq, $like, $like]));
     }
 
+    // ── Analyse géographique : clients géolocalisables + boutiques + franchisés. ──
+    //    Géoloc par code postal (référentiel embarqué côté client). Le front
+    //    résout lat/lng et compte les non-localisés. Aucune donnée en dur.
+    if ($m === 'GET' && $p === '/franchisor/geo-clients') {
+      $out = ['shops' => [], 'clients' => [], 'franchisees' => []];
+      $SHOPS2 = row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='shops'") ? 'shops' : 'ws_shops';
+      $out['shops'] = rows("SELECT id, name, city, zip AS cp FROM $SHOPS2 WHERE active=1 ORDER BY name");
+      // Bureaux (B2B) — jaune. Boutique via la tournée assignée.
+      if (row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_offices'")) {
+        $offs = rows("SELECT f.id, f.name, f.postal_code AS cp, f.city, t.shop_id,
+                             (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.office_client_id = f.id) AS ca
+                        FROM ws_offices f LEFT JOIN ws_tours t ON t.id = f.tour_id
+                       WHERE f.active = 1");
+        foreach ($offs as $f) $out['clients'][] = ['id' => 'o' . $f['id'], 'type' => 'office',
+          'name' => $f['name'], 'cp' => $f['cp'], 'city' => $f['city'],
+          'shop_id' => $f['shop_id'] !== null ? (int) $f['shop_id'] : null, 'ca' => (float) $f['ca']];
+      }
+      // Particuliers — bleu. CP de facturation ; CA via l'identité consolidée client.
+      if (row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_customers'")) {
+        $priv = rows("SELECT c.id, c.first_name, c.last_name, c.invoice_postal_code AS cp, c.invoice_city AS city,
+                             c.preferred_shop_id AS shop_id,
+                             (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.customer_id = COALESCE(c.client_id, c.id)) AS ca
+                        FROM ws_customers c LIMIT 3000");
+        foreach ($priv as $c) $out['clients'][] = ['id' => 'p' . $c['id'], 'type' => 'private',
+          'name' => trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? '')) ?: ('Client #' . $c['id']),
+          'cp' => $c['cp'], 'city' => $c['city'],
+          'shop_id' => $c['shop_id'] !== null ? (int) $c['shop_id'] : null, 'ca' => (float) $c['ca']];
+      }
+      // Franchisés (RBAC) : bo_users rôle franchise + portée bo_user_shops.
+      if (row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='bo_users'")) {
+        $frs = rows("SELECT u.id, COALESCE(u.display_name, u.email) AS name FROM bo_users u WHERE u.role='franchise' AND u.active=1 ORDER BY name");
+        foreach ($frs as $u) {
+          $sids = array_map(fn ($r) => (int) $r['shop_id'], rows("SELECT shop_id FROM bo_user_shops WHERE user_id=?", [(int) $u['id']]));
+          $out['franchisees'][] = ['id' => (int) $u['id'], 'name' => $u['name'], 'shops' => $sids];
+        }
+      }
+      json_out($out);
+    }
+
     // ── Zones de chalandise (primaires) — gérées par le franchiseur, par shop. ──
     if ($m === 'GET' && $p === '/franchisor/catchment') {
       if (!row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_franchisor_catchment'")) json_out([]);
