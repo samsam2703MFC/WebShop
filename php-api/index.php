@@ -498,6 +498,36 @@ function dispatch($m, $p) {
     if (qp('all') !== null) {
       json_out(array_map(fn ($e) => [$e['zip'], $e['city'], $e['lat'], $e['lng']], $all));
     }
+    //    ?groups=1 → arrondissements / régions (plages officielles bpost) avec
+    //    le compte de CP du référentiel — pour l'ajout groupé.
+    if (qp('groups') !== null) {
+      $defs = [
+        ['Région de Bruxelles-Capitale', [[1000, 1299]]],
+        ['Brabant wallon (arr. Nivelles)', [[1300, 1499]]],
+        ['Brabant flamand — Hal-Vilvorde', [[1500, 1999]]],
+        ['Brabant flamand — Louvain', [[3000, 3499]]],
+        ['Province d\'Anvers', [[2000, 2999]]],
+        ['Limbourg', [[3500, 3999]]],
+        ['Province de Liège', [[4000, 4999]]],
+        ['Province de Namur', [[5000, 5999]]],
+        ['Hainaut — Charleroi / Sud', [[6000, 6599]]],
+        ['Province de Luxembourg', [[6600, 6999]]],
+        ['Hainaut — Mons / Nord', [[7000, 7999]]],
+        ['Flandre-Occidentale', [[8000, 8999]]],
+        ['Flandre-Orientale', [[9000, 9999]]],
+      ];
+      $out = [];
+      foreach ($defs as [$name, $ranges]) {
+        $cps = [];
+        foreach ($all as $e) {
+          $z = (int) $e['zip'];
+          foreach ($ranges as [$a, $b]) if ($z >= $a && $z <= $b) { $cps[] = (string) $e['zip']; break; }
+        }
+        $cps = array_values(array_unique($cps));
+        if ($cps) $out[] = ['name' => $name, 'count' => count($cps), 'cps' => $cps];
+      }
+      json_out($out);
+    }
     $q = mb_strtolower(trim((string) qp('q', '')));
     if (mb_strlen($q) < 2) json_out([]);
     $out = [];
