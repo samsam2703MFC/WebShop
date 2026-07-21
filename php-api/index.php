@@ -2691,6 +2691,34 @@ function dispatch($m, $p) {
       json_out([]);
     }
 
+    // ── Analyse géographique (franchisé) — CLOISONNÉE sur la portée ?shop :
+    //    uniquement les clients rattachés à SA boutique. Même contrat que le
+    //    module franchiseur (géoloc par CP côté client, non-localisés comptés).
+    if ($m === 'GET' && $p === '/franchisee/geo-clients') {
+      $out = ['shops' => [], 'clients' => []];
+      $out['shops'] = rows("SELECT id, name, city, zip AS cp FROM $SHOPS WHERE active=1 AND " . ($shopId ? "id = " . (int) $shopId : "1=1") . " ORDER BY name");
+      if ($tblExists('ws_offices')) {
+        $offs = rows("SELECT f.id, f.name, f.postal_code AS cp, f.city, t.shop_id,
+                             (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.office_client_id = f.id) AS ca
+                        FROM ws_offices f LEFT JOIN ws_tours t ON t.id = f.tour_id
+                       WHERE f.active = 1" . ($shopId ? " AND t.shop_id = " . (int) $shopId : ""));
+        foreach ($offs as $f) $out['clients'][] = ['id' => 'o' . $f['id'], 'type' => 'office',
+          'name' => $f['name'], 'cp' => $f['cp'], 'city' => $f['city'],
+          'shop_id' => $f['shop_id'] !== null ? (int) $f['shop_id'] : null, 'ca' => (float) $f['ca']];
+      }
+      if ($tblExists('ws_customers')) {
+        $priv = rows("SELECT c.id, c.first_name, c.last_name, c.invoice_postal_code AS cp, c.invoice_city AS city,
+                             c.preferred_shop_id AS shop_id,
+                             (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.customer_id = COALESCE(c.client_id, c.id)) AS ca
+                        FROM ws_customers c" . ($shopId ? " WHERE c.preferred_shop_id = " . (int) $shopId : "") . " LIMIT 3000");
+        foreach ($priv as $c) $out['clients'][] = ['id' => 'p' . $c['id'], 'type' => 'private',
+          'name' => trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? '')) ?: ('Client #' . $c['id']),
+          'cp' => $c['cp'], 'city' => $c['city'],
+          'shop_id' => $c['shop_id'] !== null ? (int) $c['shop_id'] : null, 'ca' => (float) $c['ca']];
+      }
+      json_out($out);
+    }
+
     // ── Cohérence zoning : un CP ne peut appartenir ni à une zone primaire
     //    (chalandise d'un AUTRE point de vente) ni à une autre zone. ──
     if ($m === 'GET' && $p === '/franchisee/zone-check') {
