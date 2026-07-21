@@ -488,6 +488,28 @@ function dispatch($m, $p) {
     json_out(row("SELECT cutoff_hour, cutoff_minutes, lead_hours, open_days FROM ws_calendar_rules
                    WHERE shop_id=? AND mode=? AND active=1 LIMIT 1", [$s, qp('mode') ?: 'collect']) ?: []);
   }
+  // ── Référentiel géo : codes postaux belges (bpost open data, embarqué). ──
+  //    ?all=1 → liste compacte [[cp, commune, lat, lng]…] (~100 Ko, à cacher côté client)
+  //    ?q=…   → recherche par préfixe de CP ou nom de commune (12 max)
+  if ($m === 'GET' && $p === '/geo/postcodes') {
+    $file = __DIR__ . '/data/zipcodes_be.json';
+    if (!is_file($file)) json_out([]);
+    $all = json_decode((string) file_get_contents($file), true) ?: [];
+    if (qp('all') !== null) {
+      json_out(array_map(fn ($e) => [$e['zip'], $e['city'], $e['lat'], $e['lng']], $all));
+    }
+    $q = mb_strtolower(trim((string) qp('q', '')));
+    if (mb_strlen($q) < 2) json_out([]);
+    $out = [];
+    foreach ($all as $e) {
+      if (strpos((string) $e['zip'], $q) === 0 || mb_stripos((string) $e['city'], $q) !== false) {
+        $out[] = ['cp' => $e['zip'], 'commune' => $e['city'], 'lat' => $e['lat'], 'lng' => $e['lng']];
+        if (count($out) >= 12) break;
+      }
+    }
+    json_out($out);
+  }
+
   if ($m === 'GET' && $p === '/calendar/exceptions') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
     json_out(rows("SELECT DATE_FORMAT(exception_date,'%Y-%m-%d') AS exception_date, type, reason
