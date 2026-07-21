@@ -1945,13 +1945,81 @@ const PHONE_PREFIXES = [
   ['+352', '+352'], ['+49', '+49'],
 ];
 
+// ── Collecte du code postal client (obligatoire partout) ────────────────
+// Dès que 4 chiffres sont saisis, la LOCALITÉ correspondante s'affiche
+// (référentiel /geo/postcodes) — liste déroulante quand un même code couvre
+// plusieurs localités (ex. 1300 → Limal · Wavre). La localité confirmée est
+// envoyée au serveur avec le code postal.
+const CP_RE = /^[1-9][0-9]{3}$/;             // format belge : 4 chiffres
+const _cpLocCache = {};
+async function cpLocalities(cp) {
+  cp = String(cp || '').trim();
+  if (!CP_RE.test(cp)) return [];
+  if (_cpLocCache[cp]) return _cpLocCache[cp];
+  const base = (window.WSAuth && window.WSAuth.endpoint)
+    ? String(window.WSAuth.endpoint).replace(/\/auth\/?$/, '') : '';
+  if (!base) return [];
+  try {
+    const r = await fetch(`${base}/geo/postcodes?q=${encodeURIComponent(cp)}`);
+    const j = await r.json();
+    const list = [...new Set((Array.isArray(j) ? j : [])
+      .filter((e) => String(e.cp) === cp).map((e) => String(e.commune)))];
+    _cpLocCache[cp] = list;
+    return list;
+  } catch (_) { return []; }
+}
+// Champ CP + localité auto. `variant` adapte le markup au formulaire hôte
+// ('modal' → ws-field du LoginModal, 'acc' → ws-acc__field du compte).
+function CpField({ cp, locality, onCp, onLocality, onOpts, variant }) {
+  const [opts, setOpts] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    const v = String(cp || '').trim();
+    if (!CP_RE.test(v)) {
+      setOpts([]); if (onOpts) onOpts([]);
+      if (locality) onLocality('');
+      return;
+    }
+    cpLocalities(v).then((list) => {
+      if (!alive) return;
+      setOpts(list); if (onOpts) onOpts(list);
+      if (list.length === 1) onLocality(list[0]);                    // localité unique → auto
+      else if (list.length > 1 && !list.includes(locality)) onLocality(''); // ambigu → choix requis
+    });
+    return () => { alive = false; };
+  }, [cp]);
+  const acc = variant === 'acc';
+  const fieldCls = acc ? 'ws-acc__field' : 'ws-field';
+  const inputCls = acc ? 'ws-acc__input' : undefined;
+  const lbl = (t) => acc ? <span className="ws-acc__field-label">{t}</span> : <span>{t}</span>;
+  const locHint = { margin: '2px 0 0', fontSize: 12.5, opacity: .75 };
+  return (
+    <>
+      <label className={fieldCls}>{lbl('Code postal')}
+        <input className={inputCls} value={cp} onChange={(e) => onCp(e.target.value)}
+          autoComplete="postal-code" inputMode="numeric" maxLength={4} placeholder="1000" required/>
+        {opts.length === 1 && locality && <p style={locHint}>📍 {locality}</p>}
+      </label>
+      {opts.length > 1 && (
+        <label className={fieldCls}>{lbl('Localité')}
+          <select className={inputCls} value={locality} onChange={(e) => onLocality(e.target.value)} required>
+            <option value="">— Choisir la localité —</option>
+            {opts.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+      )}
+    </>
+  );
+}
+
 function LoginModal({ open, onClose, onLogin, onRegister }) {
   const [tab, setTab] = useState('login');
-  const [form, setForm] = useState({ identifier: '', email: '', phone: '', phonePrefix: '+32', password: '', firstName: '', lastName: '', postalCode: '', authMethod: 'email' });
+  const [form, setForm] = useState({ identifier: '', email: '', phone: '', phonePrefix: '+32', password: '', firstName: '', lastName: '', postalCode: '', locality: '', authMethod: 'email' });
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
   const [pwStep, setPwStep] = useState(false);   // panneau « compte existant -> mot de passe »
   const [newPw, setNewPw] = useState('');
+  const [cpOpts, setCpOpts] = useState([]);      // localités du CP saisi (validation « localité choisie »)
   if (!open) return null;
   function set(k, v) { setForm((f) => ({ ...f, [k]: v })); setErr(''); }
   async function submit(e) {
@@ -1973,6 +2041,10 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
       } else {
         if (!form.firstName || !form.lastName) { setErr('Prénom et nom requis.'); return; }
         if (!form.email && !form.phone) { setErr('Email ou téléphone requis.'); return; }
+        // Code postal OBLIGATOIRE (collecte réseau) + localité confirmée quand
+        // le code couvre plusieurs localités.
+        if (!CP_RE.test(String(form.postalCode).trim())) { setErr('Code postal requis (4 chiffres).'); return; }
+        if (cpOpts.length > 1 && !form.locality) { setErr('Choisissez votre localité.'); return; }
         const r = window.WSAuth
           ? await window.WSAuth.register(form)
           : authRegister(form);
@@ -2041,7 +2113,8 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
                 <input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="tel" inputMode="tel" placeholder="470 00 00 02"/>
               </span>
             </label>
-            <label className="ws-field"><span>Code postal</span><input value={form.postalCode} onChange={(e) => set('postalCode', e.target.value)} autoComplete="postal-code" inputMode="numeric"/></label>
+            <CpField variant="modal" cp={form.postalCode} locality={form.locality}
+              onCp={(v) => set('postalCode', v)} onLocality={(v) => set('locality', v)} onOpts={setCpOpts}/>
           </>
         )}
         {tab === 'login' && (
@@ -2237,6 +2310,57 @@ function AccountPurchases({ user }) {
   );
 }
 
+// ── Rattrapage du code postal (comptes existants) ───────────────────────
+// À CHAQUE connexion d'un client dont le code postal manque en base
+// (user.needsPostcode), cette modal de saisie rapide s'affiche : un seul champ
+// CP, localité affichée immédiatement pour confirmation, bouton Valider qui
+// enregistre (PATCH /auth/me) et ferme. Jamais affichée si le CP est déjà
+// connu ; ne réapparaît plus une fois enregistré. « Plus tard » referme pour
+// cette session — elle reviendra à la prochaine connexion.
+function PostcodeCatchupModal({ user, onUpdateUser }) {
+  const [cp, setCp] = useState('');
+  const [locality, setLocality] = useState('');
+  const [cpOpts, setCpOpts] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [snoozed, setSnoozed] = useState(false);
+  const uid = user ? user.id : null;
+  useEffect(() => { setSnoozed(false); setCp(''); setLocality(''); setErr(''); }, [uid]); // nouvelle connexion → réaffichage
+  const needs = !!user && (user.needsPostcode === true || !user.postalCode);
+  if (!needs || snoozed) return null;
+  async function submit(e) {
+    if (e) e.preventDefault();
+    setErr('');
+    if (!CP_RE.test(String(cp).trim())) { setErr('Code postal requis (4 chiffres).'); return; }
+    if (cpOpts.length > 1 && !locality) { setErr('Choisissez votre localité.'); return; }
+    if (!window.WSAuth || typeof window.WSAuth.updateMe !== 'function') { setSnoozed(true); return; }
+    setBusy(true);
+    try {
+      const r = await window.WSAuth.updateMe({ postalCode: String(cp).trim(), locality });
+      if (r && r.ok && r.user) { onUpdateUser(r.user); }              // needsPostcode:false → la modal disparaît
+      else setErr((r && r.error) || 'Enregistrement impossible. Réessayez.');
+    } catch (_) {
+      setErr('Erreur réseau. Veuillez réessayer.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <ModalShell onClose={() => setSnoozed(true)} narrow>
+      <p className="ws-modal__eyebrow">Votre profil</p>
+      <h2 className="ws-modal__title">Votre <em>code postal</em> ?</h2>
+      <p className="ws-modal__lede">Il nous manque votre code postal — il nous aide à organiser les livraisons et les tournées près de chez vous.</p>
+      <form className="ws-form" onSubmit={submit}>
+        <CpField variant="modal" cp={cp} locality={locality}
+          onCp={(v) => { setCp(v); setErr(''); }} onLocality={setLocality} onOpts={setCpOpts}/>
+        {err && <p className="ws-form__err">{err}</p>}
+        <button type="submit" className="ws-cta ws-cta--block" disabled={busy}>{busy ? 'Enregistrement…' : 'Valider'}</button>
+        <button type="button" className="ws-linkbtn" onClick={() => setSnoozed(true)}>Plus tard</button>
+      </form>
+    </ModalShell>
+  );
+}
+
 function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdateUser, shops, currentShopId, onChangePreferredShop, office, tour }) {
   const [form, setForm] = useState({
     firstName: user?.firstName || '',
@@ -2245,6 +2369,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     email: user?.email || '',
     phone: user?.phone || '',
     postalCode: user?.postalCode || '',
+    locality: user?.locality || '',
     isBusiness: !!user?.isBusiness,
     preferredShopId: user?.preferredShopId || null,
     fidelityApp: user?.fidelityApp || { active: false, linkedAt: null },
@@ -2584,7 +2709,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         // (voir section « Sociétés de facturation » — le serveur les ignore).
         const r = await window.WSAuth.updateMe({
           firstName: form.firstName, lastName: form.lastName,
-          phone: form.phone, postalCode: form.postalCode,
+          phone: form.phone, postalCode: form.postalCode, locality: form.locality,
         });
         if (r && r.ok && r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
       } catch (_) {}
@@ -2660,12 +2785,8 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             <input type="tel" className="ws-acc__input" value={form.phone}
               onChange={(e) => setField('phone', e.target.value)} placeholder="+32 ..." />
           </label>
-          <label className="ws-acc__field">
-            <span className="ws-acc__field-label">Code postal</span>
-            <input type="text" className="ws-acc__input" value={form.postalCode}
-              onChange={(e) => setField('postalCode', e.target.value)} placeholder="1000"
-              inputMode="numeric" maxLength="10" />
-          </label>
+          <CpField variant="acc" cp={form.postalCode} locality={form.locality}
+            onCp={(v) => setField('postalCode', v)} onLocality={(v) => setField('locality', v)}/>
         </div>
 
         <div className="ws-acc__form-foot">
@@ -4712,6 +4833,9 @@ function ShopFrame({ variant }) {
         onClose={() => setSwitcherOpen(false)}
       />
       <LoginModal open={authOpen} onClose={() => setAuthOpen(false)} onLogin={handleLogin} onRegister={handleLogin}/>
+      {/* Rattrapage CP : s'affiche seule après toute connexion (login, handoff
+          PWA, session restaurée) tant que le code postal manque en base. */}
+      <PostcodeCatchupModal user={user} onUpdateUser={(u) => setUser(u)}/>
       <AccountModal
         open={accountOpen}
         user={user}

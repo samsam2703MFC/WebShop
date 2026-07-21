@@ -1091,6 +1091,13 @@ function dispatch($m, $p) {
     if ($authM === 'email' && $mail === '')  json_out(['error' => 'Email requis'], 400);
     if ($authM === 'phone' && $phone === '') json_out(['error' => 'Téléphone requis'], 400);
     if ($mail === '' && $phone === '')       json_out(['error' => 'Email ou téléphone requis'], 400);
+    // Code postal OBLIGATOIRE (exigence réseau : collecte partout) + format
+    // validé selon le pays (défaut BE : 4 chiffres). La localité confirmée à
+    // la saisie est stockée avec le CP (référentiel /geo/postcodes).
+    if ($zip === '') json_out(['error' => 'Code postal requis'], 400);
+    $zip = zip_validate($zip, $b['country'] ?? 'BE');
+    if ($zip === null) json_out(['error' => 'Code postal invalide'], 400);
+    $locality = zip_locality($zip, $b['locality'] ?? '');
     $pass = (string) ($b['password'] ?? '');
     $hash = ($pass !== '' && strlen($pass) >= 6) ? password_hash($pass, PASSWORD_BCRYPT) : null;
     // Anti-doublon : si un client existe déjà (email OU téléphone E.164), on ne
@@ -1104,10 +1111,16 @@ function dispatch($m, $p) {
       // client.id_main_shop is NOT NULL without a default → caller's shop else modal.
       $ms = $b['shopId'] ?? null;
       if (!$ms) { $r = row("SELECT id_main_shop FROM client GROUP BY id_main_shop ORDER BY COUNT(*) DESC LIMIT 1"); $ms = $r['id_main_shop'] ?? 1; }
-      q("INSERT INTO client (id_main_shop, email, phone, phone_prefix, phone_e164, name, surname, zip, password_hash,
+      // `locality` guardée par col_exists : le code peut être déployé une
+      // requête avant que migrate.sh n'ait joué 0015 — pas de 500 pendant la fenêtre.
+      $hasLoc = col_exists('client', 'locality');
+      q("INSERT INTO client (id_main_shop, email, phone, phone_prefix, phone_e164, name, surname, zip, " . ($hasLoc ? "locality, " : "") . "password_hash,
                              active, source_channel, webshop_user, preferred_auth_method)
-         VALUES (?,?,?,?,?,?,?,?,?,1,'webshop',1,?)",
-        [$ms, ($mail ?: null), ($phone ?: null), ($phone !== '' ? $pfx : null), ($e164 ?: null), $first, $last, $zip, $hash, $authM]);
+         VALUES (?,?,?,?,?,?,?,?," . ($hasLoc ? "?," : "") . "?,1,'webshop',1,?)",
+        array_merge(
+          [$ms, ($mail ?: null), ($phone ?: null), ($phone !== '' ? $pfx : null), ($e164 ?: null), $first, $last, $zip],
+          $hasLoc ? [$locality] : [],
+          [$hash, $authM]));
       $id = db()->lastInsertId();
     }
     json_out(['user' => user_payload($id), 'token' => sign_token(['id' => (int) $id, 'exp' => time() + 30 * 86400])], 201);
@@ -1467,7 +1480,16 @@ function dispatch($m, $p) {
     // document fiscal — elles viennent de VIES (/auth/billing-verify) ou d'une
     // saisie encadrée à l'AJOUT (/auth/billing-company), jamais d'une édition
     // libre. Les clés company / invoice / isBusiness envoyées ici sont ignorées.
-    if (array_key_exists('postalCode', $b)) { $sets[] = 'zip=?'; $vals[] = ($b['postalCode'] !== '' ? $b['postalCode'] : null); }
+    // Code postal : format validé (défaut BE) ; la localité confirmée est
+    // stockée avec — c'est aussi le canal de la modal de rattrapage post-login.
+    if (array_key_exists('postalCode', $b)) {
+      $zp = trim((string) $b['postalCode']);
+      if ($zp === '') json_out(['error' => 'Code postal requis'], 400); // collecte obligatoire : pas d'effacement
+      $zp = zip_validate($zp, $b['country'] ?? 'BE');
+      if ($zp === null) json_out(['error' => 'Code postal invalide'], 400);
+      $sets[] = 'zip=?'; $vals[] = $zp;
+      if (col_exists('client', 'locality')) { $sets[] = 'locality=?'; $vals[] = zip_locality($zp, $b['locality'] ?? ''); }
+    }
     // Préférences éditées dans le profil : persistées pour être visibles depuis
     // la PWA aussi (colonnes partagées). Sans ça, ces choix restaient locaux au
     // navigateur et se perdaient au rechargement.
@@ -2899,14 +2921,21 @@ function dispatch($m, $p) {
       $b = body();
       $raison = trim((string) ($b['raison'] ?? ''));
       if ($raison === '') json_out(['error' => 'raison sociale requise'], 400);
+      // Code postal OBLIGATOIRE (collecte réseau, formulaire « Nouveau client »
+      // du BO franchisé) + localité confirmée, stockés sur ws_offices.
+      $obZip = trim((string) ($b['cp'] ?? ($b['postal_code'] ?? '')));
+      if ($obZip === '') json_out(['error' => 'Code postal requis'], 400);
+      $obZip = zip_validate($obZip, $b['country'] ?? 'BE');
+      if ($obZip === null) json_out(['error' => 'Code postal invalide'], 400);
+      $obLoc = zip_locality($obZip, $b['localite'] ?? ($b['locality'] ?? ''));
       $tourId = null;
       if (!empty($b['tour']) && $tblExists('ws_tours')) {
         $tr = row("SELECT id FROM ws_tours WHERE name=? LIMIT 1", [(string) $b['tour']]);
         if ($tr) $tourId = (int) $tr['id'];
       }
-      q("INSERT INTO ws_offices (tour_id, name, address, contact, email, phone, vat, status, deferred_billing_enabled, drop_minutes, active" . ($shopId ? ", shop_id" : "") . ")
-          VALUES (?,?,?,?,?,?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
-        [$tourId, $raison, (string) ($b['adr'] ?? ''), (string) ($b['contactNom'] ?? ''),
+      q("INSERT INTO ws_offices (tour_id, name, address, postal_code, city, contact, email, phone, vat, status, deferred_billing_enabled, drop_minutes, active" . ($shopId ? ", shop_id" : "") . ")
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
+        [$tourId, $raison, (string) ($b['adr'] ?? ''), $obZip, $obLoc, (string) ($b['contactNom'] ?? ''),
          (string) ($b['contactEmail'] ?? ''), (string) ($b['contactTel'] ?? ''), (string) ($b['tva'] ?? ''),
          'validated', (stripos((string) ($b['paiement'] ?? ''), 'compt') === false) ? 1 : 0,
          (float) ($b['drop'] ?? 5)]);
@@ -3494,6 +3523,9 @@ function user_payload($id) {
     'phonePrefix' => $u['phone_prefix'] ?? '+32',
     'phoneE164' => $u['phone_e164'] ?? null,
     'postalCode' => $u['zip'] ?? null,
+    'locality' => $u['locality'] ?? null,
+    // Pilote la modal de rattrapage post-login : true tant que le CP manque.
+    'needsPostcode' => (($u['zip'] ?? '') === '' || $u['zip'] === null),
     'authMethod' => $u['preferred_auth_method'] ?? null,
     'webshopUser' => (bool) ($u['webshop_user'] ?? 0),
     'pwaUser' => (bool) ($u['pwa_user'] ?? 0),
@@ -3563,6 +3595,48 @@ function col_exists($table, $col) {
     } catch (Throwable $e) { $cache[$k] = false; }
   }
   return $cache[$k];
+}
+
+/* Collecte du code postal client (exigence « partout ») — helpers partagés
+ * entre /auth/register, PATCH /auth/me et la modal de rattrapage post-login. */
+/* Format du code postal selon le pays (défaut BE). Retourne le CP normalisé
+ * (trim) ou null si le format est invalide. */
+function zip_validate($zip, $country = 'BE') {
+  $zip = trim((string) $zip);
+  $formats = [
+    'BE' => '/^[1-9][0-9]{3}$/',                  // 4 chiffres, pas de 0 initial
+    'NL' => '/^[1-9][0-9]{3}\s?[A-Za-z]{2}$/',
+    'FR' => '/^[0-9]{5}$/',
+    'LU' => '/^[0-9]{4}$/',
+    'DE' => '/^[0-9]{5}$/',
+  ];
+  $re = $formats[strtoupper((string) $country)] ?? '/^[A-Za-z0-9][A-Za-z0-9 \-]{1,9}$/';
+  return preg_match($re, $zip) ? $zip : null;
+}
+/* Localités du référentiel bpost pour un CP belge (un même code peut couvrir
+ * plusieurs localités, ex. 1300 → Limal · Wavre). [] si CP hors référentiel. */
+function zip_localities($zip) {
+  static $idx = null;
+  if ($idx === null) {
+    $idx = [];
+    $file = __DIR__ . '/data/zipcodes_be.json';
+    if (is_file($file)) {
+      foreach ((json_decode((string) file_get_contents($file), true) ?: []) as $e) {
+        $idx[(string) $e['zip']][] = (string) $e['city'];
+      }
+    }
+  }
+  return array_values(array_unique($idx[(string) $zip] ?? []));
+}
+/* Localité à stocker avec le CP : la localité confirmée par le client si elle
+ * appartient bien au référentiel de ce CP, sinon la première du référentiel
+ * (CP mono-localité ou saisie libre hors liste). null si CP inconnu. */
+function zip_locality($zip, $claimed = '') {
+  $loc = zip_localities($zip);
+  if (!$loc) return (trim((string) $claimed) !== '') ? trim((string) $claimed) : null;
+  $claimed = trim((string) $claimed);
+  foreach ($loc as $c) if ($claimed !== '' && mb_strtolower($c) === mb_strtolower($claimed)) return $c;
+  return $loc[0];
 }
 
 /* Date limite de demande de facture pour un ticket : dernier jour du mois du
