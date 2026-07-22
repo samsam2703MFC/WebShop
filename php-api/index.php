@@ -3129,21 +3129,24 @@ function dispatch($m, $p) {
       $obZip = zip_validate($obZip, $b['country'] ?? 'BE');
       if ($obZip === null) json_out(['error' => 'Code postal invalide'], 400);
       $obLoc = zip_locality($obZip, $b['localite'] ?? ($b['locality'] ?? ''));
+      // id_shop : déduit du code postal (chalandise) ; sinon saisi manuellement
+      // ($b['shop']) ; sinon la boutique courante (portée franchisé).
+      $obShop = (isset($b['shop']) && $b['shop'] !== '') ? (int) $b['shop'] : (zip_shop($obZip) ?? $shopId);
       $tourId = null;
       if (!empty($b['tour']) && $tblExists('ws_tours')) {
         $tr = row("SELECT id FROM ws_tours WHERE name=? LIMIT 1", [(string) $b['tour']]);
         if ($tr) $tourId = (int) $tr['id'];
       }
-      q("INSERT INTO ws_offices (tour_id, name, address, postal_code, city, contact, email, phone, vat, status, deferred_billing_enabled, drop_minutes, active" . ($shopId ? ", shop_id" : "") . ")
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
+      q("INSERT INTO ws_offices (tour_id, name, address, postal_code, city, contact, email, phone, vat, status, deferred_billing_enabled, drop_minutes, active" . ($obShop ? ", shop_id" : "") . ")
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1" . ($obShop ? "," . (int) $obShop : "") . ")",
         [$tourId, $raison, (string) ($b['adr'] ?? ''), $obZip, $obLoc, (string) ($b['contactNom'] ?? ''),
          (string) ($b['contactEmail'] ?? ''), (string) ($b['contactTel'] ?? ''), (string) ($b['tva'] ?? ''),
          'validated', (stripos((string) ($b['paiement'] ?? ''), 'compt') === false) ? 1 : 0,
          (float) ($b['drop'] ?? 5)]);
       $officeId = (int) db()->lastInsertId();
       if ($tblExists('ws_office_delivery_sites')) {
-        q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, tournee_id, site_access_minutes, active" . ($shopId ? ", shop_id" : "") . ")
-            VALUES (?,?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
+        q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, tournee_id, site_access_minutes, active" . ($obShop ? ", shop_id" : "") . ")
+            VALUES (?,?,?,?,?,?,1" . ($obShop ? "," . (int) $obShop : "") . ")",
           [$officeId, $raison . ' — ' . ((string) ($b['office'] ?? 'Site')), (string) ($b['adr'] ?? ''),
            (string) ($b['etage'] ?? ''), $tourId, (float) ($b['acc'] ?? 6)]);
       }
@@ -3902,6 +3905,20 @@ function zip_locality($zip, $claimed = '') {
   $claimed = trim((string) $claimed);
   foreach ($loc as $c) if ($claimed !== '' && mb_strtolower($c) === mb_strtolower($claimed)) return $c;
   return $loc[0];
+}
+/* Shop (id_shop) déduit du code postal via la zone de chalandise
+ * (ws_franchisor_catchment : le CP appartient au territoire d'une boutique).
+ * Rend l'id de la boutique qui couvre ce CP, sinon null → saisie manuelle. */
+function zip_shop($zip) {
+  $zip = preg_replace('/\D+/', '', (string) $zip);
+  if ($zip === '') return null;
+  if (!row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_franchisor_catchment'")) return null;
+  if (!col_exists('ws_franchisor_catchment', 'shop_id')) return null;
+  $r = row("SELECT shop_id FROM ws_franchisor_catchment
+             WHERE active=1 AND shop_id IS NOT NULL
+               AND postcodes REGEXP CONCAT('(^|[^0-9])', ?, '($|[^0-9])')
+             ORDER BY shop_id LIMIT 1", [$zip]);
+  return $r && $r['shop_id'] !== null ? (int) $r['shop_id'] : null;
 }
 
 /* Date limite de demande de facture pour un ticket : dernier jour du mois du
