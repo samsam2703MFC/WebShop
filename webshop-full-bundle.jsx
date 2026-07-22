@@ -2392,13 +2392,31 @@ if (typeof document !== 'undefined' && !document.getElementById('ws-bureau-style
   document.head.appendChild(_st);
 }
 function BureauZoneModal({ open, onClose }) {
+  const frameRef = React.useRef(null);
+  const [h, setH] = React.useState(320);
+  React.useEffect(() => {
+    if (!open) return;
+    const fit = () => {
+      try {
+        const d = frameRef.current && frameRef.current.contentDocument;
+        const body = d && (d.querySelector('.lb-wrap') || d.body);
+        if (body) {
+          const max = Math.round((window.innerHeight || 800) * 0.85);
+          setH(Math.min(Math.max(body.scrollHeight + 24, 240), max));
+        }
+      } catch (e) { /* même origine attendue ; sinon on garde la hauteur par défaut */ }
+    };
+    fit();
+    const id = setInterval(fit, 350);      // suit l'expansion du formulaire « hors zone »
+    return () => clearInterval(id);
+  }, [open]);
   if (!open) return null;
   return (
     <div className="ws-modal" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()}
-        style={{ position: 'relative', width: 'min(680px, 94vw)', height: 'min(80vh, 760px)',
+        style={{ position: 'relative', width: 'min(680px, 94vw)', height: h,
                  background: '#241a16', borderRadius: 16, overflow: 'hidden',
-                 boxShadow: '0 24px 70px rgba(0,0,0,.42)' }}>
+                 boxShadow: '0 24px 70px rgba(0,0,0,.42)', transition: 'height .18s ease' }}>
         <button type="button" onClick={onClose} aria-label="Fermer"
           style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, width: 32, height: 32,
                    borderRadius: '50%', border: 'none', cursor: 'pointer', color: '#fff',
@@ -2406,7 +2424,7 @@ function BureauZoneModal({ open, onClose }) {
                    alignItems: 'center', justifyContent: 'center' }}>
           <Pict d={ICONS.close} s={14}/>
         </button>
-        <iframe title="Livraison au bureau" src="/landing/livraison-bureau.html"
+        <iframe ref={frameRef} title="Livraison au bureau" src="/landing/livraison-bureau.html"
           style={{ width: '100%', height: '100%', border: 0, display: 'block' }} />
       </div>
     </div>
