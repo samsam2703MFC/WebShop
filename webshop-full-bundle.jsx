@@ -1756,7 +1756,13 @@ function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, us
           deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}/>
       </div>
       <div className="ws-nav__right">
-        {window.LangChip && <window.LangChip />}
+        {/* Desktop : sélecteur de langue. Mobile : masqué (voir .ws-nav__lang),
+            remplacé par l'icône « i » -> landing « Livraison au bureau ». */}
+        {window.LangChip && <window.LangChip className="ws-nav__lang" />}
+        <a className="ws-nav__info" href="/landing/livraison-bureau.html"
+           aria-label="Livraison au bureau — informations" title="Livraison au bureau">
+          <Pict d={ICONS.info} s={16}/>
+        </a>
         {window.AllergenNavButton && <window.AllergenNavButton onClick={onAllergens}/>}
         <button className="ws-nav__icon" aria-label="Compte" onClick={onAccount}>
           {user
