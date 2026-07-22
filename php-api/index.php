@@ -3144,7 +3144,11 @@ function dispatch($m, $p) {
                                      : row("SELECT id FROM ws_offices WHERE name=? AND active=1", [$bn]);
             if ($orow) $officeId = (int) $orow['id'];
           }
-          $name  = trim((string) ($r['office'] ?? ($r['name'] ?? '')));
+          // Le NOM du site prime (champ name du formulaire / de l'API) ; repli sur
+          // office (mini-form « + Site »). « — » = placeholder, pas un nom.
+          $name  = trim((string) ($r['name'] ?? ($r['office'] ?? '')));
+          if ($name === '—') $name = trim((string) ($r['office'] ?? ''));
+          if ($name === '—') $name = '';
           $addr  = trim((string) ($r['adr'] ?? ($r['address'] ?? '')));
           $floor = trim((string) ($r['etage'] ?? ($r['floor_room'] ?? '')));
           $cn    = trim((string) ($r['contact_name'] ?? ''));
