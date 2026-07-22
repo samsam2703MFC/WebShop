@@ -3275,11 +3275,20 @@ function dispatch($m, $p) {
           // de liaison bureau↔site est créée si elle n'existe pas encore.
           $siteAdr = trim((string) ($r['site'] ?? ''));
           if ($siteAdr !== '' && $rid && $tblExists('ws_office_delivery_sites')) {
-            $ps = row("SELECT id FROM ws_office_delivery_sites WHERE office_client_id=? AND address=? LIMIT 1", [$rid, $siteAdr]);
+            // Un site DOIT être rattaché à une tournée : repli sur la tournée
+            // stockée de l'office si le formulaire n'en a pas résolu une.
+            $pairTour = $tourId;
+            if ($pairTour === null && $hasTour) {
+              $ot = row("SELECT tour_id FROM ws_offices WHERE id=?", [$rid]);
+              if ($ot && $ot['tour_id'] !== null) $pairTour = (int) $ot['tour_id'];
+            }
+            $ps = row("SELECT id, tournee_id FROM ws_office_delivery_sites WHERE office_client_id=? AND address=? LIMIT 1", [$rid, $siteAdr]);
             if (!$ps) {
               q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, tournee_id, site_access_minutes, active" . ($shopId ? ", shop_id" : "") . ")
                    VALUES (?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
-                [$rid, ($name !== '' ? $name : 'Bureau') . ' @ ' . mb_substr($siteAdr, 0, 80), $siteAdr, $tourId, 6]);
+                [$rid, ($name !== '' ? $name : 'Bureau') . ' @ ' . mb_substr($siteAdr, 0, 80), $siteAdr, $pairTour, 6]);
+            } elseif ($ps['tournee_id'] === null && $pairTour !== null) {
+              q("UPDATE ws_office_delivery_sites SET tournee_id=? WHERE id=?", [$pairTour, (int) $ps['id']]);
             }
           }
         }
