@@ -2360,10 +2360,12 @@ function dispatch($m, $p) {
       $rs = rows("SELECT name, postcodes FROM ws_franchisor_catchment WHERE active=1" .
                  ($hasShop && $shopId ? " AND (shop_id = " . (int) $shopId . " OR shop_id IS NULL)" : "") .
                  " ORDER BY name");
-      $out = [];
+      $out = []; $seen = [];
       foreach ($rs as $c) {
         foreach (preg_split('/[^0-9]+/', (string) $c['postcodes'], -1, PREG_SPLIT_NO_EMPTY) as $one) {
-          if (preg_match('/^[0-9]{4}$/', $one)) $out[] = ['cp' => $one, 'zone' => $c['name']];
+          if (!preg_match('/^[0-9]{4}$/', $one) || isset($seen[$one])) continue;
+          $seen[$one] = true;
+          $out[] = ['cp' => $one, 'zone' => $c['name'], 'loc' => implode(' · ', zip_localities($one))];
         }
       }
       json_out($out);
