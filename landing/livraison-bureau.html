@@ -4,20 +4,23 @@
 <meta charset="utf-8">
 <title>Livraison au bureau · L'Atelier By</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="L'Atelier By livre vos bureaux. Choisissez votre zone de livraison ou signalez-nous la vôtre.">
+<meta name="description" content="L'Atelier By livre vos bureaux — pains, viennoiseries et traiteur. Production centralisée, points de distribution, logistique coordonnée. Choisissez votre zone.">
 <meta name="theme-color" content="#241a16">
 <link rel="icon" href="favicon-32.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="webshop-landing-b2b.css?v=4">
 <style>
-  /* Page complète : fond crème clair (écrase le body sombre de la CSS landing),
-     typographie marque. La mise en page est portée par livraison-bureau.js. */
-  html, body { margin: 0; background: #fdf6f0; color: #241a16;
-    font-family: var(--font-ui, system-ui, -apple-system, 'Segoe UI', sans-serif); }
+  html, body, #root { margin: 0; }
 </style>
 </head>
 <body>
 <div id="root"></div>
-<script src="livraison-bureau.js?v=7"></script>
+
+<!-- React 18 UMD (no build step — matches the rest of the project) -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+
+<!-- Landing page component (plain ES6 + React.createElement — no Babel needed) -->
+<script src="webshop-landing-b2b.js?v=4"></script>
 </body>
 </html>
