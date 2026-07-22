@@ -1970,6 +1970,26 @@ function dispatch($m, $p) {
       json_out($out);
     }
 
+    // ── Prospects B2B non rattachés (id_main_shop = 0) — nouveaux « clients bureau »
+    //    encodés depuis la landing dont le code postal n'est couvert par aucun
+    //    franchisé. Affichés dans la Console franchiseur, menu « Prospect ». ──
+    if ($m === 'GET' && $p === '/franchisor/prospects') {
+      if (!row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='client'")) json_out([]);
+      $hasB2b = col_exists('client', 'is_b2b');
+      $hasOD  = col_exists('client', 'office_delivery');
+      $hasSt  = col_exists('client', 'status');
+      $hasLoc = col_exists('client', 'locality');
+      $hasCr  = col_exists('client', 'created_at');
+      $where = "c.id_main_shop = 0";
+      if ($hasB2b) $where .= " AND c.is_b2b = 1";
+      json_out(rows("SELECT c.id, c.name, c.surname, c.email, c.phone, c.zip" .
+                    ($hasLoc ? ", c.locality" : ", NULL AS locality") .
+                    ($hasSt  ? ", c.status"   : ", NULL AS status") .
+                    ($hasOD  ? ", c.office_delivery" : ", 1 AS office_delivery") .
+                    ($hasCr  ? ", c.created_at" : ", NULL AS created_at") . "
+                       FROM client c WHERE $where ORDER BY c.id DESC LIMIT 500"));
+    }
+
     // ── Zones de chalandise (primaires) — gérées par le franchiseur, par shop. ──
     if ($m === 'GET' && $p === '/franchisor/catchment') {
       if (!row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_franchisor_catchment'")) json_out([]);
