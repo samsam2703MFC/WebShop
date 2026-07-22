@@ -3162,6 +3162,47 @@ function dispatch($m, $p) {
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
       }
 
+      // Client B2B (formulaire « Client B2B (société) ») → vraie table client.
+      // Upsert par TVA (normalisée) puis par raison sociale : company_name,
+      // tax_number, siège (street/zip/city), is_b2b=1 ; création → rattachée à
+      // la boutique courante, office_delivery=1, status=1 (à valider).
+      if ($tbl === 'fr_clients' && $tblExists('client')) {
+        $n = 0;
+        foreach ($rows2 as $r) {
+          $tva  = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string) ($r['tva'] ?? '')));
+          $rais = trim((string) ($r['raison'] ?? ''));
+          if ($tva === '' && $rais === '') continue;
+          $ex = null;
+          if ($tva !== '' && col_exists('client', 'tax_number'))
+            $ex = row("SELECT id FROM client WHERE REPLACE(REPLACE(REPLACE(UPPER(COALESCE(tax_number,'')),'.',''),' ',''),'-','')=? LIMIT 1", [$tva]);
+          if (!$ex && $rais !== '' && col_exists('client', 'company_name'))
+            $ex = row("SELECT id FROM client WHERE TRIM(COALESCE(company_name,''))=? LIMIT 1", [$rais]);
+          $sets = []; $uv = [];
+          if ($rais !== '' && col_exists('client', 'company_name')) { $sets[] = 'company_name=?'; $uv[] = $rais; }
+          if ($tva !== '' && col_exists('client', 'tax_number'))    { $sets[] = 'tax_number=?';   $uv[] = $tva; }
+          foreach (['adresse' => 'street', 'cp' => 'zip', 'ville' => 'city'] as $fk => $col) {
+            if (!empty($r[$fk]) && col_exists('client', $col)) { $sets[] = "$col=?"; $uv[] = trim((string) $r[$fk]); }
+          }
+          if (col_exists('client', 'is_b2b')) $sets[] = 'is_b2b=1';
+          if ($ex) {
+            if ($sets) { $uv[] = (int) $ex['id']; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $uv); }
+            $n++;
+          } else {
+            $cols = ['id_main_shop', 'name', 'zip', 'city', 'street', 'active', 'source_channel', 'webshop_user'];
+            $iv = [(int) ($shopId ?: 0), $rais ?: 'Client B2B', trim((string) ($r['cp'] ?? '')),
+                   trim((string) ($r['ville'] ?? '')), trim((string) ($r['adresse'] ?? '')), 1, 'webshop', 0];
+            if (col_exists('client', 'company_name'))    { $cols[] = 'company_name';    $iv[] = $rais ?: null; }
+            if ($tva !== '' && col_exists('client', 'tax_number')) { $cols[] = 'tax_number'; $iv[] = $tva; }
+            if (col_exists('client', 'is_b2b'))          { $cols[] = 'is_b2b';          $iv[] = 1; }
+            if (col_exists('client', 'office_delivery')) { $cols[] = 'office_delivery'; $iv[] = 1; }
+            if (col_exists('client', 'status'))          { $cols[] = 'status';          $iv[] = 1; }
+            q("INSERT INTO client (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $iv);
+            $n++;
+          }
+        }
+        json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
+      }
+
       // Bureau (office) → ws_offices : création + édition complètes — statut
       // (toggle pending/validated), TVA (VIES), facturation différée (toggle),
       // tournée par défaut. La fiche client liée (client_id) reçoit TVA +
