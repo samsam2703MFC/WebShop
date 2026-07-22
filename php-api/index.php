@@ -2688,9 +2688,12 @@ function dispatch($m, $p) {
     // ── Zone de chalandise marque (ws_franchisor_catchment — migration 0012). ──
     if ($m === 'GET' && $p === '/franchisee/ws-franchisor-catchment') {
       if (!$tblExists('ws_franchisor_catchment')) json_out([]);
-      $rs = rows("SELECT id, name, postcodes, exclusive FROM ws_franchisor_catchment WHERE active=1 ORDER BY id");
+      $hasShopC = col_exists('ws_franchisor_catchment', 'shop_id');
+      $rs = rows("SELECT id, name, postcodes, exclusive" . ($hasShopC ? ", shop_id" : ", NULL AS shop_id") . "
+                    FROM ws_franchisor_catchment WHERE active=1 ORDER BY id");
       json_out(array_map(fn ($r) => ['id' => (int) $r['id'], 'name' => $r['name'],
-        'cp' => $r['postcodes'] ?: '—', 'exclusif' => (bool) $r['exclusive']], $rs));
+        'cp' => $r['postcodes'] ?: '—', 'exclusif' => (bool) $r['exclusive'],
+        'shop_id' => $r['shop_id'] !== null ? (int) $r['shop_id'] : null], $rs));
     }
 
     // ── Dispo produit — exceptions réelles : ws_products.active (réseau) +
