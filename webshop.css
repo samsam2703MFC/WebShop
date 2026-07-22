@@ -146,6 +146,24 @@
   border-radius: 50%;
   position: relative;
 }
+/* Icône « i » -> landing « Livraison au bureau ». Masquée en desktop
+   (le sélecteur de langue est affiché) ; visible en mobile à la place de la
+   langue (voir @media 720px). Reprend l'anatomie de .ws-nav__icon. */
+.ws-nav__info {
+  display: none;
+  width: 32px; height: 32px;
+  place-items: center;
+  color: var(--color-text-muted);
+  border-radius: 50%;
+  text-decoration: none;
+}
+/* Vue mobile : pas de sélecteur de langue ; l'icône « i » prend sa place.
+   Sélecteur descendant (.ws-nav__right …) pour l'emporter sur .ws-langchip
+   défini plus tard dans webshop-i18n.css (spécificité égale sinon). */
+@media (max-width: 720px) {
+  .ws-nav__right .ws-nav__lang { display: none; }
+  .ws-nav__right .ws-nav__info { display: inline-grid; }
+}
 .ws-nav__cart-badge {
   position: absolute; top: 0; right: -2px;
   min-width: 16px; height: 16px;
