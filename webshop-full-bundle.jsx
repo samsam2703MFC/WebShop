@@ -554,9 +554,11 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                    animation: 'wsBureauPulse 2.2s infinite' }}>i</button>
         {hover && (
-          <span role="tooltip" style={{ position: 'absolute', top: '150%', right: 0, width: 216,
-            background: '#241a16', color: '#fff', borderRadius: 10, padding: '10px 12px',
-            font: '500 11.5px/1.45 system-ui', boxShadow: '0 8px 24px rgba(0,0,0,.28)', zIndex: 70, textAlign: 'left' }}>
+          <span role="tooltip" style={{ position: 'absolute', top: '160%', right: 0, width: 216,
+            background: '#241a16', color: '#fff', borderRadius: 14, padding: '11px 13px',
+            font: '500 11.5px/1.45 system-ui', boxShadow: '0 10px 28px rgba(0,0,0,.3)', zIndex: 70, textAlign: 'left' }}>
+            <span aria-hidden="true" style={{ position: 'absolute', top: -5, right: 15, width: 11, height: 11,
+              background: '#241a16', transform: 'rotate(45deg)', borderRadius: 3 }} />
             Pas encore de bureau&nbsp;? Vérifiez si votre zone est desservie et faites votre demande.
           </span>
         )}
@@ -2396,9 +2398,17 @@ function BureauZoneModal({ open, onClose }) {
   const [h, setH] = React.useState(320);
   React.useEffect(() => {
     if (!open) return;
+    let styled = false;
     const fit = () => {
       try {
         const d = frameRef.current && frameRef.current.contentDocument;
+        if (d && d.head && !styled) {
+          // La landing a body{background:#241a16} sans couleur de texte → texte noir
+          // illisible. On force un fond abricot + texte sombre (même origine).
+          const st = d.createElement('style');
+          st.textContent = 'html,body{background:#e8a15c!important;color:#241a16!important}';
+          d.head.appendChild(st); styled = true;
+        }
         const body = d && (d.querySelector('.lb-wrap') || d.body);
         if (body) {
           const max = Math.round((window.innerHeight || 800) * 0.85);
@@ -2415,12 +2425,12 @@ function BureauZoneModal({ open, onClose }) {
     <div className="ws-modal" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()}
         style={{ position: 'relative', width: 'min(680px, 94vw)', height: h,
-                 background: '#241a16', borderRadius: 16, overflow: 'hidden',
+                 background: '#e8a15c', borderRadius: 16, overflow: 'hidden',
                  boxShadow: '0 24px 70px rgba(0,0,0,.42)', transition: 'height .18s ease' }}>
         <button type="button" onClick={onClose} aria-label="Fermer"
           style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, width: 32, height: 32,
-                   borderRadius: '50%', border: 'none', cursor: 'pointer', color: '#fff',
-                   background: 'rgba(255,255,255,.16)', display: 'inline-flex',
+                   borderRadius: '50%', border: 'none', cursor: 'pointer', color: '#241a16',
+                   background: 'rgba(36,26,22,.16)', display: 'inline-flex',
                    alignItems: 'center', justifyContent: 'center' }}>
           <Pict d={ICONS.close} s={14}/>
         </button>
