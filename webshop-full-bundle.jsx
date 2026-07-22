@@ -554,7 +554,7 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                    animation: 'wsBureauPulse 2.2s infinite' }}>i</button>
         {hover && (
-          <span role="tooltip" style={{ position: 'absolute', bottom: '140%', right: 0, width: 216,
+          <span role="tooltip" style={{ position: 'absolute', top: '150%', right: 0, width: 216,
             background: '#241a16', color: '#fff', borderRadius: 10, padding: '10px 12px',
             font: '500 11.5px/1.45 system-ui', boxShadow: '0 8px 24px rgba(0,0,0,.28)', zIndex: 70, textAlign: 'left' }}>
             Pas encore de bureau&nbsp;? Vérifiez si votre zone est desservie et faites votre demande.
