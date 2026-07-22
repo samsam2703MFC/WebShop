@@ -2395,10 +2395,19 @@ function BureauZoneModal({ open, onClose }) {
   if (!open) return null;
   return (
     <div className="ws-modal" onClick={onClose}>
-      <div className="ws-modal__panel" onClick={(e) => e.stopPropagation()}>
-        <span className="ws-modal__handle" aria-hidden="true" />
-        <button className="ws-modal__close" onClick={onClose} aria-label="Fermer"><Pict d={ICONS.close} s={14}/></button>
-        <iframe title="Livraison au bureau" src="/landing/livraison-bureau.html" style={{ width: '100%', height: '70vh', border: 0, borderRadius: 12 }} />
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ position: 'relative', width: 'min(680px, 94vw)', height: 'min(80vh, 760px)',
+                 background: '#241a16', borderRadius: 16, overflow: 'hidden',
+                 boxShadow: '0 24px 70px rgba(0,0,0,.42)' }}>
+        <button type="button" onClick={onClose} aria-label="Fermer"
+          style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, width: 32, height: 32,
+                   borderRadius: '50%', border: 'none', cursor: 'pointer', color: '#fff',
+                   background: 'rgba(255,255,255,.16)', display: 'inline-flex',
+                   alignItems: 'center', justifyContent: 'center' }}>
+          <Pict d={ICONS.close} s={14}/>
+        </button>
+        <iframe title="Livraison au bureau" src="/landing/livraison-bureau.html"
+          style={{ width: '100%', height: '100%', border: 0, display: 'block' }} />
       </div>
     </div>
   );
