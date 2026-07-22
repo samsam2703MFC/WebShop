@@ -2413,9 +2413,16 @@ function dispatch($m, $p) {
       $raw = @file_get_contents('https://ec.europa.eu/taxation_customs/vies/rest-api/ms/' . $mv[1] . '/vat/' . rawurlencode($mv[2]), false, $ctx);
       $j = $raw !== false ? json_decode($raw, true) : null;
       if (!is_array($j) || !array_key_exists('isValid', $j)) json_out(['valid' => null, 'error' => 'vies_unavailable'], 502);
+      // Adresse VIES découpée : « Avenue Thomas Edison 111 1402 Nivelles »
+      // → street (rue + n°), zip (4 chiffres), city — pour remplir les bons champs.
+      $addr1 = trim(preg_replace('/\s+/', ' ', (string) ($j['address'] ?? '')));
+      $street = null; $azip = null; $acity = null;
+      if (preg_match('/^(.*?)[\s,]*\b(\d{4})\s+(\D.*)$/u', $addr1, $ma)) {
+        $street = trim($ma[1], " ,") ?: null; $azip = $ma[2]; $acity = trim($ma[3]) ?: null;
+      }
       json_out(['valid' => !empty($j['isValid']),
                 'name' => trim((string) ($j['name'] ?? '')) !== '---' ? (trim((string) ($j['name'] ?? '')) ?: null) : null,
-                'address' => trim(preg_replace('/\s+/', ' ', (string) ($j['address'] ?? ''))) ?: null]);
+                'address' => $addr1 ?: null, 'street' => $street, 'zip' => $azip, 'city' => $acity]);
     }
 
     // ── CP déjà affectés à chaque tournée (préremplissage du formulaire Tournée). ──
