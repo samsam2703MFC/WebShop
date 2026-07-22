@@ -546,7 +546,7 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
       <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flex: 'none', marginLeft: 4 }}
         onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
         <button type="button" aria-label="Pas encore de bureau ?"
-          onClick={(e) => { e.stopPropagation(); e.preventDefault(); window.open('/landing/livraison-bureau.html#contact', '_blank', 'noopener'); }}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); window.open('/landing/livraison-bureau.html', '_blank', 'noopener'); }}
           style={{ width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer', flex: 'none',
                    background: '#c17a2a', color: '#fff', font: '700 11px/1 system-ui',
                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -3054,7 +3054,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           <div className="ws-acc__card ws-acc__card--empty">
             <p className="ws-acc__note">Aucun bureau associé. Liez-vous à un bureau de livraison de votre boutique.</p>
             <button className="ws-cta ws-cta--block" onClick={openSitePicker}>Lier un bureau</button>
-            <button type="button" className="ws-acc__unplug" onClick={() => window.open('/landing/livraison-bureau.html#contact', '_blank', 'noopener')}>Ma zone est-elle desservie&nbsp;?</button>
+            <button type="button" className="ws-acc__unplug" onClick={() => window.open('/landing/livraison-bureau.html', '_blank', 'noopener')}>Ma zone est-elle desservie&nbsp;?</button>
           </div>
         )}
 
