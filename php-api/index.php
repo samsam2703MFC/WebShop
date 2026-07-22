@@ -2744,8 +2744,13 @@ function dispatch($m, $p) {
     // Comptes Office en attente de validation — ws_offices.status='pending'.
     if ($m === 'GET' && $p === '/franchisee/fr-validations') {
       if (!$tblExists('ws_offices')) json_out([]);
+      // Scopé boutique : un bureau « pending » n'apparaît que chez SON franchisé
+      // (ws_offices.shop_id, posé par le trigger 0021 = client.id_main_shop).
+      // shop_id NULL = bureaux historiques d'avant 0021 → visibles partout.
+      $vScope = ($shopId && col_exists('ws_offices', 'shop_id'))
+        ? " AND (shop_id = " . (int) $shopId . " OR shop_id IS NULL)" : "";
       $rs = rows("SELECT id, name, email, vat, DATE_FORMAT(created_at,'%d/%m') AS d FROM ws_offices
-                   WHERE status='pending' ORDER BY created_at DESC LIMIT 50");
+                   WHERE status='pending' AND active=1$vScope ORDER BY created_at DESC LIMIT 50");
       json_out(array_map(function ($r) {
         $init = strtoupper(mb_substr($r['name'], 0, 1) . (preg_match('/\s(\S)/u', $r['name'], $mm) ? $mm[1] : ''));
         return ['id' => 'p' . $r['id'], 'init' => $init, 'raison' => $r['name'], 'email' => $r['email'] ?: '—',
