@@ -695,14 +695,17 @@ function dispatch($m, $p) {
   }
 
   /* ── Zones de livraison bureau (public) — alimente la droplist de la landing :
-     tournées ACTIVES groupées par zone principale (option = zone secondaire).
+     tournées ACTIVES avec leurs codes postaux (zone de chalandise).
      Une tournée en préparation (active=0) n'apparaît jamais. ── */
   if ($m === 'GET' && $p === '/delivery-zones') {
-    json_out(rows("SELECT t.id, t.name AS tour, t.zone_secondary AS zoneSecondary,
-                          z.id AS zoneId, z.name AS zonePrincipal, z.sort_order AS zoneSort
-                     FROM ws_tours t LEFT JOIN ws_delivery_zones z ON z.id = t.zone_id
+    $hasTP = col_exists('ws_tour_postcodes', 'postcode');
+    json_out(rows("SELECT t.id, t.name AS tour" .
+      ($hasTP ? ", GROUP_CONCAT(DISTINCT tp.postcode ORDER BY tp.postcode SEPARATOR ' · ') AS postcodes" : ", NULL AS postcodes") . "
+                     FROM ws_tours t" .
+      ($hasTP ? " LEFT JOIN ws_tour_postcodes tp ON tp.tour_id = t.id" : "") . "
                     WHERE t.active = 1
-                    ORDER BY (z.sort_order IS NULL), z.sort_order, z.name, t.name"));
+                    GROUP BY t.id, t.name
+                    ORDER BY t.name"));
   }
 
   /* ── Modalités d'une zone/tournée (public) : boutique qui livre + jours,
@@ -1986,7 +1989,7 @@ function dispatch($m, $p) {
       // Un CP ne peut appartenir qu'à une seule zone primaire.
       foreach (preg_split('/[^0-9]+/', $cp, -1, PREG_SPLIT_NO_EMPTY) as $one) {
         $hit = row("SELECT name FROM ws_franchisor_catchment WHERE active=1 AND postcodes REGEXP CONCAT('(^|[^0-9])', ?, '($|[^0-9])')" . ($id ? " AND id <> " . $id : ""), [$one]);
-        if ($hit) json_out(['error' => "CP $one déjà attribué à la zone primaire « {$hit['name']} »", 'cp' => $one], 409);
+        if ($hit) json_out(['error' => "CP $one déjà attribué à la zone de chalandise « {$hit['name']} »", 'cp' => $one], 409);
       }
       $hasShop = (bool) row("SELECT 1 x FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='ws_franchisor_catchment' AND column_name='shop_id'");
       $shop = isset($b['shop_id']) && $b['shop_id'] !== '' ? (int) $b['shop_id'] : null;
@@ -2346,6 +2349,32 @@ function dispatch($m, $p) {
         'vehicule' => 'Standard', 'franco' => '—', 'delai' => 'J+1',
         'service' => (int) (float) ws_param('cost_service_minutes', '15'),
         'catchment' => $z['catchment_name'] ?: ''], $rs));
+    }
+
+    // ── Zone de chalandise : codes postaux attribués à la boutique (pool des tournées). ──
+    // Alimente le sélecteur de CP du formulaire « Créer une tournée » : le franchisé ne
+    // peut cocher que des codes postaux de SA chalandise (ws_franchisor_catchment).
+    if ($m === 'GET' && $p === '/franchisee/catchment-postcodes') {
+      if (!$tblExists('ws_franchisor_catchment')) json_out([]);
+      $hasShop = (bool) row("SELECT 1 x FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='ws_franchisor_catchment' AND column_name='shop_id'");
+      $rs = rows("SELECT name, postcodes FROM ws_franchisor_catchment WHERE active=1" .
+                 ($hasShop && $shopId ? " AND (shop_id = " . (int) $shopId . " OR shop_id IS NULL)" : "") .
+                 " ORDER BY name");
+      $out = [];
+      foreach ($rs as $c) {
+        foreach (preg_split('/[^0-9]+/', (string) $c['postcodes'], -1, PREG_SPLIT_NO_EMPTY) as $one) {
+          if (preg_match('/^[0-9]{4}$/', $one)) $out[] = ['cp' => $one, 'zone' => $c['name']];
+        }
+      }
+      json_out($out);
+    }
+
+    // ── CP déjà affectés à chaque tournée (préremplissage du formulaire Tournée). ──
+    if ($m === 'GET' && $p === '/franchisee/ws-tour-postcodes') {
+      if (!$tblExists('ws_tour_postcodes')) json_out([]);
+      json_out(rows("SELECT tp.tour_id, tp.postcode FROM ws_tour_postcodes tp" .
+                    ($shopId ? " JOIN ws_tours t ON t.id = tp.tour_id AND t.shop_id = " . (int) $shopId : "") .
+                    " ORDER BY tp.tour_id, tp.postcode"));
     }
 
     // ── Sites de livraison (ws_office_delivery_sites) — table réelle complète. ──
@@ -2905,8 +2934,20 @@ function dispatch($m, $p) {
         json_out(['ok' => !$rejected, 'mode' => 'typed', 'n' => $n, 'rejected' => $rejected]);
       }
 
-      // Tournées → zones secondaires (ws_tour_zones) + zone principale.
-      if ($tbl === 'ws_tours' && $tblExists('ws_tour_zones')) {
+      // Tournées → codes postaux (ws_tour_postcodes, ⊆ zone de chalandise de la boutique).
+      // Une tournée porte directement ses CP ; un même CP peut servir plusieurs tournées.
+      if ($tbl === 'ws_tours' && ($tblExists('ws_tour_postcodes') || $tblExists('ws_tour_zones'))) {
+        $hasTP = $tblExists('ws_tour_postcodes');
+        // Pool autorisé = codes postaux de la chalandise attribuée à la boutique.
+        $pool = [];
+        if ($hasTP && $tblExists('ws_franchisor_catchment')) {
+          $hasShopC = (bool) row("SELECT 1 x FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='ws_franchisor_catchment' AND column_name='shop_id'");
+          $poolRows = rows("SELECT postcodes FROM ws_franchisor_catchment WHERE active=1" .
+                           ($hasShopC && $shopId ? " AND (shop_id = " . (int) $shopId . " OR shop_id IS NULL)" : ""));
+          foreach ($poolRows as $pr) {
+            foreach (preg_split('/[^0-9]+/', (string) $pr['postcodes'], -1, PREG_SPLIT_NO_EMPTY) as $one) $pool[$one] = true;
+          }
+        }
         $n = 0;
         foreach ($rows2 as $r) {
           $rid = (string) ($r['id'] ?? '');
@@ -2923,15 +2964,30 @@ function dispatch($m, $p) {
               $tid = (int) db()->lastInsertId();
             }
           } else { continue; }
-          $zs = [];
-          foreach (['zone', 'zonePrim', 'zoneSec'] as $k) {
-            if (empty($r[$k])) continue;
-            $zr = row("SELECT id FROM ws_delivery_zones WHERE name=? OR id=? LIMIT 1", [(string) $r[$k], (string) $r[$k]]);
-            if ($zr) $zs[$k] = (int) $zr['id'];
+          // Codes postaux de la tournée (nouveau modèle). Remplacement intégral, ⊆ chalandise.
+          if ($hasTP && array_key_exists('postcodes', $r)) {
+            $wanted = is_array($r['postcodes'])
+              ? $r['postcodes']
+              : preg_split('/[^0-9]+/', (string) $r['postcodes'], -1, PREG_SPLIT_NO_EMPTY);
+            q("DELETE FROM ws_tour_postcodes WHERE tour_id=?", [$tid]);
+            foreach (array_unique($wanted) as $cp1) {
+              $cp1 = trim((string) $cp1);
+              if (!preg_match('/^[0-9]{4}$/', $cp1)) continue;
+              if ($pool && !isset($pool[$cp1])) continue;                 // hors chalandise → ignoré
+              q("INSERT IGNORE INTO ws_tour_postcodes (tour_id, postcode) VALUES (?,?)", [$tid, $cp1]);
+              $n++;
+            }
           }
-          if (isset($zs['zonePrim']) || isset($zs['zone'])) q("UPDATE ws_tours SET zone_id=? WHERE id=?", [$zs['zonePrim'] ?? $zs['zone'], $tid]);
-          q("DELETE FROM ws_tour_zones WHERE tour_id=?", [$tid]);
-          foreach (array_unique(array_values($zs)) as $zid) { q("INSERT IGNORE INTO ws_tour_zones (tour_id, zone_id) VALUES (?,?)", [$tid, $zid]); $n++; }
+          // Compat héritée : ws_tour_zones/zone_id (zones « secondaires » retirées de l'UI).
+          if ($tblExists('ws_tour_zones')) {
+            $zs = [];
+            foreach (['zone', 'zonePrim', 'zoneSec'] as $k) {
+              if (empty($r[$k])) continue;
+              $zr = row("SELECT id FROM ws_delivery_zones WHERE name=? OR id=? LIMIT 1", [(string) $r[$k], (string) $r[$k]]);
+              if ($zr) $zs[$k] = (int) $zr['id'];
+            }
+            if (isset($zs['zonePrim']) || isset($zs['zone'])) q("UPDATE ws_tours SET zone_id=? WHERE id=?", [$zs['zonePrim'] ?? $zs['zone'], $tid]);
+          }
         }
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
       }
