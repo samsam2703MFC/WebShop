@@ -1980,9 +1980,12 @@ function dispatch($m, $p) {
       $hasSt  = col_exists('client', 'status');
       $hasLoc = col_exists('client', 'locality');
       $hasCr  = col_exists('client', 'created_at');
+      $hasCo  = col_exists('client', 'company_name');
       $where = "c.id_main_shop = 0";
       if ($hasB2b) $where .= " AND c.is_b2b = 1";
-      json_out(rows("SELECT c.id, c.name, c.surname, c.email, c.phone, c.zip" .
+      json_out(rows("SELECT c.id, " .
+                    ($hasCo ? "COALESCE(NULLIF(TRIM(c.company_name),''), c.name) AS name" : "c.name") .
+                    ", c.surname, c.email, c.phone, c.zip" .
                     ($hasLoc ? ", c.locality" : ", NULL AS locality") .
                     ($hasSt  ? ", c.status"   : ", NULL AS status") .
                     ($hasOD  ? ", c.office_delivery" : ", 1 AS office_delivery") .
