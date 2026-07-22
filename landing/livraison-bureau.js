@@ -66,8 +66,8 @@
       el('p', { style: 'font:400 15px/1.55 var(--font-ui,system-ui);color:' + MUTED + ';margin:0 auto;max-width:520px', text: "L’Atelier By livre vos bureaux. Choisissez votre zone de livraison — ou signalez-nous la vôtre si elle n’est pas encore desservie." }),
     ]));
 
-    // ── Carte : le formulaire ──
-    var card = el('div', { style: 'background:' + CARD + ';border:1px solid ' + LINE + ';border-radius:16px;padding:24px 22px;box-shadow:0 12px 34px rgba(36,26,22,.06)' });
+    // ── Carte : le formulaire (ancre #contact) ──
+    var card = el('div', { id: 'contact', style: 'scroll-margin-top:88px;background:' + CARD + ';border:1px solid ' + LINE + ';border-radius:16px;padding:24px 22px;box-shadow:0 12px 34px rgba(36,26,22,.06)' });
 
     card.appendChild(el('div', { style: 'font:600 15px var(--font-ui,system-ui);color:' + INK + ';margin-bottom:4px', text: 'Organiser mes livraisons' }));
     card.appendChild(el('p', { style: 'font:400 12.5px/1.5 var(--font-ui,system-ui);color:' + MUTED + ';margin:0 0 16px', text: 'Choisissez votre zone de livraison.' }));
