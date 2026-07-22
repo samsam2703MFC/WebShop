@@ -54,6 +54,12 @@ jobs:
           SITE_BASE: ${{ vars.SITE_BASE || '/' }}
         run: npm run build
 
+      # Les pages landing statiques (/landing/*) ne passent pas par le build Vite
+      # (dossier hors public/). On les copie dans dist/ pour qu'elles partent avec
+      # le rsync du frontend → <web_root>/landing/. Miroir de deploy.yml (Pages).
+      - name: Bundle standalone landing pages into dist
+        run: cp -r landing dist/landing
+
       - name: Install sshpass
         run: sudo apt-get update && sudo apt-get install -y sshpass
 
