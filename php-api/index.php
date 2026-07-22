@@ -2403,6 +2403,21 @@ function dispatch($m, $p) {
       json_out($out);
     }
 
+    // ── Vérification TVA via VIES (registre européen) — formulaire Office. ──
+    // Renvoie {valid, name, address} ; le BO pré-remplit nom/adresse de l'office
+    // (et la fiche client liée est mise à jour à l'enregistrement).
+    if ($m === 'GET' && $p === '/franchisee/vies-check') {
+      $vat = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string) qp('vat', '')));
+      if (!preg_match('/^([A-Z]{2})([0-9A-Za-z+*]{2,12})$/', $vat, $mv)) json_out(['valid' => false, 'error' => 'format']);
+      $ctx = stream_context_create(['http' => ['timeout' => 6, 'ignore_errors' => true]]);
+      $raw = @file_get_contents('https://ec.europa.eu/taxation_customs/vies/rest-api/ms/' . $mv[1] . '/vat/' . rawurlencode($mv[2]), false, $ctx);
+      $j = $raw !== false ? json_decode($raw, true) : null;
+      if (!is_array($j) || !array_key_exists('isValid', $j)) json_out(['valid' => null, 'error' => 'vies_unavailable'], 502);
+      json_out(['valid' => !empty($j['isValid']),
+                'name' => trim((string) ($j['name'] ?? '')) !== '---' ? (trim((string) ($j['name'] ?? '')) ?: null) : null,
+                'address' => trim(preg_replace('/\s+/', ' ', (string) ($j['address'] ?? ''))) ?: null]);
+    }
+
     // ── CP déjà affectés à chaque tournée (préremplissage du formulaire Tournée). ──
     if ($m === 'GET' && $p === '/franchisee/ws-tour-postcodes') {
       if (!$tblExists('ws_tour_postcodes')) json_out([]);
@@ -2439,14 +2454,17 @@ function dispatch($m, $p) {
     // ── Offices / bureaux (ws_offices) — table réelle. ──
     if ($m === 'GET' && $p === '/franchisee/ws-offices') {
       if (!$tblExists('ws_offices')) json_out([]);
-      $join = ''; $wh = '1=1';
-      if ($shopId && $tblExists('ws_tours')) {
+      $join = ''; $wh = '1=1'; $tourSel = "NULL AS tour";
+      if ($tblExists('ws_tours')) {
         $join = "LEFT JOIN ws_tours t ON t.id = f.tour_id";
-        $wh   = "(t.shop_id = " . (int) $shopId . " OR f.tour_id IS NULL)";
+        $tourSel = "t.name AS tour";
+        if ($shopId) $wh = "(t.shop_id = " . (int) $shopId . " OR f.tour_id IS NULL)";
       }
-      json_out(rows("SELECT f.id, f.tour_id, f.name, f.address, f.postal_code, f.city, f.contact,
+      $rs = rows("SELECT f.id, f.tour_id, $tourSel, f.name, f.address, f.postal_code, f.city, f.contact,
                             f.email, f.phone, f.vat, f.status, f.deferred_billing_enabled
-                       FROM ws_offices f $join WHERE $wh AND f.active=1 ORDER BY f.name LIMIT 300"));
+                       FROM ws_offices f $join WHERE $wh AND f.active=1 ORDER BY f.name LIMIT 300");
+      // deferred en Oui/Non : valeurs du toggle du formulaire Office.
+      json_out(array_map(fn ($f) => ['deferred_billing_enabled' => ((int) $f['deferred_billing_enabled'] ? 'Oui' : 'Non')] + $f, $rs));
     }
 
     // ── Emails bureau (ws_office_emails) — dérivés des contacts ws_offices. ──
@@ -3103,20 +3121,70 @@ function dispatch($m, $p) {
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
       }
 
-      // Bureau (office) → ws_offices : rattachement à une tournée par défaut (tour_id).
-      if ($tbl === 'ws_offices' && $tblExists('ws_offices') && col_exists('ws_offices', 'tour_id')) {
+      // Bureau (office) → ws_offices : création + édition complètes — statut
+      // (toggle pending/validated), TVA (VIES), facturation différée (toggle),
+      // tournée par défaut. La fiche client liée (client_id) reçoit TVA +
+      // raison sociale validées par VIES. Le cut-off / jours autorisés ne sont
+      // PAS stockés ici : ils sont hérités de la tournée (ws_tour_availability).
+      if ($tbl === 'ws_offices' && $tblExists('ws_offices')) {
+        $hasTour  = col_exists('ws_offices', 'tour_id');
+        $hasShopO = col_exists('ws_offices', 'shop_id');
+        $hasCli   = col_exists('ws_offices', 'client_id');
         $n = 0;
         foreach ($rows2 as $r) {
-          $rid = $r['id'] ?? null;
-          if (!is_numeric($rid) || !row("SELECT id FROM ws_offices WHERE id=?", [(int) $rid])) continue;
+          $name = trim((string) ($r['name'] ?? ''));
           $tourId = null; $tv = trim((string) ($r['tour'] ?? ''));
-          if ($tv !== '' && $tv !== '—') {
+          if ($hasTour && $tv !== '' && $tv !== '—') {
             $tr = ctype_digit($tv)
               ? row("SELECT id FROM ws_tours WHERE id=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [(int) $tv])
               : row("SELECT id FROM ws_tours WHERE name=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [$tv]);
             if ($tr) $tourId = (int) $tr['id'];
           }
-          if ($tourId !== null) { q("UPDATE ws_offices SET tour_id=? WHERE id=?", [$tourId, (int) $rid]); $n++; }
+          $status = in_array(($r['status'] ?? ''), ['pending', 'validated'], true) ? $r['status'] : null;
+          $defer = null;
+          if (array_key_exists('deferred_billing_enabled', $r)) {
+            $dv = $r['deferred_billing_enabled'];
+            $defer = (int) (is_numeric($dv) ? ((int) $dv !== 0) : ($dv === true || stripos((string) $dv, 'oui') !== false));
+          }
+          $vat = trim((string) ($r['vat'] ?? ''));
+          // id numérique, sinon retrouvé par nom (les lignes créées côté BO n'ont pas d'id DB).
+          $rid = is_numeric($r['id'] ?? null) && row("SELECT id FROM ws_offices WHERE id=?", [(int) $r['id']])
+            ? (int) $r['id']
+            : (($name !== '' && ($ex = row("SELECT id FROM ws_offices WHERE name=? LIMIT 1", [$name]))) ? (int) $ex['id'] : 0);
+          if ($rid) {
+            $sets = []; $uvals = [];
+            foreach (['name' => 'name', 'address' => 'address', 'postal_code' => 'postal_code', 'city' => 'city',
+                      'contact' => 'contact', 'email' => 'email', 'phone' => 'phone'] as $fk => $col) {
+              if (array_key_exists($fk, $r) && trim((string) $r[$fk]) !== '') { $sets[] = "$col=?"; $uvals[] = trim((string) $r[$fk]); }
+            }
+            if ($vat !== '')      { $sets[] = 'vat=?';    $uvals[] = $vat; }
+            if ($status !== null) { $sets[] = 'status=?'; $uvals[] = $status; }
+            if ($defer !== null)  { $sets[] = 'deferred_billing_enabled=?'; $uvals[] = $defer; }
+            if ($tourId !== null) { $sets[] = 'tour_id=?'; $uvals[] = $tourId; }
+            if ($sets) { $uvals[] = $rid; q("UPDATE ws_offices SET " . implode(',', $sets) . " WHERE id=?", $uvals); $n++; }
+            // Fiche client d'origine : TVA + raison sociale VIES.
+            if ($hasCli && ($vat !== '' || !empty($r['vies_name']))) {
+              $cl = row("SELECT client_id FROM ws_offices WHERE id=?", [$rid]);
+              if ($cl && $cl['client_id']) {
+                if ($vat !== '' && col_exists('client', 'tax_number'))
+                  q("UPDATE client SET tax_number=? WHERE id=?", [$vat, (int) $cl['client_id']]);
+                if (!empty($r['vies_name']) && col_exists('client', 'company_name'))
+                  q("UPDATE client SET company_name=? WHERE id=?", [trim((string) $r['vies_name']), (int) $cl['client_id']]);
+              }
+            }
+          } elseif ($name !== '') {
+            // Création (« Créer un nouvel office ») — statut par défaut : validé.
+            $cols = ['name', 'address', 'postal_code', 'city', 'contact', 'email', 'phone', 'status', 'active'];
+            $ivals = [$name, (string) ($r['address'] ?? ''), (string) ($r['postal_code'] ?? ''), (string) ($r['city'] ?? ''),
+                      (string) ($r['contact'] ?? ''), (string) ($r['email'] ?? ''), (string) ($r['phone'] ?? ''),
+                      $status ?: 'validated', 1];
+            if ($vat !== '')      { $cols[] = 'vat'; $ivals[] = $vat; }
+            if ($defer !== null)  { $cols[] = 'deferred_billing_enabled'; $ivals[] = $defer; }
+            if ($hasTour && $tourId !== null) { $cols[] = 'tour_id'; $ivals[] = $tourId; }
+            if ($hasShopO && $shopId)         { $cols[] = 'shop_id'; $ivals[] = (int) $shopId; }
+            q("INSERT INTO ws_offices (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $ivals);
+            $n++;
+          }
         }
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
       }
