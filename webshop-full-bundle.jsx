@@ -516,6 +516,8 @@ function DatePill({ mode, value, onChange, shopId,
 
 // Mode pill — Ruby (collect) / Abricot (delivery)
 function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel }) {
+  const [zoneOpen, setZoneOpen] = React.useState(false);
+  const [hover, setHover] = React.useState(false);
   const delivTitle = deliveryCutoffPassed
     ? `Livraison non disponible après ${deliveryCutoffLabel || '11h00'}`
     : undefined;
@@ -524,6 +526,7 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
     : undefined;
   const effMode = deliveryCutoffPassed && mode === 'delivery' ? 'collect' : mode;
   return (
+    <React.Fragment>
     <div className="ws-modes" role="tablist" aria-label="Mode boutique">
       <span className="ws-modes__indicator" data-mode={effMode} aria-hidden="true"/>
       <button className={`ws-mode ws-mode--collect${mode === 'collect' ? ' is-active' : ''}${collectCutoffPassed ? ' is-disabled' : ''}`}
@@ -541,7 +544,26 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
         <span className="ws-mode__lbl-full">Livraison au bureau</span>
         {deliveryCutoffPassed && <span className="ws-mode__cutoff"> · Fermé</span>}
       </button>
+      {/* « i » apricot : pas encore de bureau ? → ouvre le formulaire zone (landing) */}
+      <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flex: 'none', marginLeft: 4 }}
+        onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+        <button type="button" aria-label="Pas encore de bureau ?" title="Pas encore de bureau ?"
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); setZoneOpen(true); }}
+          style={{ width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer', flex: 'none',
+                   background: '#c17a2a', color: '#fff', font: '700 11px/1 system-ui',
+                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                   animation: 'wsBureauPulse 2.2s infinite' }}>i</button>
+        {hover && (
+          <span role="tooltip" style={{ position: 'absolute', bottom: '140%', right: 0, width: 216,
+            background: '#241a16', color: '#fff', borderRadius: 10, padding: '10px 12px',
+            font: '500 11.5px/1.45 system-ui', boxShadow: '0 8px 24px rgba(0,0,0,.28)', zIndex: 70, textAlign: 'left' }}>
+            Pas encore de bureau&nbsp;? Vérifiez si votre zone est desservie et faites votre demande.
+          </span>
+        )}
+      </span>
     </div>
+    <BureauZoneModal open={zoneOpen} onClose={() => setZoneOpen(false)} />
+    </React.Fragment>
   );
 }
 
@@ -2361,6 +2383,27 @@ function PostcodeCatchupModal({ user, onUpdateUser }) {
   );
 }
 
+// Modale « Livraison au bureau » — réutilise le formulaire zone de la landing
+// (/landing/livraison-bureau.html) en iframe : source unique du formulaire, zéro double code.
+if (typeof document !== 'undefined' && !document.getElementById('ws-bureau-style')) {
+  const _st = document.createElement('style');
+  _st.id = 'ws-bureau-style';
+  _st.textContent = '@keyframes wsBureauPulse{0%{box-shadow:0 0 0 0 rgba(193,122,42,.55)}70%{box-shadow:0 0 0 7px rgba(193,122,42,0)}100%{box-shadow:0 0 0 0 rgba(193,122,42,0)}}';
+  document.head.appendChild(_st);
+}
+function BureauZoneModal({ open, onClose }) {
+  if (!open) return null;
+  return (
+    <div className="ws-modal" onClick={onClose}>
+      <div className="ws-modal__panel" onClick={(e) => e.stopPropagation()}>
+        <span className="ws-modal__handle" aria-hidden="true" />
+        <button className="ws-modal__close" onClick={onClose} aria-label="Fermer"><Pict d={ICONS.close} s={14}/></button>
+        <iframe title="Livraison au bureau" src="/landing/livraison-bureau.html" style={{ width: '100%', height: '70vh', border: 0, borderRadius: 12 }} />
+      </div>
+    </div>
+  );
+}
+
 function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdateUser, shops, currentShopId, onChangePreferredShop, office, tour }) {
   const [form, setForm] = useState({
     firstName: user?.firstName || '',
@@ -3030,15 +3073,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           </div>
         )}
 
-        {zoneOpen && (
-          <div className="ws-modal" onClick={() => setZoneOpen(false)}>
-            <div className="ws-modal__panel" onClick={(e) => e.stopPropagation()}>
-              <span className="ws-modal__handle" aria-hidden="true" />
-              <button className="ws-modal__close" onClick={() => setZoneOpen(false)} aria-label="Fermer"><Pict d={ICONS.close} s={14}/></button>
-              <iframe title="Livraison au bureau" src="/landing/livraison-bureau.html" style={{ width: '100%', height: '70vh', border: 0, borderRadius: 12 }} />
-            </div>
-          </div>
-        )}
+        <BureauZoneModal open={zoneOpen} onClose={() => setZoneOpen(false)} />
 
         {/* Sélecteur de bureau (sites de livraison du shop — même liste que la PWA) */}
         {siteStep === 'pick' && (
