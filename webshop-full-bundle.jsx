@@ -554,11 +554,14 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                    animation: 'wsBureauPulse 2.2s infinite' }}>i</button>
         {hover && (
-          <span role="tooltip" style={{ position: 'absolute', top: '160%', right: 0, width: 216,
-            background: '#241a16', color: '#fff', borderRadius: 14, padding: '11px 13px',
-            font: '500 11.5px/1.45 system-ui', boxShadow: '0 10px 28px rgba(0,0,0,.3)', zIndex: 70, textAlign: 'left' }}>
+          <span role="tooltip" style={{ position: 'absolute', top: '160%', right: 0, width: 216, maxWidth: '78vw',
+            boxSizing: 'border-box', whiteSpace: 'normal', wordBreak: 'break-word',
+            background: '#e8a15c', color: '#241a16', borderRadius: 14, padding: '11px 13px',
+            font: '600 11.5px/1.45 system-ui', boxShadow: '0 10px 28px rgba(36,26,22,.28)',
+            border: '1px solid rgba(36,26,22,.10)', zIndex: 70, textAlign: 'left' }}>
             <span aria-hidden="true" style={{ position: 'absolute', top: -5, right: 15, width: 11, height: 11,
-              background: '#241a16', transform: 'rotate(45deg)', borderRadius: 3 }} />
+              background: '#e8a15c', borderTop: '1px solid rgba(36,26,22,.10)', borderLeft: '1px solid rgba(36,26,22,.10)',
+              transform: 'rotate(45deg)', borderRadius: 3 }} />
             Pas encore de bureau&nbsp;? Vérifiez si votre zone est desservie et faites votre demande.
           </span>
         )}
