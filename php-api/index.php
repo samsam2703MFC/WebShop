@@ -2501,8 +2501,11 @@ function dispatch($m, $p) {
         $tourSel = "t.name AS tour";
         if ($shopId) $wh = "(t.shop_id = " . (int) $shopId . " OR f.tour_id IS NULL)";
       }
+      $siteSel = $tblExists('ws_office_delivery_sites')
+        ? ", (SELECT s.address FROM ws_office_delivery_sites s WHERE s.office_client_id=f.id AND s.active=1 ORDER BY s.id LIMIT 1) AS site"
+        : ", NULL AS site";
       $rs = rows("SELECT f.id, f.tour_id, $tourSel, f.name, f.address, f.postal_code, f.city, f.contact,
-                            f.email, f.phone, f.vat, f.status, f.deferred_billing_enabled
+                            f.email, f.phone, f.vat, f.status, f.deferred_billing_enabled$siteSel
                        FROM ws_offices f $join WHERE $wh AND f.active=1 ORDER BY f.name LIMIT 300");
       // deferred en Oui/Non : valeurs du toggle du formulaire Office.
       json_out(array_map(fn ($f) => ['deferred_billing_enabled' => ((int) $f['deferred_billing_enabled'] ? 'Oui' : 'Non')] + $f, $rs));
@@ -3265,7 +3268,19 @@ function dispatch($m, $p) {
             if ($hasTour && $tourId !== null) { $cols[] = 'tour_id'; $ivals[] = $tourId; }
             if ($hasShopO && $shopId)         { $cols[] = 'shop_id'; $ivals[] = (int) $shopId; }
             q("INSERT INTO ws_offices (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $ivals);
+            $rid = (int) db()->lastInsertId();
             $n++;
+          }
+          // Sens du paramétrage : le BUREAU choisit son building (site). La ligne
+          // de liaison bureau↔site est créée si elle n'existe pas encore.
+          $siteAdr = trim((string) ($r['site'] ?? ''));
+          if ($siteAdr !== '' && $rid && $tblExists('ws_office_delivery_sites')) {
+            $ps = row("SELECT id FROM ws_office_delivery_sites WHERE office_client_id=? AND address=? LIMIT 1", [$rid, $siteAdr]);
+            if (!$ps) {
+              q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, tournee_id, site_access_minutes, active" . ($shopId ? ", shop_id" : "") . ")
+                   VALUES (?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
+                [$rid, ($name !== '' ? $name : 'Bureau') . ' @ ' . mb_substr($siteAdr, 0, 80), $siteAdr, $tourId, 6]);
+            }
           }
         }
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
