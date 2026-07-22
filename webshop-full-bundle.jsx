@@ -516,7 +516,6 @@ function DatePill({ mode, value, onChange, shopId,
 
 // Mode pill — Ruby (collect) / Abricot (delivery)
 function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel }) {
-  const [zoneOpen, setZoneOpen] = React.useState(false);
   const [hover, setHover] = React.useState(false);
   const delivTitle = deliveryCutoffPassed
     ? `Livraison non disponible après ${deliveryCutoffLabel || '11h00'}`
@@ -526,7 +525,6 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
     : undefined;
   const effMode = deliveryCutoffPassed && mode === 'delivery' ? 'collect' : mode;
   return (
-    <React.Fragment>
     <div className="ws-modes" role="tablist" aria-label="Mode boutique">
       <span className="ws-modes__indicator" data-mode={effMode} aria-hidden="true"/>
       <button className={`ws-mode ws-mode--collect${mode === 'collect' ? ' is-active' : ''}${collectCutoffPassed ? ' is-disabled' : ''}`}
@@ -548,7 +546,7 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
       <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flex: 'none', marginLeft: 4 }}
         onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
         <button type="button" aria-label="Pas encore de bureau ?" title="Pas encore de bureau ?"
-          onClick={(e) => { e.stopPropagation(); e.preventDefault(); setZoneOpen(true); }}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); window.open('/landing/livraison-bureau.html', '_blank', 'noopener'); }}
           style={{ width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer', flex: 'none',
                    background: '#c17a2a', color: '#fff', font: '700 11px/1 system-ui',
                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -567,8 +565,6 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
         )}
       </span>
     </div>
-    <BureauZoneModal open={zoneOpen} onClose={() => setZoneOpen(false)} />
-    </React.Fragment>
   );
 }
 
@@ -2388,60 +2384,12 @@ function PostcodeCatchupModal({ user, onUpdateUser }) {
   );
 }
 
-// Modale « Livraison au bureau » — réutilise le formulaire zone de la landing
-// (/landing/livraison-bureau.html) en iframe : source unique du formulaire, zéro double code.
+// Pulse apricot du « i » « pas encore de bureau ? » (à côté de « Livraison au bureau »).
 if (typeof document !== 'undefined' && !document.getElementById('ws-bureau-style')) {
   const _st = document.createElement('style');
   _st.id = 'ws-bureau-style';
   _st.textContent = '@keyframes wsBureauPulse{0%{box-shadow:0 0 0 0 rgba(193,122,42,.55)}70%{box-shadow:0 0 0 7px rgba(193,122,42,0)}100%{box-shadow:0 0 0 0 rgba(193,122,42,0)}}';
   document.head.appendChild(_st);
-}
-function BureauZoneModal({ open, onClose }) {
-  const frameRef = React.useRef(null);
-  const [h, setH] = React.useState(320);
-  React.useEffect(() => {
-    if (!open) return;
-    let styled = false;
-    const fit = () => {
-      try {
-        const d = frameRef.current && frameRef.current.contentDocument;
-        if (d && d.head && !styled) {
-          // La landing a body{background:#241a16} sans couleur de texte → texte noir
-          // illisible. On force un fond abricot + texte sombre (même origine).
-          const st = d.createElement('style');
-          st.textContent = 'html,body{background:#e8a15c!important;color:#241a16!important}';
-          d.head.appendChild(st); styled = true;
-        }
-        const body = d && (d.querySelector('.lb-wrap') || d.body);
-        if (body) {
-          const max = Math.round((window.innerHeight || 800) * 0.85);
-          setH(Math.min(Math.max(body.scrollHeight + 24, 240), max));
-        }
-      } catch (e) { /* même origine attendue ; sinon on garde la hauteur par défaut */ }
-    };
-    fit();
-    const id = setInterval(fit, 350);      // suit l'expansion du formulaire « hors zone »
-    return () => clearInterval(id);
-  }, [open]);
-  if (!open) return null;
-  return (
-    <div className="ws-modal" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ position: 'relative', width: 'min(680px, 94vw)', height: h,
-                 background: '#e8a15c', borderRadius: 16, overflow: 'hidden',
-                 boxShadow: '0 24px 70px rgba(0,0,0,.42)', transition: 'height .18s ease' }}>
-        <button type="button" onClick={onClose} aria-label="Fermer"
-          style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, width: 32, height: 32,
-                   borderRadius: '50%', border: 'none', cursor: 'pointer', color: '#241a16',
-                   background: 'rgba(36,26,22,.16)', display: 'inline-flex',
-                   alignItems: 'center', justifyContent: 'center' }}>
-          <Pict d={ICONS.close} s={14}/>
-        </button>
-        <iframe ref={frameRef} title="Livraison au bureau" src="/landing/livraison-bureau.html"
-          style={{ width: '100%', height: '100%', border: 0, display: 'block' }} />
-      </div>
-    </div>
-  );
 }
 
 function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdateUser, shops, currentShopId, onChangePreferredShop, office, tour }) {
@@ -2472,9 +2420,6 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     ? { status: 'ok', message: 'TVA vérifiée (VIES)' }
     : { status: 'idle', message: '' })); // idle | loading | ok | invalid | unavailable
   const [fidOpen, setFidOpen] = useState(false);
-  // Modale « Livraison au bureau » (client sans office) : réutilise le formulaire
-  // zone de la landing (/landing/livraison-bureau.html) en iframe — pas de double code.
-  const [zoneOpen, setZoneOpen] = useState(false);
   // Comptes entreprise (livraison bureau) rattachés à l'e-mail du client
   // (ws_office_emails → ws_offices) — affichés en lecture seule, comme la PWA.
   const [linkedCompanies, setLinkedCompanies] = useState([]);
@@ -3109,11 +3054,10 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           <div className="ws-acc__card ws-acc__card--empty">
             <p className="ws-acc__note">Aucun bureau associé. Liez-vous à un bureau de livraison de votre boutique.</p>
             <button className="ws-cta ws-cta--block" onClick={openSitePicker}>Lier un bureau</button>
-            <button type="button" className="ws-acc__unplug" onClick={() => setZoneOpen(true)}>Ma zone est-elle desservie&nbsp;?</button>
+            <button type="button" className="ws-acc__unplug" onClick={() => window.open('/landing/livraison-bureau.html', '_blank', 'noopener')}>Ma zone est-elle desservie&nbsp;?</button>
           </div>
         )}
 
-        <BureauZoneModal open={zoneOpen} onClose={() => setZoneOpen(false)} />
 
         {/* Sélecteur de bureau (sites de livraison du shop — même liste que la PWA) */}
         {siteStep === 'pick' && (
