@@ -2389,6 +2389,9 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     ? { status: 'ok', message: 'TVA vérifiée (VIES)' }
     : { status: 'idle', message: '' })); // idle | loading | ok | invalid | unavailable
   const [fidOpen, setFidOpen] = useState(false);
+  // Modale « Livraison au bureau » (client sans office) : réutilise le formulaire
+  // zone de la landing (/landing/livraison-bureau.html) en iframe — pas de double code.
+  const [zoneOpen, setZoneOpen] = useState(false);
   // Comptes entreprise (livraison bureau) rattachés à l'e-mail du client
   // (ws_office_emails → ws_offices) — affichés en lecture seule, comme la PWA.
   const [linkedCompanies, setLinkedCompanies] = useState([]);
@@ -3023,6 +3026,17 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           <div className="ws-acc__card ws-acc__card--empty">
             <p className="ws-acc__note">Aucun bureau associé. Liez-vous à un bureau de livraison de votre boutique.</p>
             <button className="ws-cta ws-cta--block" onClick={openSitePicker}>Lier un bureau</button>
+            <button type="button" className="ws-acc__unplug" onClick={() => setZoneOpen(true)}>Ma zone est-elle desservie&nbsp;?</button>
+          </div>
+        )}
+
+        {zoneOpen && (
+          <div className="ws-modal" onClick={() => setZoneOpen(false)}>
+            <div className="ws-modal__panel" onClick={(e) => e.stopPropagation()}>
+              <span className="ws-modal__handle" aria-hidden="true" />
+              <button className="ws-modal__close" onClick={() => setZoneOpen(false)} aria-label="Fermer"><Pict d={ICONS.close} s={14}/></button>
+              <iframe title="Livraison au bureau" src="/landing/livraison-bureau.html" style={{ width: '100%', height: '70vh', border: 0, borderRadius: 12 }} />
+            </div>
           </div>
         )}
 
