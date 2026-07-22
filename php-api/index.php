@@ -2425,6 +2425,40 @@ function dispatch($m, $p) {
                 'address' => $addr1 ?: null, 'street' => $street, 'zip' => $azip, 'city' => $acity]);
     }
 
+    // ── Renvoi d'un client office vers le franchisé couvrant son CP (choix 1 du
+    //    contrôle TVA vs tournée) : crée/active la fiche client rattachée à la
+    //    boutique dont la chalandise couvre le CP → son bureau pending naît chez elle. ──
+    if ($m === 'POST' && $p === '/franchisee/route-office') {
+      $b = body();
+      $cp = preg_replace('/\D+/', '', (string) ($b['cp'] ?? ''));
+      if (!preg_match('/^\d{4}$/', $cp)) json_out(['routed' => false, 'error' => 'Code postal requis'], 400);
+      $target = zip_shop($cp);
+      if (!$target) json_out(['routed' => false, 'error' => 'Aucun franchisé ne couvre ce code postal'], 404);
+      $tName = ($r0 = row("SELECT name FROM shops WHERE id=?", [$target])) ? $r0['name'] : ('#' . $target);
+      $mail = strtolower(trim((string) ($b['email'] ?? '')));
+      $vat  = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string) ($b['vat'] ?? '')));
+      $ex = $mail !== '' ? row("SELECT id FROM client WHERE email IS NOT NULL AND LOWER(TRIM(email))=? LIMIT 1", [$mail]) : null;
+      if ($ex) {
+        $sets = ['id_main_shop=' . (int) $target];
+        if (col_exists('client', 'is_b2b'))          $sets[] = 'is_b2b=1';
+        if (col_exists('client', 'office_delivery')) $sets[] = 'office_delivery=1';
+        if (col_exists('client', 'status'))          $sets[] = 'status=1';
+        q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", [(int) $ex['id']]);
+        if ($vat !== '' && col_exists('client', 'tax_number')) q("UPDATE client SET tax_number=? WHERE id=?", [$vat, (int) $ex['id']]);
+        json_out(['routed' => true, 'shop' => $tName, 'client_id' => (int) $ex['id']]);
+      }
+      $cols = ['id_main_shop', 'email', 'name', 'zip', 'city', 'active', 'source_channel', 'webshop_user'];
+      $ivals = [(int) $target, $mail ?: null, trim((string) ($b['name'] ?? '')) ?: 'Office', $cp,
+                trim((string) ($b['city'] ?? '')), 1, 'webshop', 0];
+      if (col_exists('client', 'company_name'))    { $cols[] = 'company_name';    $ivals[] = trim((string) ($b['name'] ?? '')) ?: null; }
+      if (col_exists('client', 'is_b2b'))          { $cols[] = 'is_b2b';          $ivals[] = 1; }
+      if (col_exists('client', 'office_delivery')) { $cols[] = 'office_delivery'; $ivals[] = 1; }
+      if (col_exists('client', 'status'))          { $cols[] = 'status';          $ivals[] = 1; }
+      if ($vat !== '' && col_exists('client', 'tax_number')) { $cols[] = 'tax_number'; $ivals[] = $vat; }
+      q("INSERT INTO client (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $ivals);
+      json_out(['routed' => true, 'shop' => $tName, 'client_id' => (int) db()->lastInsertId()]);
+    }
+
     // ── CP déjà affectés à chaque tournée (préremplissage du formulaire Tournée). ──
     if ($m === 'GET' && $p === '/franchisee/ws-tour-postcodes') {
       if (!$tblExists('ws_tour_postcodes')) json_out([]);
