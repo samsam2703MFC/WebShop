@@ -54,12 +54,6 @@ jobs:
           SITE_BASE: ${{ vars.SITE_BASE || '/' }}
         run: npm run build
 
-      # Les pages landing statiques (/landing/*) ne passent pas par le build Vite
-      # (dossier hors public/). On les copie dans dist/ pour qu'elles partent avec
-      # le rsync du frontend → <web_root>/landing/. Miroir de deploy.yml (Pages).
-      - name: Bundle standalone landing pages into dist
-        run: cp -r landing dist/landing
-
       - name: Install sshpass
         run: sudo apt-get update && sudo apt-get install -y sshpass
 
@@ -126,19 +120,8 @@ jobs:
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             "php '${{ vars.WEB_ROOT || '/var/www/html' }}/api/sync_product_images.php'"
 
-      # Standalone B2B landing page — shipped as-is (NOT part of the PWA build).
-      # The public URL /landing is an Apache alias to /var/www/latelierby-landing
-      # (see the server's catch-all vhost: `Alias /landing /var/www/latelierby-landing`),
-      # NOT <WEB_ROOT>/landing — so the folder must be deployed there.
-      - name: Deploy landing page → /landing (alias → /var/www/latelierby-landing)
-        env:
-          SSHPASS: ${{ secrets.SSH_PASSWORD }}
-        run: |
-          sshpass -e rsync -rltDz --omit-dir-times \
-            -e "ssh -p ${{ vars.SSH_PORT || '22' }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
-            landing/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ vars.LANDING_DIR || '/var/www/latelierby-landing' }}/"
-          echo "Verifying the page served at /landing is the freshly-deployed build…"
-          sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
-            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "curl -s http://localhost/landing/evenements-b2b.html | grep -o 'webshop-landing-b2b.js?v=[0-9]*' | head -1 || echo 'WARN: version marker not found in served page'"
+      # Le site /landing (alias Apache → /var/www/latelierby-landing) est déployé
+      # EXCLUSIVEMENT par le dépôt `landing` (git reset --hard origin/main côté
+      # serveur). Ce workflow n'y touche plus : le dossier landing/ et ses étapes
+      # de déploiement ont été rapatriés là-bas pour supprimer les écrasements
+      # croisés entre les deux pipelines (ex. livraison-bureau.html).
