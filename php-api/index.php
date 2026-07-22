@@ -705,6 +705,44 @@ function dispatch($m, $p) {
                     ORDER BY (z.sort_order IS NULL), z.sort_order, z.name, t.name"));
   }
 
+  /* ── Modalités d'une zone/tournée (public) : boutique qui livre + jours,
+     horaires, cut-off et créneaux — « pilote tout » de la landing bureau. ── */
+  if ($m === 'GET' && $p === '/zone-modalites') {
+    $tourId = (int) qp('tour', '0');
+    if (!$tourId) json_out((object) []);
+    $DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+    $tr = row("SELECT id, name AS tour, shop_id FROM ws_tours WHERE id = ? AND active = 1", [$tourId]);
+    if (!$tr) json_out((object) []);
+    $shopId = (int) $tr['shop_id'];
+    $shop = $shopId ? row("SELECT name, city FROM shops WHERE id = ?", [$shopId]) : null;
+    $jours = null; $dep = null; $fin = null; $cut = null;
+    if (col_exists('ws_tour_availability', 'tour_id')) {
+      $av = row("SELECT GROUP_CONCAT(DISTINCT delivery_day ORDER BY delivery_day) AS days,
+                        TIME_FORMAT(MIN(delivery_start), '%H:%i') AS dep,
+                        TIME_FORMAT(MAX(delivery_end), '%H:%i')   AS fin,
+                        TIME_FORMAT(MIN(cutoff_time), '%H:%i')    AS cut
+                   FROM ws_tour_availability WHERE tour_id = ? AND active = 1", [$tourId]);
+      if ($av && $av['days'] !== null) {
+        $jours = implode(' · ', array_map(fn ($d) => $DAYS[((int) $d) % 7], explode(',', (string) $av['days'])));
+        $dep = $av['dep']; $fin = $av['fin']; $cut = $av['cut'];
+      }
+    }
+    $creneaux = [];
+    if ($shopId && col_exists('ws_slots', 'label')) {
+      $creneaux = array_map(fn ($r) => $r['label'],
+        rows("SELECT label FROM ws_slots WHERE shop_id = ? AND mode = 'delivery' AND active = 1 ORDER BY sort_order, label LIMIT 40", [$shopId]));
+    }
+    json_out([
+      'shop'     => $shop ? ($shop['name'] ?: $shop['city']) : null,
+      'city'     => $shop['city'] ?? null,
+      'tour'     => $tr['tour'],
+      'jours'    => $jours,
+      'horaire'  => ($dep && $fin) ? ($dep . '–' . $fin) : null,
+      'cutoff'   => $cut ? ($cut . ' J-1') : null,
+      'creneaux' => $creneaux,
+    ]);
+  }
+
   /* ── Demande de zone non servie (public, « Ma zone n'est pas dans la liste »).
      PERSISTÉE (ws_zone_requests) — c'est la carte de la demande non servie — ET
      un mail admin part en PLUS. Rate-limit par IP (formulaire public arrosable). ── */

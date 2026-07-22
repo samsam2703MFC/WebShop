@@ -126,10 +126,27 @@
       form.style.display = (v === OTHER) ? 'block' : 'none';
       var isCov = !!(v && v !== OTHER && v !== '');
       covered.style.display = isCov ? 'block' : 'none';
-      if (isCov) {
-        var z = zones.filter(function (x) { return String(x.id) === v; })[0];
-        covered.textContent = z ? ('Votre zone est desservie par la tournée « ' + (z.zoneSecondary || z.tour) + ' ». Vous pouvez commander dès maintenant.') : '';
-      }
+      if (!isCov) return;
+      var z = zones.filter(function (x) { return String(x.id) === v; })[0];
+      covered.innerHTML = '';
+      covered.appendChild(el('div', { style: 'font-weight:600', text: 'Votre zone est desservie' + (z ? ' par la tournée « ' + (z.zoneSecondary || z.tour) + ' »' : '') + '.' }));
+      var mod = el('div', { style: 'margin-top:6px;font-weight:400;color:#37503f', text: 'Chargement des modalités…' });
+      covered.appendChild(mod);
+      // « pilote tout » : la zone choisie affiche les vraies modalités de la boutique qui livre.
+      fetch(API + '/zone-modalites?tour=' + encodeURIComponent(v))
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (m) {
+          if (!m || (!m.jours && !(m.creneaux && m.creneaux.length))) { mod.textContent = 'Vous pouvez commander dès maintenant.'; return; }
+          mod.innerHTML = '';
+          if (m.shop) mod.appendChild(el('div', { style: 'font-weight:600', text: 'Livré par ' + m.shop }));
+          var parts = [];
+          if (m.jours) parts.push('Jours : ' + m.jours);
+          if (m.horaire) parts.push('Horaire : ' + m.horaire);
+          if (m.cutoff) parts.push('Cut-off : ' + m.cutoff);
+          if (parts.length) mod.appendChild(el('div', { style: 'margin-top:3px', text: parts.join('  ·  ') }));
+          if (m.creneaux && m.creneaux.length) mod.appendChild(el('div', { style: 'margin-top:3px', text: 'Créneaux : ' + m.creneaux.join(', ') }));
+        })
+        .catch(function () { mod.textContent = 'Vous pouvez commander dès maintenant.'; });
     });
 
     send.addEventListener('click', function () {
