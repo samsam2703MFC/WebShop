@@ -3030,6 +3030,69 @@ function dispatch($m, $p) {
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
       }
 
+      // Sites de livraison des bureaux → ws_office_delivery_sites (rattachement à
+      // une tournée réelle). Relie le « client office » à sa tournée : résout le
+      // nom de tournée → ws_tours.id et le nom de bureau → ws_offices.id.
+      if ($tbl === 'ws_office_delivery_sites' && $tblExists('ws_office_delivery_sites')) {
+        $n = 0;
+        foreach ($rows2 as $r) {
+          // Tournée rattachée (libellé ou id) → ws_tours.id (scopé boutique).
+          $tourId = null; $tv = trim((string) ($r['tour'] ?? ($r['tour_name'] ?? '')));
+          if ($tv !== '' && $tv !== '—') {
+            $tr = ctype_digit($tv)
+              ? row("SELECT id FROM ws_tours WHERE id=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [(int) $tv])
+              : row("SELECT id FROM ws_tours WHERE name=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [$tv]);
+            if ($tr) $tourId = (int) $tr['id'];
+          }
+          // Bureau (compte B2B) → ws_offices.id.
+          $officeId = null; $bn = trim((string) ($r['bureau'] ?? ''));
+          if ($bn !== '' && $bn !== '—' && $tblExists('ws_offices')) {
+            $orow = ctype_digit($bn) ? row("SELECT id FROM ws_offices WHERE id=?", [(int) $bn])
+                                     : row("SELECT id FROM ws_offices WHERE name=? AND active=1", [$bn]);
+            if ($orow) $officeId = (int) $orow['id'];
+          }
+          $name  = trim((string) ($r['office'] ?? ($r['name'] ?? '')));
+          $addr  = trim((string) ($r['adr'] ?? ($r['address'] ?? '')));
+          $floor = trim((string) ($r['etage'] ?? ($r['floor_room'] ?? '')));
+          $cn    = trim((string) ($r['contact_name'] ?? ''));
+          $cp    = trim((string) ($r['contact_phone'] ?? ''));
+          $acc   = isset($r['acc']) ? (float) $r['acc'] : (isset($r['site_access_minutes']) ? (float) $r['site_access_minutes'] : 10);
+          $rid   = $r['id'] ?? null;
+          $ex    = is_numeric($rid) ? row("SELECT id FROM ws_office_delivery_sites WHERE id=?", [(int) $rid]) : null;
+          if ($ex) {
+            q("UPDATE ws_office_delivery_sites SET name=?, address=?, floor_room=?, contact_name=?, contact_phone=?,
+                 site_access_minutes=?, tournee_id=COALESCE(?, tournee_id), office_client_id=COALESCE(?, office_client_id)" .
+                 ($shopId ? ", shop_id=" . (int) $shopId : "") . " WHERE id=?",
+              [$name ?: null, $addr ?: null, $floor ?: null, $cn ?: null, $cp ?: null, $acc, $tourId, $officeId, (int) $ex['id']]);
+            $n++;
+          } elseif ($name !== '' || $addr !== '' || $officeId) {
+            q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, contact_name, contact_phone, site_access_minutes, tournee_id, shop_id, active)
+                 VALUES (?,?,?,?,?,?,?,?,?,1)",
+              [$officeId, $name ?: null, $addr ?: null, $floor ?: null, $cn ?: null, $cp ?: null, $acc, $tourId, $shopId]);
+            $n++;
+          }
+        }
+        json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
+      }
+
+      // Bureau (office) → ws_offices : rattachement à une tournée par défaut (tour_id).
+      if ($tbl === 'ws_offices' && $tblExists('ws_offices') && col_exists('ws_offices', 'tour_id')) {
+        $n = 0;
+        foreach ($rows2 as $r) {
+          $rid = $r['id'] ?? null;
+          if (!is_numeric($rid) || !row("SELECT id FROM ws_offices WHERE id=?", [(int) $rid])) continue;
+          $tourId = null; $tv = trim((string) ($r['tour'] ?? ''));
+          if ($tv !== '' && $tv !== '—') {
+            $tr = ctype_digit($tv)
+              ? row("SELECT id FROM ws_tours WHERE id=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [(int) $tv])
+              : row("SELECT id FROM ws_tours WHERE name=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [$tv]);
+            if ($tr) $tourId = (int) $tr['id'];
+          }
+          if ($tourId !== null) { q("UPDATE ws_offices SET tour_id=? WHERE id=?", [$tourId, (int) $rid]); $n++; }
+        }
+        json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
+      }
+
       // Paramètres → UPSERT ws_param (config partagée : upsert par clé, jamais de delete).
       if ($tbl === 'params' && $tblExists('ws_param')) {
         $n = 0;
