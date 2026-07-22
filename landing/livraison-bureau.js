@@ -63,14 +63,14 @@
     // ── Hero ──
     wrap.appendChild(el('div', { style: 'text-align:center;padding:10px 0 22px' }, [
       el('h1', { style: 'font-family:var(--font-display,Vank),serif;font-size:34px;line-height:1.1;color:' + INK + ';margin:0 0 12px', text: 'Livraison au bureau' }),
-      el('p', { style: 'font:400 15px/1.55 var(--font-ui,system-ui);color:' + MUTED + ';margin:0 auto;max-width:520px', text: "L’Atelier By livre vos bureaux. Choisissez votre zone de livraison — ou signalez-nous la vôtre si elle n’est pas encore desservie." }),
+      el('p', { style: 'font:400 15px/1.55 var(--font-ui,system-ui);color:' + MUTED + ';margin:0 auto;max-width:520px', text: "L’Atelier By livre vos bureaux — pains, viennoiseries et traiteur, directement au travail." }),
     ]));
 
     // ── Carte : le formulaire (ancre #contact) ──
     var card = el('div', { id: 'contact', style: 'scroll-margin-top:88px;background:' + CARD + ';border:1px solid ' + LINE + ';border-radius:16px;padding:24px 22px;box-shadow:0 12px 34px rgba(36,26,22,.06)' });
 
-    card.appendChild(el('div', { style: 'font:600 15px var(--font-ui,system-ui);color:' + INK + ';margin-bottom:4px', text: 'Organiser mes livraisons' }));
-    card.appendChild(el('p', { style: 'font:400 12.5px/1.5 var(--font-ui,system-ui);color:' + MUTED + ';margin:0 0 16px', text: 'Choisissez votre zone de livraison.' }));
+    card.appendChild(el('div', { style: 'font:600 18px var(--font-ui,system-ui);color:' + INK + ';margin-bottom:6px', text: 'Où livrons-nous ?' }));
+    card.appendChild(el('p', { style: 'font:400 13px/1.55 var(--font-ui,system-ui);color:' + MUTED + ';margin:0 0 16px', text: 'Nos jours, horaires et créneaux dépendent de la boutique qui vous livre. Choisissez votre zone : vous verrez aussitôt vos modalités exactes.' }));
 
     // Droplist groupée par zone principale
     var sel = el('select', { class: 'lb-select', style: fieldStyle() + ';appearance:auto', 'aria-label': 'Zone de livraison' });
