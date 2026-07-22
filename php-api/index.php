@@ -2957,6 +2957,8 @@ function dispatch($m, $p) {
           if (preg_match('/^r(\\d+)$/', $rid, $mm)) {                      // tournée réelle existante
             $tid = (int) $mm[1];
             if (!row("SELECT id FROM ws_tours WHERE id=?", [$tid])) continue;
+            if (isset($r['name']) && trim((string) $r['name']) !== '')     // édition : nom / capacité
+              q("UPDATE ws_tours SET name=?, max_items=? WHERE id=?", [(string) $r['name'], (int) ($r['max'] ?? 10), $tid]);
           } elseif (strpos($rid, 'rn') === 0 && !empty($r['name'])) {      // nouvelle tournée du constructeur → création réelle
             $ex = row("SELECT id FROM ws_tours WHERE name=?", [(string) $r['name']]);
             if ($ex) { $tid = (int) $ex['id']; }
