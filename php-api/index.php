@@ -1964,6 +1964,45 @@ function dispatch($m, $p) {
       json_out(['ok' => true, 'id' => $id]);
     }
 
+    // Constructeur de tournées — candidats « + Ajouter » : chaque bureau
+    // (ws_offices) avec son nombre de sites de livraison (ws_office_delivery_sites)
+    // et le coût-temps total (dépôt bureau `drop_minutes` + accès par site
+    // `site_access_minutes`). Par défaut on ne liste que les bureaux ayant AU MOINS
+    // un site PAS ENCORE rattaché à une tournée (tournee_id NULL) = candidats.
+    //   ?all=1    → inclure aussi les sites déjà en tournée
+    //   ?shopId=  → borne à une boutique (ws_office_delivery_sites.shop_id)
+    //   ?q=       → filtre nom / ville
+    // Shape : { id, nom, ville, offices (nb sites), min (minutes totales) } — prêt
+    // pour remplacer le mock data.json du back-office franchisé.
+    if ($m === 'GET' && $p === '/franchisor/tour-candidates') {
+      $all    = qp('all') === '1';
+      $shopId = qp('shopId');
+      $qq     = trim((string) qp('q'));
+      $like   = '%' . $qq . '%';
+      // Colonnes temps ajoutées par migration : repli sûr (0) si absentes.
+      $hasDrop = (bool) row("SELECT 1 x FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='ws_offices' AND column_name='drop_minutes'");
+      $hasAcc  = (bool) row("SELECT 1 x FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='ws_office_delivery_sites' AND column_name='site_access_minutes'");
+      $dropExpr = $hasDrop ? 'COALESCE(o.drop_minutes,0)' : '0';
+      $accExpr  = $hasAcc  ? 'COALESCE(SUM(s.site_access_minutes),0)' : '0';
+      $notInTour = $all ? '' : ' AND s.tournee_id IS NULL';
+      $shopWhere = ($shopId !== null && $shopId !== '') ? ' AND s.shop_id = ?' : '';
+      $params = [];
+      if ($shopWhere) $params[] = $shopId;
+      $params[] = $qq; $params[] = $like; $params[] = $like;
+      json_out(rows(
+        "SELECT o.id, o.name AS nom, o.city AS ville,
+                COUNT(s.id) AS offices,
+                ROUND($dropExpr + $accExpr) AS `min`
+           FROM ws_offices o
+           JOIN ws_office_delivery_sites s
+             ON s.office_client_id = o.id AND s.active = 1$notInTour$shopWhere
+          WHERE o.active = 1 AND (? = '' OR o.name LIKE ? OR o.city LIKE ?)
+          GROUP BY o.id, o.name, o.city
+         HAVING COUNT(s.id) > 0
+          ORDER BY o.name
+          LIMIT 100", $params));
+    }
+
     if ($m === 'POST' && $p === '/franchisor/voucher') {
       $b = body(); $code = strtoupper(trim($b['code'] ?? ''));
       if ($code === '') json_out(['error' => 'code requis'], 400);
