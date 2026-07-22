@@ -10,21 +10,14 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="webshop-landing-b2b.css?v=4">
 <style>
-  /* Layout fonctionnel uniquement (pas de choix visuel) — les couleurs/typos
-     viennent du design system de la landing (webshop-landing-b2b.css). */
-  html, body { margin: 0; }
-  .lb-wrap { max-width: 680px; margin: 0 auto; padding: 32px 20px 64px; }
-  .lb-field { display: block; margin: 14px 0; }
-  .lb-field > span { display: block; margin-bottom: 6px; font-size: 14px; }
-  .lb-input, .lb-select { width: 100%; box-sizing: border-box; padding: 10px 12px; font: inherit; }
-  .lb-row { display: flex; gap: 12px; flex-wrap: wrap; }
-  .lb-row > .lb-field { flex: 1; min-width: 160px; }
-  .lb-hidden { display: none; }
-  .lb-msg { margin-top: 14px; }
+  /* Page complète : fond crème clair (écrase le body sombre de la CSS landing),
+     typographie marque. La mise en page est portée par livraison-bureau.js. */
+  html, body { margin: 0; background: #fdf6f0; color: #241a16;
+    font-family: var(--font-ui, system-ui, -apple-system, 'Segoe UI', sans-serif); }
 </style>
 </head>
 <body>
 <div id="root"></div>
-<script src="livraison-bureau.js?v=1"></script>
+<script src="livraison-bureau.js?v=2"></script>
 </body>
 </html>
