@@ -153,6 +153,17 @@
           }
         }).catch(function () { send.disabled = false; fmsg.textContent = 'Réseau indisponible, réessayez.'; });
     });
+
+    // Arrivée via le « i » du webshop (…/livraison-bureau.html#contact) : la page
+    // complète est chargée (header/hero), puis on amène en douceur le focus sur
+    // la section #contact (le sélecteur de zone « pilote tout »). Le saut d'ancre
+    // natif ne marche pas ici car #contact est créé par ce JS après le chargement.
+    if (location.hash === '#contact') {
+      setTimeout(function () {
+        try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
+        try { sel.focus({ preventScroll: true }); } catch (e) { try { sel.focus(); } catch (e2) {} }
+      }, 90);
+    }
   }
 
   fetch(API + '/delivery-zones')
