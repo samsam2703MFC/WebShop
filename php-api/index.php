@@ -2305,29 +2305,38 @@ function dispatch($m, $p) {
       if (!$tblExists('ws_tours')) json_out([]);
       $hasTk = $tblExists('ws_tour_tracking');
       $hasZ  = $tblExists('ws_delivery_zones');
+      $hasFV = col_exists('ws_tours', 'delivery_fee');
       $rs = rows("SELECT t.id, t.name, t.max_items" . ($hasZ ? ", z.name AS zone" : ", NULL AS zone") .
+                 ($hasFV ? ", t.delivery_fee, t.vehicle" : ", NULL AS delivery_fee, NULL AS vehicle") .
                  ($hasTk ? ", tk.driver_name" : ", NULL AS driver_name") . ",
                          (SELECT COUNT(*) FROM ws_orders o WHERE o.tour_id=t.id AND o.delivery_date=?) AS used
                     FROM ws_tours t" . ($hasZ ? " LEFT JOIN ws_delivery_zones z ON z.id = t.zone_id" : "") .
                  ($hasTk ? " LEFT JOIN ws_tour_tracking tk ON tk.tour_id = t.id" : "") . "
                    WHERE " . $scope('t.shop_id') . " AND t.active=1 ORDER BY t.name", [$today]);
-      // Fenêtre du jour (départ) depuis ws_tour_availability quand dispo.
+      // Fenêtre du jour (départ) + jours actifs depuis ws_tour_availability quand dispo.
       $hasAv = $tblExists('ws_tour_availability');
       $svc = (float) ws_param('cost_service_minutes', '15');
       json_out(array_map(function ($t) use ($hasAv, $svc) {
         $start = 360; $amp = 240;
+        $inv = [1 => 'L', 2 => 'Ma', 3 => 'Me', 4 => 'J', 5 => 'V', 6 => 'S', 7 => 'D'];
+        $days = []; foreach ($inv as $kk) $days[$kk] = false;
         if ($hasAv) {
           $av = row("SELECT TIME_TO_SEC(MIN(delivery_start))/60 AS st,
                             TIME_TO_SEC(MAX(delivery_end))/60 - TIME_TO_SEC(MIN(delivery_start))/60 AS amp
                        FROM ws_tour_availability WHERE tour_id=? AND active=1", [(int) $t['id']]);
           if ($av && $av['st'] !== null) { $start = (int) $av['st']; $amp = max(60, (int) $av['amp']); }
+          foreach (rows("SELECT DISTINCT delivery_day FROM ws_tour_availability WHERE tour_id=? AND active=1", [(int) $t['id']]) as $rd) {
+            $k = $inv[(int) $rd['delivery_day']] ?? null; if ($k) $days[$k] = true;
+          }
         }
         $name = $t['name'];
         $short = trim(preg_replace('/^Tourn[ée]e\s+/u', '', $name));
         $short = preg_split('/[\s\/]+/u', $short)[0] ?: $name;
         return ['id' => 'r' . $t['id'], 'name' => $name, 'short' => $short,
                 'driver' => $t['driver_name'] ?: '— non assigné', 'start' => $start,
-                'max' => (int) ($t['max_items'] ?: 10), 'ret' => true, 'forfait' => 0,
+                'max' => (int) ($t['max_items'] ?: 10), 'ret' => true,
+                'forfait' => $t['delivery_fee'] !== null ? (float) $t['delivery_fee'] : 0,
+                'vehicule' => $t['vehicle'] ?: '', 'days' => $days,
                 'amplitude' => $amp, 'decharge' => (int) $svc, 'trajet' => (int) $svc,
                 'used' => (int) $t['used'], 'zone' => $t['zone'] ?: '—'];
       }, $rs));
@@ -2980,6 +2989,31 @@ function dispatch($m, $p) {
               if ($pool && !isset($pool[$cp1])) continue;                 // hors chalandise → ignoré
               q("INSERT IGNORE INTO ws_tour_postcodes (tour_id, postcode) VALUES (?,?)", [$tid, $cp1]);
               $n++;
+            }
+          }
+          // Forfait & véhicule → colonnes ws_tours (migration 0018).
+          if ($tid) {
+            $fvSets = []; $fvVals = [];
+            if (col_exists('ws_tours', 'delivery_fee') && isset($r['forfait'])) { $fvSets[] = 'delivery_fee=?'; $fvVals[] = (float) $r['forfait']; }
+            if (col_exists('ws_tours', 'vehicle') && isset($r['vehicule'])) { $fvSets[] = 'vehicle=?'; $fvVals[] = (string) $r['vehicule']; }
+            if ($fvSets) { $fvVals[] = $tid; q("UPDATE ws_tours SET " . implode(',', $fvSets) . " WHERE id=?", $fvVals); }
+          }
+          // Jours + heure de départ → ws_tour_availability (fenêtre 'morning'), NON destructif :
+          // ne touche jamais les fenêtres 'afternoon'/'soir' réglées dans « Horaires & fermetures ».
+          if ($tid && $shopId && $tblExists('ws_tour_availability') && !empty($r['days']) && is_array($r['days'])) {
+            $dmap = ['L' => 1, 'Ma' => 2, 'Me' => 3, 'J' => 4, 'V' => 5, 'S' => 6, 'D' => 7];
+            $sMin = is_numeric($r['start'] ?? null) ? (int) $r['start'] : 360;
+            $fmt = fn ($mn) => sprintf('%02d:%02d:00', intdiv((($mn % 1440) + 1440) % 1440, 60), (($mn % 60) + 60) % 60);
+            $startT = $fmt($sMin); $endT = $fmt($sMin + 180); $cutT = $fmt(max(0, $sMin - 120));
+            foreach ($dmap as $k => $dow) {
+              if (!empty($r['days'][$k])) {
+                q("INSERT INTO ws_tour_availability (tour_id, shop_id, delivery_day, window_label, delivery_start, delivery_end, cutoff_time, active)
+                     VALUES (?,?,?, 'morning', ?, ?, ?, 1)
+                     ON DUPLICATE KEY UPDATE delivery_start=VALUES(delivery_start), active=1",
+                  [$tid, $shopId, $dow, $startT, $endT, $cutT]);
+              } else {
+                q("UPDATE ws_tour_availability SET active=0 WHERE tour_id=? AND shop_id=? AND delivery_day=? AND window_label='morning'", [$tid, $shopId, $dow]);
+              }
             }
           }
           // Compat héritée : ws_tour_zones/zone_id (zones « secondaires » retirées de l'UI).
