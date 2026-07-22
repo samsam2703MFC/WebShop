@@ -447,6 +447,7 @@ function dispatch($m, $p) {
                 : ['active' => false]);
   }
   if ($m === 'POST' && $p === '/vouchers/redeem') {
+    rate_limit('voucher', 15, 600);   // anti brute-force des codes
     $b = body(); $sub = (float) ($b['subtotal'] ?? 0);
     $v = row("SELECT code, type, value, min_order FROM ws_vouchers
                WHERE code=? AND active=1 AND (expires_at IS NULL OR expires_at>NOW())
@@ -643,15 +644,16 @@ function dispatch($m, $p) {
   // teste `office.status === 'validated'` ; on PROJETTE donc active en status
   // ('validated' si actif, sinon 'pending') — la colonne chaîne status de la
   // table (doublon) n'est plus lue.
+  // Annuaire des bureaux : champs MINIMAUX pour le sélecteur du webshop
+  // (nom + adresse). Contact, email, téléphone et TVA ne sont plus exposés
+  // publiquement — c'était un annuaire de prospection téléchargeable.
   if ($m === 'GET' && $p === '/offices') {
-    json_out(rows("SELECT id, tour_id AS tourId, name, address, postal_code AS postalCode, city,
-                          contact, email, phone, vat, active,
+    json_out(rows("SELECT id, tour_id AS tourId, name, address, postal_code AS postalCode, city, active,
                           IF(active=1,'validated','pending') AS status
                      FROM ws_offices WHERE active=1"));
   }
   if ($m === 'GET' && ($mm = $match('/offices/:id'))) {
-    $o = row("SELECT id, tour_id AS tourId, name, address, postal_code AS postalCode, city,
-                     contact, email, phone, vat, active,
+    $o = row("SELECT id, tour_id AS tourId, name, address, postal_code AS postalCode, city, active,
                      IF(active=1,'validated','pending') AS status
                 FROM ws_offices WHERE id=?", [$mm['id']]);
     if (!$o) json_out(['error' => 'Office introuvable'], 404);
@@ -751,10 +753,13 @@ function dispatch($m, $p) {
   /* Comptes entreprise auxquels un e-mail est rattaché (pour commander « pour
      une entreprise »). deferredBilling = paiement sur compte activé. */
   if ($m === 'GET' && $p === '/companies') {
+    // Sonde email → sociétés liées : rate-limité (anti-énumération de masse)
+    // et réduit aux champs que le checkout consomme (id, nom, TVA pour le
+    // pré-remplissage facture, facturation différée) — plus d'adresse exposée.
+    rate_limit('companies', 10, 600);
     $email = strtolower(trim(qp('email') ?: ''));
     if ($email === '') json_out([]);
-    json_out(rows("SELECT o.id, o.name, o.vat, o.deferred_billing_enabled AS deferredBilling,
-                          o.address, o.postal_code AS postalCode, o.city
+    json_out(rows("SELECT o.id, o.name, o.vat, o.deferred_billing_enabled AS deferredBilling
                      FROM ws_office_emails e JOIN ws_offices o ON o.id = e.office_id
                     WHERE e.email = ? AND e.active = 1 AND o.active = 1 AND o.status = 'validated'
                     ORDER BY o.name", [$email]));
@@ -1069,8 +1074,14 @@ function dispatch($m, $p) {
               'paymentType' => $paymentType, 'onAccount' => $onAccount, 'total' => $total]);
   }
   if ($m === 'GET' && ($mm = $match('/orders/:id'))) {
+    // Données personnelles (identité, adresse, contenu) : lecture réservée au
+    // PROPRIÉTAIRE connecté ou à l'admin — les ids/refs sont énumérables, un
+    // accès public permettrait de lire les commandes de n'importe qui.
     $o = row("SELECT * FROM ws_orders WHERE id=? OR order_ref=? LIMIT 1", [$mm['id'], $mm['id']]);
     if (!$o) json_out(['error' => 'Commande introuvable'], 404);
+    $uid = auth_uid();
+    $isOwner = $uid && (int) ($o['customer_id'] ?? 0) === (int) $uid;
+    if (!$isOwner && !is_admin_request()) json_out(['error' => 'Non autorisé.'], 401);
     $o['lines'] = rows("SELECT * FROM ws_order_lines WHERE order_id=?", [$o['id']]);
     json_out($o);
   }
@@ -1126,6 +1137,7 @@ function dispatch($m, $p) {
     json_out(['user' => user_payload($id), 'token' => sign_token(['id' => (int) $id, 'exp' => time() + 30 * 86400])], 201);
   }
   if ($m === 'POST' && $p === '/auth/login') {
+    rate_limit('login', 10, 300);   // anti brute-force mots de passe
     $b = body();
     // Identifiant = email OU téléphone.
     $ident = strtolower(trim($b['identifier'] ?? $b['email'] ?? ''));
@@ -1145,6 +1157,12 @@ function dispatch($m, $p) {
   // ⚠️ SÉCURITÉ : aucune vérification d'identité (pas d'OTP). Choix produit assumé
   // pour le prototype. NE PAS mettre en prod sans OTP/email — sinon vol de compte.
   if ($m === 'POST' && $p === '/auth/set-password') {
+    // Durci : rate-limité, et RÉSERVÉ aux comptes qui n'ont PAS encore de mot
+    // de passe (clients importés / créés côté PWA — le seul cas du flux front).
+    // Un compte déjà protégé ne peut plus être écrasé ici : sans cette garde,
+    // connaître l'email de quelqu'un suffisait à voler son compte.
+    // TODO produit : ajouter un OTP email/SMS pour couvrir aussi ce cas résiduel.
+    rate_limit('setpw', 5, 900);
     $b = body();
     $mail = strtolower(trim($b['email'] ?? ''));
     [, $phoneNat, $phoneE164] = norm_phone($b['phonePrefix'] ?? '+32', $b['phone'] ?? '');
@@ -1152,13 +1170,16 @@ function dispatch($m, $p) {
     [, $identNat, $identE164] = norm_phone($b['phonePrefix'] ?? '+32', $ident);
     $pass = (string) ($b['password'] ?? '');
     if (strlen($pass) < 6) json_out(['error' => 'Mot de passe trop court (min. 6 caractères).'], 400);
-    $u = row("SELECT id FROM client
+    $u = row("SELECT id, password_hash FROM client
                 WHERE (? <> '' AND LOWER(TRIM(email))=?)
                    OR (? <> '' AND (phone_e164=? OR phone=?))
                    OR (? <> '' AND (LOWER(TRIM(email))=? OR phone_e164=? OR phone=?))
                 ORDER BY webshop_user DESC, id LIMIT 1",
              [$mail, $mail, $phoneNat, $phoneE164, $phoneNat, $ident, $ident, $identE164, $identNat]);
     if (!$u) json_out(['error' => 'Compte introuvable.'], 404);
+    if (!empty($u['password_hash'])) {
+      json_out(['error' => 'Ce compte a déjà un mot de passe. Connectez-vous ou utilisez la réinitialisation.'], 403);
+    }
     q("UPDATE client SET password_hash=?, webshop_user=1, active=1 WHERE id=?",
       [password_hash($pass, PASSWORD_BCRYPT), $u['id']]);
     json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400]), 'updated' => true]);
@@ -3620,6 +3641,38 @@ function geo_private_clients($shopId = null) {
     'cp' => $c['cp'], 'city' => $c['city'],
     'shop_id' => $c['shop_id'] !== null ? (int) $c['shop_id'] : null, 'ca' => (float) $c['ca']];
   return $out;
+}
+
+/* Limitation de débit (anti brute-force) — compteur par clé (route|IP) sur une
+ * fenêtre glissante simple (table ws_rate_limit, migration 0016). Fail-open :
+ * toute erreur DB laisse passer (la disponibilité prime) ; un dépassement
+ * renvoie 429 sans révéler le seuil exact. */
+function rate_limit($bucket, $max, $windowSec) {
+  $blocked = false;
+  try {
+    $ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '?');
+    $ip = trim(explode(',', (string) $ip)[0]);
+    $key = substr($bucket . '|' . $ip, 0, 120);
+    $now = time();
+    $r = row("SELECT hits, window_start FROM ws_rate_limit WHERE rl_key=?", [$key]);
+    if (!$r || ($now - (int) $r['window_start']) >= $windowSec) {
+      q("REPLACE INTO ws_rate_limit (rl_key, hits, window_start) VALUES (?,1,?)", [$key, $now]);
+      return;
+    }
+    if ((int) $r['hits'] >= $max) $blocked = true;   // le 429 part HORS du try
+    else q("UPDATE ws_rate_limit SET hits = hits + 1 WHERE rl_key=?", [$key]);
+  } catch (Throwable $e) { /* table absente / DB indisponible — fail-open */ }
+  if ($blocked) json_out(['error' => 'Trop de tentatives. Réessayez dans quelques minutes.'], 429);
+}
+
+/* Le jeton admin est-il présenté sur CETTE requête ? (garde optionnelle pour
+ * des lectures sensibles aussi accessibles au propriétaire connecté). */
+function is_admin_request() {
+  $expected = (string) (cfg()['admin_token'] ?? '');
+  if ($expected === '') return false;
+  $given = req_header('X-Admin-Token');
+  if ($given === '') { $a = req_header('Authorization'); if (stripos($a, 'bearer ') === 0) $given = substr($a, 7); }
+  return $given !== '' && hash_equals($expected, trim($given));
 }
 
 /* Collecte du code postal client (exigence « partout ») — helpers partagés
