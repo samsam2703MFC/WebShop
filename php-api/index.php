@@ -2686,14 +2686,24 @@ function dispatch($m, $p) {
     }
 
     // ── Zone de chalandise marque (ws_franchisor_catchment — migration 0012). ──
+    //    shop_name / shop_city viennent de la table shops : les tuiles
+    //    « Magasins » du BO affichent le vrai nom du franchisé.
     if ($m === 'GET' && $p === '/franchisee/ws-franchisor-catchment') {
       if (!$tblExists('ws_franchisor_catchment')) json_out([]);
       $hasShopC = col_exists('ws_franchisor_catchment', 'shop_id');
-      $rs = rows("SELECT id, name, postcodes, exclusive" . ($hasShopC ? ", shop_id" : ", NULL AS shop_id") . "
-                    FROM ws_franchisor_catchment WHERE active=1 ORDER BY id");
+      $rs = $hasShopC
+        ? rows("SELECT c.id, c.name, c.postcodes, c.exclusive, c.shop_id,
+                       s.name AS shop_name, s.city AS shop_city
+                  FROM ws_franchisor_catchment c
+                  LEFT JOIN shops s ON s.id = c.shop_id
+                 WHERE c.active=1 ORDER BY c.id")
+        : rows("SELECT id, name, postcodes, exclusive, NULL AS shop_id,
+                       NULL AS shop_name, NULL AS shop_city
+                  FROM ws_franchisor_catchment WHERE active=1 ORDER BY id");
       json_out(array_map(fn ($r) => ['id' => (int) $r['id'], 'name' => $r['name'],
         'cp' => $r['postcodes'] ?: '—', 'exclusif' => (bool) $r['exclusive'],
-        'shop_id' => $r['shop_id'] !== null ? (int) $r['shop_id'] : null], $rs));
+        'shop_id' => $r['shop_id'] !== null ? (int) $r['shop_id'] : null,
+        'shop_name' => $r['shop_name'] ?: null, 'shop_city' => $r['shop_city'] ?: null], $rs));
     }
 
     // ── Dispo produit — exceptions réelles : ws_products.active (réseau) +
