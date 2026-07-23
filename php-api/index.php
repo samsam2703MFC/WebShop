@@ -2103,6 +2103,16 @@ function dispatch($m, $p) {
       if (!$sets) json_out(['error' => 'rien à modifier'], 400);
       $vals[] = $id;
       q("UPDATE ws_products SET " . implode(', ', $sets) . " WHERE id=?", $vals);
+      // CATÉGORIE AUTOMATIQUE : active dès qu'AU MOINS UN de ses produits est
+      // en ligne, désactivée quand plus aucun ne l'est.
+      if (array_key_exists('active', $b)) {
+        $pc = row("SELECT cat_id FROM ws_products WHERE id=?", [$id]);
+        if ($pc && $pc['cat_id'] !== null) {
+          q("UPDATE ws_categories
+                SET active = EXISTS(SELECT 1 FROM ws_products p2 WHERE p2.cat_id = ws_categories.id AND p2.active = 1)
+              WHERE id=?", [(int) $pc['cat_id']]);
+        }
+      }
       $audit('product.update', 'ws_products', $id, null, $b);
       json_out(['ok' => true]);
     }
@@ -2130,6 +2140,13 @@ function dispatch($m, $p) {
         if (!empty($b['brand_mandatory'])) q("UPDATE ws_products SET brand_mandatory=1,
               active = IF(active=0 AND COALESCE(office_delivery,1)=0, 1, active) WHERE cat_id=?", [$id]);
         else q("UPDATE ws_products SET brand_mandatory=0 WHERE cat_id=?", [$id]);
+      }
+      // CATÉGORIE AUTOMATIQUE : après cascade, l'état de la catégorie suit ses
+      // produits (un obligatoire épargné par la cascade la maintient active).
+      if (array_key_exists('active', $b) || array_key_exists('brand_mandatory', $b)) {
+        q("UPDATE ws_categories
+              SET active = EXISTS(SELECT 1 FROM ws_products p2 WHERE p2.cat_id = ws_categories.id AND p2.active = 1)
+            WHERE id=?", [$id]);
       }
       $audit('category.update', 'ws_categories', $id, null, $b);
       json_out(['ok' => true]);
