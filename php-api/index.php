@@ -2635,6 +2635,18 @@ function dispatch($m, $p) {
       json_out(['ok' => true, 'code' => $code, 'type' => $type, 'value' => $val]);
     }
 
+    // ── Fiche client : commandes du client (droplist réclamation + note ★1-5). ──
+    if ($m === 'GET' && $p === '/franchisee/client-orders') {
+      $cid = (int) qp('client_id', 0);
+      if (!$cid || !$tblExists('ws_orders')) json_out([]);
+      $hasRating = col_exists('ws_orders', 'rating');
+      json_out(rows("SELECT id, order_ref, created_at, total, status" .
+                    ($hasRating ? ", rating" : ", NULL AS rating") . "
+                      FROM ws_orders WHERE customer_id=" . $cid .
+                     ($shopId ? " AND shop_id=" . (int) $shopId : "") . "
+                     ORDER BY created_at DESC LIMIT 50"));
+    }
+
     // ── Fiche client : réclamation client mécontent (ws_incidents.client_id). ──
     if ($m === 'POST' && $p === '/franchisee/client-complaint') {
       $b = body();
@@ -2647,12 +2659,20 @@ function dispatch($m, $p) {
       $cid = (int) ($b['client_id'] ?? 0);
       if (!$cid) json_out(['ok' => false, 'error' => 'client_id requis'], 400);
       if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
-      q("INSERT INTO ws_incidents (shop_id, type, severity, status, title, description, client_id)
-           VALUES (?,?,?,?,?,?,?)",
-        [(int) $shopId, 'litige', 'medium', 'open',
+      // Réclamation rattachée à un ACHAT : order_id optionnel, mais s'il est
+      // fourni la commande doit appartenir à ce client (order_ref dénormalisée).
+      $oid = (int) ($b['order_id'] ?? 0); $oref = null;
+      if ($oid) {
+        $or = $tblExists('ws_orders') ? row("SELECT id, order_ref FROM ws_orders WHERE id=? AND customer_id=?", [$oid, $cid]) : null;
+        if (!$or) json_out(['ok' => false, 'error' => 'commande inconnue pour ce client'], 400);
+        $oref = $or['order_ref'];
+      }
+      q("INSERT INTO ws_incidents (shop_id, order_id, order_ref, type, severity, status, title, description, client_id)
+           VALUES (?,?,?,?,?,?,?,?,?)",
+        [(int) $shopId, $oid ?: null, $oref, 'litige', 'medium', 'open',
          mb_substr(trim((string) ($b['title'] ?? 'Réclamation client')), 0, 180),
          trim((string) ($b['description'] ?? '')), $cid]);
-      json_out(['ok' => true]);
+      json_out(['ok' => true, 'order_ref' => $oref]);
     }
 
     // ── Horaires tournées (ws_tour_availability) — fenêtres agrégées par tournée. ──
