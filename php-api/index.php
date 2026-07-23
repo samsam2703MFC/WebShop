@@ -2187,9 +2187,11 @@ function dispatch($m, $p) {
 
     // ── Contexte session (admin_token → pas de bo_user ; contexte minimal). ──
     if ($m === 'GET' && $p === '/franchisee/me') {
-      $shop = $shopId ? row("SELECT id, name, city FROM $SHOPS WHERE id=?", [$shopId]) : null;
+      // zip (CP) inclus : géolocalisation de la BOUTIQUE sur les cartes
+      // (départ des tournées) — même référentiel CP→GPS que les sites.
+      $shop = $shopId ? row("SELECT id, name, city, zip FROM $SHOPS WHERE id=?", [$shopId]) : null;
       json_out([
-        'shop'         => $shop ? ['id' => (int) $shop['id'], 'name' => $shop['name'], 'city' => $shop['city']] : null,
+        'shop'         => $shop ? ['id' => (int) $shop['id'], 'name' => $shop['name'], 'city' => $shop['city'], 'cp' => $shop['zip'] ?: ''] : null,
         'consoleLabel' => 'Console franchisé' . ($shop ? ' · ' . ($shop['city'] ?: $shop['name']) : ''),
       ]);
     }
