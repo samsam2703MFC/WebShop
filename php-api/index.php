@@ -995,6 +995,21 @@ function dispatch($m, $p) {
       if ($guestPhone === '') { $guestPhone = null; $guestPfx = null; }
     }
 
+    // 4-quater-avant. Site absent du payload mais BUREAU connu : le front peut
+    //   avoir une liste de sites vide au moment du checkout (cache, liaison
+    //   bureau↔site posée après la connexion…). On résout alors le site par
+    //   défaut du bureau CÔTÉ SERVEUR — sinon la commande s'enregistrait sans
+    //   office_delivery_site_id et n'était rattachable à aucune tournée au
+    //   back-office (groupe « Hors tournée »).
+    if ($mode === 'delivery' && empty($dl['siteId']) && $officeClientId) {
+      $autoSite = row("SELECT id, name FROM ws_office_delivery_sites
+                        WHERE office_client_id=? AND active=1
+                        ORDER BY is_default DESC, id LIMIT 1", [(int) $officeClientId]);
+      if ($autoSite) {
+        $dl['siteId'] = (int) $autoSite['id'];
+        if (empty($dl['siteName'])) $dl['siteName'] = $autoSite['name'];
+      }
+    }
     // 4-quater. LIVRAISON BUREAU — éligibilité + cut-off vérifiés SERVEUR (jamais
     //   l'état affiché du front) : site actif + rattaché à une tournée + tournée
     //   active + roule ce jour + pas de fermeture + avant cut-off (heure locale
@@ -3149,6 +3164,7 @@ function dispatch($m, $p) {
       // avec de quoi diagnostiquer le maillon manquant.
       $orphans = rows(
         "SELECT o.order_ref, COALESCE(o.delivery_date, DATE(o.created_at)) AS jour,
+                o.office_delivery_site_id AS osid, o.office_client_id AS ooid, f3.name AS bureau,
                 COALESCE(NULLIF(o.guest_name,'')" .
                 ($hasCliT ? ", NULLIF(TRIM(CONCAT(COALESCE(cl.name,''),' ',COALESCE(cl.surname,''))),'')" : "") . ",
                          'Client webshop') AS client,
@@ -3171,15 +3187,29 @@ function dispatch($m, $p) {
         $J3 = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
         $bySite = [];
         foreach ($orphans as $o3) {
-          $bySite[$o3['libelle']][] = [
+          // Diagnostic du maillon manquant, affiché tel quel dans l'arbre.
+          if ($o3['osid']) {
+            $diag = 'site #' . $o3['osid'] . ' : inactif, sans tournée, ou tournée inactive';
+          } elseif ($o3['ooid']) {
+            $diag = 'bureau #' . $o3['ooid'] . ' : aucun site actif rattaché à une tournée pour ce bureau';
+          } else {
+            $diag = 'commande sans id de site ni de bureau';
+          }
+          $off3 = $o3['bureau'] ? ($o3['bureau'] . ' (#' . $o3['ooid'] . ')')
+                : ($o3['ooid'] ? ('bureau #' . $o3['ooid']) : '— bureau non renseigné');
+          $k3 = $o3['libelle'] . '|' . $diag . '|' . $off3;
+          $bySite[$k3]['libelle'] = $o3['libelle'];
+          $bySite[$k3]['diag'] = $diag;
+          $bySite[$k3]['off'] = $off3;
+          $bySite[$k3]['users'][] = [
             'nom' => $o3['client'] . ' · #' . $o3['order_ref']
                    . ($o3['jour'] > $today ? (' · ' . $J3[(int) date('w', strtotime($o3['jour']))] . ' ' . date('d/m', strtotime($o3['jour']))) : ''),
             'cmd' => (int) $o3['pieces']];
         }
         $orphSites = [];
-        foreach ($bySite as $lib => $us) {
-          $orphSites[] = ['libelle' => $lib, 'ville' => '—', 'cutoff' => '—', 'office' => '—',
-                          'commandes' => count($us), 'users' => $us];
+        foreach ($bySite as $g3) {
+          $orphSites[] = ['libelle' => $g3['libelle'], 'ville' => $g3['diag'], 'cutoff' => '—', 'office' => $g3['off'],
+                          'commandes' => count($g3['users']), 'users' => $g3['users']];
         }
         $out[] = ['nom' => '⚠ Hors tournée (à rattacher)', 'chauffeur' => '—', 'statut' => 'En préparation',
                   'zones' => [['nom' => 'Site inactif, sans tournée, ou commande sans site/bureau', 'sites' => $orphSites]]];
