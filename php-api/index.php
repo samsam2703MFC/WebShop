@@ -2471,14 +2471,18 @@ function dispatch($m, $p) {
     if ($m === 'GET' && $p === '/franchisee/ws-office-delivery-sites') {
       if (!$tblExists('ws_office_delivery_sites')) json_out([]);
       $hasT = $tblExists('ws_tours');
+      $hasStop = col_exists('ws_office_delivery_sites', 'tournee_stop_id');
       $rs = rows("SELECT s.id, s.office_client_id, s.client_id, s.name, s.address, s.floor_room,
                          s.contact_name, s.contact_phone, s.tournee_id, s.shop_id,
-                         s.site_access_minutes, s.active, f.name AS office_name" .
+                         s.site_access_minutes, s.active, f.name AS office_name,
+                         f.address AS office_address, f.postal_code AS office_cp, f.city AS office_city" .
+                 ($hasStop ? ", s.tournee_stop_id" : ", NULL AS tournee_stop_id") .
                  ($hasT ? ", t.name AS tour_name" : ", NULL AS tour_name") . "
                     FROM ws_office_delivery_sites s
                     LEFT JOIN ws_offices f ON f.id = s.office_client_id" .
                  ($hasT ? " LEFT JOIN ws_tours t ON t.id = s.tournee_id" : "") . "
-                   WHERE " . $scope('s.shop_id') . " AND s.active=1 ORDER BY s.name LIMIT 1000");
+                   WHERE " . $scope('s.shop_id') . " AND s.active=1
+                   ORDER BY " . ($hasStop ? "COALESCE(s.tournee_stop_id, 999), " : "") . "s.name LIMIT 1000");
       json_out(array_map(fn ($s2) => [
         'id' => (int) $s2['id'], 'office_client_id' => $s2['office_client_id'] !== null ? (int) $s2['office_client_id'] : null,
         'client_id' => $s2['client_id'], 'bureau' => $s2['office_name'] ?: ($s2['name'] ?: '—'),
@@ -2487,6 +2491,8 @@ function dispatch($m, $p) {
         'etage' => $s2['floor_room'] ?: '—', 'floor_room' => $s2['floor_room'] ?: '—',
         'contact_name' => $s2['contact_name'] ?: '—', 'contact_phone' => $s2['contact_phone'] ?: '—',
         'tour' => $s2['tour_name'] ?: '—', 'tournee_id' => $s2['tournee_id'] !== null ? (int) $s2['tournee_id'] : null,
+        'stop' => $s2['tournee_stop_id'] !== null ? (int) $s2['tournee_stop_id'] : null,
+        'office_address' => $s2['office_address'] ?: '', 'office_cp' => $s2['office_cp'] ?: '', 'office_city' => $s2['office_city'] ?: '',
         'acc' => (float) $s2['site_access_minutes'], 'site_access_minutes' => (float) $s2['site_access_minutes'],
         'shop_id' => $s2['shop_id'], 'active' => (bool) $s2['active'],
       ], $rs));
@@ -3730,17 +3736,22 @@ function dispatch($m, $p) {
               $ex = row("SELECT id FROM ws_office_delivery_sites
                           WHERE active=1 AND office_client_id IS NULL AND $nAdrSql=? AND $nNameSql=? $scS LIMIT 1", [$nA, $nN]);
           }
+          // Ordre dans la tournée (1, 2, 3…) : tournee_stop_id round-trippé.
+          $hasStopCol = col_exists('ws_office_delivery_sites', 'tournee_stop_id');
+          $stopVal = (array_key_exists('stop', $r) && is_numeric($r['stop'])) ? (int) $r['stop'] : null;
+          $stopClr = array_key_exists('stop', $r) && $r['stop'] === null;
           if ($ex) {
             $tourSql = $tourId !== null ? "tournee_id=" . (int) $tourId : ($tourCleared ? "tournee_id=NULL" : "tournee_id=tournee_id");
+            $stopSql = $hasStopCol ? ($stopVal !== null ? ", tournee_stop_id=" . $stopVal : ($stopClr ? ", tournee_stop_id=NULL" : "")) : "";
             q("UPDATE ws_office_delivery_sites SET name=?, address=?, floor_room=?, contact_name=?, contact_phone=?,
-                 site_access_minutes=?, $tourSql, office_client_id=COALESCE(?, office_client_id), active=1" .
+                 site_access_minutes=?, $tourSql, office_client_id=COALESCE(?, office_client_id), active=1$stopSql" .
                  ($shopId ? ", shop_id=" . (int) $shopId : "") . " WHERE id=?",
               [$name ?: null, $addr ?: null, $floor ?: null, $cn ?: null, $cp ?: null, $acc, $officeId, (int) $ex['id']]);
             $keptIds[] = (int) $ex['id']; $n++;
           } elseif ($name !== '' || $addr !== '' || $officeId) {
-            q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, contact_name, contact_phone, site_access_minutes, tournee_id, shop_id, active)
-                 VALUES (?,?,?,?,?,?,?,?,?,1)",
-              [$officeId, $name ?: null, $addr ?: null, $floor ?: null, $cn ?: null, $cp ?: null, $acc, $tourId, $shopId]);
+            q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, contact_name, contact_phone, site_access_minutes, tournee_id, shop_id, active" . ($hasStopCol ? ", tournee_stop_id" : "") . ")
+                 VALUES (?,?,?,?,?,?,?,?,?,1" . ($hasStopCol ? ",?" : "") . ")",
+              array_merge([$officeId, $name ?: null, $addr ?: null, $floor ?: null, $cn ?: null, $cp ?: null, $acc, $tourId, $shopId], $hasStopCol ? [$stopVal] : []));
             $keptIds[] = (int) db()->lastInsertId(); $n++;
           }
         }
