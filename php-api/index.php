@@ -1064,17 +1064,22 @@ function dispatch($m, $p) {
       //     live sont écrites — une ws_orders au schéma plus ancien ne doit
       //     plus faire échouer le paiement (« Unknown column » → 500). La
       //     migration 0031 aligne le schéma ; ce garde-fou protège l'intervalle.
+      // Les colonnes INT ne reçoivent que des valeurs NUMÉRIQUES : le front
+      // envoie des ids de créneau symboliques (ex. « s-09 ») → slot_id=NULL
+      // (le libellé humain reste dans slot_label). MySQL strict refusait
+      // l'INSERT (« Incorrect integer value 's-09' for column slot_id »).
+      $intOrNull = fn ($v) => (isset($v) && is_numeric($v)) ? (int) $v : null;
       $ordVals = [
-        'order_ref' => $ref, 'shop_id' => $shop, 'customer_id' => $b['customerId'] ?? null,
+        'order_ref' => $ref, 'shop_id' => $shop, 'customer_id' => $intOrNull($b['customerId'] ?? null),
         'guest_email' => $guestEmail, 'guest_name' => $guestName, 'guest_phone' => $guestPhone, 'guest_phone_prefix' => $guestPfx,
         'mode' => $mode, 'status' => $orderStatus,
-        'slot_id' => $b['slotId'] ?? null, 'slot_label' => $b['slotLabel'] ?? null, 'delivery_date' => $b['deliveryDate'] ?? null,
+        'slot_id' => $intOrNull($b['slotId'] ?? null), 'slot_label' => $b['slotLabel'] ?? null, 'delivery_date' => $b['deliveryDate'] ?? null,
         'subtotal' => $subtotal, 'promo_amount' => $promo, 'webshop_discount' => $webshopDisc,
         'voucher_code' => $voucherCode, 'voucher_discount' => $voucherDisc, 'total' => $total,
         'payment_method' => $paymentMethod, 'payment_status' => 'pending', 'lang' => $b['lang'] ?? 'fr', 'note' => $note,
         'delivery_mode' => $mode === 'delivery' ? 'office_delivery' : 'collect',
-        'office_client_id' => $officeClientId, 'office_delivery_site_id' => $dl['siteId'] ?? null,
-        'office_delivery_site_name' => $dl['siteName'] ?? null, 'tournee_stop_id' => $dl['tourneeStopId'] ?? null,
+        'office_client_id' => $intOrNull($officeClientId), 'office_delivery_site_id' => $intOrNull($dl['siteId'] ?? null),
+        'office_delivery_site_name' => $dl['siteName'] ?? null, 'tournee_stop_id' => $intOrNull($dl['tourneeStopId'] ?? null),
         'payment_type' => $paymentType, 'delivery_fee_applied' => $feeApplied, 'delivery_fee_amount' => $feeAmount,
         'free_delivery_minimum' => $freeMin, 'po_number' => $poNumber, 'invoice_requested' => $invRequested, 'invoice_vat' => $invVat,
       ];
@@ -1084,8 +1089,9 @@ function dispatch($m, $p) {
            VALUES (" . implode(',', array_fill(0, count($ordIns), '?')) . ")", array_values($ordIns));
       $oid = $pdo->lastInsertId();
       foreach ($lines as $l) {
+        $pidL = is_numeric($l['productId'] ?? null) ? (int) $l['productId'] : null;
         q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note) VALUES (?,?,?,?,?,?,?)",
-          [$oid, $l['productId'], $l['name'], $l['qty'], $l['unit'], $l['portion'], $l['note']]);
+          [$oid, $pidL, $l['name'], $l['qty'], $l['unit'], $l['portion'], $l['note']]);
         // Décrément du stock du jour : si aucune ligne de stock n'existe encore
         // pour ce produit/jour/mode, on la CRÉE (qty_total=0) pour que la vente
         // soit tracée — avant, l'UPDATE ne touchait rien et le stock ne bougeait pas.
