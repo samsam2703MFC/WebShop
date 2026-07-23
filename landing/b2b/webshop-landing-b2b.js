@@ -169,10 +169,10 @@
       var self = this;
       var t = function (fr, nl) { return self.t(fr, nl); };
       return [
-        { key: 'corporate', illo: 'assets/abricot/office-delivery.png', name: t('Événements corporate & conventions', 'Corporate & congressen'), desc: t('Volumes élevés, plusieurs jours, contraintes horaires. Coffee breaks et plateaux simultanés sur plusieurs salles.', 'Grote volumes, meerdere dagen, tijdsbeperkingen. Coffee breaks en schotels tegelijk in meerdere zalen.'), onPick: function () { self.pick('corporate'); } },
-        { key: 'catering', illo: 'assets/abricot/sandwiches.png', name: t('Gros catering & traiteur', 'Grote catering & traiteur'), desc: t('Buffets, réceptions, coffee breaks. Vous orchestrez, nous fournissons la partie boulangère à l’échelle.', 'Buffetten, recepties, coffee breaks. U regisseert, wij leveren het bakkerijdeel op schaal.'), onPick: function () { self.pick('catering'); } },
-        { key: 'mariage', illo: 'assets/abricot/cake.png', name: t('Mariages & salles de réception', 'Huwelijken & feestzalen'), desc: t('Partenariat avec les salles, formules dédiées. D’une pièce montée à des centaines de mignardises.', 'Samenwerking met zalen, aparte formules. Van een pièce montée tot honderden zoetigheden.'), onPick: function () { self.pick('mariage'); } },
-        { key: 'scouts', illo: 'assets/abricot/rolls.png', name: t('Camps scouts & collectivités', 'Scoutskampen & collectiviteiten'), desc: t('Volume, budget serré, livraison sur site. Du pain en quantité, là où vous êtes.', 'Volume, krap budget, levering ter plaatse. Brood in hoeveelheid, waar u ook bent.'), onPick: function () { self.pick('scouts'); } }
+        { key: 'corporate', illo: '/landing/assets/abricot/office-delivery.png', name: t('Événements corporate & conventions', 'Corporate & congressen'), desc: t('Volumes élevés, plusieurs jours, contraintes horaires. Coffee breaks et plateaux simultanés sur plusieurs salles.', 'Grote volumes, meerdere dagen, tijdsbeperkingen. Coffee breaks en schotels tegelijk in meerdere zalen.'), onPick: function () { self.pick('corporate'); } },
+        { key: 'catering', illo: '/landing/assets/abricot/sandwiches.png', name: t('Gros catering & traiteur', 'Grote catering & traiteur'), desc: t('Buffets, réceptions, coffee breaks. Vous orchestrez, nous fournissons la partie boulangère à l’échelle.', 'Buffetten, recepties, coffee breaks. U regisseert, wij leveren het bakkerijdeel op schaal.'), onPick: function () { self.pick('catering'); } },
+        { key: 'mariage', illo: '/landing/assets/abricot/cake.png', name: t('Mariages & salles de réception', 'Huwelijken & feestzalen'), desc: t('Partenariat avec les salles, formules dédiées. D’une pièce montée à des centaines de mignardises.', 'Samenwerking met zalen, aparte formules. Van een pièce montée tot honderden zoetigheden.'), onPick: function () { self.pick('mariage'); } },
+        { key: 'scouts', illo: '/landing/assets/abricot/rolls.png', name: t('Camps scouts & collectivités', 'Scoutskampen & collectiviteiten'), desc: t('Volume, budget serré, livraison sur site. Du pain en quantité, là où vous êtes.', 'Volume, krap budget, levering ter plaatse. Brood in hoeveelheid, waar u ook bent.'), onPick: function () { self.pick('scouts'); } }
       ];
     }
 
@@ -303,9 +303,9 @@
           modalClose: t('Fermer', 'Sluiten')
         },
         pillars: [
-          { num: '01', title: t('Production centralisée', 'Gecentraliseerde productie'), body: t('Un seul atelier, dimensionné pour le volume. La constance d’une recette, à grande échelle.', 'Eén atelier, op maat van het volume. De constantheid van één recept, op grote schaal.'), illo: 'assets/abricot/croissant.png' },
-          { num: '02', title: t('Six points de distribution', 'Zes distributiepunten'), body: t('Halle, Corbais, Gosselies, Sombreffe, Gembloux, Wavre. Un relais près de votre événement.', 'Halle, Corbais, Gosselies, Sombreffe, Gembloux, Wavre. Een schakel dicht bij uw evenement.'), illo: 'assets/abricot/circle.png' },
-          { num: '03', title: t('Logistique coordonnée', 'Gecoördineerde logistiek'), body: t('Planning, fabrication et livraison synchronisés. Le volume arrive à l’heure, et complet.', 'Planning, productie en levering gesynchroniseerd. Het volume komt op tijd, en volledig.'), illo: 'assets/abricot/line.png' }
+          { num: '01', title: t('Production centralisée', 'Gecentraliseerde productie'), body: t('Un seul atelier, dimensionné pour le volume. La constance d’une recette, à grande échelle.', 'Eén atelier, op maat van het volume. De constantheid van één recept, op grote schaal.'), illo: '/landing/assets/abricot/croissant.png' },
+          { num: '02', title: t('Six points de distribution', 'Zes distributiepunten'), body: t('Halle, Corbais, Gosselies, Sombreffe, Gembloux, Wavre. Un relais près de votre événement.', 'Halle, Corbais, Gosselies, Sombreffe, Gembloux, Wavre. Een schakel dicht bij uw evenement.'), illo: '/landing/assets/abricot/circle.png' },
+          { num: '03', title: t('Logistique coordonnée', 'Gecoördineerde logistiek'), body: t('Planning, fabrication et livraison synchronisés. Le volume arrive à l’heure, et complet.', 'Planning, productie en levering gesynchroniseerd. Het volume komt op tijd, en volledig.'), illo: '/landing/assets/abricot/line.png' }
         ],
         cards: this.cards(),
         ceremony: { key: 'ceremonie', name: t('Cérémonies & funérariums', 'Ceremonies & uitvaart'), desc: t('Discrétion, réactivité, formules sobres. Une réponse rapide, sans mise en scène.', 'Discretie, reactiviteit, sobere formules. Een snel antwoord, zonder enscenering.'), onPick: function () { self.pick('ceremonie'); } },
@@ -370,7 +370,7 @@
         /* ============ HEADER ============ */
         React.createElement('header', { style: css('position:sticky;top:0;z-index:60;background:rgba(28,19,16,.82);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--lp-hair);') },
           React.createElement('div', { style: css('max-width:1180px;margin:0 auto;padding:0 clamp(20px,5vw,56px);height:74px;display:flex;align-items:center;justify-content:space-between;gap:24px;') },
-            React.createElement('img', { src: 'assets/logo-white.png', alt: "L'Atelier By", className: 'lp-logo', style: css('height:22px;width:auto;display:block;') }),
+            React.createElement('img', { src: '/landing/assets/logo-white.png', alt: "L'Atelier By", className: 'lp-logo', style: css('height:22px;width:auto;display:block;') }),
             React.createElement('nav', { className: 'lp-nav', style: css('display:flex;align-items:center;gap:30px;') },
               React.createElement('a', { href: '#reseau', style: css(self.navLink('reseau')) }, c.navReseau),
               React.createElement('a', { href: '#terrains', style: css(self.navLink('terrains')) }, c.navTerrains),
@@ -389,7 +389,7 @@
 
         /* ============ HERO ============ */
         React.createElement('section', { style: css('position:relative;padding:clamp(72px,12vw,150px) clamp(20px,5vw,56px) clamp(60px,9vw,110px);overflow:hidden;') },
-          React.createElement('img', { src: 'assets/abricot/b2b.png', alt: '', 'aria-hidden': 'true', style: css('position:absolute;top:6%;right:-6%;width:min(560px,52vw);opacity:.13;animation:lpfloat 11s ease-in-out infinite;pointer-events:none;') }),
+          React.createElement('img', { src: '/landing/assets/abricot/b2b.png', alt: '', 'aria-hidden': 'true', style: css('position:absolute;top:6%;right:-6%;width:min(560px,52vw);opacity:.13;animation:lpfloat 11s ease-in-out infinite;pointer-events:none;') }),
           React.createElement('div', { style: css('max-width:1180px;margin:0 auto;position:relative;') },
             React.createElement('div', { 'data-rev': true, style: css('max-width:880px;') },
               React.createElement('p', { style: css('font-family:var(--font-ui);font-size:11px;font-weight:500;letter-spacing:.3em;text-transform:uppercase;color:var(--lp-abricot);margin:0 0 26px;') }, c.heroEyebrow),
@@ -507,7 +507,7 @@
 
         /* ============ RÉALISATIONS ============ */
         React.createElement('section', { id: 'capacites', style: css('scroll-margin-top:88px;background:var(--lp-panel);padding:clamp(64px,9vw,110px) clamp(20px,5vw,56px);border-top:1px solid var(--lp-hair);position:relative;overflow:hidden;') },
-          React.createElement('img', { src: 'assets/abricot/circle.png', alt: '', 'aria-hidden': 'true', style: css('position:absolute;left:-8%;bottom:-20%;width:min(460px,44vw);opacity:.1;pointer-events:none;') }),
+          React.createElement('img', { src: '/landing/assets/abricot/circle.png', alt: '', 'aria-hidden': 'true', style: css('position:absolute;left:-8%;bottom:-20%;width:min(460px,44vw);opacity:.1;pointer-events:none;') }),
           React.createElement('div', { style: css('max-width:1180px;margin:0 auto;position:relative;') },
             React.createElement('div', { 'data-rev': true, style: css('max-width:720px;') },
               React.createElement('p', { style: css('font-family:var(--font-ui);font-size:11px;font-weight:500;letter-spacing:.24em;text-transform:uppercase;color:var(--lp-abricot);margin:0 0 18px;') },
@@ -588,7 +588,7 @@
               React.createElement('h2', { style: css('font-family:var(--font-ui);font-weight:400;letter-spacing:-.015em;line-height:1.08;margin:0 0 22px;font-size:clamp(30px,4.4vw,54px);max-width:14ch;') }, c.formTitle),
               React.createElement('p', { style: css('font-size:16.5px;line-height:1.7;color:var(--lp-muted);margin:0;max-width:44ch;') }, c.formSub),
               React.createElement('p', { style: css('font-family:var(--font-accent);font-size:18px;color:var(--lp-abricot);margin:40px 0 0;opacity:.9;') }, c.tagline),
-              React.createElement('img', { src: 'assets/abricot/croissant.png', alt: '', 'aria-hidden': 'true', style: css('width:130px;opacity:.16;margin-top:34px;') })
+              React.createElement('img', { src: '/landing/assets/abricot/croissant.png', alt: '', 'aria-hidden': 'true', style: css('width:130px;opacity:.16;margin-top:34px;') })
             ),
             React.createElement('form', { 'data-rev': true, noValidate: true, ref: function (el) { self._form = el; }, onSubmit: function (e) { self.onSubmit(e); }, style: css('background:var(--lp-deep);border:1px solid var(--lp-line);border-radius:18px;padding:clamp(26px,3.4vw,40px);') },
               React.createElement('input', { type: 'text', name: 'company_website', tabIndex: -1, autoComplete: 'off', 'aria-hidden': 'true', style: css('position:absolute;left:-9999px;width:1px;height:1px;opacity:0;') }),
@@ -671,7 +671,7 @@
           React.createElement('div', { className: 'lp-foot__wrap' },
             React.createElement('div', { className: 'lp-foot__top' },
               React.createElement('div', { className: 'lp-foot__brand' },
-                React.createElement('img', { className: 'lp-logo lp-foot__logo', src: 'assets/logo-white.png', alt: "L'Atelier By" }),
+                React.createElement('img', { className: 'lp-logo lp-foot__logo', src: '/landing/assets/logo-white.png', alt: "L'Atelier By" }),
                 React.createElement('p', { className: 'lp-foot__tag' }, c.ftTag)
               ),
               React.createElement('div', { className: 'lp-foot__col' },

@@ -8,28 +8,28 @@
 /* --- Brand fonts (subset shipped in /fonts) ------------------------------- */
 @font-face {
   font-family: 'Gotham';
-  src: url('fonts/Gotham_Light.otf') format('opentype');
+  src: url('/landing/fonts/Gotham_Light.otf') format('opentype');
   font-weight: 300; font-style: normal; font-display: swap;
 }
 @font-face {
   font-family: 'Gotham';
-  src: url('fonts/Gotham_Regular.otf') format('opentype');
+  src: url('/landing/fonts/Gotham_Regular.otf') format('opentype');
   font-weight: 400; font-style: normal; font-display: swap;
 }
 @font-face {
   font-family: 'Gotham';
-  src: url('fonts/Gotham_Medium.otf') format('opentype');
+  src: url('/landing/fonts/Gotham_Medium.otf') format('opentype');
   font-weight: 500; font-style: normal; font-display: swap;
 }
 @font-face {
   /* No dedicated bold cut shipped — map heavier weights to Medium. */
   font-family: 'Gotham';
-  src: url('fonts/Gotham_Medium.otf') format('opentype');
+  src: url('/landing/fonts/Gotham_Medium.otf') format('opentype');
   font-weight: 600; font-style: normal; font-display: swap;
 }
 @font-face {
   font-family: 'Vank';
-  src: url('fonts/GC_Vank.ttf') format('truetype');
+  src: url('/landing/fonts/GC_Vank.ttf') format('truetype');
   font-weight: 400; font-style: normal; font-display: swap;
   unicode-range: U+0020-007E;
 }
