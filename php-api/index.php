@@ -3256,7 +3256,12 @@ function dispatch($m, $p) {
                   COALESCE(NULLIF(l.product_name,''), pr.name, '—') AS produit,
                   SUM(l.qty) AS qty,
                   COALESCE(NULLIF(o.slot_label,''), '—') AS creneau," .
-          ($hasT ? " COALESCE(t.name, IF(o.mode='delivery','— sans tournée','Comptoir'))" : " IF(o.mode='delivery','—','Comptoir')") . " AS tournee
+          ($hasT ? " COALESCE(t.name,
+                  (SELECT t3.name FROM ws_office_delivery_sites s3
+                     JOIN ws_tours t3 ON t3.id = s3.tournee_id
+                    WHERE s3.office_client_id = o.office_client_id
+                      AND s3.active = 1 LIMIT 1),
+                  IF(o.mode='delivery','⚠ tournée à rattacher','Comptoir'))" : " IF(o.mode='delivery','—','Comptoir')") . " AS tournee
              FROM ws_order_lines l
              JOIN ws_orders o ON o.id = l.order_id
              LEFT JOIN ws_products pr ON pr.id = l.product_id
