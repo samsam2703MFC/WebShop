@@ -2499,7 +2499,9 @@ function dispatch($m, $p) {
       if ($tblExists('ws_tours')) {
         $join = "LEFT JOIN ws_tours t ON t.id = f.tour_id";
         $tourSel = "t.name AS tour";
-        if ($shopId) $wh = "(t.shop_id = " . (int) $shopId . " OR f.tour_id IS NULL)";
+        if ($shopId) $wh = col_exists('ws_offices', 'shop_id')
+          ? "(f.shop_id = " . (int) $shopId . " OR f.shop_id IS NULL)"
+          : "(t.shop_id = " . (int) $shopId . " OR f.tour_id IS NULL)";
       }
       $siteSel = $tblExists('ws_office_delivery_sites')
         ? ", (SELECT s.address FROM ws_office_delivery_sites s WHERE s.office_client_id=f.id AND s.active=1 ORDER BY s.id LIMIT 1) AS site"
@@ -3446,12 +3448,16 @@ function dispatch($m, $p) {
         // retirées côté BO — sinon elles « réapparaissent » à chaque GET.
         $n = 0; $keptIds = [];
         foreach ($rows2 as $r) {
-          // Tournée rattachée (libellé ou id) → ws_tours.id (scopé boutique).
+          // Tournée rattachée (libellé ou id) → ws_tours.id. Scope tolérant :
+          // les tournées historiques peuvent avoir shop_id NULL — un scope
+          // strict faisait ignorer silencieusement le changement de tournée.
           $tourId = null; $tv = trim((string) ($r['tour'] ?? ($r['tour_name'] ?? '')));
+          $tourCleared = array_key_exists('tour', $r) && ($tv === '' || $tv === '—');
           if ($tv !== '' && $tv !== '—') {
+            $scT = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
             $tr = ctype_digit($tv)
-              ? row("SELECT id FROM ws_tours WHERE id=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [(int) $tv])
-              : row("SELECT id FROM ws_tours WHERE name=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [$tv]);
+              ? row("SELECT id FROM ws_tours WHERE id=?" . $scT, [(int) $tv])
+              : row("SELECT id FROM ws_tours WHERE name=? AND active=1" . $scT . " ORDER BY id DESC LIMIT 1", [$tv]);
             if ($tr) $tourId = (int) $tr['id'];
           }
           // Bureau (compte B2B) → ws_offices.id.
@@ -3486,10 +3492,11 @@ function dispatch($m, $p) {
               [$officeId, $name ?: null, $addr ?: null]);
           }
           if ($ex) {
+            $tourSql = $tourId !== null ? "tournee_id=" . (int) $tourId : ($tourCleared ? "tournee_id=NULL" : "tournee_id=tournee_id");
             q("UPDATE ws_office_delivery_sites SET name=?, address=?, floor_room=?, contact_name=?, contact_phone=?,
-                 site_access_minutes=?, tournee_id=COALESCE(?, tournee_id), office_client_id=COALESCE(?, office_client_id), active=1" .
+                 site_access_minutes=?, $tourSql, office_client_id=COALESCE(?, office_client_id), active=1" .
                  ($shopId ? ", shop_id=" . (int) $shopId : "") . " WHERE id=?",
-              [$name ?: null, $addr ?: null, $floor ?: null, $cn ?: null, $cp ?: null, $acc, $tourId, $officeId, (int) $ex['id']]);
+              [$name ?: null, $addr ?: null, $floor ?: null, $cn ?: null, $cp ?: null, $acc, $officeId, (int) $ex['id']]);
             $keptIds[] = (int) $ex['id']; $n++;
           } elseif ($name !== '' || $addr !== '' || $officeId) {
             q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, contact_name, contact_phone, site_access_minutes, tournee_id, shop_id, active)
@@ -3577,9 +3584,10 @@ function dispatch($m, $p) {
           $name = trim((string) ($r['name'] ?? ''));
           $tourId = null; $tv = trim((string) ($r['tour'] ?? ''));
           if ($hasTour && $tv !== '' && $tv !== '—') {
+            $scT = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
             $tr = ctype_digit($tv)
-              ? row("SELECT id FROM ws_tours WHERE id=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [(int) $tv])
-              : row("SELECT id FROM ws_tours WHERE name=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [$tv]);
+              ? row("SELECT id FROM ws_tours WHERE id=?" . $scT, [(int) $tv])
+              : row("SELECT id FROM ws_tours WHERE name=? AND active=1" . $scT . " ORDER BY id DESC LIMIT 1", [$tv]);
             if ($tr) $tourId = (int) $tr['id'];
           }
           $status = in_array(($r['status'] ?? ''), ['pending', 'validated'], true) ? $r['status'] : null;
@@ -3604,6 +3612,10 @@ function dispatch($m, $p) {
             if ($status !== null) { $sets[] = 'status=?'; $uvals[] = $status; }
             if ($defer !== null)  { $sets[] = 'deferred_billing_enabled=?'; $uvals[] = $defer; }
             if ($tourId !== null) { $sets[] = 'tour_id=?'; $uvals[] = $tourId; }
+            // Estampiller le shop quand il manque : un office round-trippé par
+            // ce BO appartient à sa boutique — indispensable pour que la passe
+            // de désactivation (suppression) puisse le viser.
+            if ($hasShopO && $shopId) $sets[] = 'shop_id=COALESCE(shop_id, ' . (int) $shopId . ')';
             if ($sets) { $uvals[] = $rid; q("UPDATE ws_offices SET " . implode(',', $sets) . " WHERE id=?", $uvals); $n++; }
             $keptOff[] = $rid;
             // Fiche client d'origine : TVA + raison sociale VIES.
@@ -3690,18 +3702,18 @@ function dispatch($m, $p) {
           $keptOff = array_values(array_filter(array_map('intval', $keptOff)));
           $inOff = $keptOff ? implode(',', $keptOff) : '0';
           q("UPDATE ws_offices SET active=0
-              WHERE active=1 AND shop_id=" . (int) $shopId . " AND id NOT IN ($inOff)");
+              WHERE active=1 AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL) AND id NOT IN ($inOff)");
           // Retirer un OFFICE ne supprime pas le CLIENT : on coupe seulement sa
           // livraison au bureau et on détache le lien — le client reste visible
           // dans le menu Clients (sa suppression, elle, se fait là-bas).
           if ($tblExists('client') && col_exists('client', 'office_id')) {
             q("UPDATE client c JOIN ws_offices o ON o.id = c.office_id
                   SET c.office_delivery = 0, c.office_id = NULL
-                WHERE o.active = 0 AND o.shop_id = " . (int) $shopId);
+                WHERE o.active = 0 AND (o.shop_id = " . (int) $shopId . " OR o.shop_id IS NULL)");
             if (col_exists('ws_offices', 'client_id'))
               q("UPDATE client c JOIN ws_offices o ON o.client_id = c.id
                     SET c.office_delivery = 0
-                  WHERE o.active = 0 AND o.shop_id = " . (int) $shopId . " AND c.office_delivery = 1
+                  WHERE o.active = 0 AND (o.shop_id = " . (int) $shopId . " OR o.shop_id IS NULL) AND c.office_delivery = 1
                     AND NOT EXISTS (SELECT 1 FROM ws_offices o2 WHERE o2.client_id = c.id AND o2.active = 1)");
           }
         }
