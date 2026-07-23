@@ -2534,7 +2534,7 @@ function dispatch($m, $p) {
       if (!$tblExists('client')) json_out([]);
       $cc = fn ($c) => col_exists('client', $c);
       $sel = "c.id, c.name, c.surname, c.email, c.phone, c.zip";
-      foreach (['company_name','phone_e164','locality','city','is_b2b','office_id','active','tax_number'] as $col)
+      foreach (['company_name','phone_e164','locality','city','is_b2b','office_id','department_id','active','tax_number'] as $col)
         if ($cc($col)) $sel .= ", c.$col";
       $sel .= $cc('status') ? ", c.status" : ", 0 AS status";
       $sel .= $cc('blocked') ? ", c.blocked" : ", 0 AS blocked";
@@ -2573,13 +2573,18 @@ function dispatch($m, $p) {
           ? ", (SELECT COALESCE(NULLIF(TRIM(s.name),''), s.address) FROM ws_office_delivery_sites s
                  WHERE s.office_client_id = wo.id AND s.active=1 ORDER BY s.id LIMIT 1) AS site_name" : ", NULL AS site_name";
       }
-      // Département : liaison au niveau société (id_client) ou legacy client_id.
+      // Département : d'abord le rattachement direct (client.department_id —
+      // migration 0027), sinon la liaison au niveau société (id_client/legacy).
       $dep = ", NULL AS department";
       if ($tblExists('b2b_client_company_department')) {
+        $byId = $cc('department_id')
+          ? "(SELECT d.name FROM b2b_client_company_department d WHERE d.id = c.department_id LIMIT 1)" : "NULL";
+        $byCo = "NULL";
         if (col_exists('b2b_client_company_department', 'id_client'))
-          $dep = ", (SELECT d.name FROM b2b_client_company_department d WHERE d.id_client = c.id ORDER BY d.id LIMIT 1) AS department";
+          $byCo = "(SELECT d.name FROM b2b_client_company_department d WHERE d.id_client = c.id ORDER BY d.id LIMIT 1)";
         elseif (col_exists('b2b_client_company_department', 'client_id'))
-          $dep = ", (SELECT d.name FROM b2b_client_company_department d WHERE d.client_id = CAST(c.id AS CHAR) ORDER BY d.id LIMIT 1) AS department";
+          $byCo = "(SELECT d.name FROM b2b_client_company_department d WHERE d.client_id = CAST(c.id AS CHAR) ORDER BY d.id LIMIT 1)";
+        $dep = ", COALESCE($byId, $byCo) AS department";
       }
       $where = "1=1";
       if ($shopId) {
@@ -2587,7 +2592,33 @@ function dispatch($m, $p) {
           ? "COALESCE(c.preferred_shop_id, c.id_main_shop) = " . (int) $shopId
           : "c.id_main_shop = " . (int) $shopId;
       }
-      json_out(rows("SELECT $sel$offCols$dep FROM client c$joins WHERE $where ORDER BY c.id DESC LIMIT 500"));
+      // Pas de LIMIT : la liste clients doit être complète.
+      json_out(rows("SELECT $sel$offCols$dep FROM client c$joins WHERE $where ORDER BY c.id DESC"));
+    }
+
+    // ── Liste clients : rattachement à un office (+ département facultatif). ──
+    if ($m === 'POST' && $p === '/franchisee/client-attach') {
+      $b = body();
+      $id = (int) ($b['id'] ?? 0);
+      if (!$id) json_out(['ok' => false, 'error' => 'id manquant'], 400);
+      $sets = []; $args = [];
+      if (array_key_exists('office_id', $b) && col_exists('client', 'office_id')) {
+        $ov = ($b['office_id'] === null || $b['office_id'] === '') ? null : (int) $b['office_id'];
+        if ($ov !== null && $tblExists('ws_offices') && !row("SELECT id FROM ws_offices WHERE id=?", [$ov]))
+          json_out(['ok' => false, 'error' => 'office inconnu'], 400);
+        $sets[] = "office_id=?"; $args[] = $ov;
+      }
+      if (array_key_exists('department_id', $b) && col_exists('client', 'department_id')) {
+        $dv = ($b['department_id'] === null || $b['department_id'] === '') ? null : (int) $b['department_id'];
+        if ($dv !== null && $tblExists('b2b_client_company_department')
+            && !row("SELECT id FROM b2b_client_company_department WHERE id=?", [$dv]))
+          json_out(['ok' => false, 'error' => 'département inconnu'], 400);
+        $sets[] = "department_id=?"; $args[] = $dv;
+      }
+      if (!$sets) json_out(['ok' => false, 'error' => 'rien à rattacher (office_id / department_id)'], 400);
+      $args[] = $id;
+      q("UPDATE client SET " . implode(', ', $sets) . " WHERE id=?", $args);
+      json_out(['ok' => true]);
     }
 
     // ── Fiche client : blocage commercial (client.blocked — migration 0025). ──
