@@ -2592,6 +2592,8 @@ function dispatch($m, $p) {
           ? "COALESCE(c.preferred_shop_id, c.id_main_shop) = " . (int) $shopId
           : "c.id_main_shop = " . (int) $shopId;
       }
+      // Soft delete : un client « supprimé » (active=0) n'apparaît plus.
+      if ($cc('active')) $where .= " AND (c.active = 1 OR c.active IS NULL)";
       // Pas de LIMIT : la liste clients doit être complète.
       json_out(rows("SELECT $sel$offCols$dep FROM client c$joins WHERE $where ORDER BY c.id DESC"));
     }
@@ -2619,6 +2621,26 @@ function dispatch($m, $p) {
       $args[] = $id;
       q("UPDATE client SET " . implode(', ', $sets) . " WHERE id=?", $args);
       json_out(['ok' => true]);
+    }
+
+    // ── Liste clients : « suppression » = soft delete (client.active=0). ──
+    if ($m === 'POST' && $p === '/franchisee/client-active') {
+      $b = body();
+      $id = (int) ($b['id'] ?? 0);
+      if (!$id || !col_exists('client', 'active')) json_out(['ok' => false, 'error' => 'id ou colonne active manquant'], 400);
+      q("UPDATE client SET active=? WHERE id=?", [!empty($b['active']) ? 1 : 0, $id]);
+      json_out(['ok' => true, 'active' => !empty($b['active'])]);
+    }
+
+    // ── Fiche client : ajout / édition du code postal (client.zip). ──
+    if ($m === 'POST' && $p === '/franchisee/client-zip') {
+      $b = body();
+      $id = (int) ($b['id'] ?? 0);
+      $zip = trim((string) ($b['zip'] ?? ''));
+      if (!$id) json_out(['ok' => false, 'error' => 'id manquant'], 400);
+      if (!preg_match('/^\d{4}$/', $zip)) json_out(['ok' => false, 'error' => 'code postal invalide (4 chiffres)'], 400);
+      q("UPDATE client SET zip=? WHERE id=?", [$zip, $id]);
+      json_out(['ok' => true, 'zip' => $zip]);
     }
 
     // ── Fiche client : blocage commercial (client.blocked — migration 0025). ──
