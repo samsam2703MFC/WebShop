@@ -2478,7 +2478,7 @@ function dispatch($m, $p) {
                     FROM ws_office_delivery_sites s
                     LEFT JOIN ws_offices f ON f.id = s.office_client_id" .
                  ($hasT ? " LEFT JOIN ws_tours t ON t.id = s.tournee_id" : "") . "
-                   WHERE " . $scope('s.shop_id') . " AND s.active=1 ORDER BY s.name LIMIT 300");
+                   WHERE " . $scope('s.shop_id') . " AND s.active=1 ORDER BY s.name LIMIT 1000");
       json_out(array_map(fn ($s2) => [
         'id' => (int) $s2['id'], 'office_client_id' => $s2['office_client_id'] !== null ? (int) $s2['office_client_id'] : null,
         'client_id' => $s2['client_id'], 'bureau' => $s2['office_name'] ?: ($s2['name'] ?: '—'),
@@ -2522,6 +2522,137 @@ function dispatch($m, $p) {
     if ($m === 'GET' && $p === '/franchisee/b2b-departments') {
       if (!$tblExists('b2b_client_company_department')) json_out([]);
       json_out(rows("SELECT * FROM b2b_client_company_department LIMIT 500"));
+    }
+
+    // ── Menu « Clients » — clients (table ERP client) rattachés aux bureaux. ──
+    //    Une ligne par client, avec les signaux de badges : commandes/récurrence
+    //    (ws_orders.customer_id), voucher nominatif (ws_vouchers.client_id),
+    //    réclamation client (ws_incidents.client_id — migration 0025), achats
+    //    magasin (pwa_purchases si présente), bureau/tournée via ws_offices,
+    //    différé au niveau bureau. Cloisonné boutique (preferred/id_main_shop).
+    if ($m === 'GET' && $p === '/franchisee/b2b-clients') {
+      if (!$tblExists('client')) json_out([]);
+      $cc = fn ($c) => col_exists('client', $c);
+      $sel = "c.id, c.name, c.surname, c.email, c.phone, c.zip";
+      foreach (['company_name','phone_e164','locality','city','is_b2b','office_id','active','tax_number'] as $col)
+        if ($cc($col)) $sel .= ", c.$col";
+      $sel .= $cc('status') ? ", c.status" : ", 0 AS status";
+      $sel .= $cc('blocked') ? ", c.blocked" : ", 0 AS blocked";
+      $sel .= $cc('pwa_user') ? ", c.pwa_user" : ", 0 AS pwa_user";
+      $sel .= $cc('webshop_user') ? ", c.webshop_user" : ", 0 AS webshop_user";
+      $sel .= $cc('fidelity_active') ? ", c.fidelity_active" : ", 0 AS fidelity_active";
+      $sel .= $cc('invoice_vat') ? ", c.invoice_vat" : ", NULL AS invoice_vat";
+      $sel .= $cc('created_at') ? ", c.created_at" : ", NULL AS created_at";
+      // Commandes webshop : nb, dernière, 90 derniers jours (récurrence), CA.
+      if ($tblExists('ws_orders'))
+        $sel .= ", (SELECT COUNT(*) FROM ws_orders o WHERE o.customer_id=c.id) AS orders_count,
+                  (SELECT MAX(o.created_at) FROM ws_orders o WHERE o.customer_id=c.id) AS last_order,
+                  (SELECT COUNT(*) FROM ws_orders o WHERE o.customer_id=c.id AND o.created_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)) AS orders_90d,
+                  (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.customer_id=c.id) AS orders_total";
+      else $sel .= ", 0 AS orders_count, NULL AS last_order, 0 AS orders_90d, 0 AS orders_total";
+      // Vouchers nominatifs (ws_client_vouchers — migration 0025) : actif / consommé.
+      if ($tblExists('ws_client_vouchers'))
+        $sel .= ", (SELECT COUNT(*) FROM ws_client_vouchers v WHERE v.client_id=c.id AND v.active=1 AND v.used_count < v.max_uses) AS voucher_active,
+                  (SELECT COUNT(*) FROM ws_client_vouchers v WHERE v.client_id=c.id AND v.used_count > 0) AS voucher_used";
+      else $sel .= ", 0 AS voucher_active, 0 AS voucher_used";
+      // Réclamation CLIENT ouverte (≠ incident de livraison, sans client_id).
+      if ($tblExists('ws_incidents') && col_exists('ws_incidents', 'client_id'))
+        $sel .= ", (SELECT COUNT(*) FROM ws_incidents i WHERE i.client_id=c.id AND i.resolved_at IS NULL) AS complaint_open";
+      else $sel .= ", 0 AS complaint_open";
+      // Achats en magasin (tickets PWA/ERP — table externe, présence non garantie).
+      $sel .= $tblExists('pwa_purchases')
+        ? ", (SELECT COUNT(*) FROM pwa_purchases pp WHERE pp.client_id=c.id) AS shop_buys"
+        : ", NULL AS shop_buys";
+      $joins = ""; $offCols = ", NULL AS office_name, NULL AS tour_name, NULL AS site_name, 0 AS deferred";
+      if ($cc('office_id') && $tblExists('ws_offices')) {
+        $joins .= " LEFT JOIN ws_offices wo ON wo.id = c.office_id";
+        $offCols = ", wo.name AS office_name, wo.deferred_billing_enabled AS deferred";
+        $offCols .= (col_exists('ws_offices', 'tour_id') && $tblExists('ws_tours'))
+          ? ", (SELECT t.name FROM ws_tours t WHERE t.id = wo.tour_id) AS tour_name" : ", NULL AS tour_name";
+        $offCols .= $tblExists('ws_office_delivery_sites')
+          ? ", (SELECT COALESCE(NULLIF(TRIM(s.name),''), s.address) FROM ws_office_delivery_sites s
+                 WHERE s.office_client_id = wo.id AND s.active=1 ORDER BY s.id LIMIT 1) AS site_name" : ", NULL AS site_name";
+      }
+      // Département : liaison au niveau société (id_client) ou legacy client_id.
+      $dep = ", NULL AS department";
+      if ($tblExists('b2b_client_company_department')) {
+        if (col_exists('b2b_client_company_department', 'id_client'))
+          $dep = ", (SELECT d.name FROM b2b_client_company_department d WHERE d.id_client = c.id ORDER BY d.id LIMIT 1) AS department";
+        elseif (col_exists('b2b_client_company_department', 'client_id'))
+          $dep = ", (SELECT d.name FROM b2b_client_company_department d WHERE d.client_id = CAST(c.id AS CHAR) ORDER BY d.id LIMIT 1) AS department";
+      }
+      $where = "1=1";
+      if ($shopId) {
+        $where = $cc('preferred_shop_id')
+          ? "COALESCE(c.preferred_shop_id, c.id_main_shop) = " . (int) $shopId
+          : "c.id_main_shop = " . (int) $shopId;
+      }
+      json_out(rows("SELECT $sel$offCols$dep FROM client c$joins WHERE $where ORDER BY c.id DESC LIMIT 500"));
+    }
+
+    // ── Fiche client : blocage commercial (client.blocked — migration 0025). ──
+    if ($m === 'POST' && $p === '/franchisee/client-block') {
+      $b = body();
+      $id = (int) ($b['id'] ?? 0);
+      if (!$id || !col_exists('client', 'blocked')) json_out(['ok' => false, 'error' => 'id ou colonne blocked manquant'], 400);
+      q("UPDATE client SET blocked=? WHERE id=?", [!empty($b['blocked']) ? 1 : 0, $id]);
+      json_out(['ok' => true, 'blocked' => !empty($b['blocked'])]);
+    }
+
+    // ── Fiche client : facturation personne morale (toggle + TVA VIES obligatoire). ──
+    if ($m === 'POST' && $p === '/franchisee/client-billing') {
+      $b = body();
+      $id = (int) ($b['id'] ?? 0);
+      if (!$id) json_out(['ok' => false, 'error' => 'id manquant'], 400);
+      $corp = !empty($b['corporate']);
+      $vat  = strtoupper(preg_replace('/[^A-Za-z0-9+*]/', '', (string) ($b['vat'] ?? '')));
+      if ($corp && $vat === '') json_out(['ok' => false, 'error' => 'TVA (VIES) obligatoire pour une personne morale'], 400);
+      if ($corp && !preg_match('/^[A-Z]{2}[0-9A-Z+*]{2,12}$/', $vat))
+        json_out(['ok' => false, 'error' => 'Format TVA invalide (ex. BE0123456789) — vérifiez via VIES'], 400);
+      $sets = []; $args = [];
+      if (col_exists('client', 'invoice_vat')) { $sets[] = "invoice_vat=?"; $args[] = $corp ? $vat : null; }
+      if (col_exists('client', 'tax_number') && $corp) { $sets[] = "tax_number=?"; $args[] = $vat; }
+      if (col_exists('client', 'is_b2b') && $corp) $sets[] = "is_b2b=1";
+      if (!$sets) json_out(['ok' => false, 'error' => 'aucune colonne facturation disponible'], 501);
+      $args[] = $id;
+      q("UPDATE client SET " . implode(', ', $sets) . " WHERE id=?", $args);
+      json_out(['ok' => true, 'corporate' => $corp, 'vat' => $corp ? $vat : null]);
+    }
+
+    // ── Fiche client : voucher / remboursement nominatif (ws_client_vouchers). ──
+    //    Table dédiée (0025) — ws_vouchers est une VUE (0007), non inscriptible.
+    if ($m === 'POST' && $p === '/franchisee/client-voucher') {
+      $b = body();
+      $cid = (int) ($b['client_id'] ?? 0);
+      $val = (float) ($b['value'] ?? 0);
+      if (!$cid || $val <= 0) json_out(['ok' => false, 'error' => 'client_id et value (>0) requis'], 400);
+      if (!$tblExists('ws_client_vouchers'))
+        json_out(['ok' => false, 'error' => 'ws_client_vouchers absente (migration 0025)'], 501);
+      $type = in_array(($b['type'] ?? ''), ['percent', 'fixed'], true) ? $b['type'] : 'fixed';
+      $code = 'RB-' . $cid . '-' . strtoupper(substr(bin2hex(random_bytes(4)), 0, 6));
+      q("INSERT INTO ws_client_vouchers (client_id, shop_id, code, type, value, max_uses, used_count, active)
+           VALUES (?,?,?,?,?,1,0,1)", [$cid, $shopId ?: null, $code, $type, $val]);
+      json_out(['ok' => true, 'code' => $code, 'type' => $type, 'value' => $val]);
+    }
+
+    // ── Fiche client : réclamation client mécontent (ws_incidents.client_id). ──
+    if ($m === 'POST' && $p === '/franchisee/client-complaint') {
+      $b = body();
+      if (!$tblExists('ws_incidents') || !col_exists('ws_incidents', 'client_id'))
+        json_out(['ok' => false, 'error' => 'ws_incidents.client_id absente (migration 0025)'], 501);
+      if (!empty($b['resolve_client_id'])) {
+        q("UPDATE ws_incidents SET resolved_at=NOW(), status='resolved' WHERE client_id=? AND resolved_at IS NULL", [(int) $b['resolve_client_id']]);
+        json_out(['ok' => true, 'resolved' => true]);
+      }
+      $cid = (int) ($b['client_id'] ?? 0);
+      if (!$cid) json_out(['ok' => false, 'error' => 'client_id requis'], 400);
+      if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
+      q("INSERT INTO ws_incidents (shop_id, type, severity, status, title, description, client_id)
+           VALUES (?,?,?,?,?,?,?)",
+        [(int) $shopId, 'litige', 'medium', 'open',
+         mb_substr(trim((string) ($b['title'] ?? 'Réclamation client')), 0, 180),
+         trim((string) ($b['description'] ?? '')), $cid]);
+      json_out(['ok' => true]);
     }
 
     // ── Horaires tournées (ws_tour_availability) — fenêtres agrégées par tournée. ──
@@ -3137,7 +3268,10 @@ function dispatch($m, $p) {
       // une tournée réelle). Relie le « client office » à sa tournée : résout le
       // nom de tournée → ws_tours.id et le nom de bureau → ws_offices.id.
       if ($tbl === 'ws_office_delivery_sites' && $tblExists('ws_office_delivery_sites')) {
-        $n = 0;
+        // Le BO envoie la LISTE COMPLÈTE : sémantique « replace ». Les ids
+        // traités sont collectés pour désactiver (active=0) les lignes webshop
+        // retirées côté BO — sinon elles « réapparaissent » à chaque GET.
+        $n = 0; $keptIds = [];
         foreach ($rows2 as $r) {
           // Tournée rattachée (libellé ou id) → ws_tours.id (scopé boutique).
           $tourId = null; $tv = trim((string) ($r['tour'] ?? ($r['tour_name'] ?? '')));
@@ -3160,24 +3294,53 @@ function dispatch($m, $p) {
           if ($name === '—') $name = trim((string) ($r['office'] ?? ''));
           if ($name === '—') $name = '';
           $addr  = trim((string) ($r['adr'] ?? ($r['address'] ?? '')));
+          if ($addr === '—') $addr = '';
           $floor = trim((string) ($r['etage'] ?? ($r['floor_room'] ?? '')));
           $cn    = trim((string) ($r['contact_name'] ?? ''));
           $cp    = trim((string) ($r['contact_phone'] ?? ''));
           $acc   = isset($r['acc']) ? (float) $r['acc'] : (isset($r['site_access_minutes']) ? (float) $r['site_access_minutes'] : 10);
           $rid   = $r['id'] ?? null;
           $ex    = is_numeric($rid) ? row("SELECT id FROM ws_office_delivery_sites WHERE id=?", [(int) $rid]) : null;
+          // Repli anti-doublon : sans id round-trippé, on retrouve la ligne par
+          // (office/nom/adresse) plutôt que de ré-insérer à chaque save.
+          // Périmètre STRICTEMENT identique au GET (shop_id = boutique) — les
+          // lignes shop_id NULL sont invisibles du BO, on n'y touche jamais.
+          if (!$ex && ($name !== '' || $addr !== '' || $officeId)) {
+            $ex = row("SELECT id FROM ws_office_delivery_sites
+                        WHERE active=1 AND (office_client_id <=> ?)
+                          AND (name <=> ?) AND (address <=> ?)" .
+                        ($shopId ? " AND shop_id=" . (int) $shopId : "") . " LIMIT 1",
+              [$officeId, $name ?: null, $addr ?: null]);
+          }
           if ($ex) {
             q("UPDATE ws_office_delivery_sites SET name=?, address=?, floor_room=?, contact_name=?, contact_phone=?,
-                 site_access_minutes=?, tournee_id=COALESCE(?, tournee_id), office_client_id=COALESCE(?, office_client_id)" .
+                 site_access_minutes=?, tournee_id=COALESCE(?, tournee_id), office_client_id=COALESCE(?, office_client_id), active=1" .
                  ($shopId ? ", shop_id=" . (int) $shopId : "") . " WHERE id=?",
               [$name ?: null, $addr ?: null, $floor ?: null, $cn ?: null, $cp ?: null, $acc, $tourId, $officeId, (int) $ex['id']]);
-            $n++;
+            $keptIds[] = (int) $ex['id']; $n++;
           } elseif ($name !== '' || $addr !== '' || $officeId) {
             q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, contact_name, contact_phone, site_access_minutes, tournee_id, shop_id, active)
                  VALUES (?,?,?,?,?,?,?,?,?,1)",
               [$officeId, $name ?: null, $addr ?: null, $floor ?: null, $cn ?: null, $cp ?: null, $acc, $tourId, $shopId]);
-            $n++;
+            $keptIds[] = (int) db()->lastInsertId(); $n++;
           }
+        }
+        // Sémantique replace : toute ligne WEBSHOP (client_id NULL = pas de
+        // synchro ERP) du périmètre boutique absente de la liste envoyée est
+        // désactivée — c'est la suppression côté BO qui devient effective.
+        // Garde-fous : (1) périmètre STRICTEMENT identique au GET (shop_id =
+        // boutique ; jamais les lignes shop_id NULL, invisibles du BO) ;
+        // (2) uniquement si au moins un id DB a fait l'aller-retour — un
+        // payload sans ids (mode démo/seed, hydratation ratée) reste ADDITIF
+        // et ne peut pas désactiver la base en masse.
+        $sawDbId = false;
+        foreach ($rows2 as $r) if (is_numeric($r['id'] ?? null)) { $sawDbId = true; break; }
+        if ($sawDbId && $shopId) {
+          $keptIds = array_values(array_filter(array_map('intval', $keptIds)));
+          $inList  = $keptIds ? implode(',', $keptIds) : '0';
+          q("UPDATE ws_office_delivery_sites SET active=0
+              WHERE active=1 AND client_id IS NULL AND id NOT IN ($inList)
+                AND shop_id=" . (int) $shopId);
         }
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
       }
@@ -3289,8 +3452,11 @@ function dispatch($m, $p) {
             $n++;
           }
           // Sens du paramétrage : le BUREAU choisit son building (site). La ligne
-          // de liaison bureau↔site est créée si elle n'existe pas encore.
+          // de liaison bureau↔site est créée seulement si l'office n'a encore
+          // AUCUN site actif (sinon on met à jour l'existant) — un ré-enregis-
+          // trement d'office ne doit jamais dupliquer de ligne site.
           $siteAdr = trim((string) ($r['site'] ?? ''));
+          if ($siteAdr === '—') $siteAdr = '';
           if ($siteAdr !== '' && $rid && $tblExists('ws_office_delivery_sites')) {
             // Un site DOIT être rattaché à une tournée : repli sur la tournée
             // stockée de l'office si le formulaire n'en a pas résolu une.
@@ -3299,13 +3465,29 @@ function dispatch($m, $p) {
               $ot = row("SELECT tour_id FROM ws_offices WHERE id=?", [$rid]);
               if ($ot && $ot['tour_id'] !== null) $pairTour = (int) $ot['tour_id'];
             }
-            $ps = row("SELECT id, tournee_id FROM ws_office_delivery_sites WHERE office_client_id=? AND address=? LIMIT 1", [$rid, $siteAdr]);
-            if (!$ps) {
-              q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, tournee_id, site_access_minutes, active" . ($shopId ? ", shop_id" : "") . ")
-                   VALUES (?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
-                [$rid, ($name !== '' ? $name : 'Bureau') . ' @ ' . mb_substr($siteAdr, 0, 80), $siteAdr, $pairTour, 6]);
-            } elseif ($ps['tournee_id'] === null && $pairTour !== null) {
-              q("UPDATE ws_office_delivery_sites SET tournee_id=? WHERE id=?", [$pairTour, (int) $ps['id']]);
+            // 1) correspondance EXACTE d'adresse → juste compléter la tournée ;
+            // 2) sinon une ligne du bureau SANS adresse → on y met l'adresse ;
+            // 3) sinon (adresses différentes non vides) → NE RIEN écraser : le
+            //    déplacement d'un bureau se fait à l'étape 3 (drag-drop), pas
+            //    par un ré-enregistrement d'office qui renverrait un champ
+            //    `site` périmé.
+            $ps = row("SELECT id, tournee_id FROM ws_office_delivery_sites
+                        WHERE office_client_id=? AND active=1 AND TRIM(COALESCE(address,''))=? LIMIT 1", [$rid, $siteAdr]);
+            if ($ps) {
+              if ($ps['tournee_id'] === null && $pairTour !== null)
+                q("UPDATE ws_office_delivery_sites SET tournee_id=? WHERE id=?", [$pairTour, (int) $ps['id']]);
+            } else {
+              $pn = row("SELECT id FROM ws_office_delivery_sites
+                          WHERE office_client_id=? AND active=1 AND TRIM(COALESCE(address,''))='' LIMIT 1", [$rid]);
+              $any = $pn ?: row("SELECT id FROM ws_office_delivery_sites WHERE office_client_id=? AND active=1 LIMIT 1", [$rid]);
+              if ($pn) {
+                q("UPDATE ws_office_delivery_sites SET address=?, tournee_id=COALESCE(?, tournee_id) WHERE id=?",
+                  [$siteAdr, $pairTour, (int) $pn['id']]);
+              } elseif (!$any) {
+                q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, tournee_id, site_access_minutes, active" . ($shopId ? ", shop_id" : "") . ")
+                     VALUES (?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
+                  [$rid, ($name !== '' ? $name : 'Bureau') . ' @ ' . mb_substr($siteAdr, 0, 80), $siteAdr, $pairTour, 6]);
+              }
             }
           }
         }
