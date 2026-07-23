@@ -1051,29 +1051,44 @@ function dispatch($m, $p) {
         }
       }
       // 6c. Écriture de la commande + lignes + décrément stock (même jour).
-      q("INSERT INTO ws_orders
-           (order_ref, shop_id, customer_id, guest_email, guest_name, guest_phone, guest_phone_prefix, mode, status,
-            slot_id, slot_label, delivery_date,
-            subtotal, promo_amount, webshop_discount, voucher_code, voucher_discount, total,
-            payment_method, payment_status, lang, note, delivery_mode,
-            office_client_id, office_delivery_site_id, office_delivery_site_name, tournee_stop_id,
-            payment_type, delivery_fee_applied, delivery_fee_amount, free_delivery_minimum,
-            po_number, invoice_requested, invoice_vat)
-         VALUES (?,?,?, ?,?,?,?, ?, ?, ?,?,?, ?,?,?,?,?,?, ?, 'pending', ?, ?, ?, ?,?,?,?, ?,?,?,?, ?,?,?)",
-        [$ref, $shop, $b['customerId'] ?? null, $guestEmail, $guestName, $guestPhone, $guestPfx, $mode, $orderStatus,
-         $b['slotId'] ?? null, $b['slotLabel'] ?? null, $b['deliveryDate'] ?? null,
-         $subtotal, $promo, $webshopDisc, $voucherCode, $voucherDisc, $total,
-         $paymentMethod, $b['lang'] ?? 'fr', $note, $mode === 'delivery' ? 'office_delivery' : 'collect',
-         $officeClientId, $dl['siteId'] ?? null, $dl['siteName'] ?? null, $dl['tourneeStopId'] ?? null,
-         $paymentType, $feeApplied, $feeAmount, $freeMin,
-         $poNumber, $invRequested, $invVat]);
+      //     INSERT DYNAMIQUE : seules les colonnes qui EXISTENT sur la table
+      //     live sont écrites — une ws_orders au schéma plus ancien ne doit
+      //     plus faire échouer le paiement (« Unknown column » → 500). La
+      //     migration 0031 aligne le schéma ; ce garde-fou protège l'intervalle.
+      $ordVals = [
+        'order_ref' => $ref, 'shop_id' => $shop, 'customer_id' => $b['customerId'] ?? null,
+        'guest_email' => $guestEmail, 'guest_name' => $guestName, 'guest_phone' => $guestPhone, 'guest_phone_prefix' => $guestPfx,
+        'mode' => $mode, 'status' => $orderStatus,
+        'slot_id' => $b['slotId'] ?? null, 'slot_label' => $b['slotLabel'] ?? null, 'delivery_date' => $b['deliveryDate'] ?? null,
+        'subtotal' => $subtotal, 'promo_amount' => $promo, 'webshop_discount' => $webshopDisc,
+        'voucher_code' => $voucherCode, 'voucher_discount' => $voucherDisc, 'total' => $total,
+        'payment_method' => $paymentMethod, 'payment_status' => 'pending', 'lang' => $b['lang'] ?? 'fr', 'note' => $note,
+        'delivery_mode' => $mode === 'delivery' ? 'office_delivery' : 'collect',
+        'office_client_id' => $officeClientId, 'office_delivery_site_id' => $dl['siteId'] ?? null,
+        'office_delivery_site_name' => $dl['siteName'] ?? null, 'tournee_stop_id' => $dl['tourneeStopId'] ?? null,
+        'payment_type' => $paymentType, 'delivery_fee_applied' => $feeApplied, 'delivery_fee_amount' => $feeAmount,
+        'free_delivery_minimum' => $freeMin, 'po_number' => $poNumber, 'invoice_requested' => $invRequested, 'invoice_vat' => $invVat,
+      ];
+      $ordIns = [];
+      foreach ($ordVals as $c => $v) if (col_exists('ws_orders', $c)) $ordIns[$c] = $v;
+      q("INSERT INTO ws_orders (" . implode(',', array_keys($ordIns)) . ")
+           VALUES (" . implode(',', array_fill(0, count($ordIns), '?')) . ")", array_values($ordIns));
       $oid = $pdo->lastInsertId();
       foreach ($lines as $l) {
         q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note) VALUES (?,?,?,?,?,?,?)",
           [$oid, $l['productId'], $l['name'], $l['qty'], $l['unit'], $l['portion'], $l['note']]);
-        q("UPDATE ws_product_stock SET qty_sold = qty_sold + ?
+        // Décrément du stock du jour : si aucune ligne de stock n'existe encore
+        // pour ce produit/jour/mode, on la CRÉE (qty_total=0) pour que la vente
+        // soit tracée — avant, l'UPDATE ne touchait rien et le stock ne bougeait pas.
+        $stq = q("UPDATE ws_product_stock SET qty_sold = qty_sold + ?
             WHERE product_id=? AND shop_id=? AND date=? AND (mode=? OR mode IS NULL)",
           [$l['qty'], $l['productId'], $shop, $stockDate, $mode]);
+        if ($stq->rowCount() === 0 && !empty($l['productId'])) {
+          q("INSERT INTO ws_product_stock (product_id, shop_id, date, mode, qty_total, qty_reserved, qty_sold, active)
+               VALUES (?,?,?,?,0,0,?,1)
+               ON DUPLICATE KEY UPDATE qty_sold = qty_sold + VALUES(qty_sold)",
+            [$l['productId'], $shop, $stockDate, $mode, $l['qty']]);
+        }
       }
       if ($cap) q("UPDATE ws_slot_capacity SET current_orders = current_orders + 1, current_items = current_items + ? WHERE id=?", [$totalQty, $cap['id']]);
       // Usage du bon via le modèle ERP (ws_vouchers est désormais une vue non-inscriptible) :
@@ -1100,7 +1115,11 @@ function dispatch($m, $p) {
       $pdo->commit();
     } catch (Throwable $e) {
       if ($pdo->inTransaction()) $pdo->rollBack();
-      throw $e;
+      // Plus JAMAIS de 500 muet au paiement : rollback + JSON exploitable
+      // (le motif réel — ex. colonne manquante — est journalisé et renvoyé).
+      error_log('POST /orders a échoué : ' . $e->getMessage());
+      json_out(['error' => 'Commande non enregistrée — erreur serveur',
+                'detail' => mb_substr($e->getMessage(), 0, 300)], 500);
     }
 
     // E-mail de confirmation (email fourni, ou celui du client connecté).
