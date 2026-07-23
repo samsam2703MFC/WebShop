@@ -2655,9 +2655,33 @@ function dispatch($m, $p) {
       $on = !empty($b['enabled']) ? 1 : 0;
       $extra = ($on && col_exists('client', 'status')) ? ", status=0" : "";
       q("UPDATE client SET office_delivery=?$extra WHERE id=?", [$on, $id]);
-      if ($on && $tblExists('ws_offices'))
+      $officeName = null; $tourName = null;
+      if ($on && $tblExists('ws_offices')) {
         q("UPDATE ws_offices SET status='validated', active=1 WHERE client_id=?", [$id]);
-      json_out(['ok' => true, 'enabled' => (bool) $on]);
+        $off = row("SELECT id, name, tour_id FROM ws_offices WHERE client_id=? AND active=1 ORDER BY id DESC LIMIT 1", [$id]);
+        $officeName = $off['name'] ?? null;
+        // SITE choisi dans la modale : le bureau y est rattaché et hérite de la
+        // tournée du site (la tournée est déterminée par le site).
+        $siteAdr = trim((string) ($b['site_adr'] ?? ''));
+        if ($off && $siteAdr !== '' && $tblExists('ws_office_delivery_sites')) {
+          $tpl = row("SELECT name, tournee_id, site_access_minutes, shop_id FROM ws_office_delivery_sites
+                       WHERE TRIM(COALESCE(address,''))=? AND active=1 ORDER BY id LIMIT 1", [$siteAdr]);
+          $ex = row("SELECT id FROM ws_office_delivery_sites WHERE office_client_id=? AND active=1 LIMIT 1", [(int) $off['id']]);
+          if ($ex) q("UPDATE ws_office_delivery_sites SET address=?, name=COALESCE(?, name), tournee_id=COALESCE(?, tournee_id), active=1 WHERE id=?",
+                     [$siteAdr, $tpl['name'] ?? null, $tpl['tournee_id'] ?? null, (int) $ex['id']]);
+          else q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, tournee_id, site_access_minutes, active, shop_id)
+                    VALUES (?,?,?,?,?,1,?)",
+                 [(int) $off['id'], $tpl['name'] ?? null, $siteAdr, $tpl['tournee_id'] ?? null,
+                  $tpl['site_access_minutes'] ?? 6, $shopId ?: ($tpl['shop_id'] ?? null)]);
+          if (($tpl['tournee_id'] ?? null) !== null) {
+            if (col_exists('ws_offices', 'tour_id'))
+              q("UPDATE ws_offices SET tour_id=? WHERE id=?", [(int) $tpl['tournee_id'], (int) $off['id']]);
+            $t = $tblExists('ws_tours') ? row("SELECT name FROM ws_tours WHERE id=?", [(int) $tpl['tournee_id']]) : null;
+            $tourName = $t['name'] ?? null;
+          }
+        }
+      }
+      json_out(['ok' => true, 'enabled' => (bool) $on, 'office' => $officeName, 'tour' => $tourName]);
     }
 
     // ── Fiche client : blocage commercial (client.blocked — migration 0025). ──
