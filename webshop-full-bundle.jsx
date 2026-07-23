@@ -8,75 +8,15 @@ const { useState, useMemo, useEffect } = React;
 // =========================================================================
 // DATA
 // =========================================================================
-const W_SHOPS = {
-  chatelain: { id: 'chatelain', name: 'Maison Châtelain',  city: 'Bruxelles', accent: '#8D1D2C', address: 'Rue du Bailli 42, 1050 Ixelles' },
-  sablon:    { id: 'sablon',    name: 'Atelier Sablon',     city: 'Bruxelles', accent: '#1F4F6B', address: 'Place du Grand Sablon 18, 1000 Bruxelles' },
-  carre:     { id: 'carre',     name: 'Le Carré',           city: 'Liège',     accent: '#6B3D0A', address: 'Rue Pont d\u2019Avroy 11, 4000 Liège' },
-  zuid:      { id: 'zuid',      name: 'Zuid Bakery',        city: 'Antwerpen', accent: '#2D5A3D', address: 'Volkstraat 37, 2000 Antwerpen' },
-  grognon:   { id: 'grognon',   name: 'Le Grognon',         city: 'Namur',     accent: '#C17A2A', address: 'Rue des Brasseurs 108, 5000 Namur' },
-  brugge:    { id: 'brugge',    name: 'Brugge Studio',      city: 'Brugge',    accent: '#5C4A8A', address: 'Steenstraat 74, 8000 Brugge' },
-};
-// Expose so webshop-shops-api.jsx can resolve from in-memory fixture
-// when no remote endpoint is configured.
+// Go-live : AUCUNE boutique en dur. Les boutiques viennent exclusivement de
+// l'API /shops ; si elle est injoignable, l'UI affiche une erreur — jamais
+// de données de démo (« Maison Châtelain » et consorts ont été purgés).
+const W_SHOPS = {};
 window.W_SHOPS = W_SHOPS;
 
-const W_CATEGORIES = [
-  { id: 'tarts',     label: 'Tartes',        img: 'img/cat-tarts.png',
-    subs: [
-      { id: 'tarts-fruit',     label: 'Fruits',           img: 'img/sweet-tart-small.png' },
-      { id: 'tarts-chocolate', label: 'Chocolat',         img: 'img/cake-slice.png' },
-      { id: 'tarts-savoury',   label: 'Salées',           img: 'img/savoury-tart.png' },
-      { id: 'tarts-classics',  label: 'Classiques',       img: 'img/sweet-tart-big.png' },
-      { id: 'tarts-individual',label: 'Individuelles',    img: 'img/cupcake.png' },
-      { id: 'tarts-seasonal',  label: 'Saison',           img: 'img/pumpkin.png' },
-    ] },
-  { id: 'plats',     label: 'Plats',         img: 'img/cat-cakes.png',
-    subs: [
-      { id: 'plats-traiteur',  label: 'Traiteur',         img: 'img/sandwiches-platter.png' },
-      { id: 'plats-soup',      label: 'Soupes',           img: 'img/tomato.png' },
-      { id: 'plats-veggie',    label: 'Végétarien',       img: 'img/carrot.png' },
-      { id: 'plats-saison',    label: 'De saison',        img: 'img/pumpkin.png' },
-      { id: 'plats-sharing',   label: 'À partager',       img: 'img/cheese-fine-cuts.png' },
-    ] },
-  { id: 'sandwiches',label: 'Sandwiches',    img: 'img/cat-sandw.png',
-    subs: [
-      { id: 'sand-classic',    label: 'Classiques',       img: 'img/sandwiches.png' },
-      { id: 'sand-veggie',     label: 'Végétariens',      img: 'img/salads.png' },
-      { id: 'sand-deluxe',     label: 'Deluxe',           img: 'img/sandwiches-platter.png' },
-      { id: 'sand-club',       label: 'Clubs',            img: 'img/cheese-fine-cuts.png' },
-      { id: 'sand-petit',      label: 'Petits formats',   img: 'img/roll.png' },
-    ] },
-  { id: 'breads',    label: 'Pains',         img: 'img/cat-breads.png',
-    subs: [
-      { id: 'breads-trad',     label: 'Tradition',        img: 'img/bread-1.png' },
-      { id: 'breads-special',  label: 'Spéciaux',         img: 'img/bread-2.png' },
-      { id: 'breads-gluten',   label: 'Sans gluten',      img: 'img/bread-3.png' },
-      { id: 'breads-petit',    label: 'Petits pains',     img: 'img/rolls.png' },
-      { id: 'breads-jour',     label: 'Du jour',          img: 'img/bread-4.png' },
-      { id: 'breads-cereales', label: 'Céréales',         img: 'img/bread-5.png' },
-    ] },
-  { id: 'viennoiseries', label: 'Viennoiseries', img: 'img/cat-vienn.png',
-    subs: [
-      { id: 'vien-croissant',  label: 'Croissants',       img: 'img/croissant.png' },
-      { id: 'vien-chocolat',   label: 'Chocolatines',     img: 'img/croissant.png' },
-      { id: 'vien-brioche',    label: 'Brioches',         img: 'img/cake.png' },
-      { id: 'vien-feuillete',  label: 'Feuilletés',       img: 'img/croissant.png' },
-      { id: 'vien-saison',     label: 'Saison',           img: 'img/cupcake.png' },
-    ] },
-  { id: 'sweet',     label: 'Sucré',         img: 'img/cat-sweet.png',
-    subs: [
-      { id: 'sweet-cookies',   label: 'Biscuits',         img: 'img/cookies.png' },
-      { id: 'sweet-cake',      label: 'Gâteaux',          img: 'img/cake.png' },
-      { id: 'sweet-cupcake',   label: 'Cupcakes',         img: 'img/cupcake.png' },
-      { id: 'sweet-chocolat',  label: 'Chocolats',        img: 'img/cake-slice.png' },
-      { id: 'sweet-saison',    label: 'Saison',           img: 'img/pumpkin.png' },
-    ] },
-];
+const W_CATEGORIES = [];
 
-const W_ASSORTMENTS = [
-  { id: 'paques', label: 'Pâques',       img: 'img/season-paques.png',       tagline: 'Sélection chocolatée — disponible jusqu\u2019au 7 avril' },
-  { id: 'ete',    label: 'Été',          img: 'img/season-fete-meres.png',   tagline: 'Pâtisseries fraîches & glaces — saison estivale' },
-];
+const W_ASSORTMENTS = [];
 
 // --- Line-art product placeholders (design-system illustrations) ---
 const PLACEHOLDER_BY_SUBCAT = {
@@ -102,173 +42,14 @@ function getPlaceholder(p) {
       || 'img/placeholders/cake.png';
 }
 
-const W_PRODUCTS = [
-  { id: 1,  cat: 'tarts',   name: 'Tarte aux fraises',                   price: 24.0, allergens: ['gluten','milk','egg'],            portions: true,  badge: '4+1', img: 'img/p-tarte-fraises.png',
-    crossPortion: true,
-    offer: { type: 'buy_x_get_y_free', x: 4, y: 1, unit: 'portion' } },
-  { id: 2,  cat: 'tarts',   name: 'Tarte aux fruits frais',              price: 28.0, allergens: ['gluten','milk','egg'],            portions: true,  badge: '4+1', img: 'img/p-tarte-fruits.png',
-    crossPortion: true,
-    offer: { type: 'buy_x_get_y_free', x: 4, y: 1, unit: 'portion' } },
-  { id: 3,  cat: 'plats',   name: 'Chou farci, crème & champignons',     price: 14.5, allergens: ['milk','egg'],                     portions: false, badge: 'Du jour', img: 'img/p-chou-farci.png',
-    no_delivery: true },
-  { id: 4,  cat: 'salades', name: 'Bowl chèvre, figues & légumes rôtis', price: 13.5, allergens: ['milk'],                           portions: false, badge: null,      img: 'img/p-bowl-veggie.png',
-    delivery_stock: 3 },
-  { id: 5,  cat: 'salades', name: 'Salade fêta, fruits rouges & olives', price: 12.5, allergens: ['milk','almond'],                  portions: false, badge: null,      img: 'img/p-salade-feta.png' },
-  { id: 6,  cat: 'salades', name: 'Salade de bœuf, bleu & pignons',      price: 15.5, allergens: ['milk'],                           portions: false, badge: null,      img: 'img/p-salade-boeuf.png' },
-  { id: 36, cat: 'salades', name: 'Salade chef saumon fumé & pommes grenailles',
-    description: 'Saumon fumé, poulet effiloché, pommes grenailles rôties, olives noires, oignon rouge, roquette et cresson.',
-    price: 14.50, allergens: ['fish','egg'],                               portions: false, badge: 'Nouveau', img: 'img/p-salade-chef-saumon.png' },
-  { id: 7,  cat: 'sweet',   name: 'Yaourt, granola & fruits rouges',     price: 5.80, allergens: ['gluten','milk'],                  portions: false, badge: null,      img: 'img/p-parfait.png' },
-  { id: 8,  cat: 'breads',  name: 'Pain de campagne au levain',          price: 4.80, allergens: ['gluten'],                         portions: false, badge: null,      img: null, lead_time: 1 },
-  { id: 9,  cat: 'breads',  name: 'Baguette tradition',                  price: 2.40, allergens: ['gluten'],                         portions: false, badge: null,      img: null },
-  { id: 10, cat: 'breads',  name: 'Pain aux céréales',                   price: 5.20, allergens: ['gluten','sesame'],                portions: false, badge: null,      img: null, lead_time: 1 },
-  { id: 11, cat: 'vienn',   name: 'Croissant au beurre AOP',             price: 1.90, allergens: ['gluten','milk','egg'],            portions: false, badge: 'Du jour', img: null },
-  { id: 12, cat: 'vienn',   name: 'Pain au chocolat',                    price: 2.20, allergens: ['gluten','milk','egg'],            portions: false, badge: null,      img: null },
-  { id: 13, cat: 'vienn',   name: 'Brioche feuilletée',                  price: 3.40, allergens: ['gluten','milk','egg'],            portions: false, badge: null,      img: null },
-  { id: 14, cat: 'sweet',   name: 'Cookies trio',                        price: 6.80, allergens: ['gluten','milk','egg'],            portions: false, badge: '2e -50%', img: null,
-    offer: { type: 'second_at_pct', pct: 50, unit: 'piece' } },
-  { id: 15, cat: 'sweet',   name: 'Madeleines (×6)',                     price: 7.20, allergens: ['gluten','milk','egg'],            portions: false, badge: null,      img: null },
-  { id: 16, cat: 'sweet',   name: 'Cannelés (×6)',                       price: 9.00, allergens: ['gluten','milk','egg'],            portions: false, badge: null,      img: null },
-  { id: 17, cat: 'sweet',   name: 'Macarons (×8)',                       price: 14.5, allergens: ['gluten','milk','egg','almond'],   portions: false, badge: null,      img: null, lead_time: 2 },
+// Go-live : plus aucun produit de démo (Tarte aux fraises & co purgés).
+const W_PRODUCTS = [];
 
-  // -------- Configurable products (test fixtures) --------
-  // Sandwich Club — options (bread, sauce) + multiple bundle plans
-  { id: 20, cat: 'sandwiches', subCat: 'sand-classic',
-    name: 'Sandwich Club',                       price: 9.50,
-    allergens: ['gluten','milk','egg'],          portions: false, badge: null,
-    img: 'img/p-sandwich-club.png',
-    options: [
-      { id: 'bread', label: 'Choix de pain', required: true, kind: 'single',
-        choices: [
-          { id: 'white', label: 'Pain blanc',  delta: 0 },
-          { id: 'brown', label: 'Pain complet', delta: 0 },
-        ]},
-      { id: 'sauce', label: 'Sauce', required: true, kind: 'single',
-        choices: [
-          { id: 'oil',  label: 'Huile d\u2019olive', delta: 0 },
-          { id: 'mayo', label: 'Mayonnaise',         delta: 1.0 },
-          { id: 'andalouse', label: 'Andalouse',     delta: 1.0 },
-        ]},
-    ],
-    has_menu_options: true,
-    available_bundles: [
-      { id: 'b-menu', name: 'Menu', description: '1 Sandwich Club + 1 boisson au choix',
-        included: [{ label: 'Sandwich Club' }],
-        slots: [
-          { id: 'drink', label: 'Boisson', required: true,
-            choices: [
-              { id: 'd1', label: 'Eau plate 33cl',   img: 'img/cold-drink.png',    delta: 0 },
-              { id: 'd2', label: 'Limonade maison',  img: 'img/lemonade-soda.png', delta: 0.5 },
-              { id: 'd3', label: 'Café',             img: 'img/hot-drink.png',     delta: 0 },
-            ],
-          },
-        ],
-        price_modifier: 3.5,
-        advantages: ['Économisez 1,00 €', 'Idéal pour le déjeuner'],
-      },
-      { id: 'b-full', name: 'Full Menu', description: '1 Sandwich Club + 1 boisson + 1 dessert',
-        included: [{ label: 'Sandwich Club' }],
-        slots: [
-          { id: 'drink', label: 'Boisson', required: true,
-            choices: [
-              { id: 'd1', label: 'Eau plate 33cl',   img: 'img/cold-drink.png',    delta: 0 },
-              { id: 'd2', label: 'Limonade maison',  img: 'img/lemonade-soda.png', delta: 0.5 },
-              { id: 'd3', label: 'Café',             img: 'img/hot-drink.png',     delta: 0 },
-            ],
-          },
-          { id: 'dessert', label: 'Dessert', required: true,
-            choices: [
-              { id: 's1', label: 'Cookie',     img: 'img/cookies.png' },
-              { id: 's2', label: 'Cupcake',    img: 'img/cupcake.png' },
-              { id: 's3', label: 'Madeleine',  img: 'img/cake-slice.png' },
-            ],
-          },
-        ],
-        price_modifier: 5.5,
-        advantages: ['Économisez 2,50 €', 'Boisson + dessert inclus', 'Le plus complet'],
-        recommended: true,
-      },
-    ],
-  },
-  // -------- Simple sandwiches (no options) --------
-  { id: 30, cat: 'sandwiches', subCat: 'sand-classic',
-    name: 'Sandwich mousse de jambon & cornichons',
-    description: 'Mousse de jambon maison fouettée, cornichons croquants, salade fraîche, sur pain de campagne.',
-    price: 7.50, allergens: ['gluten','milk','egg'], portions: false, badge: '2e -30%',
-    img: 'img/p-sand-mousse-jambon.png',
-    offer: { type: 'second_at_pct', pct: 30, unit: 'piece' } },
-  { id: 31, cat: 'sandwiches', subCat: 'sand-deluxe',
-    name: 'Sandwich jambon de Parme & burrata',
-    description: 'Jambon de Parme 18 mois, burrata crémeuse, pignons torréfiés, jeunes pousses, confit de figues.',
-    price: 11.50, allergens: ['gluten','milk','nuts'], portions: false, badge: 'Signature',
-    img: 'img/p-sand-jambon-burrata.png' },
-  { id: 32, cat: 'sandwiches', subCat: 'sand-classic',
-    name: 'Sandwich œufs brouillés & bacon',
-    description: 'Œufs brouillés moelleux, bacon croustillant, ciboulette fraîche, sur pain brioché.',
-    price: 8.20, allergens: ['gluten','milk','egg'], portions: false, badge: null,
-    img: 'img/p-sand-oeufs-bacon.png' },
-  { id: 33, cat: 'sandwiches', subCat: 'sand-veggie',
-    name: 'Sandwich féta & roquette',
-    description: 'Féta marinée aux herbes, roquette, tomates confites, huile d\u2019olive vierge extra.',
-    price: 8.90, allergens: ['gluten','milk'], portions: false, badge: null,
-    img: 'img/p-sand-feta-roquette.png' },
-  { id: 34, cat: 'sandwiches', subCat: 'sand-deluxe',
-    name: 'Sandwich crabe & roquette',
-    description: 'Chair de crabe, mayonnaise citronnée, roquette, tomates fraîches, cornichons.',
-    price: 12.50, allergens: ['gluten','milk','egg','crustacean','fish'], portions: false, badge: null,
-    img: 'img/p-sand-crabe.png' },
-  { id: 35, cat: 'sandwiches', subCat: 'sand-classic',
-    name: 'Sandwich rillettes de thon',
-    description: 'Rillettes de thon préparées maison, salade verte croquante, citron.',
-    price: 7.80, allergens: ['gluten','milk','egg','fish'], portions: false, badge: null,
-    img: 'img/p-sand-thon.png' },
+const W_PRODUCT_PRICES = {};
+const W_SHOP_PRODUCTS = {};
 
-  // Quiche du jour — sauce option + salad upsell
-  { id: 21, cat: 'plats', subCat: 'plats-traiteur',
-    name: 'Quiche du jour',                      price: 7.80,
-    allergens: ['gluten','milk','egg'],          portions: true, badge: 'Du jour',
-    crossPortion: true,
-    img: 'img/savoury-tart.png',
-    options: [
-      { id: 'sauce', label: 'Accompagnement', required: false, kind: 'single',
-        choices: [
-          { id: 'none',   label: 'Sans',          delta: 0 },
-          { id: 'pesto',  label: 'Pesto maison',  delta: 0.5 },
-          { id: 'tomato', label: 'Coulis tomate', delta: 0.5 },
-        ]},
-    ],
-    upsells: [
-      { id: 'salad', label: 'Petite salade', img: 'img/salads.png',         delta: 4.5 },
-      { id: 'soup',  label: 'Soupe du jour', img: 'img/tomato.png',         delta: 4.0 },
-      { id: 'drink', label: 'Boisson',       img: 'img/cold-drink.png',     delta: 2.5 },
-    ],
-  },
-];
-
-// Per-shop price overrides (ws_product_prices table).
-// Format: { shopId: { productId: price } }
-// Absent = use default price from ws_products.price
-const W_PRODUCT_PRICES = {
-  'chatelain': {},            // default prices at Châtelain
-  'ixelles':   { 4: 14.00 }, // bowl chèvre is €14.00 at Ixelles (vs €13.50 default)
-};
-
-// Per-shop product availability (ws_product_shops table).
-// Format: { shopId: [productId, ...] }
-// Absent shopId key = all products available at that shop
-const W_SHOP_PRODUCTS = {
-  // 'ixelles': [1,2,4,5,6,7,8,9,10,11,12], // example: no plats at Ixelles
-};
-
-if (typeof window !== 'undefined') {
-  window._CATALOG_SEED = {
-    products: W_PRODUCTS,
-    assortments: W_ASSORTMENTS,
-    categories: W_CATEGORIES,
-    prices: W_PRODUCT_PRICES,
-    shopProducts: W_SHOP_PRODUCTS,
-  };
-}
+// Go-live : window._CATALOG_SEED n’est plus exposé — le catalogue vient
+// exclusivement de l'API /catalog ; en cas d'échec, l'UI reste vide/erreur.
 
 
 // =========================================================================
@@ -276,33 +57,13 @@ if (typeof window !== 'undefined') {
 // A client may be linked to one office; an office may be linked to one tour.
 // Delivery is enabled only if both links exist (office validated + tour set).
 // =========================================================================
-// TODO[BACKEND]: tours must come from a Tours API (e.g. `GET /tours?shopId=`).
-// This in-memory fixture exists only so the demo storefront keeps running
-// before the endpoint is wired. Frontend code MUST go through window.WSTours
-// (to be added) — never read W_TOURS directly outside the demo seam below.
-const W_TOURS = {
-  'tour-bxl-mid': { id: 'tour-bxl-mid', name: 'Bruxelles Midi',  shopId: 'chatelain', window: '11:30–13:30', days: 'lun-ven' },
-  'tour-bxl-am':  { id: 'tour-bxl-am',  name: 'Bruxelles Matin', shopId: 'sablon',    window: '08:30–10:30', days: 'lun-ven' },
-  'tour-lg':      { id: 'tour-lg',      name: 'Liège Centre',    shopId: 'carre',     window: '11:00–13:00', days: 'mar-ven' },
-};
-// TODO[BACKEND]: offices come from WSOffices (webshop-offices-api.jsx).
-// This seed only feeds window._AUTH_STORE so the API stub has data to return
-// when no remote endpoint is configured. Remove once /offices is live.
-const W_OFFICES_SEED = {
-  'off-acme':     { id: 'off-acme',     name: 'ACME Avocats',     contact: 'Marie Dubois',  phone: '+32 472 11 22 33', email: 'marie@acme.be',     address: 'Rue de la Loi 120, 1040 Bxl',  tourId: 'tour-bxl-mid', status: 'validated',
-                    /* default site shown pre-selection — user picks in checkout */
-                    defaultSiteId: 'site-acme-loi' },
-  'off-pendingA': { id: 'off-pendingA', name: 'Borderline & Co.', contact: 'Lou Mercier',   phone: '+32 470 12 34 56', email: 'lou@borderline.be', address: 'Place Stéphanie 4, 1050 Bxl',  tourId: null,           status: 'pending',
-                    defaultSiteId: null },
-};
-// TODO[BACKEND]: users / auth must move behind a real Auth API
-// (`POST /auth/login`, `GET /me`, `PATCH /me`). This seed is demo-only and
-// stores a plaintext password — NEVER ship to production.
-const W_USERS_SEED = {
-  'marie@acme.be':     { id: 'u1', email: 'marie@acme.be', phone: '0470111222', password: 'demo', firstName: 'Marie', lastName: 'Dubois',  officeId: 'off-acme',     preferredShopId: 'chatelain', fidelityApp: { active: false, linkedAt: null } },
-  'lou@borderline.be': { id: 'u2', email: 'lou@borderline.be', phone: '0470222333', password: 'demo', firstName: 'Lou',   lastName: 'Mercier', officeId: 'off-pendingA', preferredShopId: 'sablon',    fidelityApp: { active: true,  linkedAt: '2026-01-12T09:30:00Z' } },
-  'jules@indep.be':    { id: 'u3', email: 'jules@indep.be', phone: '0470333444', password: 'demo', firstName: 'Jules', lastName: 'Vermeer', officeId: null,           preferredShopId: null,         fidelityApp: { active: false, linkedAt: null } },
-};
+// Go-live : plus aucune tournée de démo — les tournées viennent de /tours.
+const W_TOURS = {};
+// Go-live : plus aucun bureau de démo — les bureaux viennent de /offices.
+const W_OFFICES_SEED = {};
+// Go-live : plus aucun utilisateur de démo. L'authentification passe par
+// l'API /auth (WSAuth) ; ce store local reste vide.
+const W_USERS_SEED = {};
 const _AUTH_STORE = { users: { ...W_USERS_SEED }, offices: { ...W_OFFICES_SEED } };
 if (typeof window !== 'undefined') window._AUTH_STORE = _AUTH_STORE;
 
@@ -311,26 +72,12 @@ function authLogin(email, password) {
   if (!u || u.password !== password) return { ok: false, error: 'Identifiants incorrects.' };
   return { ok: true, user: u };
 }
-function authRegister({ email, password, firstName, lastName }) {
-  const k = email.trim().toLowerCase();
-  if (_AUTH_STORE.users[k]) return { ok: false, error: 'Un compte existe déjà avec cet email.' };
-  const u = { id: 'u' + Date.now(), email: k, password, firstName, lastName, officeId: null };
-  _AUTH_STORE.users[k] = u;
-  return { ok: true, user: u };
+function authRegister() {
+  // Go-live : plus d'inscription locale fictive — l'API /auth est requise.
+  return { ok: false, error: 'Service inscription indisponible — réessayez.' };
 }
 function getOffice(id) { return id ? _AUTH_STORE.offices[id] : null; }
 function getTour(id)   { return id ? W_TOURS[id] : null; }
-function submitOfficeRequest({ user, companyName, contactName, phone, email }) {
-  const id = 'off-req-' + Date.now();
-  const office = {
-    id, name: companyName, contact: contactName, phone,
-    email: (email || user?.email || '').trim().toLowerCase(),
-    address: null, tourId: null, status: 'pending',
-  };
-  _AUTH_STORE.offices[id] = office;
-  if (user) { user.officeId = id; _AUTH_STORE.users[user.email] = { ...user }; }
-  return office;
-}
 
 // =========================================================================
 // SHARED PRIMITIVES
@@ -1414,10 +1161,11 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
 // free quarter-equivalents, valued at the cheapest line's basePrice × 0.27.
 // Fallback rule used only when WSPricing.getCrossPortionRule() is unavailable.
 // x paid + y free per group; threshold = portions needed before first freebie.
-const _CROSS_PORTION_FALLBACK = { x: 4, y: 1, threshold: 4, label: '4 quarts achetés, 1 offert' };
+// Go-live : plus de regle 4+1 de secours cote client (promotion hors course).
 
 function computeCrossPortionOffer(basket, rule) {
-  const r = rule || _CROSS_PORTION_FALLBACK;
+  const r = rule;
+  if (!r) return null; // pas de regle serveur -> pas d'offre affichee
   if (!Array.isArray(basket) || basket.length === 0) return null;
   const items = [];
   for (const l of basket) {
@@ -1541,7 +1289,9 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
   const subtotal = basket.reduce((t, l) => t + l.price * l.qty, 0);
   const crossOffer = computeCrossPortionOffer(basket, crossPortionRule);
   const crossSavings = crossOffer?.savings || 0;
-  const promo = mode === 'collect' ? subtotal * 0.05 : 0;
+  // Go-live : aucune remise calculee cote client. Les remises reelles
+  // viennent du serveur (quote/commande) - promo locale forcee a 0.
+  const promo = 0;
   const deliveryFee = (mode === 'delivery' && deliveryFeeResult) ? (deliveryFeeResult.fee_amount || 0) : 0;
   const total = Math.max(0, subtotal - promo - crossSavings + deliveryFee);
   return (
@@ -3432,7 +3182,9 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
 
   // TODO[BACKEND]: same as above — checkout totals must come from WSPricing.quote().
   const subtotal = basket.reduce((t, l) => t + l.price * l.qty, 0);
-  const promo = mode === 'collect' ? subtotal * 0.05 : 0;
+  // Go-live : aucune remise calculee cote client. Les remises reelles
+  // viennent du serveur (quote/commande) - promo locale forcee a 0.
+  const promo = 0;
   const voucherDiscount = voucherApplied && voucherApplied.ok ? voucherApplied.discount : 0;
   const deliveryFee = (mode === 'delivery' && deliveryFeeResult) ? (deliveryFeeResult.fee_amount || 0) : 0;
   const total = Math.max(0, subtotal - promo - voucherDiscount + deliveryFee);
@@ -4139,7 +3891,9 @@ function ShopFrame({ variant }) {
   const _deep = typeof parseDeepLink === 'function' ? parseDeepLink() : {};
   // Active shop: deep-link → last remembered (WSShopRouter) → default.
   const [shopId, setShopId] = useState(
-    _deep.shopId || (window.WSShopRouter && window.WSShopRouter.current()) || 'chatelain'
+    // Go-live : plus de boutique par defaut en dur - deep-link ou memoire,
+    // sinon la premiere boutique reelle renvoyee par /shops (effet ci-dessous).
+    _deep.shopId || (window.WSShopRouter && window.WSShopRouter.current()) || null
   );
   React.useEffect(() => {
     // Persist the active shop so cart/checkout/login stay scoped to it.
@@ -4326,11 +4080,14 @@ function ShopFrame({ variant }) {
 
   // Shops directory — sourced from API stub (or remote endpoint when wired).
   const [shops, setShops] = useState(() => (window.WSShops ? window.WSShops.getCacheSync() : Object.values(W_SHOPS || {})));
+  const [shopsFailed, setShopsFailed] = React.useState(false);
   React.useEffect(() => {
     let alive = true;
     if (window.WSShops) {
-      window.WSShops.list().then((s) => { if (alive) setShops(s); }).catch(() => {});
-    }
+      window.WSShops.list()
+        .then((s) => { if (!alive) return; setShops(s || []); setShopsFailed(!s || !s.length); })
+        .catch(() => { if (alive) setShopsFailed(true); });
+    } else { setShopsFailed(true); }
     return () => { alive = false; };
   }, []);
 
@@ -4340,7 +4097,8 @@ function ShopFrame({ variant }) {
   React.useEffect(() => {
     if (!shops || !shops.length) return;
     const m = shops.find((s) => String(s.id) === String(shopId) || s.slug === shopId);
-    if (m && m.id !== shopId) setShopId(m.id);
+    if (m) { if (m.id !== shopId) setShopId(m.id); }
+    else setShopId(shops[0].id); // ref inconnue (vieille memoire demo) -> premiere boutique reelle
   }, [shops]);
 
   // Categories — loaded from API, seed used as instant fallback.
@@ -4773,6 +4531,23 @@ function ShopFrame({ variant }) {
     stockReleaseAll(); // release before clearing user reference
     setUser(null);
     if (mode === 'delivery') { setMode('collect'); setBasket([]); }
+  }
+
+  // Go-live : sans boutique resolue (API /shops en echec ou vide), on affiche
+  // un etat explicite - jamais de boutique de demonstration.
+  if (!shop) {
+    return (
+      <div className={`ws ws--${variant}`} style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', textAlign: 'center' }}>
+        <div>
+          <h2 style={{ marginBottom: '.5rem' }}>{shopsFailed ? 'Boutiques indisponibles' : 'Chargement de la boutique…'}</h2>
+          <p style={{ opacity: .7 }}>
+            {shopsFailed
+              ? 'Impossible de charger la liste des boutiques (API injoignable). Veuillez réessayer plus tard.'
+              : 'Connexion en cours…'}
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (

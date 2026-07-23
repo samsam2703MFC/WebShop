@@ -41,7 +41,7 @@
           return { ok: false, error: j.message || 'Échec de l\'envoi.' };
         } catch (e) { /* fall through */ }
       }
-      return { ok: true }; // demo: pretend it was sent
+      return { ok: false, error: 'Service indisponible — demande non envoyée.' }; // Go-live : jamais de faux succès
     },
 
     // Get a single office by id (any status).
@@ -69,17 +69,8 @@
           if (r.ok) return await r.json();
         } catch (e) { /* fall through */ }
       }
-      const store = window._AUTH_STORE && window._AUTH_STORE.offices;
-      if (!store) throw new Error('offices store unavailable');
-      const id = 'off-' + Date.now().toString(36);
-      const office = {
-        id,
-        status: 'pending',
-        tourId: null,
-        ...payload,
-      };
-      store[id] = office;
-      return office;
+      // Go-live : plus de creation locale fictive de bureau.
+      throw new Error('API bureaux indisponible — demande non enregistrée.');
     },
   };
   window.WSOffices = api;

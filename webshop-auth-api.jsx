@@ -68,14 +68,8 @@
           return { ok: false, error: j.error || j.message || "Erreur lors de l'inscription.", exists: !!j.exists, status: r.status };
         } catch (_) {}
       }
-      // Fallback.
-      const store = window._AUTH_STORE;
-      if (!store) return { ok: false, error: 'Store unavailable.' };
-      const k = String(email).trim().toLowerCase();
-      if (store.users && store.users[k]) return { ok: false, error: 'Un compte existe déjà avec cet email.' };
-      const u = { id: 'u' + Date.now(), email: k, phone: phone || '', password, firstName, lastName, officeId: null, preferredShopId: null, fidelityApp: { active: false, linkedAt: null } };
-      if (store.users) store.users[k] = u;
-      return { ok: true, user: u };
+      // Go-live : plus de creation de compte local fictif.
+      return { ok: false, error: 'Service inscription indisponible — réessayez.' };
     },
 
     /* ── Set / update password (compte existant) ─────────────────────── */
@@ -284,16 +278,8 @@
           if (r.ok) { const j = await r.json(); return { ok: true, user: j.user || j }; }
         } catch (_) {}
       }
-      // Fallback: mutate in-memory store.
-      const store = window._AUTH_STORE;
-      if (store && store.users && patch.email) {
-        const k = String(patch.email).trim().toLowerCase();
-        if (store.users[k]) {
-          store.users[k] = { ...store.users[k], ...patch };
-          return { ok: true, user: store.users[k] };
-        }
-      }
-      return { ok: false, error: 'Not found.' };
+      // Go-live : plus de mutation d'un store local fictif.
+      return { ok: false, error: 'Service profil indisponible — réessayez.' };
     },
 
     /* ── Password reset ─────────────────────────────────────────────── */
@@ -308,7 +294,7 @@
           return { ok: r.ok };
         } catch (_) {}
       }
-      return { ok: true }; // Demo: always succeeds silently
+      return { ok: false }; // Go-live : jamais de faux succès
     },
   };
 

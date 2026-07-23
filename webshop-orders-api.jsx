@@ -44,16 +44,9 @@
         const base = (typeof j.error === 'string' && j.error) ? j.error : (j.error?.message || `Erreur ${r.status}`);
         throw new Error(base + (j.detail ? (' — ' + j.detail) : ''));
       }
-      // Demo fallback — simulate a successful order placement.
-      // TODO[BACKEND]: remove once POST /orders is live.
-      return {
-        ok: true,
-        orderId: 'ord-' + Date.now().toString(36),
-        status: 'pending_payment',
-        total: payload.total || 0,
-        slot: payload.slot?.label || payload.slot?.slotId || '',
-        payment: payload.payment?.method || '',
-      };
+      // Go-live : plus de simulation de commande. Sans API configurée, on
+      // refuse — une commande ne peut jamais « réussir » à blanc.
+      throw new Error('API commandes indisponible — commande non enregistrée.');
     },
 
     /* Fetch a single order (e.g. for the confirmation page). */
@@ -91,7 +84,7 @@
           return { ok: r.ok, ...j };
         } catch (_) {}
       }
-      return { ok: true }; // Demo: always succeeds
+      return { ok: false, error: 'API commandes indisponible' }; // Go-live : jamais de faux succès
     },
   };
 

@@ -22,164 +22,18 @@
                                is presented as payment method in checkout
    payment_type: 'immediate' → normal payment methods (Bancontact, Visa, …)
 
-   All stubs fall back to in-memory seed data when `endpoint` is null.
-   Set WSDeliveryFees.endpoint in api-config.js to activate live HTTP.
+   Go-live : plus de seed en memoire - endpoint obligatoire (api-config.js),
+   sinon erreur explicite.
    ========================================================================= */
 
 (function () {
 
-  /* ---------------------------------------------------------------------- */
-  /* SEED DATA                                                                */
-  /* ---------------------------------------------------------------------- */
-
-  /* Delivery sites — one office client can have multiple sites, each with
-     its own fee config and payment type.                                     */
-  const SEED_SITES = [
-    {
-      id:                         'site-acme-loi',
-      office_client_id:           'off-acme',
-      name:                       'ACME Avocats — Rue de la Loi',
-      address:                    'Rue de la Loi 120, 1040 Bruxelles',
-      floor_room:                 '4e étage, salle Themis',
-      contact_name:               'Marie Dubois',
-      contact_phone:              '+32 472 11 22 33',
-      tournee_id:                 'tour-bxl-mid',
-      tournee_stop_id:            'stop-acme-loi',
-      shop_id:                    'chatelain',
-      /* fee config */
-      free_delivery:              false,
-      always_charge:              false,
-      fee_amount:                 4.50,
-      free_delivery_minimum:      40.00,
-      /* payment */
-      payment_type:               'deferred',
-      /* status */
-      active:                     true,
-    },
-    {
-      id:                         'site-acme-arts',
-      office_client_id:           'off-acme',
-      name:                       'ACME Avocats — Place des Arts',
-      address:                    'Place des Arts 7, 1210 Saint-Josse',
-      floor_room:                 'Réception',
-      contact_name:               'Pierre Fontaine',
-      contact_phone:              '+32 472 33 44 55',
-      tournee_id:                 'tour-bxl-am',
-      tournee_stop_id:            'stop-acme-arts',
-      shop_id:                    'sablon',
-      free_delivery:              true,
-      always_charge:              false,
-      fee_amount:                 0,
-      free_delivery_minimum:      0,
-      payment_type:               'immediate',
-      active:                     true,
-    },
-  ];
-
-  /* Office-level fallback rules (used when no site-specific rule matches).  */
-  const SEED_OFFICE_RULES = [
-    {
-      id:           'rule-off-acme',
-      office_client_id: 'off-acme',
-      free_delivery: false,
-      always_charge: false,
-      fee_amount:    5.00,
-      free_delivery_minimum: 50.00,
-      payment_type: 'deferred',
-    },
-  ];
-
-  /* Tournée-level fallback rules.                                            */
-  const SEED_TOUR_RULES = [
-    {
-      id:         'rule-tour-bxl-mid',
-      tournee_id: 'tour-bxl-mid',
-      free_delivery: false,
-      always_charge: false,
-      fee_amount:    5.00,
-      free_delivery_minimum: 45.00,
-    },
-    {
-      id:         'rule-tour-bxl-am',
-      tournee_id: 'tour-bxl-am',
-      free_delivery: false,
-      always_charge: false,
-      fee_amount:    6.00,
-      free_delivery_minimum: 50.00,
-    },
-    {
-      id:         'rule-tour-lg',
-      tournee_id: 'tour-lg',
-      free_delivery: false,
-      always_charge: false,
-      fee_amount:    7.00,
-      free_delivery_minimum: 55.00,
-    },
-  ];
-
-  /* Per-shop fallback rules.                                                 */
-  const SEED_SHOP_RULES = [
-    { id: 'rule-shop-chatelain', shop_id: 'chatelain', free_delivery: false, always_charge: false, fee_amount: 6.00, free_delivery_minimum: 50.00 },
-    { id: 'rule-shop-sablon',    shop_id: 'sablon',    free_delivery: false, always_charge: false, fee_amount: 6.00, free_delivery_minimum: 50.00 },
-    { id: 'rule-shop-carre',     shop_id: 'carre',     free_delivery: false, always_charge: false, fee_amount: 6.50, free_delivery_minimum: 55.00 },
-  ];
-
-  /* Global fallback rule.                                                    */
-  const SEED_GLOBAL_RULE = {
-    free_delivery: false,
-    always_charge: false,
-    fee_amount:    7.00,
-    free_delivery_minimum: 50.00,
-  };
-
-  /* ---------------------------------------------------------------------- */
-  /* HELPERS                                                                  */
-  /* ---------------------------------------------------------------------- */
-
-  function computeFee(rule, subtotal) {
-    if (!rule || rule.free_delivery) return 0;
-    if (rule.always_charge) return rule.fee_amount || 0;
-    if (subtotal >= (rule.free_delivery_minimum || 0)) return 0;
-    return rule.fee_amount || 0;
-  }
-
-  /* Resolve the applicable rule for a given context, seed-mode.             */
-  function resolveRuleSeed({ siteId, officeClientId, tourneeId, shopId }) {
-    if (siteId) {
-      const site = SEED_SITES.find((s) => s.id === siteId && s.active);
-      if (site) return { rule: site, level: 'site', site };
-    }
-    if (officeClientId) {
-      const r = SEED_OFFICE_RULES.find((r) => r.office_client_id === officeClientId);
-      if (r) return { rule: r, level: 'office', site: null };
-    }
-    if (tourneeId) {
-      const r = SEED_TOUR_RULES.find((r) => r.tournee_id === tourneeId);
-      if (r) return { rule: r, level: 'tour', site: null };
-    }
-    if (shopId) {
-      const r = SEED_SHOP_RULES.find((r) => r.shop_id === shopId);
-      if (r) return { rule: r, level: 'shop', site: null };
-    }
-    return { rule: SEED_GLOBAL_RULE, level: 'global', site: null };
-  }
-
-  /* Build the full resolution result returned by quote() / resolve().       */
-  function buildResult({ resolved, subtotal }) {
-    const { rule, level, site } = resolved;
-    const fee = computeFee(rule, subtotal);
-    const free_minimum = (!rule.free_delivery && !rule.always_charge) ? (rule.free_delivery_minimum || 0) : 0;
-    return {
-      fee_amount:                  fee,
-      free_delivery:               rule.free_delivery || false,
-      always_charge:               rule.always_charge || false,
-      free_delivery_minimum:       free_minimum,
-      amount_remaining_for_free:   fee > 0 && free_minimum > 0 ? Math.max(0, free_minimum - subtotal) : 0,
-      payment_type:                rule.payment_type || 'immediate',
-      resolved_level:              level,
-      site:                        site || null,
-    };
-  }
+  /* ----------------------------------------------------------------------
+     Go-live : toutes les donnees de demo (sites ACME, regles de tournee,
+     regle globale seed) ont ete purgees. Sans endpoint configure, les
+     appels echouent explicitement - jamais de frais fictifs.
+     ---------------------------------------------------------------------- */
+  function noApi() { throw new Error('API frais de livraison indisponible.'); }
 
   /* ---------------------------------------------------------------------- */
   /* HTTP HELPERS                                                             */
@@ -212,7 +66,7 @@
      */
     async listSites({ officeClientId }) {
       if (this.endpoint) return apiFetch('/sites', { officeClientId });
-      return SEED_SITES.filter((s) => s.office_client_id === officeClientId && s.active);
+      noApi();
     },
 
     /**
@@ -221,7 +75,7 @@
      */
     async getSite({ siteId }) {
       if (this.endpoint) return apiFetch('/sites/' + siteId, {});
-      return SEED_SITES.find((s) => s.id === siteId) || null;
+      noApi();
     },
 
     /**
@@ -240,8 +94,7 @@
      */
     async quote({ siteId, officeClientId, tourneeId, shopId, subtotal }) {
       if (this.endpoint) return apiFetch('/quote', { siteId, officeClientId, tourneeId, shopId, subtotal });
-      const resolved = resolveRuleSeed({ siteId, officeClientId, tourneeId, shopId });
-      return buildResult({ resolved, subtotal });
+      noApi();
     },
 
     /**
@@ -255,8 +108,7 @@
         const q = await apiFetch('/quote', { siteId, officeClientId, tourneeId, shopId, subtotal: 0 });
         paymentType = q.payment_type || 'immediate';
       } else {
-        const resolved = resolveRuleSeed({ siteId, officeClientId, tourneeId, shopId });
-        paymentType = resolved.rule.payment_type || 'immediate';
+        noApi();
       }
 
       if (paymentType === 'deferred') {

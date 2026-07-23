@@ -183,22 +183,11 @@
     fr: {
       // canonical — empty means "use the source field"
     },
-    // Placeholders for a few ids so you can see the round-trip working.
-    nl: {
-      1: { name: '[NL] Tarte aux fraises' },
-      2: { name: '[NL] Tarte aux fruits frais' },
-      3: { name: '[NL] Tarte au citron' },
-    },
-    en: {
-      1: { name: '[EN] Tarte aux fraises' },
-      2: { name: '[EN] Tarte aux fruits frais' },
-      3: { name: '[EN] Tarte au citron' },
-    },
-    de: {
-      1: { name: '[DE] Tarte aux fraises' },
-      2: { name: '[DE] Tarte aux fruits frais' },
-      3: { name: '[DE] Tarte au citron' },
-    },
+    // Go-live : plus de traductions de demo - les libelles traduits
+    // viendront de l'API produit.
+    nl: {},
+    en: {},
+    de: {},
   };
 
   const CATEGORY_TR = {

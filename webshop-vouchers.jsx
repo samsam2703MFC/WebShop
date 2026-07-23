@@ -18,18 +18,8 @@
         if (Array.isArray(arr) && arr.length) return arr;
       }
     } catch (e) {}
-    return [
-      { id: 'v_seed1', code: 'BIENVENUE10', type: 'percent', value: 10, minOrder: 0, scope: 'order',
-        channel: 'webshop', shopIds: [], validFrom: '2026-01-01', validUntil: '2026-12-31',
-        usage: { used: 142, limit: null }, status: 'active' },
-      { id: 'v_seed2', code: 'PRINTEMPS5', type: 'amount', value: 5, minOrder: 25, scope: 'order',
-        channel: 'webshop', shopIds: [], validFrom: '2026-04-01', validUntil: '2026-06-30',
-        usage: { used: 38, limit: 500 }, status: 'active' },
-      { id: 'v_seed3', code: 'PAIN-OFF', type: 'percent', value: 15, minOrder: 0, scope: 'category',
-        scopeRef: 'pains', channel: 'webshop', shopIds: ['chatelain', 'sablon'],
-        validFrom: '2026-05-01', validUntil: '2026-05-31',
-        usage: { used: 9, limit: 100 }, status: 'active' },
-    ];
+    // Go-live : plus aucun code promo de démo (BIENVENUE10 & co purgés).
+    return [];
   }
 
   function validateVoucher(code, ctx) {
@@ -126,8 +116,11 @@
           return j; // server returns { ok, voucher, discount, message } or { ok:false, reason, message }
         } catch (_) {}
       }
-      // Fallback: client-side validation from localStorage / seed.
-      // TODO[BACKEND]: remove once POST /vouchers/redeem is live.
+      // Go-live : si l'API est configurée mais injoignable, on refuse le code
+      // (jamais de validation « à blanc » côté client).
+      if (WSVouchers.endpoint) {
+        return { ok: false, reason: 'offline', message: 'Service codes promo indisponible — réessayez.' };
+      }
       return validateVoucher(code, { shopId, subtotal });
     },
 
