@@ -3132,6 +3132,143 @@ function dispatch($m, $p) {
         'dup' => (bool) $r['proche']], $rs));
     }
 
+    // ── Commandes du jour — RÉEL (ws_orders, portée boutique). Remplace la
+    //    liste de démo codée en dur dans le BO (go-live : plus de mock). ──
+    if ($m === 'GET' && $p === '/franchisee/fr-orders') {
+      if (!$hasOrders) json_out([]);
+      $rs = rows("SELECT o.order_ref, COALESCE(NULLIF(o.guest_name,''),'Client webshop') AS client,
+                         o.mode, o.total, o.status, o.slot_label,
+                         DATE_FORMAT(o.created_at,'%H:%i') AS heure,
+                         (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id) AS pieces
+                    FROM ws_orders o
+                   WHERE " . $scope('o.shop_id') . "
+                     AND (o.delivery_date = ? OR (o.delivery_date IS NULL AND DATE(o.created_at) = ?))
+                   ORDER BY o.created_at DESC LIMIT 200", [$today, $today]);
+      json_out(array_map(fn ($o) => [
+        'ref' => '#' . $o['order_ref'],
+        'client' => $o['client'],
+        'mode' => ($o['mode'] === 'delivery' ? 'Livraison' : 'Retrait'),
+        'montant' => number_format((float) $o['total'], 2, ',', ' ') . ' €',
+        'statut' => $o['status'], 'heure' => $o['heure'],
+        'creneau' => $o['slot_label'] ?: '—', 'pieces' => (int) $o['pieces'],
+      ], $rs));
+    }
+
+    // ── Avancement du statut d'une commande (écran Commandes du jour). ──
+    if ($m === 'POST' && $p === '/franchisee/order-status') {
+      $b = body(); $ref = ltrim(trim((string) ($b['ref'] ?? '')), '#');
+      $st = (string) ($b['status'] ?? '');
+      $OK = ['pending', 'confirmed', 'preparing', 'ready', 'delivered', 'completed', 'cancelled'];
+      if ($ref === '' || !in_array($st, $OK, true)) json_out(['ok' => false, 'error' => 'ref + statut valides requis'], 400);
+      if (!$hasOrders) json_out(['ok' => false, 'error' => 'ws_orders absente'], 501);
+      q("UPDATE ws_orders SET status=? WHERE order_ref=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [$st, $ref]);
+      json_out(['ok' => true, 'status' => $st]);
+    }
+
+    // ── Stats réseau — agrégats RÉELS 30 jours (toutes boutiques). ──
+    if ($m === 'GET' && $p === '/franchisee/fr-net-stats') {
+      if (!$hasOrders) json_out([]);
+      $d = row("SELECT COALESCE(SUM(total),0) ca, COUNT(*) n, COALESCE(AVG(total),0) pm,
+                       COALESCE(SUM(mode='delivery'),0) deliv
+                  FROM ws_orders WHERE status <> 'cancelled'
+                   AND created_at >= DATE_SUB(?, INTERVAL 30 DAY)", [$today]);
+      $shopsN = (int) (row("SELECT COUNT(*) n FROM $SHOPS WHERE active=1")['n'] ?? 0);
+      $pctLiv = ((int) $d['n']) > 0 ? round(100 * (int) $d['deliv'] / (int) $d['n']) : 0;
+      json_out([
+        ['k' => 'CA réseau (30 j)',   'v' => $eurk((float) $d['ca']),  'sub' => ((int) $d['n']) . ' commandes'],
+        ['k' => 'Boutiques actives',  'v' => (string) $shopsN,         'sub' => 'réseau'],
+        ['k' => 'Part livraison',     'v' => $pctLiv . ' %',           'sub' => 'vs retrait'],
+        ['k' => 'Panier moyen',       'v' => number_format((float) $d['pm'], 2, ',', ' ') . ' €', 'sub' => '30 jours'],
+      ]);
+    }
+
+    // ── Capacité / calendrier — RÉEL : créneaux (ws_slots) × réservations
+    //    (ws_orders.slot_id par delivery_date), 5 prochains jours. ──
+    if ($m === 'GET' && $p === '/franchisee/fr-capacity') {
+      if (!$tblExists('ws_slots')) json_out([]);
+      $slots = rows("SELECT id, label, mode FROM ws_slots WHERE " . $scope('shop_id') . " AND active=1 ORDER BY sort_order, label LIMIT 20");
+      if (!$slots) json_out([]);
+      $hasCap = $tblExists('ws_slot_capacity');
+      $J = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+      $days = [];
+      for ($i = 0; $i < 5; $i++) {
+        $dt = date('Y-m-d', strtotime($today . " +$i day"));
+        $days[] = ['date' => $dt, 'label' => $J[(int) date('w', strtotime($dt))] . ' ' . (int) date('d', strtotime($dt))];
+      }
+      $out = [];
+      foreach ($slots as $s) {
+        $cells = []; $maxDefault = 0;
+        foreach ($days as $dy) {
+          $n = $hasOrders ? (int) (row("SELECT COUNT(*) n FROM ws_orders
+                                         WHERE slot_id=? AND delivery_date=? AND status<>'cancelled'" .
+                                        ($shopId ? " AND shop_id=" . (int) $shopId : ""), [(int) $s['id'], $dy['date']])['n'] ?? 0) : 0;
+          // Capacité du jour : ws_slot_capacity (par boutique × mode × date) —
+          // 0 = pas de plafond défini pour ce créneau/jour.
+          $mx = 0;
+          if ($hasCap && $shopId) {
+            $cp = row("SELECT COALESCE(SUM(max_orders),0) mx, COALESCE(SUM(current_orders),0) cur
+                        FROM ws_slot_capacity WHERE shop_id=? AND mode=? AND slot_date=?",
+                      [(int) $shopId, $s['mode'], $dy['date']]);
+            $mx = (int) ($cp['mx'] ?? 0);
+            if ($mx > 0 && !$n) $n = (int) ($cp['cur'] ?? 0);
+          }
+          if ($mx > $maxDefault) $maxDefault = $mx;
+          $cells[] = ['date' => $dy['date'], 'label' => $dy['label'], 'res' => $n, 'max' => $mx];
+        }
+        $out[] = ['slot' => $s['label'], 'mode' => ($s['mode'] === 'Retrait' || $s['mode'] === 'collect') ? 'Retrait' : 'Livraison',
+                  'max' => $maxDefault, 'days' => $cells];
+      }
+      json_out($out);
+    }
+
+    // ── Décision sur une demande d'accès compte Office (fr-validations). ──
+    if ($m === 'POST' && $p === '/franchisee/validation-decide') {
+      $b = body(); $id = (int) preg_replace('/\D/', '', (string) ($b['id'] ?? ''));
+      $act = (string) ($b['action'] ?? '');
+      if (!$id || !in_array($act, ['accept', 'reject'], true)) json_out(['ok' => false, 'error' => 'id + action requis'], 400);
+      if (!$tblExists('ws_offices')) json_out(['ok' => false, 'error' => 'ws_offices absente'], 501);
+      if ($act === 'accept') {
+        q("UPDATE ws_offices SET status='validated', active=1 WHERE id=?", [$id]);
+        // Tournée choisie dans la modale (nom ou id, résolution tolérante).
+        $tv = trim((string) ($b['tour'] ?? ''));
+        if ($tv !== '' && col_exists('ws_offices', 'tour_id') && $tblExists('ws_tours')) {
+          $scT = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
+          $tr = ctype_digit($tv) ? row("SELECT id FROM ws_tours WHERE id=?" . $scT, [(int) $tv])
+                                 : row("SELECT id FROM ws_tours WHERE name=? AND active=1" . $scT . " ORDER BY id DESC LIMIT 1", [$tv]);
+          if ($tr) q("UPDATE ws_offices SET tour_id=? WHERE id=?", [(int) $tr['id'], $id]);
+        }
+        // Site (building) choisi : ligne de liaison bureau↔bâtiment, tournée héritée.
+        $sa = trim((string) ($b['site_adr'] ?? ''));
+        if ($sa !== '' && $tblExists('ws_office_delivery_sites')) {
+          $nSql = "LOWER(REGEXP_REPLACE(TRIM(COALESCE(address,'')), '[[:space:]]+', ' '))";
+          $nSa = mb_strtolower(preg_replace('/\s+/u', ' ', $sa));
+          $ex2 = row("SELECT id FROM ws_office_delivery_sites WHERE office_client_id=? AND active=1 LIMIT 1", [$id]);
+          $tpl2 = row("SELECT name, tournee_id, site_access_minutes FROM ws_office_delivery_sites WHERE $nSql=? AND active=1 ORDER BY id LIMIT 1", [$nSa]);
+          if ($ex2) q("UPDATE ws_office_delivery_sites SET address=?, name=COALESCE(?, name), tournee_id=COALESCE(?, tournee_id), active=1 WHERE id=?",
+                      [$sa, $tpl2['name'] ?? null, $tpl2['tournee_id'] ?? null, (int) $ex2['id']]);
+          else q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, tournee_id, site_access_minutes, active" . ($shopId ? ", shop_id" : "") . ")
+                    VALUES (?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
+                 [$id, $tpl2['name'] ?? null, $sa, $tpl2['tournee_id'] ?? null, (float) ($tpl2['site_access_minutes'] ?? 6)]);
+          if ($tpl2 && $tpl2['tournee_id'] !== null && col_exists('ws_offices', 'tour_id'))
+            q("UPDATE ws_offices SET tour_id=COALESCE(tour_id, ?) WHERE id=?", [(int) $tpl2['tournee_id'], $id]);
+        }
+      } else {
+        q("UPDATE ws_offices SET active=0 WHERE id=? AND status='pending'", [$id]);
+      }
+      json_out(['ok' => true, 'action' => $act]);
+    }
+
+    // ── Décision sur une demande de rattachement bureau (fr-join-requests). ──
+    if ($m === 'POST' && $p === '/franchisee/join-decide') {
+      $b = body(); $id = (int) preg_replace('/\D/', '', (string) ($b['id'] ?? ''));
+      $act = (string) ($b['action'] ?? '');
+      if (!$id || !in_array($act, ['link', 'reject'], true)) json_out(['ok' => false, 'error' => 'id + action requis'], 400);
+      if (!$tblExists('ws_office_join_requests')) json_out(['ok' => false, 'error' => 'table absente'], 501);
+      q("UPDATE ws_office_join_requests SET status=? WHERE id=?" . ($shopId && col_exists('ws_office_join_requests', 'shop_id') ? " AND shop_id=" . (int) $shopId : ""),
+        [$act === 'link' ? 'linked' : 'rejected', $id]);
+      json_out(['ok' => true, 'action' => $act]);
+    }
+
     // Stock du jour — catalogue catégories › produits (online/en shop/seuil).
     // ── Stock du jour : lignes de commande du produit (Ruby = Click&Collect,
     //    Apricot = Delivery) — ws_order_lines × ws_orders, jour courant. ──
@@ -3280,12 +3417,13 @@ function dispatch($m, $p) {
       $out['shops'] = rows("SELECT id, name, city, zip AS cp FROM $SHOPS WHERE active=1 AND " . ($shopId ? "id = " . (int) $shopId : "1=1") . " ORDER BY name");
       if ($tblExists('ws_offices')) {
         $offs = rows("SELECT f.id, f.name, f.postal_code AS cp, f.city, t.shop_id,
-                             (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.office_client_id = f.id) AS ca
+                             (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.office_client_id = f.id) AS ca,
+                             (SELECT COUNT(*) FROM ws_orders o WHERE o.office_client_id = f.id AND o.status<>'cancelled') AS n
                         FROM ws_offices f LEFT JOIN ws_tours t ON t.id = f.tour_id
                        WHERE f.active = 1" . ($shopId ? " AND t.shop_id = " . (int) $shopId : ""));
         foreach ($offs as $f) $out['clients'][] = ['id' => 'o' . $f['id'], 'type' => 'office',
           'name' => $f['name'], 'cp' => $f['cp'], 'city' => $f['city'],
-          'shop_id' => $f['shop_id'] !== null ? (int) $f['shop_id'] : null, 'ca' => (float) $f['ca']];
+          'shop_id' => $f['shop_id'] !== null ? (int) $f['shop_id'] : null, 'ca' => (float) $f['ca'], 'n' => (int) $f['n']];
       }
       // Particuliers de MA boutique — identité unifiée `client` (zip/localité
       // collectés partout), rattachement preferred_shop_id → id_main_shop.
