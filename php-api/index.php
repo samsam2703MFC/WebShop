@@ -419,6 +419,64 @@ function dispatch($m, $p) {
     $r = array_values(array_filter($r, static fn($x) => (float) $x['price'] > 0));
     json_out($r);
   }
+  // ── DIAGNOSTIC DE VISIBILITÉ (lecture seule, public comme le catalogue) :
+  //    /catalog/why?shopId=2&product=Brownies  (ou &productId=1150004)
+  //    Évalue CHAQUE maillon de la chaîne pour le(s) produit(s) trouvé(s) et
+  //    dit pourquoi il est visible ou non au webshop — fini les devinettes.
+  if ($m === 'GET' && $p === '/catalog/why') {
+    $s = (int) (qp('shopId') ?: 0); $q = trim((string) (qp('product') ?: '')); $pid = (int) (qp('productId') ?: 0);
+    if (!$s || (!$q && !$pid)) json_out(['erreur' => 'shopId + product (nom) ou productId requis'], 400);
+    try {
+      $prods = $pid ? rows("SELECT * FROM ws_products WHERE id=?", [$pid])
+                    : rows("SELECT * FROM ws_products WHERE name LIKE ? ORDER BY active DESC, id LIMIT 10", ['%' . $q . '%']);
+      if (!$prods) json_out(['erreur' => 'aucun produit ne correspond', 'recherche' => $q ?: $pid]);
+      $out = [];
+      foreach ($prods as $p2) {
+        $id = (int) $p2['id'];
+        $chk = ['produit' => $p2['name'] . ' (id ' . $id . ')'];
+        $chk['1_produit_actif'] = ((int) $p2['active'] === 1) ? 'OK'
+          : 'ECHEC — ws_products.active=0 : invisible PARTOUT (console franchisor → toggle Webshop)';
+        $cat = $p2['cat_id'] !== null ? row("SELECT id, label, active FROM ws_categories WHERE id=?", [(int) $p2['cat_id']]) : null;
+        $chk['2_categorie'] = $cat
+          ? ($cat['label'] . ' (id ' . $cat['id'] . ') — ' . (((int) $cat['active'] === 1) ? 'active OK'
+             : 'ECHEC — catégorie INACTIVE : pas d\'onglet au webshop pour ce produit'))
+          : 'ECHEC — cat_id ' . $p2['cat_id'] . ' introuvable dans ws_categories';
+        $twins = rows("SELECT id, active FROM ws_products WHERE TRIM(name)=TRIM(?) AND id<>?", [$p2['name'], $id]);
+        $chk['3_doublons_de_nom'] = $twins
+          ? ('ATTENTION — ' . count($twins) . ' jumeau(x) du même nom : ' .
+             implode(', ', array_map(fn ($t2) => '#' . $t2['id'] . ((int) $t2['active'] === 1 ? ' (actif)' : ' (inactif)'), $twins)) .
+             ' — vérifiez que vous regardez le bon id')
+          : 'OK — nom unique';
+        $ps2 = row("SELECT active, no_delivery FROM ws_product_shops WHERE product_id=? AND shop_id=?", [$id, $s]);
+        $chk['4_assortiment_boutique'] = $ps2 === null ? 'OK — pas de surcharge boutique (inclus par défaut)'
+          : (((int) $ps2['active'] === 1) ? 'OK — activé pour la boutique ' . $s
+             : 'ECHEC — RETIRÉ de l\'assortiment de la boutique ' . $s . ' (BO franchisé → Assortiment)');
+        $pw = row("SELECT price FROM ws_product_prices WHERE product_id=? AND shop_id=? AND active=1", [$id, $s]);
+        $erpx = erp_shop_prices($s, [$id]);
+        $final = isset($erpx[$id]) ? $erpx[$id] : (float) ($pw['price'] ?? $p2['price']);
+        $chk['5_prix_final'] = ($final > 0)
+          ? ('OK — ' . number_format($final, 2, ',', ' ') . ' € (source : ' . (isset($erpx[$id]) ? 'ERP shop_product' : 'ws_') . ')')
+          : 'ECHEC — prix final 0 : masqué du catalogue (poser le prix ERP shop_product ou ws)';
+        $od = (int) ($p2['office_delivery'] ?? 1);
+        $chk['6_canal_livraison'] = $od === 1 ? 'OK — visible aussi en mode livraison bureau'
+          : 'ATTENTION — office_delivery=0 : masqué en mode LIVRAISON, visible en Click & Collect seulement';
+        $popts3 = erp_portion_options($s, [$id]);
+        $cand3 = $popts3[$id] ?? [];
+        $chk['7_portions_ERP'] = $cand3
+          ? implode(' · ', array_map(fn ($c3) => $c3['label'] . ($c3['price'] !== null
+              ? (' ' . number_format($c3['price'], 2, ',', ' ') . ' €') : ' (SANS PRIX — non proposée)'), $cand3))
+          : ((int) $p2['portions'] === 1 ? 'flag ws portions actif (3 tailles × facteurs)' : 'aucune — produit non portionnable');
+        $visible = ((int) $p2['active'] === 1) && ($ps2 === null || (int) $ps2['active'] === 1) && $final > 0;
+        $catOk = $cat && (int) $cat['active'] === 1;
+        $chk['VERDICT_click_collect'] = ($visible && $catOk) ? 'VISIBLE au webshop (Click & Collect)'
+          : ($visible ? 'DANS le catalogue mais SANS ONGLET (catégorie inactive)' : 'INVISIBLE — corriger les ECHEC ci-dessus');
+        $chk['VERDICT_livraison'] = ($visible && $catOk && $od === 1) ? 'VISIBLE en mode livraison bureau' : 'INVISIBLE en mode livraison';
+        $out[] = $chk;
+      }
+      json_out($out);
+    } catch (Throwable $e) { json_out(['erreur' => 'diagnostic KO', 'detail' => $e->getMessage()], 500); }
+  }
+
   // Menu / bundle d'un produit : ws_bundles -> slots -> choices (imbriqué).
   if ($m === 'GET' && $p === '/catalog/bundles') {
     $pid = qp('productId'); if (!$pid) json_out([]);
