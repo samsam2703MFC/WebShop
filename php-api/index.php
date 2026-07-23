@@ -141,15 +141,15 @@ function dispatch($m, $p) {
   /* ── Shops / Brand ── */
   if ($m === 'GET' && $p === '/shops') {
     json_out(rows("SELECT id, slug, name, city, email, phone, accent, tint, logo_url,
-                          webshop_discount_type, webshop_discount_value,
+                          discount_type AS webshop_discount_type, discount_value AS webshop_discount_value,
                           TRIM(CONCAT_WS(' ', street, street_num)) AS address
-                     FROM ws_shops WHERE active = 1 ORDER BY name"));
+                     FROM shops WHERE active = 1 AND webshop_enabled = 1 ORDER BY name"));
   }
   if ($m === 'GET' && $p === '/brand') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
     json_out(row("SELECT id, slug, name, accent, tint, logo_url,
-                         webshop_discount_type, webshop_discount_value
-                    FROM ws_shops WHERE id = ?", [$s]) ?: []);
+                         discount_type AS webshop_discount_type, discount_value AS webshop_discount_value
+                    FROM shops WHERE id = ? AND webshop_enabled = 1", [$s]) ?: []);
   }
 
   /* ── Lien webshop du client PWA (footer PWA → boutique préférée) ──
@@ -178,7 +178,7 @@ function dispatch($m, $p) {
                       WHERE c.id = ?", [$cid]);
       } else {
         $shop = row("SELECT w.id, w.slug, NULL AS webshop_url
-                       FROM client c JOIN ws_shops w ON w.id = c.preferred_shop_id
+                       FROM client c JOIN shops w ON w.id = c.preferred_shop_id AND w.webshop_enabled = 1
                       WHERE c.id = ?", [$cid]);
       }
     }
@@ -843,7 +843,7 @@ function dispatch($m, $p) {
 
     // 2-bis. Remise webshop paramétrée par boutique (ws_shops.webshop_discount_*).
     $webshopDisc = 0;
-    $sd = row("SELECT webshop_discount_type AS t, webshop_discount_value AS v FROM ws_shops WHERE id=?", [$shop]);
+    $sd = row("SELECT discount_type AS t, discount_value AS v FROM shops WHERE id=? AND webshop_enabled=1", [$shop]);
     if ($sd && (float) $sd['v'] > 0) {
       $baseW = $subtotal - $promo;
       $webshopDisc = $sd['t'] === 'fixed' ? min($baseW, (float) $sd['v']) : round($baseW * (float) $sd['v']) / 100;
@@ -1321,7 +1321,7 @@ function dispatch($m, $p) {
                 (SELECT COUNT(*) FROM ws_order_lines l WHERE l.order_id = o.id) AS items,
                 o.total AS total, 0 AS toInvoice, NULL AS billingEntityId, NULL AS frozenAt,
                 NULL AS invoiceNo, NULL AS invoiceTotal, NULL AS pdfPath, 'order' AS source
-           FROM ws_orders o LEFT JOIN ws_shops s ON s.id = o.shop_id
+           FROM ws_orders o LEFT JOIN shops s ON s.id = o.shop_id AND s.webshop_enabled = 1
           WHERE o.customer_id = ? AND o.created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)",
         [$id]));
     } catch (Throwable $e) { /* — */ }
@@ -1561,7 +1561,7 @@ function dispatch($m, $p) {
     $hasOrders = $tblExists('ws_orders');
     // Source boutiques : table unifiée `shops` (webshop_enabled/active réels),
     // repli legacy `ws_shops`. $SHOPS est contrôlé (jamais une entrée client).
-    $SHOPS = $tblExists('shops') ? 'shops' : 'ws_shops';
+    $SHOPS = 'shops';
 
     // KPIs réseau — agrégés depuis ws_orders / shops quand dispo.
     if ($m === 'GET' && $p === '/franchisor/kpis') {
@@ -1903,7 +1903,7 @@ function dispatch($m, $p) {
     //    résout lat/lng et compte les non-localisés. Aucune donnée en dur.
     if ($m === 'GET' && $p === '/franchisor/geo-clients') {
       $out = ['shops' => [], 'clients' => [], 'franchisees' => []];
-      $SHOPS2 = row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='shops'") ? 'shops' : 'ws_shops';
+      $SHOPS2 = 'shops';
       $out['shops'] = rows("SELECT id, name, city, zip AS cp FROM $SHOPS2 WHERE active=1 ORDER BY name");
       // Bureaux (B2B) — jaune. Boutique via la tournée assignée.
       if (row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_offices'")) {
@@ -1936,7 +1936,7 @@ function dispatch($m, $p) {
       json_out(rows("SELECT c.id, c.name, c.postcodes, c.exclusive, c.active" .
                     ($hasShop ? ", c.shop_id, s.name AS shop_name" : ", NULL AS shop_id, NULL AS shop_name") . "
                       FROM ws_franchisor_catchment c" .
-                    ($hasShop ? " LEFT JOIN ws_shops s ON s.id = c.shop_id" : "") . " ORDER BY c.name"));
+                    ($hasShop ? " LEFT JOIN shops s ON s.id = c.shop_id AND s.webshop_enabled = 1" : "") . " ORDER BY c.name"));
     }
     if ($m === 'POST' && $p === '/franchisor/catchment') {
       $b = body();
@@ -2141,7 +2141,7 @@ function dispatch($m, $p) {
     require_admin();
 
     $tblExists = function ($t) { return (bool) row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", [$t]); };
-    $SHOPS = $tblExists('shops') ? 'shops' : 'ws_shops';
+    $SHOPS = 'shops';
     $eur0  = function ($n) { return number_format((float) $n, 0, ',', ' ') . ' €'; };
     $eurk  = function ($n) { return number_format(round($n / 1000)) . ' k€'; };
     $today = qp('date', date('Y-m-d'));
@@ -3215,17 +3215,9 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/admin/shop-discount') {
       $b = body();
       $type = in_array($b['type'] ?? '', ['percent', 'fixed'], true) ? $b['type'] : 'percent';
-      // Après l'unification, la remise vit sur shops (colonnes à plat discount_type/value
-      // dans le schéma prod). Tant que `shops` n'existe pas, on retombe sur ws_shops.
-      $hasShops = row("SELECT 1 AS x FROM information_schema.tables
-                        WHERE table_schema=DATABASE() AND table_name='shops'");
-      if ($hasShops) {
-        q("UPDATE shops SET discount_type=?, discount_value=? WHERE id=?",
-          [$type, (float) ($b['value'] ?? 0), $b['shopId'] ?? 0]);
-      } else {
-        q("UPDATE ws_shops SET webshop_discount_type=?, webshop_discount_value=? WHERE id=?",
-          [$type, (float) ($b['value'] ?? 0), $b['shopId'] ?? 0]);
-      }
+      // Après l'unification, la remise vit sur shops (colonnes à plat discount_type/value).
+      q("UPDATE shops SET discount_type=?, discount_value=? WHERE id=?",
+        [$type, (float) ($b['value'] ?? 0), $b['shopId'] ?? 0]);
       json_out(['ok' => true, 'type' => $type, 'value' => (float) ($b['value'] ?? 0)]);
     }
     // ── Comptes entreprise (B2B) ──
@@ -3327,8 +3319,8 @@ function tour_orderable($tourId, $deliveryDate) {
   // Fuseau boutique : ws_shops.timezone si la colonne existe (capacité), sinon
   // Europe/Brussels — correct pour toutes les boutiques belges du réseau.
   $tzName = 'Europe/Brussels';
-  if (col_exists('ws_shops', 'timezone')) {
-    $tzr = row("SELECT timezone FROM ws_shops WHERE id=?", [$shop]);
+  if (col_exists('shops', 'timezone')) {
+    $tzr = row("SELECT timezone FROM shops WHERE id=?", [$shop]);
     if ($tzr && !empty($tzr['timezone'])) $tzName = $tzr['timezone'];
   }
   try { $zone = new DateTimeZone($tzName); } catch (Throwable $e) { $zone = new DateTimeZone('Europe/Brussels'); }
