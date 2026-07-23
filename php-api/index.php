@@ -288,6 +288,30 @@ function dispatch($m, $p) {
       $x['allergens'] = $x['allergens'] ? json_decode($x['allergens']) : [];
     }
     unset($x);
+    // Types de portions PAR PRODUIT (ERP product_portion, même base — clé
+    // id_product = ws_products.id) : seuls les types ACTIFS sont proposés,
+    // dans l'ordre display_order. Libellés normalisés vers quart/demi/entier.
+    // Table absente ou produit sans lignes → null : le front garde le
+    // comportement historique (les 3 tailles quand p.portions = 1).
+    try {
+      if ((bool) row("SELECT 1 x FROM information_schema.tables
+                       WHERE table_schema=DATABASE() AND table_name='product_portion'")) {
+        $mapPT = ['quart' => 'quart', 'quarter' => 'quart', '1/4' => 'quart',
+                  'demi' => 'demi', 'half' => 'demi', '1/2' => 'demi',
+                  'entier' => 'entier', 'entiere' => 'entier', 'whole' => 'entier', 'full' => 'entier'];
+        $pt = [];
+        foreach (rows("SELECT id_product, portion_type FROM product_portion
+                        WHERE is_active=1 ORDER BY id_product, display_order") as $pr2) {
+          $k2 = $mapPT[mb_strtolower(trim((string) $pr2['portion_type']))] ?? null;
+          if ($k2 && !in_array($k2, $pt[(int) $pr2['id_product']] ?? [], true)) $pt[(int) $pr2['id_product']][] = $k2;
+        }
+        foreach ($r as &$x) {
+          $x['portionTypes'] = $pt[(int) $x['id']] ?? null;
+          if (!empty($x['portionTypes'])) $x['portions'] = true;
+        }
+        unset($x);
+      }
+    } catch (Throwable $e) { /* portions ERP indisponibles — comportement historique */ }
     // Allergènes RÉELS (source de vérité = ERP, même base atelierby_db) : dérivés du
     // modèle recette → matières → allergènes. Clé de liaison : ws_products.id =
     // product.id (produits semés depuis l'ERP avec le même identifiant). Calcul en
@@ -856,12 +880,18 @@ function dispatch($m, $p) {
     //    sur COALESCE(ws_product_prices, ws_products.price). Aligné sur /catalog.
     $subtotal = 0; $lines = [];
     $storePrices = erp_shop_prices($shop, array_map(static fn($it) => (int) ($it['productId'] ?? 0), $basket));
+    // Facteur de PORTION appliqué CÔTÉ SERVEUR (même barème que l'affichage :
+    // quart ×0.27, demi ×0.52, entière ×1). Avant, le serveur facturait plein
+    // tarif quelle que soit la portion choisie — le front seul remisait.
+    $PFACT = ['quart' => 0.27, 'demi' => 0.52, 'entier' => 1.0];
     foreach ($basket as $it) {
       $p2 = row("SELECT p.id, p.name, p.cross_portion, COALESCE(pp.price, p.price) AS price
                    FROM ws_products p LEFT JOIN ws_product_prices pp ON pp.product_id=p.id AND pp.shop_id=? AND pp.active=1
                   WHERE p.id=? AND p.active=1", [$shop, $it['productId'] ?? 0]);
       if (!$p2) continue;
       $unit = isset($storePrices[(int) $p2['id']]) ? $storePrices[(int) $p2['id']] : (float) $p2['price'];
+      $portion2 = mb_strtolower(trim((string) ($it['portion'] ?? '')));
+      $unit = round($unit * ($PFACT[$portion2] ?? 1.0), 2);
       $qty = max(1, (int) ($it['qty'] ?? 1));
       $subtotal += $unit * $qty;
       $lines[] = ['productId' => $p2['id'], 'name' => $p2['name'], 'qty' => $qty,

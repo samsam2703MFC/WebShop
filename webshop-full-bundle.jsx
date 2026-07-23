@@ -753,15 +753,20 @@ function PortionGlyph({ size = 14 }) {
 // Portion option list inside the product modal — same toggle/button UX as
 // other option groups (pdm-optrow + pdm-seg). Each button shows icon +
 // portion name + computed price.
-function PortionOptions({ value, onChange, basePrice }) {
+function PortionOptions({ value, onChange, basePrice, types }) {
+  // Types de portions ACTIFS du produit (ERP product_portion, servi par le
+  // catalogue sous `portionTypes`) — sans liste, les 3 tailles historiques.
+  const shapes = (Array.isArray(types) && types.length)
+    ? PORTION_SHAPES.filter((o) => types.includes(o.v))
+    : PORTION_SHAPES;
   return (
     <div className="pdm-optrow">
       <div className="pdm-optrow__head">
         <span className="pdm-opt__label">Portion</span>
         <span className="pdm-opt__req">Requis</span>
       </div>
-      <div className="pdm-seg pdm-seg--portions" role="radiogroup" aria-label="Portion" style={{ '--pdm-seg-n': PORTION_SHAPES.length }}>
-        {PORTION_SHAPES.map((o) => {
+      <div className="pdm-seg pdm-seg--portions" role="radiogroup" aria-label="Portion" style={{ '--pdm-seg-n': shapes.length }}>
+        {shapes.map((o) => {
           const on = value === o.v;
           const price = (basePrice || 0) * o.factor;
           return (
@@ -823,7 +828,10 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     setSel(initSelections);
     setUpsellIds({});
     setQty(1);
-    setPortion('entier');
+    // Portion par défaut = la plus grande DISPONIBLE pour ce produit
+    // (l'ERP peut ne proposer que quart/demi : 'entier' serait invalide).
+    const pts = Array.isArray(product?.portionTypes) && product.portionTypes.length ? product.portionTypes : null;
+    setPortion(pts ? (['entier', 'demi', 'quart'].find((t) => pts.includes(t)) || pts[0]) : 'entier');
     setBundleSlots({});
     setCarIdx(0);
     if (product?.options) {
@@ -1090,6 +1098,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                   value={portion}
                   onChange={setPortion}
                   basePrice={product.price}
+                  types={product.portionTypes}
                 />
               )}
             </div>
