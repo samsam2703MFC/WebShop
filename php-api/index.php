@@ -1082,6 +1082,8 @@ function dispatch($m, $p) {
         'office_delivery_site_name' => $dl['siteName'] ?? null, 'tournee_stop_id' => $intOrNull($dl['tourneeStopId'] ?? null),
         'payment_type' => $paymentType, 'delivery_fee_applied' => $feeApplied, 'delivery_fee_amount' => $feeAmount,
         'free_delivery_minimum' => $freeMin, 'po_number' => $poNumber, 'invoice_requested' => $invRequested, 'invoice_vat' => $invVat,
+        // Source AUTOMATIQUE : toute commande passée ici vient du webshop.
+        'source' => 'webshop',
       ];
       $ordIns = [];
       foreach ($ordVals as $c => $v) if (col_exists('ws_orders', $c)) $ordIns[$c] = $v;
@@ -3184,27 +3186,38 @@ function dispatch($m, $p) {
     //    liste de démo codée en dur dans le BO (go-live : plus de mock). ──
     if ($m === 'GET' && $p === '/franchisee/fr-orders') {
       if (!$hasOrders) json_out([]);
-      // Nom + prénom du CLIENT connecté (table client) — repli guest, puis
-      // « Client webshop ». Source dérivée du moyen de paiement : famille
-      // « shop » (espèces / comptoir) = POS, sinon Webshop.
+      // Toutes les commandes d'AUJOURD'HUI ET DES PROCHAINS JOURS (31 j) :
+      // le tableau de bord filtre côté écran (Aujourd'hui / Semaine / Mois).
+      // Nom + prénom du client connecté (table client), source (colonne
+      // ws_orders.source posée par le webshop, repli moyen de paiement),
+      // payé / non payé (payment_status).
       $hasCli2 = $tblExists('client');
-      $rs = rows("SELECT o.order_ref, o.payment_method,
+      $hasSrc  = col_exists('ws_orders', 'source');
+      $rs = rows("SELECT o.order_ref, o.payment_method, o.payment_status, o.payment_type,
                          COALESCE(NULLIF(o.guest_name,'')" .
                          ($hasCli2 ? ", NULLIF(TRIM(CONCAT(COALESCE(cl.name,''),' ',COALESCE(cl.surname,''))),'')" : "") . ",
                                   'Client webshop') AS client,
-                         o.mode, o.total, o.status, o.slot_label,
+                         o.mode, o.total, o.status, o.slot_label" .
+                 ($hasSrc ? ", o.source" : ", NULL AS source") . ",
+                         COALESCE(o.delivery_date, DATE(o.created_at)) AS jour,
                          DATE_FORMAT(o.created_at,'%H:%i') AS heure,
                          (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id) AS pieces
                     FROM ws_orders o" .
                  ($hasCli2 ? " LEFT JOIN client cl ON cl.id = o.customer_id" : "") . "
                    WHERE " . $scope('o.shop_id') . "
-                     AND (o.delivery_date = ? OR (o.delivery_date IS NULL AND DATE(o.created_at) = ?))
-                   ORDER BY o.created_at DESC LIMIT 200", [$today, $today]);
+                     AND COALESCE(o.delivery_date, DATE(o.created_at))
+                         BETWEEN ? AND DATE_ADD(?, INTERVAL 31 DAY)
+                   ORDER BY COALESCE(o.delivery_date, DATE(o.created_at)), o.created_at DESC LIMIT 400", [$today, $today]);
       json_out(array_map(fn ($o) => [
         'ref' => '#' . $o['order_ref'],
         'client' => $o['client'],
-        'mode' => ($o['mode'] === 'delivery' ? 'Livraison' : 'Retrait'),
-        'source' => (payment_family($o['payment_method'] ?? '') === 'shop') ? 'POS' : 'Webshop',
+        'mode' => ($o['mode'] === 'delivery' ? 'Livraison' : 'Collect'),
+        'source' => ($o['source'] === 'pos') ? 'POS'
+                  : (($o['source'] === 'webshop') ? 'Webshop'
+                  : ((payment_family($o['payment_method'] ?? '') === 'shop') ? 'POS' : 'Webshop')),
+        'paye' => in_array(strtolower((string) $o['payment_status']), ['paid', 'captured', 'succeeded'], true) ? 'Payé'
+                : (($o['payment_type'] === 'deferred') ? 'Facturé' : 'Non payé'),
+        'date' => $o['jour'],
         'montant' => number_format((float) $o['total'], 2, ',', ' ') . ' €',
         'statut' => $o['status'], 'heure' => $o['heure'],
         'creneau' => $o['slot_label'] ?: '—', 'pieces' => (int) $o['pieces'],
