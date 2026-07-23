@@ -2078,6 +2078,15 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/franchisor/product') {
       $b = body(); $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['error' => 'id requis'], 400);
+      // RÈGLE MÉTIER : « obligatoire » ⇒ visible au webshop. Rendre un produit
+      // obligatoire force active=1 ; couper le webshop d'un produit obligatoire
+      // est refusé (il faut d'abord lever l'obligation).
+      if (!empty($b['brand_mandatory'])) $b['active'] = 1;
+      if (array_key_exists('active', $b) && empty($b['active'])) {
+        $cur = row("SELECT brand_mandatory FROM ws_products WHERE id=?", [$id]);
+        $stillMand = array_key_exists('brand_mandatory', $b) ? !empty($b['brand_mandatory']) : !empty($cur['brand_mandatory']);
+        if ($stillMand) json_out(['error' => 'Produit OBLIGATOIRE : il doit rester visible au webshop — levez d\'abord l\'obligation.'], 400);
+      }
       $sets = []; $vals = [];
       if (array_key_exists('active', $b))          { $sets[] = 'active=?';          $vals[] = !empty($b['active']) ? 1 : 0; }  // « Webshop » = visibilité webshop réelle
       if (array_key_exists('office_delivery', $b)) { $sets[] = 'office_delivery=?'; $vals[] = !empty($b['office_delivery']) ? 1 : 0; }  // canal livraison bureau (« apricot »)
@@ -2098,10 +2107,19 @@ function dispatch($m, $p) {
       $b = body(); $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['error' => 'id requis'], 400);
       if (array_key_exists('menu_default', $b)) q("UPDATE ws_categories SET menu_default=? WHERE id=?", [!empty($b['menu_default']) ? 1 : 0, $id]);
-      if (array_key_exists('active', $b))          q("UPDATE ws_products SET active=? WHERE cat_id=?", [!empty($b['active']) ? 1 : 0, $id]);  // cascade « Webshop » catégorie
+      // Cascade « Webshop » : ne coupe JAMAIS un produit obligatoire (règle
+      // métier : obligatoire ⇒ visible au webshop).
+      if (array_key_exists('active', $b)) {
+        if (!empty($b['active'])) q("UPDATE ws_products SET active=1 WHERE cat_id=?", [$id]);
+        else q("UPDATE ws_products SET active=0 WHERE cat_id=? AND brand_mandatory=0", [$id]);
+      }
       if (array_key_exists('office_delivery', $b)) q("UPDATE ws_products SET office_delivery=? WHERE cat_id=?", [!empty($b['office_delivery']) ? 1 : 0, $id]);  // cascade « livraison bureau » catégorie
       if (array_key_exists('brand_whitelist', $b)) q("UPDATE ws_products SET brand_whitelist=? WHERE cat_id=?", [!empty($b['brand_whitelist']) ? 1 : 0, $id]);
-      if (array_key_exists('brand_mandatory', $b)) q("UPDATE ws_products SET brand_mandatory=? WHERE cat_id=?", [!empty($b['brand_mandatory']) ? 1 : 0, $id]);
+      // Rendre une catégorie obligatoire rend aussi ses produits visibles.
+      if (array_key_exists('brand_mandatory', $b)) {
+        if (!empty($b['brand_mandatory'])) q("UPDATE ws_products SET brand_mandatory=1, active=1 WHERE cat_id=?", [$id]);
+        else q("UPDATE ws_products SET brand_mandatory=0 WHERE cat_id=?", [$id]);
+      }
       $audit('category.update', 'ws_categories', $id, null, $b);
       json_out(['ok' => true]);
     }
