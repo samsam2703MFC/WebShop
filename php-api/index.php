@@ -2667,6 +2667,21 @@ function dispatch($m, $p) {
       if ($on && $tblExists('ws_offices')) {
         q("UPDATE ws_offices SET status='validated', active=1 WHERE client_id=?", [$id]);
         $off = row("SELECT id, name, tour_id FROM ws_offices WHERE client_id=? AND active=1 ORDER BY id DESC LIMIT 1", [$id]);
+        // AUTO-RÉPARATION : client activé sans office (état antérieur aux
+        // correctifs — trigger non déclenché) → création directe, sans
+        // dépendre d'une transition de colonne.
+        if (!$off && col_exists('ws_offices', 'client_id')) {
+          $c = row("SELECT * FROM client WHERE id=?", [$id]);
+          if ($c) {
+            $offName = trim((string) ($c['company_name'] ?? '')) ?: (trim((string) ($c['name'] ?? '')) ?: ('Client #' . $id));
+            q("INSERT INTO ws_offices (client_id, shop_id, name, postal_code, city, email, phone, status, active)
+                 VALUES (?,?,?,?,?,?,?, 'validated', 1)
+                 ON DUPLICATE KEY UPDATE active=1, status='validated'",
+              [$id, ((int) ($c['id_main_shop'] ?? 0)) ?: ($shopId ?: null), $offName,
+               $c['zip'] ?? null, $c['locality'] ?? ($c['city'] ?? null), $c['email'] ?? null, $c['phone'] ?? null]);
+            $off = row("SELECT id, name, tour_id FROM ws_offices WHERE client_id=? AND active=1 ORDER BY id DESC LIMIT 1", [$id]);
+          }
+        }
         $officeName = $off['name'] ?? null;
         // Lien INVERSE indispensable : le GET b2b-clients projette bureau/site/
         // tournée via client.office_id — sans lui, tout disparaît au reload.
