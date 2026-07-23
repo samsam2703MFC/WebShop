@@ -3236,6 +3236,35 @@ function dispatch($m, $p) {
       json_out($out);
     }
 
+    // À PRODUIRE (écran Préparation) — lignes de commande agrégées par
+    // catégorie × produit × créneau × tournée, aujourd'hui + 31 jours (le BO
+    // filtre par jour via les badges). ws_order_lines × ws_orders réels.
+    if ($m === 'GET' && $p === '/franchisee/fr-prep-lines') {
+      if (!$hasOrders || !$tblExists('ws_order_lines')) json_out([]);
+      $hasT = $tblExists('ws_tours') && $tblExists('ws_office_delivery_sites');
+      $rs = rows(
+        "SELECT COALESCE(o.delivery_date, DATE(o.created_at)) AS date,
+                COALESCE(c.name, 'Autres') AS cat,
+                COALESCE(NULLIF(l.product_name,''), pr.name, '—') AS produit,
+                SUM(l.qty) AS qty,
+                COALESCE(NULLIF(o.slot_label,''), '—') AS creneau," .
+        ($hasT ? " COALESCE(t.name, IF(o.mode='delivery','— sans tournée','Comptoir'))" : " IF(o.mode='delivery','—','Comptoir')") . " AS tournee
+           FROM ws_order_lines l
+           JOIN ws_orders o ON o.id = l.order_id
+           LEFT JOIN ws_products pr ON pr.id = l.product_id
+           LEFT JOIN ws_categories c ON c.id = pr.cat_id" .
+        ($hasT ? "
+           LEFT JOIN ws_office_delivery_sites s ON s.id = o.office_delivery_site_id
+           LEFT JOIN ws_tours t ON t.id = s.tournee_id" : "") . "
+          WHERE " . $scope('o.shop_id') . " AND o.status <> 'cancelled'
+            AND COALESCE(o.delivery_date, DATE(o.created_at))
+                BETWEEN ? AND DATE_ADD(?, INTERVAL 31 DAY)
+          GROUP BY date, cat, produit, creneau, tournee
+          ORDER BY date, cat, produit, creneau LIMIT 500", [$today, $today]);
+      json_out(array_map(fn ($r) => ['date' => $r['date'], 'cat' => $r['cat'], 'produit' => $r['produit'],
+        'qty' => (int) $r['qty'], 'creneau' => $r['creneau'], 'tournee' => $r['tournee']], $rs));
+    }
+
     // Bon de chargement (prep) — colis du jour groupés par site.
     if ($m === 'GET' && $p === '/franchisee/fr-prep-points') {
       if (!$tblExists('ws_office_delivery_sites') || !$hasOrders) json_out([]);
