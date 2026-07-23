@@ -401,6 +401,18 @@ function dispatch($m, $p) {
         unset($x);
       }
     }
+    // Le prix de la portion ENTIÈRE suit le prix FINAL (magasin ERP inclus) —
+    // il était figé AVANT la surcharge : « Entière €1.00 » (prix ws résiduel)
+    // alors que la carte affichait 18,90 €.
+    foreach ($r as &$x) {
+      if (!empty($x['portionOptions']) && is_array($x['portionOptions'])) {
+        foreach ($x['portionOptions'] as &$po) {
+          if (($po['v'] ?? '') === 'entier') $po['price'] = (float) $x['price'];
+        }
+        unset($po);
+      }
+    }
+    unset($x);
     // Règle : on n'affiche QUE les produits à prix non nul (> 0). Un produit dont le
     // prix effectif (magasin ERP, ou repli ws_) vaut 0 n'est pas vendable → masqué.
     // Appliqué APRÈS la surcharge du prix magasin pour couvrir les deux sources.
