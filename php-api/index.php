@@ -3769,6 +3769,24 @@ function dispatch($m, $p) {
         'heure' => $r['heure'], 'client' => $r['client']], $rs));
     }
 
+    // Résolution PRODUIT robuste — utilisée par tous les toggles/saisies :
+    // id (productId) prioritaire quand le front le fournit, sinon nom TRIMé ;
+    // inclut les produits OBLIGATOIRES même hors webshop (active=0). Avant :
+    // WHERE name=? AND active=1 → « produit inconnu » sur simple écart
+    // d'espaces, doublon de nom, ou produit désactivé côté marque entre deux
+    // rafraîchissements de l'écran.
+    $findProduct = function ($src, $cols = 'id') {
+      $pid = is_numeric($src['productId'] ?? null) ? (int) $src['productId'] : 0;
+      if ($pid) { $p = row("SELECT $cols FROM ws_products WHERE id=?", [$pid]); if ($p) return $p; }
+      $n = trim((string) ($src['product'] ?? ''));
+      if ($n === '') return null;
+      return row("SELECT $cols FROM ws_products
+                   WHERE TRIM(name) = ? AND (active = 1 OR brand_mandatory = 1)
+                   ORDER BY active DESC, id LIMIT 1", [$n]);
+    };
+    $prodKo = fn ($src) => json_out(['ok' => false,
+      'error' => 'produit inconnu : « ' . trim((string) ($src['product'] ?? ($src['productId'] ?? '?'))) . ' » — rechargez la page (Ctrl+F5), le catalogue a peut-être changé'], 400);
+
     // ── Stock du jour : SAISIE directe (formulaire modale) — pose les
     //    quantités ABSOLUES du jour par mode (webshop=delivery / shop=collect)
     //    dans ws_product_stock. date = jour courant. ──
@@ -3776,8 +3794,8 @@ function dispatch($m, $p) {
       $b = body();
       if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
       if (!$tblExists('ws_product_stock') || !$tblExists('ws_products')) json_out(['ok' => false, 'error' => 'tables stock absentes'], 501);
-      $pr = row("SELECT id FROM ws_products WHERE name=? AND active=1 LIMIT 1", [(string) ($b['product'] ?? '')]);
-      if (!$pr) json_out(['ok' => false, 'error' => 'produit inconnu'], 400);
+      $pr = $findProduct($b);
+      if (!$pr) $prodKo($b);
       $out2 = [];
       foreach (['delivery' => 'online', 'collect' => 'shop'] as $mode2 => $key2) {
         if (!array_key_exists($key2, $b) || $b[$key2] === '' || $b[$key2] === null) continue;
@@ -3798,8 +3816,8 @@ function dispatch($m, $p) {
       $b = body();
       if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
       if (!$tblExists('ws_product_stock') || !$tblExists('ws_products')) json_out(['ok' => false, 'error' => 'tables stock absentes'], 501);
-      $pr = row("SELECT id FROM ws_products WHERE name=? AND active=1 LIMIT 1", [(string) ($b['product'] ?? '')]);
-      if (!$pr) json_out(['ok' => false, 'error' => 'produit inconnu'], 400);
+      $pr = $findProduct($b);
+      if (!$pr) $prodKo($b);
       $mode = (($b['mode'] ?? '') === 'delivery') ? 'delivery' : 'collect';
       $delta = (int) ($b['delta'] ?? 0);
       if (!$delta) json_out(['ok' => false, 'error' => 'delta requis (±n)'], 400);
@@ -3856,8 +3874,8 @@ function dispatch($m, $p) {
     if ($m === 'GET' && $p === '/franchisee/stock-defaults') {
       if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
       if (!$tblExists('ws_product_stock_defaults') || !$tblExists('ws_products')) json_out(['ok' => true, 'days' => (object) []]);
-      $pr = row("SELECT id FROM ws_products WHERE name=? AND active=1 LIMIT 1", [(string) (qp('product') ?: '')]);
-      if (!$pr) json_out(['ok' => false, 'error' => 'produit inconnu'], 400);
+      $pr = $findProduct(['productId' => qp('productId'), 'product' => qp('product')]);
+      if (!$pr) $prodKo(['product' => qp('product')]);
       $days = [];
       foreach (rows("SELECT weekday, mode, qty FROM ws_product_stock_defaults
                       WHERE shop_id=? AND product_id=?", [(int) $shopId, (int) $pr['id']]) as $r) {
@@ -3875,8 +3893,8 @@ function dispatch($m, $p) {
       if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
       if (!$tblExists('ws_product_stock_defaults') || !$tblExists('ws_products'))
         json_out(['ok' => false, 'error' => 'ws_product_stock_defaults absente — migration 0036 non appliquée'], 500);
-      $pr = row("SELECT id FROM ws_products WHERE name=? AND active=1 LIMIT 1", [(string) ($b['product'] ?? '')]);
-      if (!$pr) json_out(['ok' => false, 'error' => 'produit inconnu'], 400);
+      $pr = $findProduct($b);
+      if (!$pr) $prodKo($b);
       $days = is_array($b['days'] ?? null) ? $b['days'] : [];
       $n = 0;
       foreach ($days as $wd => $vals) {
@@ -3917,7 +3935,7 @@ function dispatch($m, $p) {
                     JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") .
                  ($hasStock ? " LEFT JOIN ws_product_stock st ON st.product_id = pr.id AND st.date = ? AND st.active = 1" . ($shopId ? " AND st.shop_id = " . (int) $shopId : "") : "") . "
-                   WHERE pr.active = 1" . ($hasPS ? " AND (ps.active IS NULL OR ps.active = 1)" : "") . "
+                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))" . ($hasPS ? " AND (ps.active IS NULL OR ps.active = 1)" : "") . "
                    GROUP BY c.sort_order, c.label, pr.id, pr.name, pr.brand_mandatory
                    ORDER BY c.sort_order, c.label, pr.name LIMIT 400", $hasStock ? [$today] : []);
       // Minimums hebdomadaires du JOUR (1=lundi … 7=dimanche) par produit.
@@ -3934,7 +3952,7 @@ function dispatch($m, $p) {
         $pid = (int) $r['pid'];
         $cats[$cat]['cat'] = $cat;
         $cats[$cat]['catMand'] = ($cats[$cat]['catMand'] ?? false) || (bool) $r['brand_mandatory'];
-        $cats[$cat]['prods'][] = ['nom' => $r['name'], 'mand' => (bool) $r['brand_mandatory'],
+        $cats[$cat]['prods'][] = ['id' => $pid, 'nom' => $r['name'], 'mand' => (bool) $r['brand_mandatory'],
           'online' => $r['online'] !== null ? max(0, (int) $r['online']) : (int) ($defs[$pid]['delivery'] ?? 0),
           'shop' => $r['shopq'] !== null ? max(0, (int) $r['shopq']) : (int) ($defs[$pid]['collect'] ?? 0),
           'min' => (int) ws_param('stock.default_min_threshold', '10')];
@@ -3952,14 +3970,14 @@ function dispatch($m, $p) {
       $active = !empty($b['active']) ? 1 : 0;
       $prods = [];
       if (!empty($b['product'])) {
-        $pr = row("SELECT id, brand_mandatory FROM ws_products WHERE name=? AND active=1 LIMIT 1", [(string) $b['product']]);
-        if (!$pr) json_out(['ok' => false, 'error' => 'produit inconnu'], 400);
+        $pr = $findProduct($b, 'id, brand_mandatory');
+        if (!$pr) $prodKo($b);
         if ((int) $pr['brand_mandatory'] && !$active) json_out(['ok' => false, 'error' => 'Produit « marque obligatoire » — non désactivable'], 400);
         $prods[] = $pr;
       } elseif (!empty($b['cat'])) {
         $prods = rows("SELECT pr.id, pr.brand_mandatory FROM ws_products pr
                         LEFT JOIN ws_categories c ON c.id = pr.cat_id
-                       WHERE pr.active=1 AND c.label=?", [(string) $b['cat']]);
+                       WHERE pr.active=1 AND TRIM(c.label)=?", [trim((string) $b['cat'])]);
         if (!$prods) json_out(['ok' => false, 'error' => 'catégorie inconnue'], 400);
       } else json_out(['ok' => false, 'error' => 'product ou cat requis'], 400);
       $n = 0;
@@ -3984,14 +4002,14 @@ function dispatch($m, $p) {
       // que soit son canal (webshop et/ou livraison bureau) et reste VERROUILLÉ
       // — le franchisé ne peut retirer que des produits NON obligatoires
       // (assortiment-toggle refuse les obligatoires côté serveur).
-      $rs = rows("SELECT pr.name, c.label AS cat, pr.brand_mandatory,
+      $rs = rows("SELECT pr.id AS pid, pr.name, c.label AS cat, pr.brand_mandatory,
                          pr.active AS ws_on, COALESCE(pr.office_delivery,1) AS od_on" .
                  ($hasPS ? ", ps.active AS ps_active, ps.no_delivery" : ", NULL AS ps_active, NULL AS no_delivery") . "
                     FROM ws_products pr JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") . "
                    WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))
                    ORDER BY c.sort_order, c.label, pr.name LIMIT 400");
-      json_out(array_map(fn ($r) => ['nom' => $r['name'], 'cat' => $r['cat'] ?: '—',
+      json_out(array_map(fn ($r) => ['id' => (int) $r['pid'], 'nom' => $r['name'], 'cat' => $r['cat'] ?: '—',
         'locked' => (bool) $r['brand_mandatory'],
         'canal' => ((int) $r['ws_on'] && (int) $r['od_on']) ? 'Webshop + Livraison'
                  : ((int) $r['ws_on'] ? 'Webshop' : 'Livraison bureau'),
