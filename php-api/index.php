@@ -4019,14 +4019,18 @@ function dispatch($m, $p) {
       // que soit son canal (webshop et/ou livraison bureau) et reste VERROUILLÉ
       // — le franchisé ne peut retirer que des produits NON obligatoires
       // (assortiment-toggle refuse les obligatoires côté serveur).
+      $hasSub = $tblExists('ws_category_subs');
       $rs = rows("SELECT pr.id AS pid, pr.name, c.label AS cat, pr.brand_mandatory,
                          pr.active AS ws_on, COALESCE(pr.office_delivery,1) AS od_on" .
+                 ($hasSub ? ", sc2.label AS sub" : ", NULL AS sub") .
                  ($hasPS ? ", ps.active AS ps_active, ps.no_delivery" : ", NULL AS ps_active, NULL AS no_delivery") . "
                     FROM ws_products pr JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
+                 ($hasSub ? " LEFT JOIN ws_category_subs sc2 ON sc2.id = pr.sub_cat_id" : "") .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") . "
                    WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))
-                   ORDER BY c.sort_order, c.label, pr.name LIMIT 400");
+                   ORDER BY c.sort_order, c.label, " . ($hasSub ? "COALESCE(sc2.sort_order, 999), sc2.label, " : "") . "pr.name LIMIT 400");
       json_out(array_map(fn ($r) => ['id' => (int) $r['pid'], 'nom' => $r['name'], 'cat' => $r['cat'] ?: '—',
+        'sub' => $r['sub'] ?: null,
         'locked' => (bool) $r['brand_mandatory'],
         'canal' => ((int) $r['ws_on'] && (int) $r['od_on']) ? 'Webshop + Livraison'
                  : ((int) $r['ws_on'] ? 'Webshop' : 'Livraison bureau'),
