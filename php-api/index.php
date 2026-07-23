@@ -3148,7 +3148,7 @@ function dispatch($m, $p) {
         $siteOut = [];
         foreach ($sites as $s2) {
           $ords = rows(
-            "SELECT o.order_ref, COALESCE(o.delivery_date, DATE(o.created_at)) AS jour,
+            "SELECT o.order_ref, DATE_FORMAT(COALESCE(o.delivery_date, DATE(o.created_at)),'%Y-%m-%d') AS jour,
                     COALESCE(NULLIF(o.guest_name,'')" .
                     ($hasCliT ? ", NULLIF(TRIM(CONCAT(COALESCE(cl.name,''),' ',COALESCE(cl.surname,''))),'')" : "") . ",
                              'Client webshop') AS client,
@@ -3182,7 +3182,7 @@ function dispatch($m, $p) {
       // qu'un tableau vide inexplicable, on les montre sous « Hors tournée »
       // avec de quoi diagnostiquer le maillon manquant.
       $orphans = rows(
-        "SELECT o.order_ref, COALESCE(o.delivery_date, DATE(o.created_at)) AS jour,
+        "SELECT o.order_ref, DATE_FORMAT(COALESCE(o.delivery_date, DATE(o.created_at)),'%Y-%m-%d') AS jour,
                 o.office_delivery_site_id AS osid, o.office_client_id AS ooid, f3.name AS bureau,
                 COALESCE(NULLIF(o.guest_name,'')" .
                 ($hasCliT ? ", NULLIF(TRIM(CONCAT(COALESCE(cl.name,''),' ',COALESCE(cl.surname,''))),'')" : "") . ",
@@ -3242,26 +3242,35 @@ function dispatch($m, $p) {
     if ($m === 'GET' && $p === '/franchisee/fr-prep-lines') {
       if (!$hasOrders || !$tblExists('ws_order_lines')) json_out([]);
       $hasT = $tblExists('ws_tours') && $tblExists('ws_office_delivery_sites');
-      $rs = rows(
-        "SELECT COALESCE(o.delivery_date, DATE(o.created_at)) AS date,
-                COALESCE(c.name, 'Autres') AS cat,
-                COALESCE(NULLIF(l.product_name,''), pr.name, '—') AS produit,
-                SUM(l.qty) AS qty,
-                COALESCE(NULLIF(o.slot_label,''), '—') AS creneau," .
-        ($hasT ? " COALESCE(t.name, IF(o.mode='delivery','— sans tournée','Comptoir'))" : " IF(o.mode='delivery','—','Comptoir')") . " AS tournee
-           FROM ws_order_lines l
-           JOIN ws_orders o ON o.id = l.order_id
-           LEFT JOIN ws_products pr ON pr.id = l.product_id
-           LEFT JOIN ws_categories c ON c.id = pr.cat_id" .
-        ($hasT ? "
-           LEFT JOIN ws_office_delivery_sites s ON s.id = o.office_delivery_site_id
-           LEFT JOIN ws_tours t ON t.id = s.tournee_id" : "") . "
-          WHERE " . $scope('o.shop_id') . " AND o.status <> 'cancelled'
-            AND COALESCE(o.delivery_date, DATE(o.created_at))
-                BETWEEN ? AND DATE_ADD(?, INTERVAL 31 DAY)
-          GROUP BY date, cat, produit, creneau, tournee
-          ORDER BY date, cat, produit, creneau LIMIT 500", [$today, $today]);
-      json_out(array_map(fn ($r) => ['date' => $r['date'], 'cat' => $r['cat'], 'produit' => $r['produit'],
+      // DATE_FORMAT force le format YYYY-MM-DD quel que soit le type réel de
+      // delivery_date (un DATETIME ferait rater le filtre par jour du BO) ;
+      // try/catch : une erreur SQL est LOGGÉE au lieu d'un 500 avalé en
+      // « Rien à produire » inexplicable.
+      try {
+        $rs = rows(
+          "SELECT DATE_FORMAT(COALESCE(o.delivery_date, DATE(o.created_at)),'%Y-%m-%d') AS jour2,
+                  COALESCE(c.name, 'Autres') AS cat,
+                  COALESCE(NULLIF(l.product_name,''), pr.name, '—') AS produit,
+                  SUM(l.qty) AS qty,
+                  COALESCE(NULLIF(o.slot_label,''), '—') AS creneau," .
+          ($hasT ? " COALESCE(t.name, IF(o.mode='delivery','— sans tournée','Comptoir'))" : " IF(o.mode='delivery','—','Comptoir')") . " AS tournee
+             FROM ws_order_lines l
+             JOIN ws_orders o ON o.id = l.order_id
+             LEFT JOIN ws_products pr ON pr.id = l.product_id
+             LEFT JOIN ws_categories c ON c.id = pr.cat_id" .
+          ($hasT ? "
+             LEFT JOIN ws_office_delivery_sites s ON s.id = o.office_delivery_site_id
+             LEFT JOIN ws_tours t ON t.id = s.tournee_id" : "") . "
+            WHERE " . $scope('o.shop_id') . " AND o.status <> 'cancelled'
+              AND COALESCE(o.delivery_date, DATE(o.created_at))
+                  BETWEEN ? AND DATE_ADD(?, INTERVAL 31 DAY)
+            GROUP BY jour2, cat, produit, creneau, tournee
+            ORDER BY jour2, cat, produit, creneau LIMIT 500", [$today, $today]);
+      } catch (Throwable $e) {
+        error_log('[ws] fr-prep-lines KO : ' . $e->getMessage());
+        json_out(['error' => 'fr-prep-lines', 'detail' => $e->getMessage()], 500);
+      }
+      json_out(array_map(fn ($r) => ['date' => $r['jour2'], 'cat' => $r['cat'], 'produit' => $r['produit'],
         'qty' => (int) $r['qty'], 'creneau' => $r['creneau'], 'tournee' => $r['tournee']], $rs));
     }
 
@@ -3352,7 +3361,7 @@ function dispatch($m, $p) {
                                   'Client webshop') AS client,
                          o.mode, o.total, o.status, o.slot_label" .
                  ($hasSrc ? ", o.source" : ", NULL AS source") . ",
-                         COALESCE(o.delivery_date, DATE(o.created_at)) AS jour,
+                         DATE_FORMAT(COALESCE(o.delivery_date, DATE(o.created_at)),'%Y-%m-%d') AS jour,
                          DATE_FORMAT(o.created_at,'%H:%i') AS heure,
                          (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id) AS pieces
                     FROM ws_orders o" .
