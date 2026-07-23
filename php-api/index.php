@@ -1052,6 +1052,15 @@ function dispatch($m, $p) {
     try {
       // 6a. Anti-survente : stock verrouillé (FOR UPDATE), refus si insuffisant.
       //     Pas de ligne stock pour ce jour = illimité (aucune vérification).
+      $hasDefT = $tblExists('ws_product_stock_defaults');
+      $wdStock = (int) date('N', strtotime($stockDate));
+      $defQty = function ($pid) use ($hasDefT, $shop, $wdStock, $mode) {
+        if (!$hasDefT || !$pid) return null;
+        $d = row("SELECT qty FROM ws_product_stock_defaults
+                   WHERE shop_id=? AND product_id=? AND weekday=? AND mode=? LIMIT 1",
+                 [$shop, (int) $pid, $wdStock, $mode]);
+        return $d !== null ? (int) $d['qty'] : null;
+      };
       foreach ($lines as $l) {
         $st = row("SELECT GREATEST(0, qty_total - qty_reserved - qty_sold) AS avail
                      FROM ws_product_stock
@@ -1060,6 +1069,15 @@ function dispatch($m, $p) {
         if ($st !== null && $l['qty'] > (int) $st['avail']) {
           $pdo->rollBack();
           json_out(['error' => 'Stock insuffisant', 'product' => $l['name'], 'available' => (int) $st['avail']], 409);
+        }
+        // Pas de ligne du jour : le MINIMUM hebdomadaire du produit (jour ISO ×
+        // canal) fait foi — « 10 par jour » = 10 vendables, pas illimité.
+        if ($st === null) {
+          $dq = $defQty($l['productId'] ?? null);
+          if ($dq !== null && $l['qty'] > $dq) {
+            $pdo->rollBack();
+            json_out(['error' => 'Stock insuffisant', 'product' => $l['name'], 'available' => $dq], 409);
+          }
         }
       }
       // 6b. Capacité du créneau (si défini pour cette date) : refus si complet.
@@ -1132,16 +1150,17 @@ function dispatch($m, $p) {
         q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note) VALUES (?,?,?,?,?,?,?)",
           [$oid, $pidL, $l['name'], $l['qty'], $l['unit'], $l['portion'], $l['note']]);
         // Décrément du stock du jour : si aucune ligne de stock n'existe encore
-        // pour ce produit/jour/mode, on la CRÉE (qty_total=0) pour que la vente
-        // soit tracée — avant, l'UPDATE ne touchait rien et le stock ne bougeait pas.
+        // pour ce produit/jour/mode, on la CRÉE en partant du MINIMUM
+        // hebdomadaire (qty_total = défaut du jour, sinon 0) pour que la
+        // vente soit tracée ET que le plafond « n par jour » reste appliqué.
         $stq = q("UPDATE ws_product_stock SET qty_sold = qty_sold + ?
             WHERE product_id=? AND shop_id=? AND date=? AND (mode=? OR mode IS NULL)",
           [$l['qty'], $l['productId'], $shop, $stockDate, $mode]);
         if ($stq->rowCount() === 0 && !empty($l['productId'])) {
           q("INSERT INTO ws_product_stock (product_id, shop_id, date, mode, qty_total, qty_reserved, qty_sold, active)
-               VALUES (?,?,?,?,0,0,?,1)
+               VALUES (?,?,?,?,?,0,?,1)
                ON DUPLICATE KEY UPDATE qty_sold = qty_sold + VALUES(qty_sold)",
-            [$l['productId'], $shop, $stockDate, $mode, $l['qty']]);
+            [$l['productId'], $shop, $stockDate, $mode, (int) ($defQty($l['productId']) ?? 0), $l['qty']]);
         }
       }
       if ($cap) q("UPDATE ws_slot_capacity SET current_orders = current_orders + 1, current_items = current_items + ? WHERE id=?", [$totalQty, $cap['id']]);
@@ -3643,6 +3662,52 @@ function dispatch($m, $p) {
         'dispo' => max(0, (int) ($st['qty_total'] ?? 0) - (int) ($st['qty_reserved'] ?? 0) - (int) ($st['qty_sold'] ?? 0))]);
     }
 
+    // ── Minimums hebdomadaires : lecture par produit (formulaire BO). ──
+    if ($m === 'GET' && $p === '/franchisee/stock-defaults') {
+      if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
+      if (!$tblExists('ws_product_stock_defaults') || !$tblExists('ws_products')) json_out(['ok' => true, 'days' => (object) []]);
+      $pr = row("SELECT id FROM ws_products WHERE name=? AND active=1 LIMIT 1", [(string) (qp('product') ?: '')]);
+      if (!$pr) json_out(['ok' => false, 'error' => 'produit inconnu'], 400);
+      $days = [];
+      foreach (rows("SELECT weekday, mode, qty FROM ws_product_stock_defaults
+                      WHERE shop_id=? AND product_id=?", [(int) $shopId, (int) $pr['id']]) as $r) {
+        $k = (string) (int) $r['weekday'];
+        if (!isset($days[$k])) $days[$k] = ['collect' => null, 'delivery' => null];
+        $days[$k][$r['mode'] === 'delivery' ? 'delivery' : 'collect'] = (int) $r['qty'];
+      }
+      json_out(['ok' => true, 'days' => $days ?: (object) []]);
+    }
+
+    // ── Minimums hebdomadaires : écriture — {product, days:{1..7:{collect,delivery}}}.
+    //    Valeur numérique = upsert ; vide/null = suppression du couple jour×canal.
+    if ($m === 'POST' && $p === '/franchisee/stock-defaults') {
+      $b = body();
+      if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
+      if (!$tblExists('ws_product_stock_defaults') || !$tblExists('ws_products'))
+        json_out(['ok' => false, 'error' => 'ws_product_stock_defaults absente — migration 0036 non appliquée'], 500);
+      $pr = row("SELECT id FROM ws_products WHERE name=? AND active=1 LIMIT 1", [(string) ($b['product'] ?? '')]);
+      if (!$pr) json_out(['ok' => false, 'error' => 'produit inconnu'], 400);
+      $days = is_array($b['days'] ?? null) ? $b['days'] : [];
+      $n = 0;
+      foreach ($days as $wd => $vals) {
+        $wd = (int) $wd; if ($wd < 1 || $wd > 7 || !is_array($vals)) continue;
+        foreach (['collect' => 'collect', 'delivery' => 'delivery'] as $key3 => $mode3) {
+          if (!array_key_exists($key3, $vals)) continue;
+          $v3 = $vals[$key3];
+          if ($v3 === '' || $v3 === null) {
+            q("DELETE FROM ws_product_stock_defaults WHERE shop_id=? AND product_id=? AND weekday=? AND mode=?",
+              [(int) $shopId, (int) $pr['id'], $wd, $mode3]);
+          } else {
+            q("INSERT INTO ws_product_stock_defaults (shop_id, product_id, weekday, mode, qty)
+                 VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE qty=VALUES(qty)",
+              [(int) $shopId, (int) $pr['id'], $wd, $mode3, max(0, (int) $v3)]);
+            $n++;
+          }
+        }
+      }
+      json_out(['ok' => true, 'n' => $n]);
+    }
+
     if ($m === 'GET' && $p === '/franchisee/fr-stock-catalog') {
       // Base du Stock du jour = TOUS les produits actifs (ws_products.active=1)
       // repris dans l'assortiment webshop de la boutique (ws_product_shops
@@ -3651,11 +3716,13 @@ function dispatch($m, $p) {
       if (!$tblExists('ws_products')) json_out([]);
       $hasStock = $tblExists('ws_product_stock');
       $hasPS = $shopId && $tblExists('ws_product_shops');
-      $rs = rows("SELECT c.label AS cat, pr.name, pr.brand_mandatory," .
+      // SUM sans ELSE : « aucune ligne du jour pour ce canal » = NULL (et non
+      // 0) — on peut alors retomber sur le MINIMUM hebdomadaire du produit.
+      $rs = rows("SELECT c.label AS cat, pr.id AS pid, pr.name, pr.brand_mandatory," .
                  ($hasStock
-                   ? " SUM(CASE WHEN st.mode='delivery' THEN st.qty_total - st.qty_reserved - st.qty_sold ELSE 0 END) AS online,
-                       SUM(CASE WHEN st.mode<>'delivery' OR st.mode IS NULL THEN st.qty_total - st.qty_reserved - st.qty_sold ELSE 0 END) AS shopq"
-                   : " 0 AS online, 0 AS shopq") . "
+                   ? " SUM(CASE WHEN st.mode='delivery' THEN st.qty_total - st.qty_reserved - st.qty_sold END) AS online,
+                       SUM(CASE WHEN st.id IS NOT NULL AND (st.mode IS NULL OR st.mode<>'delivery') THEN st.qty_total - st.qty_reserved - st.qty_sold END) AS shopq"
+                   : " NULL AS online, NULL AS shopq") . "
                     FROM ws_products pr
                     JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") .
@@ -3663,13 +3730,23 @@ function dispatch($m, $p) {
                    WHERE pr.active = 1" . ($hasPS ? " AND (ps.active IS NULL OR ps.active = 1)" : "") . "
                    GROUP BY c.sort_order, c.label, pr.id, pr.name, pr.brand_mandatory
                    ORDER BY c.sort_order, c.label, pr.name LIMIT 400", $hasStock ? [$today] : []);
+      // Minimums hebdomadaires du JOUR (1=lundi … 7=dimanche) par produit.
+      $defs = [];
+      if ($shopId && $tblExists('ws_product_stock_defaults')) {
+        foreach (rows("SELECT product_id, mode, qty FROM ws_product_stock_defaults
+                        WHERE shop_id=? AND weekday=?", [(int) $shopId, (int) date('N')]) as $d) {
+          $defs[(int) $d['product_id']][$d['mode'] === 'delivery' ? 'delivery' : 'collect'] = (int) $d['qty'];
+        }
+      }
       $cats = [];
       foreach ($rs as $r) {
         $cat = $r['cat'] ?: 'Autres';
+        $pid = (int) $r['pid'];
         $cats[$cat]['cat'] = $cat;
         $cats[$cat]['catMand'] = ($cats[$cat]['catMand'] ?? false) || (bool) $r['brand_mandatory'];
         $cats[$cat]['prods'][] = ['nom' => $r['name'], 'mand' => (bool) $r['brand_mandatory'],
-          'online' => max(0, (int) $r['online']), 'shop' => max(0, (int) $r['shopq']),
+          'online' => $r['online'] !== null ? max(0, (int) $r['online']) : (int) ($defs[$pid]['delivery'] ?? 0),
+          'shop' => $r['shopq'] !== null ? max(0, (int) $r['shopq']) : (int) ($defs[$pid]['collect'] ?? 0),
           'min' => (int) ws_param('stock.default_min_threshold', '10')];
       }
       json_out(array_values($cats));
