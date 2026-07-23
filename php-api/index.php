@@ -3134,16 +3134,25 @@ function dispatch($m, $p) {
 
     // Stock du jour — catalogue catégories › produits (online/en shop/seuil).
     if ($m === 'GET' && $p === '/franchisee/fr-stock-catalog') {
-      if (!$tblExists('ws_product_stock') || !$tblExists('ws_products')) json_out([]);
-      $rs = rows("SELECT c.label AS cat, pr.name, pr.brand_mandatory,
-                         SUM(CASE WHEN st.mode='delivery' THEN st.qty_total - st.qty_reserved - st.qty_sold ELSE 0 END) AS online,
-                         SUM(CASE WHEN st.mode<>'delivery' OR st.mode IS NULL THEN st.qty_total - st.qty_reserved - st.qty_sold ELSE 0 END) AS shopq
-                    FROM ws_product_stock st
-                    JOIN ws_products pr ON pr.id = st.product_id
-                    LEFT JOIN ws_categories c ON c.id = pr.cat_id
-                   WHERE " . $scope('st.shop_id') . " AND st.date = ? AND st.active = 1
+      // Base du Stock du jour = TOUS les produits actifs (ws_products.active=1)
+      // repris dans l'assortiment webshop de la boutique (ws_product_shops
+      // actif ou sans surcharge) — les quantités du jour viennent de
+      // ws_product_stock quand elles existent, sinon 0.
+      if (!$tblExists('ws_products')) json_out([]);
+      $hasStock = $tblExists('ws_product_stock');
+      $hasPS = $shopId && $tblExists('ws_product_shops');
+      $rs = rows("SELECT c.label AS cat, pr.name, pr.brand_mandatory," .
+                 ($hasStock
+                   ? " SUM(CASE WHEN st.mode='delivery' THEN st.qty_total - st.qty_reserved - st.qty_sold ELSE 0 END) AS online,
+                       SUM(CASE WHEN st.mode<>'delivery' OR st.mode IS NULL THEN st.qty_total - st.qty_reserved - st.qty_sold ELSE 0 END) AS shopq"
+                   : " 0 AS online, 0 AS shopq") . "
+                    FROM ws_products pr
+                    LEFT JOIN ws_categories c ON c.id = pr.cat_id" .
+                 ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") .
+                 ($hasStock ? " LEFT JOIN ws_product_stock st ON st.product_id = pr.id AND st.date = ? AND st.active = 1" . ($shopId ? " AND st.shop_id = " . (int) $shopId : "") : "") . "
+                   WHERE pr.active = 1" . ($hasPS ? " AND (ps.active IS NULL OR ps.active = 1)" : "") . "
                    GROUP BY c.label, pr.id, pr.name, pr.brand_mandatory
-                   ORDER BY c.label, pr.name LIMIT 400", [$today]);
+                   ORDER BY c.label, pr.name LIMIT 400", $hasStock ? [$today] : []);
       $cats = [];
       foreach ($rs as $r) {
         $cat = $r['cat'] ?: 'Autres';
