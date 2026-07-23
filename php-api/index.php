@@ -1052,7 +1052,10 @@ function dispatch($m, $p) {
     try {
       // 6a. Anti-survente : stock verrouillé (FOR UPDATE), refus si insuffisant.
       //     Pas de ligne stock pour ce jour = illimité (aucune vérification).
-      $hasDefT = $tblExists('ws_product_stock_defaults');
+      //     NB : $tblExists (closure des sections franchisé) N'EXISTE PAS ici —
+      //     l'appeler valait « Value of type null is not callable » (500).
+      $hasDefT = (bool) row("SELECT 1 x FROM information_schema.tables
+                              WHERE table_schema=DATABASE() AND table_name='ws_product_stock_defaults'");
       $wdStock = (int) date('N', strtotime($stockDate));
       $defQty = function ($pid) use ($hasDefT, $shop, $wdStock, $mode) {
         if (!$hasDefT || !$pid) return null;
