@@ -2534,7 +2534,7 @@ function dispatch($m, $p) {
       if (!$tblExists('client')) json_out([]);
       $cc = fn ($c) => col_exists('client', $c);
       $sel = "c.id, c.name, c.surname, c.email, c.phone, c.zip";
-      foreach (['company_name','phone_e164','locality','city','is_b2b','office_id','department_id','active','tax_number'] as $col)
+      foreach (['company_name','phone_e164','locality','city','is_b2b','office_id','department_id','active','tax_number','office_delivery'] as $col)
         if ($cc($col)) $sel .= ", c.$col";
       $sel .= $cc('status') ? ", c.status" : ", 0 AS status";
       $sel .= $cc('blocked') ? ", c.blocked" : ", 0 AS blocked";
@@ -2641,6 +2641,18 @@ function dispatch($m, $p) {
       if (!preg_match('/^\d{4}$/', $zip)) json_out(['ok' => false, 'error' => 'code postal invalide (4 chiffres)'], 400);
       q("UPDATE client SET zip=? WHERE id=?", [$zip, $id]);
       json_out(['ok' => true, 'zip' => $zip]);
+    }
+
+    // ── Fiche client : livraison au bureau (client.office_delivery). ──
+    //    Passer à 1 déclenche le trigger trg_client_office_delivery_au (0023) :
+    //    l'office est créé/réactivé dans ws_offices ; à 0 il est désactivé.
+    if ($m === 'POST' && $p === '/franchisee/client-office-delivery') {
+      $b = body();
+      $id = (int) ($b['id'] ?? 0);
+      if (!$id || !col_exists('client', 'office_delivery')) json_out(['ok' => false, 'error' => 'id ou colonne office_delivery manquant'], 400);
+      $on = !empty($b['enabled']) ? 1 : 0;
+      q("UPDATE client SET office_delivery=? WHERE id=?", [$on, $id]);
+      json_out(['ok' => true, 'enabled' => (bool) $on]);
     }
 
     // ── Fiche client : blocage commercial (client.blocked — migration 0025). ──
