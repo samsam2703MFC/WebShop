@@ -820,6 +820,11 @@ function dispatch($m, $p) {
   /* ── Orders ── (tout est calculé serveur depuis la base : prix, promo 4+1,
        bon de réduction, frais de livraison, paiement différé B2B, liaison bureau) */
   if ($m === 'POST' && $p === '/orders') {
+   // TOUT le handler est sous garde : n'importe quel échec (table manquante,
+   // colonne inconnue, données inattendues) renvoie un JSON {error, detail}
+   // exploitable au lieu d'un 500 muet. json_out() sort par exit → les
+   // réponses normales ne passent jamais par le catch.
+   try {
     $b = body();
     $shop = $b['shopId'] ?? null; $basket = $b['basket'] ?? [];
     if (!$shop || !is_array($basket) || !count($basket)) json_out(['error' => 'shopId et basket requis'], 400);
@@ -882,9 +887,13 @@ function dispatch($m, $p) {
     }
     $promo = round($promo, 2);
 
-    // 2-bis. Remise webshop paramétrée par boutique (ws_shops.webshop_discount_*).
+    // 2-bis. Remise webshop paramétrée par boutique — colonnes non garanties
+    // par les migrations : absentes → pas de remise (jamais un 500).
     $webshopDisc = 0;
-    $sd = row("SELECT discount_type AS t, discount_value AS v FROM shops WHERE id=? AND webshop_enabled=1", [$shop]);
+    $sd = (col_exists('shops', 'discount_type') && col_exists('shops', 'discount_value'))
+      ? row("SELECT discount_type AS t, discount_value AS v FROM shops WHERE id=?" .
+            (col_exists('shops', 'webshop_enabled') ? " AND webshop_enabled=1" : ""), [$shop])
+      : null;
     if ($sd && (float) $sd['v'] > 0) {
       $baseW = $subtotal - $promo;
       $webshopDisc = $sd['t'] === 'fixed' ? min($baseW, (float) $sd['v']) : round($baseW * (float) $sd['v']) / 100;
@@ -1132,6 +1141,12 @@ function dispatch($m, $p) {
               'subtotal' => $subtotal, 'promo' => $promo, 'webshopDiscount' => $webshopDisc,
               'voucherDiscount' => $voucherDisc, 'deliveryFee' => $feeAmount,
               'paymentType' => $paymentType, 'onAccount' => $onAccount, 'total' => $total]);
+   } catch (Throwable $e) {
+    try { $pdo2 = db(); if ($pdo2->inTransaction()) $pdo2->rollBack(); } catch (Throwable $e2) {}
+    error_log('POST /orders (garde globale) : ' . $e->getMessage());
+    json_out(['error' => 'Commande non enregistrée — erreur serveur',
+              'detail' => mb_substr($e->getMessage(), 0, 300)], 500);
+   }
   }
   if ($m === 'GET' && ($mm = $match('/orders/:id'))) {
     // Données personnelles (identité, adresse, contenu) : lecture réservée au
@@ -4634,9 +4649,16 @@ function payment_label($m) {
   $map = ['stripe' => 'Carte / Bancontact (en ligne)', 'shop' => 'Paiement en boutique', 'deferred' => 'Sur compte (facturation)'];
   return $map[$m] ?? $m;
 }
-/* Moyens de paiement autorisés pour une boutique + profil (config, sinon défaut). */
+/* Moyens de paiement autorisés pour une boutique + profil (config, sinon défaut).
+   ws_shop_payment_options n'est créée par aucune migration : si la table est
+   absente (cas du serveur live), on retombe sur les défauts au lieu de jeter
+   une exception qui faisait échouer TOUTES les commandes en 500. */
 function allowed_methods($shop, $profile) {
-  $rows = rows("SELECT method FROM ws_shop_payment_options WHERE shop_id=? AND profile_type=? AND active=1 ORDER BY method", [$shop, $profile]);
+  $rows = [];
+  try {
+    if (row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_shop_payment_options'"))
+      $rows = rows("SELECT method FROM ws_shop_payment_options WHERE shop_id=? AND profile_type=? AND active=1 ORDER BY method", [$shop, $profile]);
+  } catch (Throwable $e) { $rows = []; }
   if ($rows) return array_column($rows, 'method');
   return $profile === 'company' ? ['stripe', 'deferred'] : ['stripe', 'shop']; // défaut
 }
