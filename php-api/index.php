@@ -3184,11 +3184,19 @@ function dispatch($m, $p) {
     //    liste de démo codée en dur dans le BO (go-live : plus de mock). ──
     if ($m === 'GET' && $p === '/franchisee/fr-orders') {
       if (!$hasOrders) json_out([]);
-      $rs = rows("SELECT o.order_ref, COALESCE(NULLIF(o.guest_name,''),'Client webshop') AS client,
+      // Nom + prénom du CLIENT connecté (table client) — repli guest, puis
+      // « Client webshop ». Source dérivée du moyen de paiement : famille
+      // « shop » (espèces / comptoir) = POS, sinon Webshop.
+      $hasCli2 = $tblExists('client');
+      $rs = rows("SELECT o.order_ref, o.payment_method,
+                         COALESCE(NULLIF(o.guest_name,'')" .
+                         ($hasCli2 ? ", NULLIF(TRIM(CONCAT(COALESCE(cl.name,''),' ',COALESCE(cl.surname,''))),'')" : "") . ",
+                                  'Client webshop') AS client,
                          o.mode, o.total, o.status, o.slot_label,
                          DATE_FORMAT(o.created_at,'%H:%i') AS heure,
                          (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id) AS pieces
-                    FROM ws_orders o
+                    FROM ws_orders o" .
+                 ($hasCli2 ? " LEFT JOIN client cl ON cl.id = o.customer_id" : "") . "
                    WHERE " . $scope('o.shop_id') . "
                      AND (o.delivery_date = ? OR (o.delivery_date IS NULL AND DATE(o.created_at) = ?))
                    ORDER BY o.created_at DESC LIMIT 200", [$today, $today]);
@@ -3196,6 +3204,7 @@ function dispatch($m, $p) {
         'ref' => '#' . $o['order_ref'],
         'client' => $o['client'],
         'mode' => ($o['mode'] === 'delivery' ? 'Livraison' : 'Retrait'),
+        'source' => (payment_family($o['payment_method'] ?? '') === 'shop') ? 'POS' : 'Webshop',
         'montant' => number_format((float) $o['total'], 2, ',', ' ') . ' €',
         'statut' => $o['status'], 'heure' => $o['heure'],
         'creneau' => $o['slot_label'] ?: '—', 'pieces' => (int) $o['pieces'],
