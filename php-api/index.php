@@ -3536,9 +3536,10 @@ function dispatch($m, $p) {
             $keptIds[] = (int) db()->lastInsertId(); $n++;
           }
         }
-        // Sémantique replace : toute ligne WEBSHOP (client_id NULL = pas de
-        // synchro ERP) du périmètre boutique absente de la liste envoyée est
-        // désactivée — c'est la suppression côté BO qui devient effective.
+        // Sémantique replace : toute ligne du périmètre boutique absente de la
+        // liste envoyée est désactivée — la suppression côté BO fait foi, y
+        // compris pour les lignes fusionnées de l'ERP (client_id renseigné) :
+        // les épargner faisait « revenir » les sites supprimés à chaque GET.
         // Garde-fous : (1) périmètre STRICTEMENT identique au GET (shop_id =
         // boutique ; jamais les lignes shop_id NULL, invisibles du BO) ;
         // (2) uniquement si au moins un id DB a fait l'aller-retour — un
@@ -3550,7 +3551,7 @@ function dispatch($m, $p) {
           $keptIds = array_values(array_filter(array_map('intval', $keptIds)));
           $inList  = $keptIds ? implode(',', $keptIds) : '0';
           q("UPDATE ws_office_delivery_sites SET active=0
-              WHERE active=1 AND client_id IS NULL AND id NOT IN ($inList)
+              WHERE active=1 AND id NOT IN ($inList)
                 AND shop_id=" . (int) $shopId);
         }
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
