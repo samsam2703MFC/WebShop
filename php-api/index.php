@@ -1107,7 +1107,10 @@ function dispatch($m, $p) {
         'order_ref' => $ref, 'shop_id' => $shop, 'customer_id' => $intOrNull($b['customerId'] ?? null),
         'guest_email' => $guestEmail, 'guest_name' => $guestName, 'guest_phone' => $guestPhone, 'guest_phone_prefix' => $guestPfx,
         'mode' => $mode, 'status' => $orderStatus,
-        'slot_id' => $intOrNull($b['slotId'] ?? null), 'slot_label' => $b['slotLabel'] ?? null, 'delivery_date' => $b['deliveryDate'] ?? null,
+        // delivery_date : jour envoyé par le front, sinon JOUR MÊME — plus
+        // jamais de NULL (les filtres par jour du BO reposent dessus).
+        'slot_id' => $intOrNull($b['slotId'] ?? null), 'slot_label' => $b['slotLabel'] ?? null,
+        'delivery_date' => ($b['deliveryDate'] ?? null) ?: date('Y-m-d'),
         'subtotal' => $subtotal, 'promo_amount' => $promo, 'webshop_discount' => $webshopDisc,
         'voucher_code' => $voucherCode, 'voucher_discount' => $voucherDisc, 'total' => $total,
         'payment_method' => $paymentMethod, 'payment_status' => 'pending', 'lang' => $b['lang'] ?? 'fr', 'note' => $note,
@@ -3249,7 +3252,7 @@ function dispatch($m, $p) {
       try {
         $rs = rows(
           "SELECT DATE_FORMAT(COALESCE(o.delivery_date, DATE(o.created_at)),'%Y-%m-%d') AS jour2,
-                  COALESCE(c.name, 'Autres') AS cat,
+                  COALESCE(c.label, 'Autres') AS cat,
                   COALESCE(NULLIF(l.product_name,''), pr.name, '—') AS produit,
                   SUM(l.qty) AS qty,
                   COALESCE(NULLIF(o.slot_label,''), '—') AS creneau," .
