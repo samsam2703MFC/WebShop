@@ -3282,6 +3282,27 @@ function dispatch($m, $p) {
         'qty' => (int) $r['qty'], 'creneau' => $r['creneau'], 'tournee' => $r['tournee']], $rs));
     }
 
+    // Chauffeurs connus (droplist de la modale d'envoi tablette) : noms
+    // DISTINCTS déjà utilisés dans ws_tour_tracking (+ ws_tours si colonne).
+    if ($m === 'GET' && $p === '/franchisee/drivers') {
+      $names = [];
+      try {
+        if ($tblExists('ws_tour_tracking')) {
+          foreach (rows("SELECT DISTINCT driver_name AS n FROM ws_tour_tracking
+                          WHERE driver_name IS NOT NULL AND TRIM(driver_name) <> '' ORDER BY driver_name LIMIT 50") as $r) $names[$r['n']] = 1;
+        }
+        foreach (['driver_name', 'driver'] as $dc) {
+          if ($tblExists('ws_tours') && col_exists('ws_tours', $dc)) {
+            foreach (rows("SELECT DISTINCT $dc AS n FROM ws_tours
+                            WHERE $dc IS NOT NULL AND TRIM($dc) <> '' AND $dc <> '—' AND " . $scope('shop_id') . " LIMIT 50") as $r) $names[$r['n']] = 1;
+            break;
+          }
+        }
+      } catch (Throwable $e) { /* table/colonne absente — liste partielle */ }
+      $ns = array_keys($names); sort($ns, SORT_FLAG_CASE | SORT_STRING);
+      json_out(array_map(fn ($n) => ['nom' => $n], $ns));
+    }
+
     // Statut d'envoi tablette + validation chauffeur, par tournée.
     if ($m === 'GET' && $p === '/franchisee/tour-dispatch-status') {
       if (!$tblExists('ws_tour_tracking') || !$tblExists('ws_tours')) json_out([]);
