@@ -2078,14 +2078,19 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/franchisor/product') {
       $b = body(); $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['error' => 'id requis'], 400);
-      // RÈGLE MÉTIER : « obligatoire » ⇒ visible au webshop. Rendre un produit
-      // obligatoire force active=1 ; couper le webshop d'un produit obligatoire
-      // est refusé (il faut d'abord lever l'obligation).
-      if (!empty($b['brand_mandatory'])) $b['active'] = 1;
-      if (array_key_exists('active', $b) && empty($b['active'])) {
-        $cur = row("SELECT brand_mandatory FROM ws_products WHERE id=?", [$id]);
-        $stillMand = array_key_exists('brand_mandatory', $b) ? !empty($b['brand_mandatory']) : !empty($cur['brand_mandatory']);
-        if ($stillMand) json_out(['error' => 'Produit OBLIGATOIRE : il doit rester visible au webshop — levez d\'abord l\'obligation.'], 400);
+      // RÈGLE MÉTIER : un produit OBLIGATOIRE doit être vendable sur AU MOINS
+      // UN canal — webshop (active) OU livraison bureau (office_delivery),
+      // voire les deux. On évalue l'état RÉSULTANT (payload + valeurs en base) :
+      // s'il fermait les deux canaux → refus ; rendre obligatoire un produit
+      // aux deux canaux fermés ouvre le webshop par défaut.
+      $curP = row("SELECT active, brand_mandatory, COALESCE(office_delivery,1) AS od FROM ws_products WHERE id=?", [$id]);
+      if (!$curP) json_out(['error' => 'produit introuvable'], 404);
+      $nextMand = array_key_exists('brand_mandatory', $b) ? !empty($b['brand_mandatory']) : !empty($curP['brand_mandatory']);
+      $nextAct  = array_key_exists('active', $b)          ? !empty($b['active'])          : !empty($curP['active']);
+      $nextOd   = array_key_exists('office_delivery', $b) ? !empty($b['office_delivery']) : !empty($curP['od']);
+      if ($nextMand && !$nextAct && !$nextOd) {
+        if (!empty($b['brand_mandatory'])) $b['active'] = 1;
+        else json_out(['error' => 'Produit OBLIGATOIRE : il doit rester vendable sur au moins un canal — webshop ou livraison bureau.'], 400);
       }
       $sets = []; $vals = [];
       if (array_key_exists('active', $b))          { $sets[] = 'active=?';          $vals[] = !empty($b['active']) ? 1 : 0; }  // « Webshop » = visibilité webshop réelle
@@ -2107,17 +2112,23 @@ function dispatch($m, $p) {
       $b = body(); $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['error' => 'id requis'], 400);
       if (array_key_exists('menu_default', $b)) q("UPDATE ws_categories SET menu_default=? WHERE id=?", [!empty($b['menu_default']) ? 1 : 0, $id]);
-      // Cascade « Webshop » : ne coupe JAMAIS un produit obligatoire (règle
-      // métier : obligatoire ⇒ visible au webshop).
+      // Cascades canaux : un produit OBLIGATOIRE garde toujours AU MOINS UN
+      // canal ouvert (webshop OU livraison bureau) — la cascade qui fermerait
+      // son dernier canal l'épargne.
       if (array_key_exists('active', $b)) {
         if (!empty($b['active'])) q("UPDATE ws_products SET active=1 WHERE cat_id=?", [$id]);
-        else q("UPDATE ws_products SET active=0 WHERE cat_id=? AND brand_mandatory=0", [$id]);
+        else q("UPDATE ws_products SET active=0 WHERE cat_id=? AND (brand_mandatory=0 OR COALESCE(office_delivery,1)=1)", [$id]);
       }
-      if (array_key_exists('office_delivery', $b)) q("UPDATE ws_products SET office_delivery=? WHERE cat_id=?", [!empty($b['office_delivery']) ? 1 : 0, $id]);  // cascade « livraison bureau » catégorie
+      if (array_key_exists('office_delivery', $b)) {
+        if (!empty($b['office_delivery'])) q("UPDATE ws_products SET office_delivery=1 WHERE cat_id=?", [$id]);
+        else q("UPDATE ws_products SET office_delivery=0 WHERE cat_id=? AND (brand_mandatory=0 OR active=1)", [$id]);
+      }
       if (array_key_exists('brand_whitelist', $b)) q("UPDATE ws_products SET brand_whitelist=? WHERE cat_id=?", [!empty($b['brand_whitelist']) ? 1 : 0, $id]);
-      // Rendre une catégorie obligatoire rend aussi ses produits visibles.
+      // Rendre une catégorie obligatoire : chaque produit aux deux canaux
+      // fermés récupère le webshop par défaut.
       if (array_key_exists('brand_mandatory', $b)) {
-        if (!empty($b['brand_mandatory'])) q("UPDATE ws_products SET brand_mandatory=1, active=1 WHERE cat_id=?", [$id]);
+        if (!empty($b['brand_mandatory'])) q("UPDATE ws_products SET brand_mandatory=1,
+              active = IF(active=0 AND COALESCE(office_delivery,1)=0, 1, active) WHERE cat_id=?", [$id]);
         else q("UPDATE ws_products SET brand_mandatory=0 WHERE cat_id=?", [$id]);
       }
       $audit('category.update', 'ws_categories', $id, null, $b);
