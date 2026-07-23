@@ -2566,7 +2566,7 @@ function dispatch($m, $p) {
         : ", NULL AS shop_buys";
       $joins = ""; $offCols = ", NULL AS office_name, NULL AS tour_name, NULL AS site_name, 0 AS deferred";
       if ($cc('office_id') && $tblExists('ws_offices')) {
-        $joins .= " LEFT JOIN ws_offices wo ON wo.id = c.office_id";
+        $joins .= " LEFT JOIN ws_offices wo ON wo.id = c.office_id AND wo.active = 1";
         $offCols = ", wo.name AS office_name, wo.deferred_billing_enabled AS deferred";
         $offCols .= (col_exists('ws_offices', 'tour_id') && $tblExists('ws_tours'))
           ? ", (SELECT t.name FROM ws_tours t WHERE t.id = wo.tour_id) AS tour_name" : ", NULL AS tour_name";
@@ -3691,6 +3691,19 @@ function dispatch($m, $p) {
           $inOff = $keptOff ? implode(',', $keptOff) : '0';
           q("UPDATE ws_offices SET active=0
               WHERE active=1 AND shop_id=" . (int) $shopId . " AND id NOT IN ($inOff)");
+          // Retirer un OFFICE ne supprime pas le CLIENT : on coupe seulement sa
+          // livraison au bureau et on détache le lien — le client reste visible
+          // dans le menu Clients (sa suppression, elle, se fait là-bas).
+          if ($tblExists('client') && col_exists('client', 'office_id')) {
+            q("UPDATE client c JOIN ws_offices o ON o.id = c.office_id
+                  SET c.office_delivery = 0, c.office_id = NULL
+                WHERE o.active = 0 AND o.shop_id = " . (int) $shopId);
+            if (col_exists('ws_offices', 'client_id'))
+              q("UPDATE client c JOIN ws_offices o ON o.client_id = c.id
+                    SET c.office_delivery = 0
+                  WHERE o.active = 0 AND o.shop_id = " . (int) $shopId . " AND c.office_delivery = 1
+                    AND NOT EXISTS (SELECT 1 FROM ws_offices o2 WHERE o2.client_id = c.id AND o2.active = 1)");
+          }
         }
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
       }
