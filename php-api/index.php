@@ -3156,6 +3156,37 @@ function dispatch($m, $p) {
       json_out(array_values($cats));
     }
 
+    // ── Assortiment par boutique : BASCULE RÉELLE ws_product_shops. ──
+    //    {product, active} = un produit ; {cat, active} = toute la catégorie.
+    //    Les produits « marque obligatoire » ne sont jamais désactivés.
+    if ($m === 'POST' && $p === '/franchisee/assortiment-toggle') {
+      $b = body();
+      if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
+      if (!$tblExists('ws_product_shops') || !$tblExists('ws_products')) json_out(['ok' => false, 'error' => 'tables produits absentes'], 501);
+      $active = !empty($b['active']) ? 1 : 0;
+      $prods = [];
+      if (!empty($b['product'])) {
+        $pr = row("SELECT id, brand_mandatory FROM ws_products WHERE name=? AND active=1 LIMIT 1", [(string) $b['product']]);
+        if (!$pr) json_out(['ok' => false, 'error' => 'produit inconnu'], 400);
+        if ((int) $pr['brand_mandatory'] && !$active) json_out(['ok' => false, 'error' => 'Produit « marque obligatoire » — non désactivable'], 400);
+        $prods[] = $pr;
+      } elseif (!empty($b['cat'])) {
+        $prods = rows("SELECT pr.id, pr.brand_mandatory FROM ws_products pr
+                        LEFT JOIN ws_categories c ON c.id = pr.cat_id
+                       WHERE pr.active=1 AND c.label=?", [(string) $b['cat']]);
+        if (!$prods) json_out(['ok' => false, 'error' => 'catégorie inconnue'], 400);
+      } else json_out(['ok' => false, 'error' => 'product ou cat requis'], 400);
+      $n = 0;
+      foreach ($prods as $pr) {
+        if ((int) $pr['brand_mandatory'] && !$active) continue; // verrou marque
+        q("INSERT INTO ws_product_shops (product_id, shop_id, active, no_delivery)
+             VALUES (?,?,?,0)
+             ON DUPLICATE KEY UPDATE active=VALUES(active)", [(int) $pr['id'], (int) $shopId, $active]);
+        $n++;
+      }
+      json_out(['ok' => true, 'n' => $n, 'active' => (bool) $active]);
+    }
+
     // Assortiment — ws_products × ws_product_shops (actif / sans livraison / verrou marque).
     if ($m === 'GET' && $p === '/franchisee/fr-assortiment') {
       if (!$tblExists('ws_products')) json_out([]);
