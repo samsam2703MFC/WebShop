@@ -3980,14 +3980,23 @@ function dispatch($m, $p) {
       // MÊME périmètre que le back-office franchisor : uniquement les
       // catégories ACTIVES (ws_categories.active=1) — une catégorie retirée
       // côté marque (ex. « B2B ») ne doit pas réapparaître ici via ses produits.
-      $rs = rows("SELECT pr.name, c.label AS cat, pr.brand_mandatory" .
+      // TRANSPORT de la règle marque : un produit OBLIGATOIRE arrive ici quel
+      // que soit son canal (webshop et/ou livraison bureau) et reste VERROUILLÉ
+      // — le franchisé ne peut retirer que des produits NON obligatoires
+      // (assortiment-toggle refuse les obligatoires côté serveur).
+      $rs = rows("SELECT pr.name, c.label AS cat, pr.brand_mandatory,
+                         pr.active AS ws_on, COALESCE(pr.office_delivery,1) AS od_on" .
                  ($hasPS ? ", ps.active AS ps_active, ps.no_delivery" : ", NULL AS ps_active, NULL AS no_delivery") . "
                     FROM ws_products pr JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") . "
-                   WHERE pr.active = 1 ORDER BY c.sort_order, c.label, pr.name LIMIT 400");
+                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))
+                   ORDER BY c.sort_order, c.label, pr.name LIMIT 400");
       json_out(array_map(fn ($r) => ['nom' => $r['name'], 'cat' => $r['cat'] ?: '—',
         'locked' => (bool) $r['brand_mandatory'],
-        'defA' => $r['ps_active'] !== null ? (bool) $r['ps_active'] : true,
+        'canal' => ((int) $r['ws_on'] && (int) $r['od_on']) ? 'Webshop + Livraison'
+                 : ((int) $r['ws_on'] ? 'Webshop' : 'Livraison bureau'),
+        // Un obligatoire est TOUJOURS actif chez le franchisé (verrou marque).
+        'defA' => (bool) $r['brand_mandatory'] ? true : ($r['ps_active'] !== null ? (bool) $r['ps_active'] : true),
         'defND' => $r['no_delivery'] !== null ? (bool) $r['no_delivery'] : false], $rs));
     }
 
