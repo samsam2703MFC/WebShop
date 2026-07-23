@@ -37,10 +37,12 @@
           headers: { 'Content-Type': 'application/json', ...authHeader },
           body: JSON.stringify(payload),
         });
-        const j = await r.json();
+        const j = await r.json().catch(() => ({}));
         if (r.ok) return { ok: true, ...j };
-        const msg = j.error?.message || `Erreur ${r.status}`;
-        throw new Error(msg);
+        // L'API renvoie {error:"…", detail:"…"} — on AFFICHE la cause réelle
+        // (avant : « Erreur 500 » générique alors que le motif était dans la réponse).
+        const base = (typeof j.error === 'string' && j.error) ? j.error : (j.error?.message || `Erreur ${r.status}`);
+        throw new Error(base + (j.detail ? (' — ' + j.detail) : ''));
       }
       // Demo fallback — simulate a successful order placement.
       // TODO[BACKEND]: remove once POST /orders is live.
