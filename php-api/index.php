@@ -3327,12 +3327,12 @@ function dispatch($m, $p) {
                        SUM(CASE WHEN st.mode<>'delivery' OR st.mode IS NULL THEN st.qty_total - st.qty_reserved - st.qty_sold ELSE 0 END) AS shopq"
                    : " 0 AS online, 0 AS shopq") . "
                     FROM ws_products pr
-                    LEFT JOIN ws_categories c ON c.id = pr.cat_id" .
+                    JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") .
                  ($hasStock ? " LEFT JOIN ws_product_stock st ON st.product_id = pr.id AND st.date = ? AND st.active = 1" . ($shopId ? " AND st.shop_id = " . (int) $shopId : "") : "") . "
                    WHERE pr.active = 1" . ($hasPS ? " AND (ps.active IS NULL OR ps.active = 1)" : "") . "
-                   GROUP BY c.label, pr.id, pr.name, pr.brand_mandatory
-                   ORDER BY c.label, pr.name LIMIT 400", $hasStock ? [$today] : []);
+                   GROUP BY c.sort_order, c.label, pr.id, pr.name, pr.brand_mandatory
+                   ORDER BY c.sort_order, c.label, pr.name LIMIT 400", $hasStock ? [$today] : []);
       $cats = [];
       foreach ($rs as $r) {
         $cat = $r['cat'] ?: 'Autres';
@@ -3380,11 +3380,14 @@ function dispatch($m, $p) {
     if ($m === 'GET' && $p === '/franchisee/fr-assortiment') {
       if (!$tblExists('ws_products')) json_out([]);
       $hasPS = $shopId && $tblExists('ws_product_shops');
+      // MÊME périmètre que le back-office franchisor : uniquement les
+      // catégories ACTIVES (ws_categories.active=1) — une catégorie retirée
+      // côté marque (ex. « B2B ») ne doit pas réapparaître ici via ses produits.
       $rs = rows("SELECT pr.name, c.label AS cat, pr.brand_mandatory" .
                  ($hasPS ? ", ps.active AS ps_active, ps.no_delivery" : ", NULL AS ps_active, NULL AS no_delivery") . "
-                    FROM ws_products pr LEFT JOIN ws_categories c ON c.id = pr.cat_id" .
+                    FROM ws_products pr JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") . "
-                   WHERE pr.active = 1 ORDER BY c.label, pr.name LIMIT 400");
+                   WHERE pr.active = 1 ORDER BY c.sort_order, c.label, pr.name LIMIT 400");
       json_out(array_map(fn ($r) => ['nom' => $r['name'], 'cat' => $r['cat'] ?: '—',
         'locked' => (bool) $r['brand_mandatory'],
         'defA' => $r['ps_active'] !== null ? (bool) $r['ps_active'] : true,
