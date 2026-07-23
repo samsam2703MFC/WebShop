@@ -1002,9 +1002,28 @@ function dispatch($m, $p) {
     //   office_delivery_site_id et n'était rattachable à aucune tournée au
     //   back-office (groupe « Hors tournée »).
     if ($mode === 'delivery' && empty($dl['siteId']) && $officeClientId) {
+      // Préférence : un site du bureau AVEC tournée ; sinon, le bâtiment situé
+      // à l'ADRESSE du bureau qui porte une tournée (cas : la ligne de liaison
+      // n'a pas hérité de la tournée du bâtiment) ; en dernier recours un site
+      // du bureau sans tournée — le contrôle d'éligibilité expliquera le refus.
       $autoSite = row("SELECT id, name FROM ws_office_delivery_sites
-                        WHERE office_client_id=? AND active=1
+                        WHERE office_client_id=? AND active=1 AND tournee_id IS NOT NULL
                         ORDER BY is_default DESC, id LIMIT 1", [(int) $officeClientId]);
+      if (!$autoSite) {
+        $offA = row("SELECT address FROM ws_offices WHERE id=?", [(int) $officeClientId]);
+        if ($offA && trim((string) $offA['address']) !== '') {
+          $nOff = mb_strtolower(preg_replace('/\s+/u', ' ', trim((string) $offA['address'])));
+          $autoSite = row("SELECT id, name FROM ws_office_delivery_sites
+                            WHERE active=1 AND tournee_id IS NOT NULL
+                              AND LOWER(REGEXP_REPLACE(TRIM(COALESCE(address,'')), '[[:space:]]+', ' '))=?
+                            ORDER BY id LIMIT 1", [$nOff]);
+        }
+      }
+      if (!$autoSite) {
+        $autoSite = row("SELECT id, name FROM ws_office_delivery_sites
+                          WHERE office_client_id=? AND active=1
+                          ORDER BY is_default DESC, id LIMIT 1", [(int) $officeClientId]);
+      }
       if ($autoSite) {
         $dl['siteId'] = (int) $autoSite['id'];
         if (empty($dl['siteName'])) $dl['siteName'] = $autoSite['name'];
@@ -4122,6 +4141,15 @@ function dispatch($m, $p) {
             $normSite = mb_strtolower(preg_replace('/\s+/u', ' ', $siteAdr));
             $ps = row("SELECT id, tournee_id FROM ws_office_delivery_sites
                         WHERE office_client_id=? AND active=1 AND $normAdrSql=? LIMIT 1", [$rid, $normSite]);
+            // La TOURNÉE de la liaison bureau↔site : celle du bureau si posée,
+            // SINON celle du BÂTIMENT (une autre ligne active à la même adresse
+            // qui en a une — le site créé dans l'écran Sites porte la tournée,
+            // la ligne de liaison du bureau doit en HÉRITER, sinon la commande
+            // du bureau n'est rattachable à aucune tournée au back-office).
+            $bldg = row("SELECT name, tournee_id FROM ws_office_delivery_sites
+                          WHERE active=1 AND tournee_id IS NOT NULL AND $normAdrSql=?
+                          ORDER BY id LIMIT 1", [$normSite]);
+            if ($pairTour === null && $bldg) $pairTour = (int) $bldg['tournee_id'];
             if ($ps) {
               if ($ps['tournee_id'] === null && $pairTour !== null)
                 q("UPDATE ws_office_delivery_sites SET tournee_id=? WHERE id=?", [$pairTour, (int) $ps['id']]);
@@ -4135,7 +4163,7 @@ function dispatch($m, $p) {
               } elseif (!$any) {
                 q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, tournee_id, site_access_minutes, active" . ($shopId ? ", shop_id" : "") . ")
                      VALUES (?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
-                  [$rid, ($name !== '' ? $name : 'Bureau') . ' @ ' . mb_substr($siteAdr, 0, 80), $siteAdr, $pairTour, 6]);
+                  [$rid, ($bldg['name'] ?? null) ?: (($name !== '' ? $name : 'Bureau') . ' @ ' . mb_substr($siteAdr, 0, 80)), $siteAdr, $pairTour, 6]);
               } else {
                 // 3) l'office a déjà un site à une AUTRE adresse et le form en
                 //    choisit une nouvelle : on DÉPLACE la ligne site de l'office
