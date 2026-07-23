@@ -726,7 +726,7 @@ function dispatch($m, $p) {
                         TIME_FORMAT(MIN(cutoff_time), '%H:%i')    AS cut
                    FROM ws_tour_availability WHERE tour_id = ? AND active = 1", [$tourId]);
       if ($av && $av['days'] !== null) {
-        $jours = implode(' · ', array_map(fn ($d) => $DAYS[((int) $d) % 7], explode(',', (string) $av['days'])));
+        $jours = implode(' · ', array_map(fn ($d) => $DAYS[(((int) $d) + 6) % 7], explode(',', (string) $av['days'])));
         $dep = $av['dep']; $fin = $av['fin']; $cut = $av['cut'];
       }
     }
@@ -2357,7 +2357,7 @@ function dispatch($m, $p) {
         $short = preg_split('/[\s\/]+/u', $short)[0] ?: $name;
         return ['id' => 'r' . $t['id'], 'name' => $name, 'short' => $short,
                 'driver' => $t['driver_name'] ?: '— non assigné', 'start' => $start,
-                'max' => (int) ($t['max_items'] ?: 10), 'ret' => true,
+                'max' => (int) ($t['max_items'] ?: 10), 'ret' => (col_exists('ws_tours','return_to_depot') ? ((int) ($t['return_to_depot'] ?? 1) !== 0) : true),
                 'forfait' => $t['delivery_fee'] !== null ? (float) $t['delivery_fee'] : 0,
                 'vehicule' => $t['vehicle'] ?: '', 'days' => $days,
                 'amplitude' => $amp, 'decharge' => (int) $svc, 'trajet' => (int) $svc,
@@ -2504,8 +2504,9 @@ function dispatch($m, $p) {
       $siteSel = $tblExists('ws_office_delivery_sites')
         ? ", (SELECT s.address FROM ws_office_delivery_sites s WHERE s.office_client_id=f.id AND s.active=1 ORDER BY s.id LIMIT 1) AS site"
         : ", NULL AS site";
+      $notesSel = col_exists('ws_offices', 'delivery_notes') ? ", f.delivery_notes" : ", NULL AS delivery_notes";
       $rs = rows("SELECT f.id, f.tour_id, $tourSel, f.name, f.address, f.postal_code, f.city, f.contact,
-                            f.email, f.phone, f.vat, f.status, f.deferred_billing_enabled$siteSel
+                            f.email, f.phone, f.vat, f.status, f.deferred_billing_enabled$notesSel$siteSel
                        FROM ws_offices f $join WHERE $wh AND f.active=1 ORDER BY f.name LIMIT 300");
       // deferred en Oui/Non : valeurs du toggle du formulaire Office.
       json_out(array_map(fn ($f) => ['deferred_billing_enabled' => ((int) $f['deferred_billing_enabled'] ? 'Oui' : 'Non')] + $f, $rs));
@@ -2653,13 +2654,24 @@ function dispatch($m, $p) {
       $id = (int) ($b['id'] ?? 0);
       if (!$id || !col_exists('client', 'office_delivery')) json_out(['ok' => false, 'error' => 'id ou colonne office_delivery manquant'], 400);
       $on = !empty($b['enabled']) ? 1 : 0;
-      $extra = ($on && col_exists('client', 'status')) ? ", status=0" : "";
+      // Activer force is_b2b=1 (le trigger ne crée l'office QUE si is_b2b=1 —
+      // un client « personne morale » via invoice_vat seul serait sinon ignoré)
+      // et valide le client (status=0).
+      $extra = "";
+      if ($on) {
+        if (col_exists('client', 'status')) $extra .= ", status=0";
+        if (col_exists('client', 'is_b2b')) $extra .= ", is_b2b=1";
+      }
       q("UPDATE client SET office_delivery=?$extra WHERE id=?", [$on, $id]);
       $officeName = null; $tourName = null;
       if ($on && $tblExists('ws_offices')) {
         q("UPDATE ws_offices SET status='validated', active=1 WHERE client_id=?", [$id]);
         $off = row("SELECT id, name, tour_id FROM ws_offices WHERE client_id=? AND active=1 ORDER BY id DESC LIMIT 1", [$id]);
         $officeName = $off['name'] ?? null;
+        // Lien INVERSE indispensable : le GET b2b-clients projette bureau/site/
+        // tournée via client.office_id — sans lui, tout disparaît au reload.
+        if ($off && col_exists('client', 'office_id'))
+          q("UPDATE client SET office_id=? WHERE id=?", [(int) $off['id'], $id]);
         // SITE choisi dans la modale : le bureau y est rattaché et hérite de la
         // tournée du site (la tournée est déterminée par le site).
         $siteAdr = trim((string) ($b['site_adr'] ?? ''));
@@ -2707,6 +2719,12 @@ function dispatch($m, $p) {
       if (col_exists('client', 'invoice_vat')) { $sets[] = "invoice_vat=?"; $args[] = $corp ? $vat : null; }
       if (col_exists('client', 'tax_number') && $corp) { $sets[] = "tax_number=?"; $args[] = $vat; }
       if (col_exists('client', 'is_b2b') && $corp) $sets[] = "is_b2b=1";
+      // Rétrogradation en PARTICULIER : sans ces resets le badge « Personne
+      // morale » (is_b2b/tax_number) resterait pour toujours.
+      if (!$corp) {
+        if (col_exists('client', 'is_b2b')) $sets[] = "is_b2b=0";
+        if (col_exists('client', 'tax_number')) $sets[] = "tax_number=NULL";
+      }
       if (!$sets) json_out(['ok' => false, 'error' => 'aucune colonne facturation disponible'], 501);
       $args[] = $id;
       q("UPDATE client SET " . implode(', ', $sets) . " WHERE id=?", $args);
@@ -2782,7 +2800,7 @@ function dispatch($m, $p) {
                    WHERE " . $scope('av.shop_id') . " AND av.active=1
                    GROUP BY t.id, t.name ORDER BY t.name LIMIT 100");
       json_out(array_map(function ($r) use ($DAYS) {
-        $jours = implode(' · ', array_map(fn ($d) => $DAYS[((int) $d) % 7], explode(',', (string) $r['days'])));
+        $jours = implode(' · ', array_map(fn ($d) => $DAYS[(((int) $d) + 6) % 7], explode(',', (string) $r['days'])));
         return ['tour' => $r['tour'], 'jour' => $jours ?: '—', 'dep' => $r['dep'], 'fin' => $r['fin'],
                 'cut' => $r['cut'] . ' J-1', 'cap' => (string) ((int) $r['cap'] ?: '—')];
       }, $rs));
@@ -2791,13 +2809,15 @@ function dispatch($m, $p) {
     // ── Fermetures ponctuelles (ws_tour_closures). ──
     if ($m === 'GET' && $p === '/franchisee/ws-tour-closures') {
       if (!$tblExists('ws_tour_closures')) json_out([]);
+      $ctSel = col_exists('ws_tour_closures', 'closure_type') ? "cl.closure_type" : "NULL";
       $rs = rows("SELECT COALESCE(t.name,'Toutes les tournées') AS tour,
-                         DATE_FORMAT(cl.closure_date,'%d/%m/%Y') AS date, COALESCE(cl.reason,'—') AS motif
+                         DATE_FORMAT(cl.closure_date,'%d/%m/%Y') AS date, COALESCE(cl.reason,'—') AS motif,
+                         COALESCE($ctSel,'Fermeture') AS ctype
                     FROM ws_tour_closures cl LEFT JOIN ws_tours t ON t.id = cl.tour_id
                    WHERE " . ($shopId ? "(t.shop_id = " . (int) $shopId . " OR cl.tour_id IS NULL)" : '1=1') . "
                    ORDER BY cl.closure_date LIMIT 100");
       json_out(array_map(fn ($r) => ['tour' => $r['tour'], 'date' => $r['date'],
-        'type' => 'Fermeture', 'motif' => $r['motif']], $rs));
+        'type' => $r['ctype'], 'motif' => $r['motif']], $rs));
     }
 
     // ── Règles calendrier (ws_calendar_rules). ──
@@ -2807,7 +2827,7 @@ function dispatch($m, $p) {
                    WHERE " . $scope('shop_id') . " AND active=1 ORDER BY mode LIMIT 50");
       json_out(array_map(function ($r) use ($DAYS) {
         $days = json_decode((string) $r['open_days'], true);
-        $jours = is_array($days) ? implode(' · ', array_map(fn ($d) => $DAYS[((int) $d) % 7], $days)) : '—';
+        $jours = is_array($days) ? implode(' · ', array_map(fn ($d) => $DAYS[(((int) $d) + 6) % 7], $days)) : '—';
         return ['mode' => $r['mode'] === 'delivery' ? 'Livraison' : 'Retrait', 'days' => $jours,
                 'cut' => sprintf('%02d:%02d J-1', (int) $r['cutoff_hour'], (int) $r['cutoff_minutes']),
                 'lead' => ((int) $r['lead_hours']) . ' h'];
@@ -3236,7 +3256,14 @@ function dispatch($m, $p) {
         json_out(['ok' => true, 'mode' => 'typed', 'n' => count($rows2)]);
       }
       if ($tbl === 'ws_tour_closures' && $tblExists('ws_tour_closures')) {
-        q("DELETE FROM ws_tour_closures");
+        // DELETE scopé BOUTIQUE : ne jamais effacer les fermetures des autres
+        // franchisés (les lignes « toutes tournées », tour_id NULL, restent
+        // gérées par la boutique courante).
+        if ($shopId && $tblExists('ws_tours'))
+          q("DELETE cl FROM ws_tour_closures cl LEFT JOIN ws_tours t ON t.id = cl.tour_id
+              WHERE t.shop_id = " . (int) $shopId . " OR cl.tour_id IS NULL");
+        else q("DELETE FROM ws_tour_closures");
+        $hasCType = col_exists('ws_tour_closures', 'closure_type');
         foreach ($rows2 as $r) {
           $d = null;
           if (preg_match('#^(\d{2})/(\d{2})/(\d{4})$#', (string) ($r['date'] ?? ''), $mm)) $d = "$mm[3]-$mm[2]-$mm[1]";
@@ -3246,8 +3273,12 @@ function dispatch($m, $p) {
             $tr = row("SELECT id FROM ws_tours WHERE name=? LIMIT 1", [(string) $r['tour']]);
             if ($tr) $tourId = (int) $tr['id'];
           }
-          q("INSERT INTO ws_tour_closures (tour_id, closure_date, reason) VALUES (?,?,?)",
-            [$tourId, $d, (string) ($r['motif'] ?? '')]);
+          if ($hasCType)
+            q("INSERT INTO ws_tour_closures (tour_id, closure_date, reason, closure_type) VALUES (?,?,?,?)",
+              [$tourId, $d, (string) ($r['motif'] ?? ''), (string) ($r['type'] ?? 'Fermeture')]);
+          else
+            q("INSERT INTO ws_tour_closures (tour_id, closure_date, reason) VALUES (?,?,?)",
+              [$tourId, $d, (string) ($r['motif'] ?? '')]);
         }
         json_out(['ok' => true, 'mode' => 'typed', 'n' => count($rows2)]);
       }
@@ -3307,10 +3338,14 @@ function dispatch($m, $p) {
             foreach (preg_split('/[^0-9]+/', (string) $pr['postcodes'], -1, PREG_SPLIT_NO_EMPTY) as $one) $pool[$one] = true;
           }
         }
-        $n = 0;
+        // Sémantique replace : tids traités collectés → les tournées retirées
+        // côté BO passent active=0 (sinon une tournée supprimée ressuscite au
+        // reload). Garde-fous : au moins un id r<n> round-trippé + scope shop.
+        $n = 0; $keptT = []; $sawT = false;
         foreach ($rows2 as $r) {
           $rid = (string) ($r['id'] ?? '');
           $tid = 0;
+          if (preg_match('/^r\d+$/', $rid)) $sawT = true;
           if (preg_match('/^r(\\d+)$/', $rid, $mm)) {                      // tournée réelle existante
             $tid = (int) $mm[1];
             if (!row("SELECT id FROM ws_tours WHERE id=?", [$tid])) continue;
@@ -3339,11 +3374,13 @@ function dispatch($m, $p) {
               $n++;
             }
           }
-          // Forfait & véhicule → colonnes ws_tours (migration 0018).
+          // Forfait & véhicule (0018) + retour dépôt (0028) → colonnes ws_tours.
           if ($tid) {
+            $keptT[] = $tid;
             $fvSets = []; $fvVals = [];
             if (col_exists('ws_tours', 'delivery_fee') && isset($r['forfait'])) { $fvSets[] = 'delivery_fee=?'; $fvVals[] = (float) $r['forfait']; }
             if (col_exists('ws_tours', 'vehicle') && isset($r['vehicule'])) { $fvSets[] = 'vehicle=?'; $fvVals[] = (string) $r['vehicule']; }
+            if (col_exists('ws_tours', 'return_to_depot') && array_key_exists('ret', $r)) { $fvSets[] = 'return_to_depot=?'; $fvVals[] = !empty($r['ret']) ? 1 : 0; }
             if ($fvSets) { $fvVals[] = $tid; q("UPDATE ws_tours SET " . implode(',', $fvSets) . " WHERE id=?", $fvVals); }
           }
           // Jours + heure de départ → ws_tour_availability (fenêtre 'morning'), NON destructif :
@@ -3374,6 +3411,13 @@ function dispatch($m, $p) {
             }
             if (isset($zs['zonePrim']) || isset($zs['zone'])) q("UPDATE ws_tours SET zone_id=? WHERE id=?", [$zs['zonePrim'] ?? $zs['zone'], $tid]);
           }
+        }
+        // Suppression persistée : tournées du périmètre boutique absentes du
+        // payload → active=0 (soft delete, l'historique commandes est gardé).
+        if ($sawT && $shopId && col_exists('ws_tours', 'shop_id')) {
+          $keptT = array_values(array_filter(array_map('intval', $keptT)));
+          $inT = $keptT ? implode(',', $keptT) : '0';
+          q("UPDATE ws_tours SET active=0 WHERE active=1 AND shop_id=" . (int) $shopId . " AND id NOT IN ($inT)");
         }
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
       }
@@ -3509,7 +3553,11 @@ function dispatch($m, $p) {
         $hasTour  = col_exists('ws_offices', 'tour_id');
         $hasShopO = col_exists('ws_offices', 'shop_id');
         $hasCli   = col_exists('ws_offices', 'client_id');
-        $n = 0;
+        $hasNotes = col_exists('ws_offices', 'delivery_notes');
+        // Sémantique replace (comme les sites) : ids traités collectés pour
+        // désactiver les offices retirés côté BO — sinon la suppression d'un
+        // office ne persiste jamais (il « ressuscite » au reload).
+        $n = 0; $keptOff = [];
         foreach ($rows2 as $r) {
           $name = trim((string) ($r['name'] ?? ''));
           $tourId = null; $tv = trim((string) ($r['tour'] ?? ''));
@@ -3537,10 +3585,12 @@ function dispatch($m, $p) {
               if (array_key_exists($fk, $r) && trim((string) $r[$fk]) !== '') { $sets[] = "$col=?"; $uvals[] = trim((string) $r[$fk]); }
             }
             if ($vat !== '')      { $sets[] = 'vat=?';    $uvals[] = $vat; }
+            if ($hasNotes && array_key_exists('delivery_notes', $r)) { $sets[] = 'delivery_notes=?'; $uvals[] = trim((string) $r['delivery_notes']) ?: null; }
             if ($status !== null) { $sets[] = 'status=?'; $uvals[] = $status; }
             if ($defer !== null)  { $sets[] = 'deferred_billing_enabled=?'; $uvals[] = $defer; }
             if ($tourId !== null) { $sets[] = 'tour_id=?'; $uvals[] = $tourId; }
             if ($sets) { $uvals[] = $rid; q("UPDATE ws_offices SET " . implode(',', $sets) . " WHERE id=?", $uvals); $n++; }
+            $keptOff[] = $rid;
             // Fiche client d'origine : TVA + raison sociale VIES.
             if ($hasCli && ($vat !== '' || !empty($r['vies_name']))) {
               $cl = row("SELECT client_id FROM ws_offices WHERE id=?", [$rid]);
@@ -3558,11 +3608,13 @@ function dispatch($m, $p) {
                       (string) ($r['contact'] ?? ''), (string) ($r['email'] ?? ''), (string) ($r['phone'] ?? ''),
                       $status ?: 'validated', 1];
             if ($vat !== '')      { $cols[] = 'vat'; $ivals[] = $vat; }
+            if ($hasNotes && trim((string) ($r['delivery_notes'] ?? '')) !== '') { $cols[] = 'delivery_notes'; $ivals[] = trim((string) $r['delivery_notes']); }
             if ($defer !== null)  { $cols[] = 'deferred_billing_enabled'; $ivals[] = $defer; }
             if ($hasTour && $tourId !== null) { $cols[] = 'tour_id'; $ivals[] = $tourId; }
             if ($hasShopO && $shopId)         { $cols[] = 'shop_id'; $ivals[] = (int) $shopId; }
             q("INSERT INTO ws_offices (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $ivals);
             $rid = (int) db()->lastInsertId();
+            $keptOff[] = $rid;
             $n++;
           }
           // Sens du paramétrage : le BUREAU choisit son building (site). La ligne
@@ -3601,9 +3653,76 @@ function dispatch($m, $p) {
                 q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, tournee_id, site_access_minutes, active" . ($shopId ? ", shop_id" : "") . ")
                      VALUES (?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
                   [$rid, ($name !== '' ? $name : 'Bureau') . ' @ ' . mb_substr($siteAdr, 0, 80), $siteAdr, $pairTour, 6]);
+              } else {
+                // 3) l'office a déjà un site à une AUTRE adresse et le form en
+                //    choisit une nouvelle : on DÉPLACE la ligne site de l'office
+                //    (même sémantique que le drag-drop étape 3) en héritant du
+                //    nom/tournée du bâtiment cible s'il existe déjà.
+                $tgt = row("SELECT name, tournee_id FROM ws_office_delivery_sites
+                             WHERE TRIM(COALESCE(address,''))=? AND active=1 ORDER BY id LIMIT 1", [$siteAdr]);
+                q("UPDATE ws_office_delivery_sites SET address=?, name=COALESCE(?, name), tournee_id=COALESCE(?, COALESCE(?, tournee_id)) WHERE id=?",
+                  [$siteAdr, $tgt['name'] ?? null, $tgt['tournee_id'] ?? null, $pairTour, (int) $any['id']]);
               }
             }
           }
+        }
+        // Suppression persistée : les offices du périmètre boutique absents de
+        // la liste envoyée passent active=0 — mêmes garde-fous que les sites
+        // (au moins un id DB round-trippé, jamais sans scope boutique).
+        $sawOffId = false;
+        foreach ($rows2 as $r) if (is_numeric($r['id'] ?? null)) { $sawOffId = true; break; }
+        if ($sawOffId && $shopId && $hasShopO) {
+          $keptOff = array_values(array_filter(array_map('intval', $keptOff)));
+          $inOff = $keptOff ? implode(',', $keptOff) : '0';
+          q("UPDATE ws_offices SET active=0
+              WHERE active=1 AND shop_id=" . (int) $shopId . " AND id NOT IN ($inOff)");
+        }
+        json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
+      }
+
+      // Horaires des tournées → ws_tour_availability (fenêtre 'morning').
+      // COMBLE LE TROU : l'écran « Horaires & fermetures » n'écrivait que le
+      // journal bo_store — cut-off / fin / capacité n'atteignaient jamais la
+      // vraie table qui pilote la prise de commande du webshop. Upsert par
+      // (tournée, jour) ; les jours retirés passent active=0 ; ne touche
+      // JAMAIS les fenêtres 'afternoon'.
+      if ($tbl === 'ws_tour_availability' && $tblExists('ws_tour_availability') && $tblExists('ws_tours')) {
+        if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
+        $dmap = ['lun' => 1, 'mar' => 2, 'mer' => 3, 'jeu' => 4, 'ven' => 5, 'sam' => 6, 'dim' => 7];
+        $parseDays = function ($str) use ($dmap) {
+          $str = mb_strtolower((string) $str); $out = [];
+          if (preg_match('/(lun|mar|mer|jeu|ven|sam|dim)\s*[-–àa]\s*(lun|mar|mer|jeu|ven|sam|dim)/u', $str, $m2)
+              && $dmap[$m2[1]] <= $dmap[$m2[2]]) {
+            for ($d2 = $dmap[$m2[1]]; $d2 <= $dmap[$m2[2]]; $d2++) $out[$d2] = 1;
+            return array_keys($out);
+          }
+          foreach ($dmap as $ab => $n2) if (strpos($str, $ab) !== false) $out[$n2] = 1;
+          return array_keys($out);
+        };
+        $t2s = function ($v) { return preg_match('/(\d{1,2}):(\d{2})/', (string) $v, $m2) ? sprintf('%02d:%02d:00', $m2[1], $m2[2]) : null; };
+        $n = 0; $touched = [];
+        foreach ($rows2 as $r) {
+          $tr = row("SELECT id FROM ws_tours WHERE name=? AND shop_id=" . (int) $shopId . " LIMIT 1", [(string) ($r['tour'] ?? '')]);
+          if (!$tr) continue;
+          $tid2 = (int) $tr['id'];
+          $start = $t2s($r['dep'] ?? '06:00'); $end = $t2s($r['fin'] ?? '12:00'); $cut = $t2s($r['cut'] ?? '17:00');
+          if (!$start || !$end || !$cut) continue;
+          $cap = (isset($r['cap']) && $r['cap'] !== '' && $r['cap'] !== '—') ? (int) $r['cap'] : null;
+          foreach ($parseDays($r['jour'] ?? '') as $dow) {
+            q("INSERT INTO ws_tour_availability
+                 (tour_id, shop_id, delivery_day, window_label, delivery_start, delivery_end, cutoff_time, max_orders, active)
+               VALUES (?,?,?, 'morning', ?,?,?,?, 1)
+               ON DUPLICATE KEY UPDATE delivery_start=VALUES(delivery_start), delivery_end=VALUES(delivery_end),
+                 cutoff_time=VALUES(cutoff_time), max_orders=VALUES(max_orders), active=1",
+              [$tid2, (int) $shopId, $dow, $start, $end, $cut, $cap]);
+            $touched[$tid2][$dow] = 1; $n++;
+          }
+        }
+        foreach ($touched as $tid2 => $dset) {
+          $keepD = implode(',', array_map('intval', array_keys($dset)));
+          q("UPDATE ws_tour_availability SET active=0
+              WHERE tour_id=" . (int) $tid2 . " AND shop_id=" . (int) $shopId . "
+                AND window_label='morning' AND delivery_day NOT IN ($keepD)");
         }
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
       }
@@ -3659,6 +3778,42 @@ function dispatch($m, $p) {
          'validated', (stripos((string) ($b['paiement'] ?? ''), 'compt') === false) ? 1 : 0,
          (float) ($b['drop'] ?? 5)]);
       $officeId = (int) db()->lastInsertId();
+      // Ligne CLIENT (table ERP) — sans elle le nouveau bureau n'apparaît
+      // jamais dans le menu Clients (GET b2b-clients lit client). Séquence
+      // anti-doublon : insert avec office_delivery=0 (pas de trigger), pose du
+      // DOUBLE lien (ws_offices.client_id + client.office_id), puis passage à
+      // office_delivery=1 → le trigger AU retombe sur l'office existant
+      // (ON DUPLICATE KEY sur client_id) au lieu d'en créer un second.
+      $newClientId = null;
+      if ($tblExists('client')) {
+        $cCols = []; $cVals = [];
+        $addC = function ($c, $v) use (&$cCols, &$cVals) { if (col_exists('client', $c)) { $cCols[] = $c; $cVals[] = $v; } };
+        $addC('company_name', $raison);
+        $addC('name', (string) ($b['contactNom'] ?? $raison));
+        $addC('email', (string) ($b['contactEmail'] ?? ''));
+        $addC('phone', (string) ($b['contactTel'] ?? ''));
+        $addC('zip', $obZip);
+        $addC('locality', $obLoc);
+        $addC('city', $obLoc);
+        $addC('street', (string) ($b['adr'] ?? ''));
+        $addC('tax_number', (string) ($b['tva'] ?? ''));
+        $addC('is_b2b', 1);
+        $addC('office_delivery', 0);
+        $addC('status', 0);
+        $addC('office_id', $officeId);
+        $addC('id_main_shop', (int) ($obShop ?: 0));
+        $addC('active', 1);
+        if ($cCols) {
+          try {
+            q("INSERT INTO client (" . implode(',', $cCols) . ") VALUES (" . implode(',', array_fill(0, count($cCols), '?')) . ")", $cVals);
+            $newClientId = (int) db()->lastInsertId();
+            if (col_exists('ws_offices', 'client_id'))
+              q("UPDATE ws_offices SET client_id=? WHERE id=?", [$newClientId, $officeId]);
+            if (col_exists('client', 'office_delivery'))
+              q("UPDATE client SET office_delivery=1 WHERE id=?", [$newClientId]);
+          } catch (Throwable $e) { /* colonne NOT NULL inattendue : l'office reste créé */ }
+        }
+      }
       if ($tblExists('ws_office_delivery_sites')) {
         q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, tournee_id, site_access_minutes, active" . ($obShop ? ", shop_id" : "") . ")
             VALUES (?,?,?,?,?,?,1" . ($obShop ? "," . (int) $obShop : "") . ")",
