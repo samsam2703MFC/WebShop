@@ -3282,6 +3282,51 @@ function dispatch($m, $p) {
         'qty' => (int) $r['qty'], 'creneau' => $r['creneau'], 'tournee' => $r['tournee']], $rs));
     }
 
+    // Statut d'envoi tablette + validation chauffeur, par tournée.
+    if ($m === 'GET' && $p === '/franchisee/tour-dispatch-status') {
+      if (!$tblExists('ws_tour_tracking') || !$tblExists('ws_tours')) json_out([]);
+      $hasDis = col_exists('ws_tour_tracking', 'dispatched_at');
+      $hasVal = col_exists('ws_tour_tracking', 'driver_validated_at');
+      $rs = rows("SELECT t.name AS tour, tk.driver_name,
+                         " . ($hasDis ? "DATE_FORMAT(tk.dispatched_at,'%d/%m %H:%i')" : "NULL") . " AS envoye,
+                         " . ($hasVal ? "DATE_FORMAT(tk.driver_validated_at,'%d/%m %H:%i')" : "NULL") . " AS valide
+                    FROM ws_tour_tracking tk JOIN ws_tours t ON t.id = tk.tour_id
+                   WHERE " . $scope('t.shop_id') . " ORDER BY t.name LIMIT 50");
+      json_out(array_map(fn ($r) => ['tour' => $r['tour'], 'chauffeur' => $r['driver_name'] ?: '—',
+        'envoye' => $r['envoye'], 'valide' => $r['valide']], $rs));
+    }
+
+    // ENVOI d'une tournée vers la tablette : upsert ws_tour_tracking —
+    // chauffeur + horodatage d'envoi ; chaque envoi REMET la validation
+    // chauffeur à zéro (c'est la tablette qui posera driver_validated_at).
+    if ($m === 'POST' && $p === '/franchisee/tour-dispatch') {
+      if (!$tblExists('ws_tours')) json_out(['error' => 'ws_tours absente'], 500);
+      if (!$tblExists('ws_tour_tracking')) json_out(['error' => 'ws_tour_tracking absente — migration 0035 non appliquée'], 500);
+      $b2 = body(); $tn = trim((string) ($b2['tour'] ?? '')); $drv = trim((string) ($b2['driver'] ?? ''));
+      if ($tn === '') json_out(['error' => 'tournée requise'], 400);
+      $t2 = row("SELECT id FROM ws_tours WHERE name=? AND " . $scope('shop_id') . " LIMIT 1", [$tn]);
+      if (!$t2) json_out(['error' => 'tournée introuvable', 'tour' => $tn], 404);
+      $nStops = 0;
+      if ($tblExists('ws_office_delivery_sites')) {
+        $c2 = row("SELECT COUNT(DISTINCT LOWER(REGEXP_REPLACE(TRIM(COALESCE(address,'')),'[[:space:]]+',' '))) AS n
+                     FROM ws_office_delivery_sites WHERE tournee_id=? AND active=1", [(int) $t2['id']]);
+        $nStops = (int) ($c2['n'] ?? 0);
+      }
+      $hasDis = col_exists('ws_tour_tracking', 'dispatched_at');
+      $hasVal = col_exists('ws_tour_tracking', 'driver_validated_at');
+      $ex2 = row("SELECT id FROM ws_tour_tracking WHERE tour_id=? LIMIT 1", [(int) $t2['id']]);
+      if ($ex2) {
+        q("UPDATE ws_tour_tracking SET driver_name=?, stops_total=?" .
+          ($hasDis ? ", dispatched_at=NOW()" : "") . ($hasVal ? ", driver_validated_at=NULL" : "") . "
+            WHERE id=?", [$drv ?: null, $nStops, (int) $ex2['id']]);
+      } else {
+        q("INSERT INTO ws_tour_tracking (tour_id, driver_name, stops_done, stops_total" .
+          ($hasDis ? ", dispatched_at" : "") . ") VALUES (?,?,0,?" . ($hasDis ? ",NOW()" : "") . ")",
+          [(int) $t2['id'], $drv ?: null, $nStops]);
+      }
+      json_out(['ok' => true, 'tour' => $tn, 'chauffeur' => $drv ?: '—', 'stops' => $nStops]);
+    }
+
     // Bon de chargement (prep) — colis du jour groupés par site.
     if ($m === 'GET' && $p === '/franchisee/fr-prep-points') {
       if (!$tblExists('ws_office_delivery_sites') || !$hasOrders) json_out([]);
