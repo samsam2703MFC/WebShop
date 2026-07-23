@@ -738,6 +738,15 @@ const PORTION_SHAPES = [
   { v: 'entier', d: <circle cx="12" cy="12" r="9" fill="currentColor"/>,                   name: 'Entière', factor: 1 },
 ];
 
+// Libellé des portions d'une carte produit : types ACTIFS (ERP portionTypes)
+// avec le PRIX de chaque portion — ex. « 1/4 €6.48 · 1/2 €12.48 · Entière €24.00 ».
+function portionPriceHint(p) {
+  const types = (Array.isArray(p?.portionTypes) && p.portionTypes.length)
+    ? p.portionTypes : PORTION_SHAPES.map((s) => s.v);
+  return PORTION_SHAPES.filter((s) => types.includes(s.v))
+    .map((s) => `${s.name} €${((p?.price || 0) * s.factor).toFixed(2)}`).join(' · ');
+}
+
 // Single "portions available" glyph used on the product card — a quartered
 // disc that hints at the slicing without committing to a specific portion.
 function PortionGlyph({ size = 14 }) {
@@ -1360,9 +1369,10 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
       </div>
       <div className="ws-card__body" onClick={(e) => e.stopPropagation()}>
         {p.portions && (
-          <div className="ws-card__portions" aria-label="Portions disponibles">
+          <div className="ws-card__portions" aria-label="Portions disponibles"
+               title={'Portions : ' + portionPriceHint(p)}>
             <PortionGlyph size={12}/>
-            <span>Portions disponibles</span>
+            <span>{portionPriceHint(p)}</span>
           </div>
         )}
         {p.lead_time > 0 && (

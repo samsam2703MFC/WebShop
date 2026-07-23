@@ -3695,6 +3695,45 @@ function dispatch($m, $p) {
         'dispo' => max(0, (int) ($st['qty_total'] ?? 0) - (int) ($st['qty_reserved'] ?? 0) - (int) ($st['qty_sold'] ?? 0))]);
     }
 
+    // ── RÈGLES RÉSEAU ERP (lecture seule) : portions par produit. ──
+    //    product_portion (même base) : tailles ACTIVES proposées au webshop,
+    //    visualisées dans l'écran « Règles de prix » du BO franchisé.
+    if ($m === 'GET' && $p === '/franchisee/erp-portion-rules') {
+      try {
+        if (!row("SELECT 1 x FROM information_schema.tables
+                   WHERE table_schema=DATABASE() AND table_name='product_portion'")) json_out([]);
+        $rs = rows("SELECT p.id AS pid, p.name AS produit, COALESCE(c.label,'Autres') AS cat,
+                           COALESCE(ppx.price, p.price) AS prix_base,
+                           GROUP_CONCAT(pp.portion_type ORDER BY pp.display_order SEPARATOR ',') AS types
+                      FROM product_portion pp
+                      JOIN ws_products p ON p.id = pp.id_product AND p.active = 1
+                      LEFT JOIN ws_categories c ON c.id = p.cat_id
+                      LEFT JOIN ws_product_prices ppx ON ppx.product_id = p.id AND ppx.active = 1" .
+                     ($shopId ? " AND ppx.shop_id = " . (int) $shopId : "") . "
+                     WHERE pp.is_active = 1
+                     GROUP BY p.id, p.name, cat, prix_base
+                     ORDER BY cat, p.name LIMIT 300");
+        // Prix magasin ERP (shop_product.portion_price) = source d'autorité.
+        $erpPx = $shopId ? erp_shop_prices((int) $shopId, array_map(fn ($r) => (int) $r['pid'], $rs)) : [];
+        $mapPT2 = ['quart' => 'quart', 'quarter' => 'quart', '1/4' => 'quart',
+                   'demi' => 'demi', 'half' => 'demi', '1/2' => 'demi',
+                   'entier' => 'entier', 'entiere' => 'entier', 'whole' => 'entier', 'full' => 'entier'];
+        $fact = ['quart' => 0.27, 'demi' => 0.52, 'entier' => 1.0];
+        $lbl = ['quart' => '1/4', 'demi' => '1/2', 'entier' => 'Entière'];
+        json_out(array_map(function ($r) use ($mapPT2, $fact, $lbl, $erpPx) {
+          $ts = [];
+          foreach (explode(',', (string) $r['types']) as $t) {
+            $k = $mapPT2[mb_strtolower(trim($t))] ?? null;
+            if ($k && !in_array($k, $ts, true)) $ts[] = $k;
+          }
+          $base = isset($erpPx[(int) $r['pid']]) ? $erpPx[(int) $r['pid']] : (float) $r['prix_base'];
+          return ['produit' => $r['produit'], 'cat' => $r['cat'], 'portions' => $ts,
+                  'facteurs' => implode(' · ', array_map(fn ($t) => '×' . $fact[$t], $ts)),
+                  'prix' => implode(' · ', array_map(fn ($t) => $lbl[$t] . ' ' . number_format($base * $fact[$t], 2, ',', ' ') . ' €', $ts))];
+        }, $rs));
+      } catch (Throwable $e) { json_out([]); }
+    }
+
     // ── Minimums hebdomadaires : lecture par produit (formulaire BO). ──
     if ($m === 'GET' && $p === '/franchisee/stock-defaults') {
       if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
