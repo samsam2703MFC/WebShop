@@ -3426,12 +3426,19 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   async function handlePay() {
     setPaying(true); setPayErr(null);
     try {
+      // Jour choisi au format YYYY-MM-DD LOCAL (isoOf évite le décalage UTC de
+      // toISOString à minuit) : sans lui, ws_orders.delivery_date restait NULL
+      // et une commande J+1 apparaissait sous « aujourd'hui » côté back-office.
+      const isoFn = (window.WSAvailability || window.WSCalendar)?.isoOf
+        || ((x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`);
+      const deliveryDate = date instanceof Date ? isoFn(date) : (date || null);
       const payload = {
         shopId: shop && shop.id,
         mode,
+        deliveryDate,
         slot: typeof slot === 'object' && slot
-          ? { slotId: slot.id, label: slot.label }
-          : { slotId: slot, label: slot },
+          ? { slotId: slot.id, label: slot.label, date: deliveryDate }
+          : { slotId: slot, label: slot, date: deliveryDate },
         basket: basket.map((l) => ({ productId: l.productId, qty: l.qty, portion: l.portion || null, note: l.note || null, options: l.options || [], bundleId: l.bundleId || null, bundleSlots: l.bundleSlots || {} })),
         voucher: voucherApplied && voucherApplied.ok ? voucherApplied.voucher.code : null,
         note: orderNote || null,

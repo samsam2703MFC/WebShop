@@ -3142,6 +3142,48 @@ function dispatch($m, $p) {
                   'statut' => ((int) $t['stops_done']) > 0 ? 'Prête' : 'En préparation',
                   'zones' => [['nom' => $t['zone'] ?: $t['name'], 'sites' => $siteOut]]];
       }
+      // FILET DE SÉCURITÉ : commandes en LIVRAISON qui ne se rattachent à aucune
+      // chaîne site actif → tournée active (site sans tournee_id, site inactif,
+      // tournée désactivée, ou commande sans id de site NI de bureau). Plutôt
+      // qu'un tableau vide inexplicable, on les montre sous « Hors tournée »
+      // avec de quoi diagnostiquer le maillon manquant.
+      $orphans = rows(
+        "SELECT o.order_ref, COALESCE(o.delivery_date, DATE(o.created_at)) AS jour,
+                COALESCE(NULLIF(o.guest_name,'')" .
+                ($hasCliT ? ", NULLIF(TRIM(CONCAT(COALESCE(cl.name,''),' ',COALESCE(cl.surname,''))),'')" : "") . ",
+                         'Client webshop') AS client,
+                COALESCE(NULLIF(o.office_delivery_site_name,''), f3.name, '— site et bureau non renseignés') AS libelle,
+                (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id) AS pieces
+           FROM ws_orders o" .
+        ($hasCliT ? " LEFT JOIN client cl ON cl.id = o.customer_id" : "") . "
+           LEFT JOIN ws_offices f3 ON f3.id = o.office_client_id
+          WHERE " . $scope('o.shop_id') . " AND o.status <> 'cancelled'
+            AND COALESCE(o.delivery_date, DATE(o.created_at)) >= ?
+            AND (o.mode = 'delivery' OR o.delivery_mode = 'office_delivery')
+            AND NOT EXISTS (
+              SELECT 1 FROM ws_office_delivery_sites s3
+                JOIN ws_tours t3 ON t3.id = s3.tournee_id AND t3.active = 1
+               WHERE s3.active = 1
+                 AND (s3.id = o.office_delivery_site_id
+                      OR (o.office_delivery_site_id IS NULL AND s3.office_client_id = o.office_client_id)))
+          ORDER BY jour, o.created_at LIMIT 40", [$today]);
+      if ($orphans) {
+        $J3 = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+        $bySite = [];
+        foreach ($orphans as $o3) {
+          $bySite[$o3['libelle']][] = [
+            'nom' => $o3['client'] . ' · #' . $o3['order_ref']
+                   . ($o3['jour'] > $today ? (' · ' . $J3[(int) date('w', strtotime($o3['jour']))] . ' ' . date('d/m', strtotime($o3['jour']))) : ''),
+            'cmd' => (int) $o3['pieces']];
+        }
+        $orphSites = [];
+        foreach ($bySite as $lib => $us) {
+          $orphSites[] = ['libelle' => $lib, 'ville' => '—', 'cutoff' => '—', 'office' => '—',
+                          'commandes' => count($us), 'users' => $us];
+        }
+        $out[] = ['nom' => '⚠ Hors tournée (à rattacher)', 'chauffeur' => '—', 'statut' => 'En préparation',
+                  'zones' => [['nom' => 'Site inactif, sans tournée, ou commande sans site/bureau', 'sites' => $orphSites]]];
+      }
       json_out($out);
     }
 
