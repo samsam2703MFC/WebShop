@@ -3333,6 +3333,30 @@ function dispatch($m, $p) {
         'heure' => $r['heure'], 'client' => $r['client']], $rs));
     }
 
+    // ── Stock du jour : SAISIE directe (formulaire modale) — pose les
+    //    quantités ABSOLUES du jour par mode (webshop=delivery / shop=collect)
+    //    dans ws_product_stock. date = jour courant. ──
+    if ($m === 'POST' && $p === '/franchisee/stock-set') {
+      $b = body();
+      if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
+      if (!$tblExists('ws_product_stock') || !$tblExists('ws_products')) json_out(['ok' => false, 'error' => 'tables stock absentes'], 501);
+      $pr = row("SELECT id FROM ws_products WHERE name=? AND active=1 LIMIT 1", [(string) ($b['product'] ?? '')]);
+      if (!$pr) json_out(['ok' => false, 'error' => 'produit inconnu'], 400);
+      $out2 = [];
+      foreach (['delivery' => 'online', 'collect' => 'shop'] as $mode2 => $key2) {
+        if (!array_key_exists($key2, $b) || $b[$key2] === '' || $b[$key2] === null) continue;
+        $qv = max(0, (int) $b[$key2]);
+        q("INSERT INTO ws_product_stock (product_id, shop_id, date, mode, qty_total, qty_reserved, qty_sold, active)
+             VALUES (?,?,?,?,?,0,0,1)
+             ON DUPLICATE KEY UPDATE qty_total=VALUES(qty_total), active=1",
+          [(int) $pr['id'], (int) $shopId, $today, $mode2, $qv]);
+        $st2 = row("SELECT qty_total, qty_reserved, qty_sold FROM ws_product_stock
+                     WHERE product_id=? AND shop_id=? AND date=? AND mode=?", [(int) $pr['id'], (int) $shopId, $today, $mode2]);
+        $out2[$key2] = max(0, (int) ($st2['qty_total'] ?? 0) - (int) ($st2['qty_reserved'] ?? 0) - (int) ($st2['qty_sold'] ?? 0));
+      }
+      json_out(['ok' => true, 'date' => $today] + $out2);
+    }
+
     // ── Stock du jour : ajustement +/− réel (ws_product_stock, jour courant). ──
     if ($m === 'POST' && $p === '/franchisee/stock-adjust') {
       $b = body();
