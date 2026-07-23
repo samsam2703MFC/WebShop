@@ -2643,15 +2643,20 @@ function dispatch($m, $p) {
       json_out(['ok' => true, 'zip' => $zip]);
     }
 
-    // ── Fiche client : livraison au bureau (client.office_delivery). ──
-    //    Passer à 1 déclenche le trigger trg_client_office_delivery_au (0023) :
-    //    l'office est créé/réactivé dans ws_offices ; à 0 il est désactivé.
+    // ── Livraison au bureau (client.office_delivery) = VALIDATION MANUELLE du
+    //    franchisé. Activer : valide le client (status=0), déclenche le trigger
+    //    trg_client_office_delivery_au (0023) qui crée/réactive l'office, puis
+    //    l'office est marqué VALIDÉ → livrable. Désactiver : le trigger
+    //    désactive l'office.
     if ($m === 'POST' && $p === '/franchisee/client-office-delivery') {
       $b = body();
       $id = (int) ($b['id'] ?? 0);
       if (!$id || !col_exists('client', 'office_delivery')) json_out(['ok' => false, 'error' => 'id ou colonne office_delivery manquant'], 400);
       $on = !empty($b['enabled']) ? 1 : 0;
-      q("UPDATE client SET office_delivery=? WHERE id=?", [$on, $id]);
+      $extra = ($on && col_exists('client', 'status')) ? ", status=0" : "";
+      q("UPDATE client SET office_delivery=?$extra WHERE id=?", [$on, $id]);
+      if ($on && $tblExists('ws_offices'))
+        q("UPDATE ws_offices SET status='validated', active=1 WHERE client_id=?", [$id]);
       json_out(['ok' => true, 'enabled' => (bool) $on]);
     }
 
