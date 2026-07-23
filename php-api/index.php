@@ -3574,6 +3574,21 @@ function dispatch($m, $p) {
                         ($shopId ? " AND shop_id=" . (int) $shopId : "") . " LIMIT 1",
               [$officeId, $name ?: null, $addr ?: null]);
           }
+          // Seconde chance NORMALISÉE (casse / espaces) : une variante de
+          // graphie ne doit pas ré-INSÉRER un doublon du même bâtiment.
+          if (!$ex && ($addr !== '' || $name !== '')) {
+            $nAdrSql  = "LOWER(REGEXP_REPLACE(TRIM(COALESCE(address,'')), '[[:space:]]+', ' '))";
+            $nNameSql = "LOWER(REGEXP_REPLACE(TRIM(COALESCE(name,'')), '[[:space:]]+', ' '))";
+            $nA = mb_strtolower(preg_replace('/\s+/u', ' ', $addr));
+            $nN = mb_strtolower(preg_replace('/\s+/u', ' ', $name));
+            $scS = $shopId ? " AND shop_id=" . (int) $shopId : "";
+            if ($officeId && $addr !== '')
+              $ex = row("SELECT id FROM ws_office_delivery_sites
+                          WHERE active=1 AND office_client_id=? AND $nAdrSql=? $scS LIMIT 1", [$officeId, $nA]);
+            if (!$ex && !$officeId && ($addr !== '' || $name !== ''))
+              $ex = row("SELECT id FROM ws_office_delivery_sites
+                          WHERE active=1 AND office_client_id IS NULL AND $nAdrSql=? AND $nNameSql=? $scS LIMIT 1", [$nA, $nN]);
+          }
           if ($ex) {
             $tourSql = $tourId !== null ? "tournee_id=" . (int) $tourId : ($tourCleared ? "tournee_id=NULL" : "tournee_id=tournee_id");
             q("UPDATE ws_office_delivery_sites SET name=?, address=?, floor_room=?, contact_name=?, contact_phone=?,
@@ -3734,6 +3749,13 @@ function dispatch($m, $p) {
           // trement d'office ne doit jamais dupliquer de ligne site.
           $siteAdr = trim((string) ($r['site'] ?? ''));
           if ($siteAdr === '—') $siteAdr = '';
+          // GARDE-FOU anti-résurrection : créer/déplacer une ligne site à
+          // partir du champ `site` d'un office N'EST PERMIS que si le front a
+          // posé le marqueur site_touch (choix EXPLICITE : formulaire office
+          // ou étape 3). Sans marqueur (save de liste, round-trip d'une valeur
+          // périmée), on se limite au complément de tournée d'une ligne
+          // existante — un site supprimé ne peut plus être recréé en douce.
+          $siteTouch = !empty($r['site_touch']);
           if ($siteAdr !== '' && $rid && $tblExists('ws_office_delivery_sites')) {
             // Un site DOIT être rattaché à une tournée : repli sur la tournée
             // stockée de l'office si le formulaire n'en a pas résolu une.
@@ -3748,12 +3770,17 @@ function dispatch($m, $p) {
             //    déplacement d'un bureau se fait à l'étape 3 (drag-drop), pas
             //    par un ré-enregistrement d'office qui renverrait un champ
             //    `site` périmé.
+            // Comparaisons d'adresse NORMALISÉES (casse, espaces multiples) —
+            // deux graphies de la même adresse ne doivent plus créer deux
+            // bâtiments (tags en double dans l'étape 3).
+            $normAdrSql = "LOWER(REGEXP_REPLACE(TRIM(COALESCE(address,'')), '[[:space:]]+', ' '))";
+            $normSite = mb_strtolower(preg_replace('/\s+/u', ' ', $siteAdr));
             $ps = row("SELECT id, tournee_id FROM ws_office_delivery_sites
-                        WHERE office_client_id=? AND active=1 AND TRIM(COALESCE(address,''))=? LIMIT 1", [$rid, $siteAdr]);
+                        WHERE office_client_id=? AND active=1 AND $normAdrSql=? LIMIT 1", [$rid, $normSite]);
             if ($ps) {
               if ($ps['tournee_id'] === null && $pairTour !== null)
                 q("UPDATE ws_office_delivery_sites SET tournee_id=? WHERE id=?", [$pairTour, (int) $ps['id']]);
-            } else {
+            } elseif ($siteTouch) {
               $pn = row("SELECT id FROM ws_office_delivery_sites
                           WHERE office_client_id=? AND active=1 AND TRIM(COALESCE(address,''))='' LIMIT 1", [$rid]);
               $any = $pn ?: row("SELECT id FROM ws_office_delivery_sites WHERE office_client_id=? AND active=1 LIMIT 1", [$rid]);
@@ -3770,7 +3797,7 @@ function dispatch($m, $p) {
                 //    (même sémantique que le drag-drop étape 3) en héritant du
                 //    nom/tournée du bâtiment cible s'il existe déjà.
                 $tgt = row("SELECT name, tournee_id FROM ws_office_delivery_sites
-                             WHERE TRIM(COALESCE(address,''))=? AND active=1 ORDER BY id LIMIT 1", [$siteAdr]);
+                             WHERE $normAdrSql=? AND active=1 ORDER BY id LIMIT 1", [$normSite]);
                 q("UPDATE ws_office_delivery_sites SET address=?, name=COALESCE(?, name), tournee_id=COALESCE(?, COALESCE(?, tournee_id)) WHERE id=?",
                   [$siteAdr, $tgt['name'] ?? null, $tgt['tournee_id'] ?? null, $pairTour, (int) $any['id']]);
               }
