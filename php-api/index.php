@@ -3099,22 +3099,48 @@ function dispatch($m, $p) {
                       FROM ws_tours t" . ($hasZ ? " LEFT JOIN ws_delivery_zones z ON z.id=t.zone_id" : "") .
                     ($hasTk ? " LEFT JOIN ws_tour_tracking tk ON tk.tour_id=t.id" : "") . "
                      WHERE " . $scope('t.shop_id') . " AND t.active=1 ORDER BY t.name", []);
+      // La bonne colonne est office_delivery_site_id (delivery_site_id n'existe
+      // pas → l'arbre était TOUJOURS vide). Sous chaque site : les COMMANDES
+      // réelles (client · n° · pièces), aujourd'hui ET jours à venir ; repli
+      // par bureau quand la commande n'a pas d'id de site.
+      $hasCliT = $tblExists('client');
       $out = [];
       foreach ($tours as $t) {
         $sites = rows(
-          "SELECT s.name AS libelle, COALESCE(s.address,'—') AS ville, s.contact_name, f.name AS office,
-                  (SELECT COUNT(*) FROM ws_orders o WHERE o.delivery_site_id = s.id AND o.delivery_date = ?) AS cmd
+          "SELECT s.id AS sid, s.office_client_id AS ocid, s.name AS libelle,
+                  COALESCE(s.address,'—') AS ville, s.contact_name, f.name AS office
              FROM ws_office_delivery_sites s LEFT JOIN ws_offices f ON f.id = s.office_client_id
-            WHERE s.tournee_id = ? AND s.active = 1 ORDER BY s.name", [$today, (int) $t['id']]);
-        $sites = array_values(array_filter($sites, fn ($s2) => (int) $s2['cmd'] > 0));
-        if (!$sites) continue;
+            WHERE s.tournee_id = ? AND s.active = 1 ORDER BY s.name", [(int) $t['id']]);
+        $siteOut = [];
+        foreach ($sites as $s2) {
+          $ords = rows(
+            "SELECT o.order_ref, COALESCE(o.delivery_date, DATE(o.created_at)) AS jour,
+                    COALESCE(NULLIF(o.guest_name,'')" .
+                    ($hasCliT ? ", NULLIF(TRIM(CONCAT(COALESCE(cl.name,''),' ',COALESCE(cl.surname,''))),'')" : "") . ",
+                             'Client webshop') AS client,
+                    (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id) AS pieces
+               FROM ws_orders o" .
+            ($hasCliT ? " LEFT JOIN client cl ON cl.id = o.customer_id" : "") . "
+              WHERE " . $scope('o.shop_id') . " AND o.status <> 'cancelled'
+                AND COALESCE(o.delivery_date, DATE(o.created_at)) >= ?
+                AND (o.office_delivery_site_id = ?
+                     OR (o.office_delivery_site_id IS NULL AND ? IS NOT NULL AND o.office_client_id = ?))
+              ORDER BY jour, o.created_at LIMIT 40",
+            [$today, (int) $s2['sid'], $s2['ocid'], $s2['ocid']]);
+          if (!$ords) continue;
+          $J2 = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+          $siteOut[] = ['libelle' => $s2['libelle'] ?: $s2['ville'], 'ville' => $s2['ville'], 'cutoff' => '—',
+            'office' => $s2['office'] ?: '—',
+            'commandes' => count($ords),
+            'users' => array_map(fn ($o2) => [
+              'nom' => $o2['client'] . ' · #' . $o2['order_ref']
+                     . ($o2['jour'] > $today ? (' · ' . $J2[(int) date('w', strtotime($o2['jour']))] . ' ' . date('d/m', strtotime($o2['jour']))) : ''),
+              'cmd' => (int) $o2['pieces']], $ords)];
+        }
+        if (!$siteOut) continue;
         $out[] = ['nom' => $t['name'], 'chauffeur' => $t['driver_name'] ?: '— non assigné',
                   'statut' => ((int) $t['stops_done']) > 0 ? 'Prête' : 'En préparation',
-                  'zones' => [['nom' => $t['zone'] ?: $t['name'], 'sites' => array_map(fn ($s2) => [
-                    'libelle' => $s2['libelle'], 'ville' => $s2['ville'], 'cutoff' => '—',
-                    'office' => $s2['office'] ?: '—',
-                    'users' => [['nom' => $s2['contact_name'] ?: ($s2['office'] ?: '—'), 'cmd' => (int) $s2['cmd']]],
-                  ], $sites)]]];
+                  'zones' => [['nom' => $t['zone'] ?: $t['name'], 'sites' => $siteOut]]];
       }
       json_out($out);
     }
@@ -3122,10 +3148,17 @@ function dispatch($m, $p) {
     // Bon de chargement (prep) — colis du jour groupés par site.
     if ($m === 'GET' && $p === '/franchisee/fr-prep-points') {
       if (!$tblExists('ws_office_delivery_sites') || !$hasOrders) json_out([]);
-      $rs = rows("SELECT s.name AS libelle, COUNT(*) AS colis
-                    FROM ws_orders o JOIN ws_office_delivery_sites s ON s.id = o.delivery_site_id
-                   WHERE " . $scope('o.shop_id') . " AND o.delivery_date = ?
-                   GROUP BY s.id, s.name ORDER BY COUNT(*) DESC LIMIT 30", [$today]);
+      // Bonne colonne (office_delivery_site_id) + repli par bureau : le bon de
+      // chargement était vide car delivery_site_id n'existe pas.
+      $rs = rows("SELECT COALESCE(NULLIF(TRIM(s.name),''), s.address, f2.name) AS libelle,
+                         COALESCE(SUM((SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id)), COUNT(*)) AS colis
+                    FROM ws_orders o
+                    LEFT JOIN ws_office_delivery_sites s ON s.id = o.office_delivery_site_id
+                    LEFT JOIN ws_offices f2 ON f2.id = o.office_client_id
+                   WHERE " . $scope('o.shop_id') . " AND o.status <> 'cancelled'
+                     AND COALESCE(o.delivery_date, DATE(o.created_at)) = ?
+                     AND (s.id IS NOT NULL OR f2.id IS NOT NULL)
+                   GROUP BY libelle ORDER BY colis DESC LIMIT 30", [$today]);
       $i = 0;
       json_out(array_map(function ($r) use (&$i) {
         $i++;
