@@ -3133,6 +3133,49 @@ function dispatch($m, $p) {
     }
 
     // Stock du jour — catalogue catégories › produits (online/en shop/seuil).
+    // ── Stock du jour : lignes de commande du produit (Ruby = Click&Collect,
+    //    Apricot = Delivery) — ws_order_lines × ws_orders, jour courant. ──
+    if ($m === 'GET' && $p === '/franchisee/stock-product-orders') {
+      $pn = trim((string) qp('product', ''));
+      if ($pn === '' || !$tblExists('ws_orders') || !$tblExists('ws_order_lines')) json_out([]);
+      $rs = rows("SELECT o.order_ref, o.mode, o.status, l.qty,
+                         DATE_FORMAT(o.created_at,'%H:%i') AS heure,
+                         COALESCE(NULLIF(o.guest_name,''), '') AS client
+                    FROM ws_order_lines l
+                    JOIN ws_orders o ON o.id = l.order_id
+                    LEFT JOIN ws_products pr ON pr.id = l.product_id
+                   WHERE (l.product_name = ? OR pr.name = ?)" .
+                   ($shopId ? " AND o.shop_id = " . (int) $shopId : "") . "
+                     AND (o.delivery_date = ? OR (o.delivery_date IS NULL AND DATE(o.created_at) = ?))
+                   ORDER BY o.created_at DESC LIMIT 100", [$pn, $pn, $today, $today]);
+      json_out(array_map(fn ($r) => ['ref' => $r['order_ref'] ?: '—',
+        'mode' => ($r['mode'] === 'delivery' ? 'delivery' : 'collect'),
+        'qty' => (int) $r['qty'], 'statut' => $r['status'] ?: '—',
+        'heure' => $r['heure'], 'client' => $r['client']], $rs));
+    }
+
+    // ── Stock du jour : ajustement +/− réel (ws_product_stock, jour courant). ──
+    if ($m === 'POST' && $p === '/franchisee/stock-adjust') {
+      $b = body();
+      if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
+      if (!$tblExists('ws_product_stock') || !$tblExists('ws_products')) json_out(['ok' => false, 'error' => 'tables stock absentes'], 501);
+      $pr = row("SELECT id FROM ws_products WHERE name=? AND active=1 LIMIT 1", [(string) ($b['product'] ?? '')]);
+      if (!$pr) json_out(['ok' => false, 'error' => 'produit inconnu'], 400);
+      $mode = (($b['mode'] ?? '') === 'delivery') ? 'delivery' : 'collect';
+      $delta = (int) ($b['delta'] ?? 0);
+      if (!$delta) json_out(['ok' => false, 'error' => 'delta requis (±n)'], 400);
+      q("INSERT INTO ws_product_stock (product_id, shop_id, date, mode, qty_total, qty_reserved, qty_sold, active)
+           VALUES (?,?,?,?,?,0,0,1)
+           ON DUPLICATE KEY UPDATE qty_total = GREATEST(0, qty_total + ?), active=1",
+        [(int) $pr['id'], (int) $shopId, $today, $mode, max(0, $delta), $delta]);
+      $st = row("SELECT qty_total, qty_reserved, qty_sold FROM ws_product_stock
+                  WHERE product_id=? AND shop_id=? AND date=? AND mode=?",
+        [(int) $pr['id'], (int) $shopId, $today, $mode]);
+      json_out(['ok' => true, 'mode' => $mode,
+        'total' => (int) ($st['qty_total'] ?? 0),
+        'dispo' => max(0, (int) ($st['qty_total'] ?? 0) - (int) ($st['qty_reserved'] ?? 0) - (int) ($st['qty_sold'] ?? 0))]);
+    }
+
     if ($m === 'GET' && $p === '/franchisee/fr-stock-catalog') {
       // Base du Stock du jour = TOUS les produits actifs (ws_products.active=1)
       // repris dans l'assortiment webshop de la boutique (ws_product_shops
