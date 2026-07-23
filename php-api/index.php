@@ -2033,6 +2033,48 @@ function dispatch($m, $p) {
     }
 
     // Produit : flags de gouvernance marque + prix réf. + override menu.
+    // ── Portions réseau (ERP, lecture seule) — vue FRANCHISOR : quels produits
+    //    sont portionnables, quelles portions sont actives, et les prix posés
+    //    par boutique (shop_product_portion_price). ──
+    if ($m === 'GET' && $p === '/franchisor/erp-portion-rules') {
+      try {
+        if (!row("SELECT 1 x FROM information_schema.tables
+                   WHERE table_schema=DATABASE() AND table_name='product_portion'")) json_out([]);
+        $hasPx = (bool) row("SELECT 1 x FROM information_schema.tables
+                              WHERE table_schema=DATABASE() AND table_name='shop_product_portion_price'");
+        $rs = rows("SELECT pp.id AS ppid, pp.id_product, pp.portion_type,
+                           p.name AS produit, COALESCE(c.label,'Autres') AS cat, p.price AS prix_base
+                      FROM product_portion pp
+                      JOIN ws_products p ON p.id = pp.id_product AND p.active = 1
+                      LEFT JOIN ws_categories c ON c.id = p.cat_id
+                     WHERE pp.is_active = 1
+                     ORDER BY cat, p.name, pp.display_order LIMIT 500");
+        $px = [];
+        if ($hasPx) {
+          foreach (rows("SELECT id_product_portion AS pid, id_shop, price FROM shop_product_portion_price ORDER BY id_shop") as $r2)
+            $px[(int) $r2['pid']][] = $r2;
+        }
+        $MAPF = ['one_half' => '1/2', 'half' => '1/2', 'demi' => '1/2', '1/2' => '1/2',
+                 'one_quarter' => '1/4', 'quarter' => '1/4', 'quart' => '1/4', '1/4' => '1/4',
+                 'one_eighth' => '1/8', 'eighth' => '1/8', 'huitieme' => '1/8', '1/8' => '1/8'];
+        $eur = fn ($v) => number_format((float) $v, 2, ',', ' ') . ' €';
+        $byProd = [];
+        foreach ($rs as $r) {
+          $pid = (int) $r['id_product'];
+          if (!isset($byProd[$pid])) $byProd[$pid] = ['produit' => $r['produit'], 'cat' => $r['cat'],
+            'portions' => ['Entière'], 'prixParts' => ['Entière ' . $eur($r['prix_base'])]];
+          $lblP = $MAPF[mb_strtolower(trim((string) $r['portion_type']))] ?? (string) $r['portion_type'];
+          $byProd[$pid]['portions'][] = $lblP;
+          $rowsPx = $px[(int) $r['ppid']] ?? [];
+          $byProd[$pid]['prixParts'][] = $rowsPx
+            ? ($lblP . ' ' . implode(' / ', array_map(fn ($z) => $eur($z['price']) . ' (boutique ' . (int) $z['id_shop'] . ')', $rowsPx)))
+            : ($lblP . ' — sans prix');
+        }
+        json_out(array_values(array_map(fn ($v) => ['produit' => $v['produit'], 'cat' => $v['cat'],
+          'portions' => $v['portions'], 'prix' => implode(' · ', $v['prixParts'])], $byProd)));
+      } catch (Throwable $e) { json_out([]); }
+    }
+
     if ($m === 'POST' && $p === '/franchisor/product') {
       $b = body(); $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['error' => 'id requis'], 400);

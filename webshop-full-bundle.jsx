@@ -1379,10 +1379,10 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
       </div>
       <div className="ws-card__body" onClick={(e) => e.stopPropagation()}>
         {p.portions && (
-          <div className="ws-card__portions" aria-label="Portions disponibles"
-               title={'Portions : ' + portionPriceHint(p)}>
+          <div className="ws-card__portions" aria-label="Disponible en portions"
+               title={'Portions : ' + portionOptionList(p).map((o) => o.name).join(' · ')}>
             <PortionGlyph size={12}/>
-            <span>{portionPriceHint(p)}</span>
+            <span>Disponible en portions</span>
           </div>
         )}
         {p.lead_time > 0 && (
