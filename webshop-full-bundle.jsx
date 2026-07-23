@@ -731,20 +731,34 @@ function OfferStrip({ offer, qty, unit, calc, onAddOne }) {
   );
 }
 
-// Portion glyph shapes (1/4, 1/2, entier) — shared by card hint + modal options
+// Portion glyph shapes (1/8, 1/4, 1/2, entier) — shared by card hint + modal
+// options. `erpOnly` = jamais proposé en repli historique (uniquement quand
+// l'ERP le déclare via product_portion).
 const PORTION_SHAPES = [
+  { v: 'huitieme', d: <path d="M12 12L12 3 A9 9 0 0 1 18.36 5.64 Z" fill="currentColor"/>, name: '1/8',     factor: 0.15, erpOnly: true },
   { v: 'quart',  d: <path d="M12 12L12 3 A9 9 0 0 1 21 12 Z" fill="currentColor"/>,        name: '1/4',     factor: 0.27 },
   { v: 'demi',   d: <path d="M12 3 A9 9 0 0 1 12 21 Z" fill="currentColor"/>,              name: '1/2',     factor: 0.52 },
   { v: 'entier', d: <circle cx="12" cy="12" r="9" fill="currentColor"/>,                   name: 'Entière', factor: 1 },
 ];
 
-// Libellé des portions d'une carte produit : types ACTIFS (ERP portionTypes)
-// avec le PRIX de chaque portion — ex. « 1/4 €6.48 · 1/2 €12.48 · Entière €24.00 ».
+// Options de portion d'un produit : PRIX EXPLICITES de l'ERP quand fournis
+// (product.portionOptions = [{v,label,price}] servis par le catalogue —
+// shop_product_portion_price), sinon repli historique base × facteur.
+function portionOptionList(p) {
+  if (Array.isArray(p?.portionOptions) && p.portionOptions.length) {
+    return p.portionOptions.map((o) => {
+      const sh = PORTION_SHAPES.find((s) => s.v === o.v) || PORTION_SHAPES[PORTION_SHAPES.length - 1];
+      return { v: o.v, d: sh.d, name: o.label || sh.name, price: Number(o.price) || 0 };
+    });
+  }
+  return PORTION_SHAPES.filter((s) => !s.erpOnly)
+    .map((s) => ({ v: s.v, d: s.d, name: s.name, price: (p?.price || 0) * s.factor }));
+}
+
+// Libellé des portions d'une carte produit — types proposés avec le PRIX de
+// chaque portion : ex. « Entière €24.00 · 1/2 €14.90 · 1/4 €8.90 ».
 function portionPriceHint(p) {
-  const types = (Array.isArray(p?.portionTypes) && p.portionTypes.length)
-    ? p.portionTypes : PORTION_SHAPES.map((s) => s.v);
-  return PORTION_SHAPES.filter((s) => types.includes(s.v))
-    .map((s) => `${s.name} €${((p?.price || 0) * s.factor).toFixed(2)}`).join(' · ');
+  return portionOptionList(p).map((o) => `${o.name} €${o.price.toFixed(2)}`).join(' · ');
 }
 
 // Single "portions available" glyph used on the product card — a quartered
@@ -762,12 +776,9 @@ function PortionGlyph({ size = 14 }) {
 // Portion option list inside the product modal — same toggle/button UX as
 // other option groups (pdm-optrow + pdm-seg). Each button shows icon +
 // portion name + computed price.
-function PortionOptions({ value, onChange, basePrice, types }) {
-  // Types de portions ACTIFS du produit (ERP product_portion, servi par le
-  // catalogue sous `portionTypes`) — sans liste, les 3 tailles historiques.
-  const shapes = (Array.isArray(types) && types.length)
-    ? PORTION_SHAPES.filter((o) => types.includes(o.v))
-    : PORTION_SHAPES;
+function PortionOptions({ value, onChange, product }) {
+  // Options du produit : prix EXPLICITES ERP quand fournis, sinon facteurs.
+  const shapes = portionOptionList(product);
   return (
     <div className="pdm-optrow">
       <div className="pdm-optrow__head">
@@ -777,7 +788,7 @@ function PortionOptions({ value, onChange, basePrice, types }) {
       <div className="pdm-seg pdm-seg--portions" role="radiogroup" aria-label="Portion" style={{ '--pdm-seg-n': shapes.length }}>
         {shapes.map((o) => {
           const on = value === o.v;
-          const price = (basePrice || 0) * o.factor;
+          const price = o.price;
           return (
             <button key={o.v}
               type="button"
@@ -837,10 +848,9 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     setSel(initSelections);
     setUpsellIds({});
     setQty(1);
-    // Portion par défaut = la plus grande DISPONIBLE pour ce produit
-    // (l'ERP peut ne proposer que quart/demi : 'entier' serait invalide).
-    const pts = Array.isArray(product?.portionTypes) && product.portionTypes.length ? product.portionTypes : null;
-    setPortion(pts ? (['entier', 'demi', 'quart'].find((t) => pts.includes(t)) || pts[0]) : 'entier');
+    // Portion par défaut = la PREMIÈRE option proposée (l'entière quand les
+    // options ERP sont fournies, sinon le comportement historique).
+    setPortion(portionOptionList(product)[0]?.v || 'entier');
     setBundleSlots({});
     setCarIdx(0);
     if (product?.options) {
@@ -884,10 +894,11 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   const deliveryStockLeft = mode === 'delivery' && qtyAvailable !== null ? Math.max(0, qtyAvailable) : null;
 
   let unit = product?.price || 0;
-  // Apply portion factor for portionable products (1/4 ≈ 0.27, 1/2 ≈ 0.52)
+  // Prix de la portion choisie : prix EXPLICITE de l'ERP quand fourni
+  // (shop_product_portion_price), sinon repli base × facteur historique.
   if (product?.portions) {
-    const factor = portion === 'quart' ? 0.27 : portion === 'demi' ? 0.52 : 1;
-    unit = unit * factor;
+    const opt = portionOptionList(product).find((o) => o.v === portion);
+    unit = opt ? opt.price : unit;
   }
   if (product?.options) {
     for (const o of product.options) {
@@ -1106,8 +1117,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                 <PortionOptions
                   value={portion}
                   onChange={setPortion}
-                  basePrice={product.price}
-                  types={product.portionTypes}
+                  product={product}
                 />
               )}
             </div>

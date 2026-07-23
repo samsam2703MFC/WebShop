@@ -102,6 +102,52 @@ function erp_shop_prices($shopId, array $ids) {
   return $out;
 }
 
+/* Options de PORTION pilotées par l'ERP (lecture seule, même base).
+ * product_portion : candidats par produit (ONE_HALF / ONE_QUARTER / ONE_EIGHTH,
+ * ordre display_order) × shop_product_portion_price : PRIX PAR BOUTIQUE de
+ * chaque portion (id_product_portion → product_portion.id). Une portion n'est
+ * PROPOSABLE que si un prix existe — celui de la boutique en priorité, sinon
+ * celui d'une autre boutique (repli phase de test mono-boutique) ; la pièce
+ * ENTIÈRE reste toujours proposée au prix de base (ajoutée par l'appelant).
+ * Renvoie [id_product => [ ['v','label','price'|null,'pp_id'], … ]]. */
+function erp_portion_options($shopId, array $ids) {
+  static $has = null;
+  if ($has === null) {
+    try {
+      $has = (bool) row("SELECT 1 x FROM information_schema.tables
+                          WHERE table_schema=DATABASE() AND table_name='product_portion'");
+    } catch (Throwable $e) { $has = false; }
+  }
+  if (!$has || !$ids) return [];
+  $MAP = ['one_half' => 'demi', 'half' => 'demi', 'demi' => 'demi', '1/2' => 'demi',
+          'one_quarter' => 'quart', 'quarter' => 'quart', 'quart' => 'quart', '1/4' => 'quart',
+          'one_eighth' => 'huitieme', 'eighth' => 'huitieme', 'huitieme' => 'huitieme', '1/8' => 'huitieme'];
+  $LBL = ['demi' => '1/2', 'quart' => '1/4', 'huitieme' => '1/8'];
+  $in = implode(',', array_map('intval', $ids));
+  $out = [];
+  try {
+    $hasPx = (bool) row("SELECT 1 x FROM information_schema.tables
+                          WHERE table_schema=DATABASE() AND table_name='shop_product_portion_price'");
+    $rows2 = rows("SELECT pp.id, pp.id_product, pp.portion_type" .
+      ($hasPx ? ", (SELECT sp2.price FROM shop_product_portion_price sp2
+                     WHERE sp2.id_product_portion = pp.id AND sp2.id_shop = " . (int) $shopId . " LIMIT 1) AS px_shop,
+                   (SELECT sp.price FROM shop_product_portion_price sp
+                     WHERE sp.id_product_portion = pp.id ORDER BY sp.id LIMIT 1) AS px_any"
+               : ", NULL AS px_shop, NULL AS px_any") . "
+        FROM product_portion pp
+       WHERE pp.is_active = 1 AND pp.id_product IN ($in)
+       ORDER BY pp.id_product, pp.display_order");
+    foreach ($rows2 as $r) {
+      $v = $MAP[mb_strtolower(trim((string) $r['portion_type']))] ?? null;
+      if (!$v) continue;
+      $price = $r['px_shop'] !== null ? (float) $r['px_shop']
+             : ($r['px_any'] !== null ? (float) $r['px_any'] : null);
+      $out[(int) $r['id_product']][] = ['v' => $v, 'label' => $LBL[$v], 'price' => $price, 'pp_id' => (int) $r['id']];
+    }
+  } catch (Throwable $e) { error_log('[ws] portions ERP indisponibles: ' . $e->getMessage()); return []; }
+  return $out;
+}
+
 /* ─────────────────────────── Routes ─────────────────────────── */
 function dispatch($m, $p) {
   // helper de matching avec :param
@@ -288,26 +334,22 @@ function dispatch($m, $p) {
       $x['allergens'] = $x['allergens'] ? json_decode($x['allergens']) : [];
     }
     unset($x);
-    // Types de portions PAR PRODUIT (ERP product_portion, même base — clé
-    // id_product = ws_products.id) : seuls les types ACTIFS sont proposés,
-    // dans l'ordre display_order. Libellés normalisés vers quart/demi/entier.
-    // Table absente ou produit sans lignes → null : le front garde le
-    // comportement historique (les 3 tailles quand p.portions = 1).
+    // PORTIONS pilotées par l'ERP : candidats (product_portion) × PRIX PAR
+    // BOUTIQUE (shop_product_portion_price). Une portion n'est proposée que si
+    // elle a un prix ; l'ENTIÈRE est toujours proposée au prix de base. Sans
+    // lignes ERP → comportement historique (3 tailles × facteurs).
     try {
-      if ((bool) row("SELECT 1 x FROM information_schema.tables
-                       WHERE table_schema=DATABASE() AND table_name='product_portion'")) {
-        $mapPT = ['quart' => 'quart', 'quarter' => 'quart', '1/4' => 'quart',
-                  'demi' => 'demi', 'half' => 'demi', '1/2' => 'demi',
-                  'entier' => 'entier', 'entiere' => 'entier', 'whole' => 'entier', 'full' => 'entier'];
-        $pt = [];
-        foreach (rows("SELECT id_product, portion_type FROM product_portion
-                        WHERE is_active=1 ORDER BY id_product, display_order") as $pr2) {
-          $k2 = $mapPT[mb_strtolower(trim((string) $pr2['portion_type']))] ?? null;
-          if ($k2 && !in_array($k2, $pt[(int) $pr2['id_product']] ?? [], true)) $pt[(int) $pr2['id_product']][] = $k2;
-        }
+      $popts = erp_portion_options($s, array_map(fn ($x2) => (int) $x2['id'], $r));
+      if ($popts) {
         foreach ($r as &$x) {
-          $x['portionTypes'] = $pt[(int) $x['id']] ?? null;
-          if (!empty($x['portionTypes'])) $x['portions'] = true;
+          $cand = $popts[(int) $x['id']] ?? null;
+          if (!$cand) { $x['portionOptions'] = null; continue; }
+          $offered = array_values(array_filter($cand, fn ($c) => $c['price'] !== null));
+          $x['portionOptions'] = array_merge(
+            [['v' => 'entier', 'label' => 'Entière', 'price' => (float) $x['price']]],
+            array_map(fn ($c) => ['v' => $c['v'], 'label' => $c['label'], 'price' => (float) $c['price']], $offered));
+          $x['portionTypes'] = array_merge(['entier'], array_map(fn ($c) => $c['v'], $offered));
+          if ($offered) $x['portions'] = true;
         }
         unset($x);
       }
@@ -880,10 +922,11 @@ function dispatch($m, $p) {
     //    sur COALESCE(ws_product_prices, ws_products.price). Aligné sur /catalog.
     $subtotal = 0; $lines = [];
     $storePrices = erp_shop_prices($shop, array_map(static fn($it) => (int) ($it['productId'] ?? 0), $basket));
-    // Facteur de PORTION appliqué CÔTÉ SERVEUR (même barème que l'affichage :
-    // quart ×0.27, demi ×0.52, entière ×1). Avant, le serveur facturait plein
-    // tarif quelle que soit la portion choisie — le front seul remisait.
-    $PFACT = ['quart' => 0.27, 'demi' => 0.52, 'entier' => 1.0];
+    // PRIX DE PORTION appliqué CÔTÉ SERVEUR : le prix EXPLICITE de la boutique
+    // (ERP shop_product_portion_price) fait foi ; sans prix ERP, repli sur les
+    // facteurs historiques (1/4 ×0.27 · 1/2 ×0.52 · 1/8 ×0.15 · entière ×1).
+    $PFACT = ['quart' => 0.27, 'demi' => 0.52, 'huitieme' => 0.15, 'entier' => 1.0];
+    $portPx = erp_portion_options($shop, array_map(static fn ($it2) => (int) ($it2['productId'] ?? 0), $basket));
     foreach ($basket as $it) {
       $p2 = row("SELECT p.id, p.name, p.cross_portion, COALESCE(pp.price, p.price) AS price
                    FROM ws_products p LEFT JOIN ws_product_prices pp ON pp.product_id=p.id AND pp.shop_id=? AND pp.active=1
@@ -891,7 +934,13 @@ function dispatch($m, $p) {
       if (!$p2) continue;
       $unit = isset($storePrices[(int) $p2['id']]) ? $storePrices[(int) $p2['id']] : (float) $p2['price'];
       $portion2 = mb_strtolower(trim((string) ($it['portion'] ?? '')));
-      $unit = round($unit * ($PFACT[$portion2] ?? 1.0), 2);
+      if ($portion2 !== '' && $portion2 !== 'entier') {
+        $unitP = null;
+        foreach (($portPx[(int) $p2['id']] ?? []) as $c2) {
+          if ($c2['v'] === $portion2 && $c2['price'] !== null) { $unitP = (float) $c2['price']; break; }
+        }
+        $unit = $unitP !== null ? $unitP : round($unit * ($PFACT[$portion2] ?? 1.0), 2);
+      }
       $qty = max(1, (int) ($it['qty'] ?? 1));
       $subtotal += $unit * $qty;
       $lines[] = ['productId' => $p2['id'], 'name' => $p2['name'], 'qty' => $qty,
@@ -3702,34 +3751,32 @@ function dispatch($m, $p) {
       try {
         if (!row("SELECT 1 x FROM information_schema.tables
                    WHERE table_schema=DATABASE() AND table_name='product_portion'")) json_out([]);
-        $rs = rows("SELECT p.id AS pid, p.name AS produit, COALESCE(c.label,'Autres') AS cat,
-                           COALESCE(ppx.price, p.price) AS prix_base,
-                           GROUP_CONCAT(pp.portion_type ORDER BY pp.display_order SEPARATOR ',') AS types
+        $rs = rows("SELECT DISTINCT p.id AS pid, p.name AS produit, COALESCE(c.label,'Autres') AS cat,
+                           COALESCE(ppx.price, p.price) AS prix_base
                       FROM product_portion pp
                       JOIN ws_products p ON p.id = pp.id_product AND p.active = 1
                       LEFT JOIN ws_categories c ON c.id = p.cat_id
                       LEFT JOIN ws_product_prices ppx ON ppx.product_id = p.id AND ppx.active = 1" .
                      ($shopId ? " AND ppx.shop_id = " . (int) $shopId : "") . "
                      WHERE pp.is_active = 1
-                     GROUP BY p.id, p.name, cat, prix_base
                      ORDER BY cat, p.name LIMIT 300");
-        // Prix magasin ERP (shop_product.portion_price) = source d'autorité.
-        $erpPx = $shopId ? erp_shop_prices((int) $shopId, array_map(fn ($r) => (int) $r['pid'], $rs)) : [];
-        $mapPT2 = ['quart' => 'quart', 'quarter' => 'quart', '1/4' => 'quart',
-                   'demi' => 'demi', 'half' => 'demi', '1/2' => 'demi',
-                   'entier' => 'entier', 'entiere' => 'entier', 'whole' => 'entier', 'full' => 'entier'];
-        $fact = ['quart' => 0.27, 'demi' => 0.52, 'entier' => 1.0];
-        $lbl = ['quart' => '1/4', 'demi' => '1/2', 'entier' => 'Entière'];
-        json_out(array_map(function ($r) use ($mapPT2, $fact, $lbl, $erpPx) {
-          $ts = [];
-          foreach (explode(',', (string) $r['types']) as $t) {
-            $k = $mapPT2[mb_strtolower(trim($t))] ?? null;
-            if ($k && !in_array($k, $ts, true)) $ts[] = $k;
-          }
+        // Prix EXPLICITES par portion (shop_product_portion_price, boutique en
+        // priorité) ; prix magasin ERP pour la pièce entière.
+        $ids3 = array_map(fn ($r) => (int) $r['pid'], $rs);
+        $popts2 = $shopId ? erp_portion_options((int) $shopId, $ids3) : [];
+        $erpPx = $shopId ? erp_shop_prices((int) $shopId, $ids3) : [];
+        $eur = fn ($v) => number_format((float) $v, 2, ',', ' ') . ' €';
+        json_out(array_map(function ($r) use ($popts2, $erpPx, $eur) {
           $base = isset($erpPx[(int) $r['pid']]) ? $erpPx[(int) $r['pid']] : (float) $r['prix_base'];
-          return ['produit' => $r['produit'], 'cat' => $r['cat'], 'portions' => $ts,
-                  'facteurs' => implode(' · ', array_map(fn ($t) => '×' . $fact[$t], $ts)),
-                  'prix' => implode(' · ', array_map(fn ($t) => $lbl[$t] . ' ' . number_format($base * $fact[$t], 2, ',', ' ') . ' €', $ts))];
+          $cand = $popts2[(int) $r['pid']] ?? [];
+          $offered = array_values(array_filter($cand, fn ($c) => $c['price'] !== null));
+          $sans = array_values(array_filter($cand, fn ($c) => $c['price'] === null));
+          $labels = array_merge(['Entière'], array_map(fn ($c) => $c['label'], $offered));
+          $prix = implode(' · ', array_merge(['Entière ' . $eur($base)],
+                    array_map(fn ($c) => $c['label'] . ' ' . $eur($c['price']), $offered)));
+          if ($sans) $prix .= ' · sans prix boutique : ' . implode(', ', array_map(fn ($c) => $c['label'], $sans));
+          return ['produit' => $r['produit'], 'cat' => $r['cat'], 'portions' => $labels,
+                  'facteurs' => 'prix boutique ERP (shop_product_portion_price)', 'prix' => $prix];
         }, $rs));
       } catch (Throwable $e) { json_out([]); }
     }
