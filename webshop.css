@@ -1553,6 +1553,9 @@
   gap: 8px;
   padding: 6px 10px 0;
 }
+/* Le + (et le i) TOUJOURS à droite : sans allergènes, AllergensRow ne rend
+   rien et space-between calait alors le bloc d'icônes à gauche. */
+.ws-card__metaStrip .ws-card__icons { margin-left: auto; }
 .ws-card__metaStrip .ws-allergens { gap: 4px; }
 .ws-card__metaStrip .ws-allergen { width: 11px; height: 11px; opacity: 0.22; }
 
