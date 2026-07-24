@@ -177,6 +177,10 @@ function ws_voucher_upsert(array $o) {
   $reqCust = $tkind === 'CUSTOMER' ? 1 : 0;
   $custId  = $tkind === 'CUSTOMER' ? $tid : null;
   $hasReason = col_exists('voucher_campaign', 'reason_kind');
+  $hasScope = col_exists('promotion_order_discount', 'scope_id_product');
+  $scopePid = isset($o['scope_product_id']) && $o['scope_product_id'] !== '' && $o['scope_product_id'] !== null ? (int) $o['scope_product_id'] : null;
+  $scopeQty = isset($o['scope_max_qty']) && $o['scope_max_qty'] !== '' && $o['scope_max_qty'] !== null ? max(1, (int) $o['scope_max_qty']) : null;
+  if ($scopePid === null) $scopeQty = null;   // pas de plafond sans périmètre
   $rKind = isset($o['reason_kind']) && $o['reason_kind'] !== '' ? mb_substr(strtoupper(trim((string) $o['reason_kind'])), 0, 24) : null;
   $rNote = isset($o['reason_note']) && $o['reason_note'] !== '' ? mb_substr(trim((string) $o['reason_note']), 0, 255) : null;
   $cBy   = isset($o['created_by']) ? mb_substr(trim((string) $o['created_by']), 0, 64) : null;
@@ -196,8 +200,11 @@ function ws_voucher_upsert(array $o) {
     $reasonSetSql = $hasReason ? ", reason_kind=?, reason_note=?, created_by=COALESCE(?, created_by)" : "";
     if ($ex) {
       q("UPDATE promotion SET status=?, valid_to=? WHERE id=?", [$status, $exp, $ex['promotion_id']]);
-      q("UPDATE promotion_order_discount SET discount_kind=?, discount_value=?, min_order_amount=? WHERE id_promotion=?",
-        [$kind, $value, $minOrd, $ex['promotion_id']]);
+      $podSet = "discount_kind=?, discount_value=?, min_order_amount=?" . ($hasScope ? ", scope_id_product=?, scope_max_qty=?" : "");
+      $podPar = [$kind, $value, $minOrd];
+      if ($hasScope) { $podPar[] = $scopePid; $podPar[] = $scopeQty; }
+      $podPar[] = $ex['promotion_id'];
+      q("UPDATE promotion_order_discount SET $podSet WHERE id_promotion=?", $podPar);
       // NB : id_shop (l'émetteur) n'est JAMAIS modifié à l'update — un bon garde
       // son propriétaire (marque ou boutique) toute sa vie.
       $params = [$exp, $maxUses, $idBrand, $tkind, $tid, $reqCust];
@@ -214,8 +221,13 @@ function ws_voucher_upsert(array $o) {
          VALUES (?, ?, 'ORDER_DISCOUNT', ?, 0, 0, NULL, ?, 0, 'ALL_SHOPS', 'VOUCHER_ONLY', 0)",
         [$name, $idShop !== null ? 'Bon boutique (franchisé)' : 'Bon marque (franchisor)', $status, $exp]);
       $pid = $pdo->lastInsertId();
-      q("INSERT INTO promotion_order_discount (id_promotion, discount_kind, discount_value, min_order_amount)
-         VALUES (?,?,?,?)", [$pid, $kind, $value, $minOrd]);
+      if ($hasScope) {
+        q("INSERT INTO promotion_order_discount (id_promotion, discount_kind, discount_value, min_order_amount, scope_id_product, scope_max_qty)
+           VALUES (?,?,?,?,?,?)", [$pid, $kind, $value, $minOrd, $scopePid, $scopeQty]);
+      } else {
+        q("INSERT INTO promotion_order_discount (id_promotion, discount_kind, discount_value, min_order_amount)
+           VALUES (?,?,?,?)", [$pid, $kind, $value, $minOrd]);
+      }
       $cols = "id_promotion, name, planned_promotion_type, status, code_type,
                valid_from, valid_to, usage_limit_total, usage_limit_per_code, usage_limit_per_customer,
                requires_customer, id_brand, id_shop, target_kind, target_id";
@@ -716,10 +728,48 @@ function dispatch($m, $p) {
         : 'Code réservé à un autre client']);
     }
     if ($sub < (float) $v['min_order']) json_out(['ok' => false, 'message' => "Minimum {$v['min_order']} €"]);
-    $disc = $v['type'] === 'percent' ? round($sub * (float) $v['value']) / 100
-          : ($v['type'] === 'fixed' ? (float) $v['value'] : 0);
-    json_out(['ok' => true, 'discount' => $disc, 'freeDelivery' => ($v['type'] === 'free_delivery'),
-              'voucher' => ['code' => $v['code'], 'type' => $v['type'], 'value' => (float) $v['value']], 'message' => 'Code appliqué']);
+    // Limite PAR CLIENT (voucher_campaign.usage_limit_per_customer) + périmètre
+    // produit (0042) — mêmes règles que la facturation, refusées dès l'aperçu.
+    $hasScope = col_exists('promotion_order_discount', 'scope_id_product');
+    $sc = row("SELECT vco.id AS code_id, vc.usage_limit_per_customer" .
+              ($hasScope ? ", pod.scope_id_product, pod.scope_max_qty" : ", NULL AS scope_id_product, NULL AS scope_max_qty") . "
+                FROM voucher_code vco
+                JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
+                JOIN promotion_order_discount pod ON pod.id_promotion = vc.id_promotion
+               WHERE vco.code = ? LIMIT 1", [$v['code']]);
+    $cidV = isset($b['customerId']) && $b['customerId'] !== '' ? (int) $b['customerId'] : null;
+    if ($sc && $sc['usage_limit_per_customer'] !== null) {
+      if ($cidV === null) json_out(['ok' => false, 'message' => 'Code nominatif — connectez-vous pour l\'utiliser']);
+      $used = row("SELECT COUNT(*) n FROM voucher_redemption WHERE id_voucher_code=? AND id_customer=? AND status='CONFIRMED'",
+                  [$sc['code_id'], $cidV]);
+      if ((int) ($used['n'] ?? 0) >= (int) $sc['usage_limit_per_customer'])
+        json_out(['ok' => false, 'message' => 'Vous avez déjà utilisé ce code']);
+    }
+    $disc = 0; $scopeMsg = '';
+    if ($sc && $sc['scope_id_product'] !== null && $v['type'] !== 'free_delivery') {
+      // Remise limitée aux pièces de CE produit (les moins chères d'abord).
+      $units = [];
+      foreach ((is_array($b['basket'] ?? null) ? $b['basket'] : []) as $l2) {
+        if ((int) ($l2['productId'] ?? 0) !== (int) $sc['scope_id_product']) continue;
+        $q2 = max(1, (int) ($l2['qty'] ?? 1));
+        for ($k2 = 0; $k2 < $q2; $k2++) $units[] = (float) ($l2['price'] ?? 0);
+      }
+      $pn = row("SELECT name FROM ws_products WHERE id=?", [(int) $sc['scope_id_product']]);
+      $pname = $pn['name'] ?? ('produit #' . $sc['scope_id_product']);
+      if (!$units) json_out(['ok' => false, 'message' => 'Ajoutez « ' . $pname . ' » au panier pour profiter du code']);
+      sort($units);
+      $cap = $sc['scope_max_qty'] !== null ? min((int) $sc['scope_max_qty'], count($units)) : count($units);
+      $baseScope = array_sum(array_slice($units, 0, $cap));
+      $disc = $v['type'] === 'percent' ? round($baseScope * (float) $v['value']) / 100
+            : min((float) $v['value'], $baseScope);
+      $scopeMsg = ' sur ' . $cap . ' × ' . $pname;
+    } else {
+      $disc = $v['type'] === 'percent' ? round($sub * (float) $v['value']) / 100
+            : ($v['type'] === 'fixed' ? (float) $v['value'] : 0);
+    }
+    json_out(['ok' => true, 'discount' => round($disc, 2), 'freeDelivery' => ($v['type'] === 'free_delivery'),
+              'voucher' => ['code' => $v['code'], 'type' => $v['type'], 'value' => (float) $v['value']],
+              'message' => 'Code appliqué' . $scopeMsg]);
   }
 
   /* Moyens de paiement autorisés — par boutique ET par profil (guest/registered/
@@ -1204,10 +1254,47 @@ function dispatch($m, $p) {
           }
         }
       }
+      // Limite PAR CLIENT (usage_limit_per_customer) + périmètre produit (0042)
+      // — mêmes règles que la prévisualisation, appliquées aux LIGNES re-tarifées
+      // serveur ($lines) : le client ne peut pas influencer le montant remisé.
+      $vScope = null;
+      if ($v && $eligible) {
+        $hasScopeC = col_exists('promotion_order_discount', 'scope_id_product');
+        $vScope = row("SELECT vco.id AS code_id, vc.usage_limit_per_customer" .
+                      ($hasScopeC ? ", pod.scope_id_product, pod.scope_max_qty" : ", NULL AS scope_id_product, NULL AS scope_max_qty") . "
+                        FROM voucher_code vco
+                        JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
+                        JOIN promotion_order_discount pod ON pod.id_promotion = vc.id_promotion
+                       WHERE vco.code = ? LIMIT 1", [$v['code']]);
+        if ($vScope && $vScope['usage_limit_per_customer'] !== null) {
+          $cidC = isset($b['customerId']) && $b['customerId'] !== '' ? (int) $b['customerId'] : null;
+          if ($cidC === null) { $eligible = false; }
+          else {
+            $usedC = row("SELECT COUNT(*) n FROM voucher_redemption WHERE id_voucher_code=? AND id_customer=? AND status='CONFIRMED'",
+                         [$vScope['code_id'], $cidC]);
+            if ((int) ($usedC['n'] ?? 0) >= (int) $vScope['usage_limit_per_customer']) $eligible = false;
+          }
+        }
+      }
       if ($v && $baseV >= (float) $v['min_order'] && $eligible) {
         $voucherCode = $v['code'];
-        $voucherDisc = $v['type'] === 'percent' ? round($baseV * (float) $v['value']) / 100
-                     : ($v['type'] === 'fixed' ? (float) $v['value'] : 0);
+        if ($vScope && $vScope['scope_id_product'] !== null && $v['type'] !== 'free_delivery') {
+          $unitsV = [];
+          foreach ($lines as $lv) {
+            if ((int) $lv['productId'] !== (int) $vScope['scope_id_product']) continue;
+            for ($kv = 0; $kv < $lv['qty']; $kv++) $unitsV[] = (float) $lv['unit'];
+          }
+          sort($unitsV);
+          $capV = $vScope['scope_max_qty'] !== null ? min((int) $vScope['scope_max_qty'], count($unitsV)) : count($unitsV);
+          $baseScopeV = array_sum(array_slice($unitsV, 0, $capV));
+          // Produit absent du panier -> remise 0 (l'aperçu a déjà prévenu).
+          $voucherDisc = $v['type'] === 'percent' ? round($baseScopeV * (float) $v['value']) / 100
+                       : min((float) $v['value'], $baseScopeV);
+          if ($baseScopeV <= 0) $voucherCode = null;   // rien à remiser -> pas de redemption comptée
+        } else {
+          $voucherDisc = $v['type'] === 'percent' ? round($baseV * (float) $v['value']) / 100
+                       : ($v['type'] === 'fixed' ? (float) $v['value'] : 0);
+        }
         // Bon « port offert » : pas de remise monétaire — on offre les frais de livraison (§4 ci-dessous).
         $voucherFreeDelivery = ($v['type'] === 'free_delivery');
       }
@@ -2146,6 +2233,7 @@ function dispatch($m, $p) {
       $vs = rows("SELECT vco.code, vc.id_shop, sh.name AS shop_name,
                          vc.target_kind, vc.target_id, vco.usage_count, vco.usage_limit,
                          vco.valid_to AS expires_at," .
+                         (col_exists('promotion_order_discount', 'scope_id_product') ? " pod.scope_id_product, pod.scope_max_qty," : " NULL AS scope_id_product, NULL AS scope_max_qty,") .
                          ($hasReason ? " vc.reason_kind, vc.reason_note," : " NULL AS reason_kind, NULL AS reason_note,") . "
                          CASE pod.discount_kind WHEN 'PERCENT' THEN 'percent'
                               WHEN 'FIXED' THEN 'fixed' WHEN 'FREE_DELIVERY' THEN 'free_delivery'
@@ -2165,6 +2253,11 @@ function dispatch($m, $p) {
       foreach ($vs as $v) {
         $val = $v['type'] === 'percent' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' %'
              : ($v['type'] === 'fixed' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' €' : 'port offert');
+        if (!empty($v['scope_id_product'])) {
+          $pn2 = row("SELECT name FROM ws_products WHERE id=?", [(int) $v['scope_id_product']]);
+          $val .= ' sur ' . ($v['scope_max_qty'] !== null ? ((int) $v['scope_max_qty'] . ' × ') : '')
+                . (($pn2['name'] ?? null) ?: ('produit #' . $v['scope_id_product']));
+        }
         $cible = 'Réseau';
         if ($v['target_kind'] === 'CUSTOMER' && $v['target_id']) {
           $c2 = row("SELECT CONCAT(COALESCE(name,''),' ',COALESCE(surname,'')) n FROM client WHERE id=?", [(int) $v['target_id']]);
@@ -2560,6 +2653,7 @@ function dispatch($m, $p) {
         'expires_at' => $b['expires_at'] ?? null, 'active' => $active,
         'id_brand' => $idBrand, 'id_shop' => null,           // émetteur = MARQUE
         'target_kind' => $tkind, 'target_id' => $tid,
+        'scope_product_id' => $b['scope_product_id'] ?? null, 'scope_max_qty' => $b['scope_max_qty'] ?? null,
         'reason_kind' => $b['reason_kind'] ?? 'MARKETING',
         'reason_note' => $b['reason_note'] ?? null,
         'created_by'  => 'franchisor',
@@ -3249,6 +3343,7 @@ function dispatch($m, $p) {
       $hasReason = col_exists('voucher_campaign', 'reason_kind');
       $vs = rows("SELECT vco.code, vc.id_shop, vc.target_kind, vc.target_id,
                          vco.usage_count, vco.usage_limit, vco.valid_to AS expires_at," .
+                         (col_exists('promotion_order_discount', 'scope_id_product') ? " pod.scope_id_product, pod.scope_max_qty," : " NULL AS scope_id_product, NULL AS scope_max_qty,") .
                          ($hasReason ? " vc.reason_kind, vc.reason_note," : " NULL AS reason_kind, NULL AS reason_note,") . "
                          CASE pod.discount_kind WHEN 'PERCENT' THEN 'percent'
                               WHEN 'FIXED' THEN 'fixed' WHEN 'FREE_DELIVERY' THEN 'free_delivery'
@@ -3268,6 +3363,11 @@ function dispatch($m, $p) {
       foreach ($vs as $v) {
         $effet = $v['type'] === 'percent' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' %'
                : ($v['type'] === 'fixed' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' €' : 'port offert');
+        if (!empty($v['scope_id_product'])) {
+          $pn3 = row("SELECT name FROM ws_products WHERE id=?", [(int) $v['scope_id_product']]);
+          $effet .= ' sur ' . ($v['scope_max_qty'] !== null ? ((int) $v['scope_max_qty'] . ' × ') : '')
+                  . (($pn3['name'] ?? null) ?: ('produit #' . $v['scope_id_product']));
+        }
         if ((float) $v['min_order'] > 0) $effet .= ' dès ' . rtrim(rtrim(number_format((float) $v['min_order'], 2, ',', ''), '0'), ',') . ' €';
         $cible = 'Tous les clients';
         if ($v['target_kind'] === 'CUSTOMER' && $v['target_id']) {
@@ -3293,6 +3393,8 @@ function dispatch($m, $p) {
                   'max_uses' => $v['usage_limit'] !== null ? (int) $v['usage_limit'] : '',
                   'expires_at' => $v['expires_at'] ? substr($v['expires_at'], 0, 10) : '',
                   'target_kind' => $v['target_kind'] ?: 'NETWORK', 'target_id' => $v['target_id'],
+                  'scope_product_id' => $v['scope_id_product'] !== null ? (int) $v['scope_id_product'] : '',
+                  'scope_max_qty' => $v['scope_max_qty'] !== null ? (int) $v['scope_max_qty'] : '',
                   'reason_kind' => $v['reason_kind'] ?: '', 'reason_note' => $v['reason_note'] ?: ''];
       }
       json_out($out);
@@ -3311,7 +3413,8 @@ function dispatch($m, $p) {
                 (col_exists('ws_offices', 'shop_id') && $shopId ? " AND shop_id = " . (int) $shopId : "") . "
                  ORDER BY name LIMIT 200")
         : [];
-      json_out(['clients' => $clients, 'offices' => $offices]);
+      $products = rows("SELECT id, name AS nom FROM ws_products WHERE active=1 ORDER BY name LIMIT 500");
+      json_out(['clients' => $clients, 'offices' => $offices, 'products' => $products]);
     }
 
     // Création / édition d'un bon de MA boutique (jamais un bon marque).
@@ -3324,6 +3427,7 @@ function dispatch($m, $p) {
         'expires_at' => $b['expires_at'] ?? null, 'active' => $b['active'] ?? 1,
         'id_shop' => $shopId, 'owner_guard' => $shopId,       // émetteur = MA boutique, verrou d'édition
         'target_kind' => $b['target_kind'] ?? 'NETWORK', 'target_id' => $b['target_id'] ?? null,
+        'scope_product_id' => $b['scope_product_id'] ?? null, 'scope_max_qty' => $b['scope_max_qty'] ?? null,
         'reason_kind' => $b['reason_kind'] ?? null, 'reason_note' => $b['reason_note'] ?? null,
         'created_by'  => 'shop:' . $shopId,
       ]);
