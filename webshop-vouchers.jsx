@@ -104,13 +104,13 @@
     /* Validate + redeem a voucher code server-side.
        Returns { ok, voucher, discount, message } on success,
        or { ok:false, reason, message } on failure. */
-    async redeem({ code, shopId, subtotal, basket } = {}) {
+    async redeem({ code, shopId, subtotal, basket, customerId } = {}) {
       if (WSVouchers.endpoint) {
         try {
           const r = await fetch(`${WSVouchers.endpoint}/redeem`, {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code, shopId, subtotal, basket }),
+            body: JSON.stringify({ code, shopId, subtotal, basket, customerId: customerId ?? null }),
           });
           const j = await r.json();
           return j; // server returns { ok, voucher, discount, message } or { ok:false, reason, message }

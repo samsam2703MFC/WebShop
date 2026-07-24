@@ -148,6 +148,94 @@ function erp_portion_options($shopId, array $ids) {
   return $out;
 }
 
+/* Upsert d'un BON dans le modèle ERP unifié (promotion → voucher_campaign →
+   voucher_code, canal WS). Chemin d'écriture UNIQUE partagé marque/franchisé :
+   - id_shop NULL  = bon MARQUE (réseau)   · id_shop = X = bon de la boutique X ;
+   - owner_guard   : si int, refuse de modifier un code appartenant à une autre
+     boutique (ou à la marque) — c'est le verrou d'édition du BO franchisé ;
+   - reason_kind / reason_note / created_by : traçabilité (migration 0041).
+   Retourne ['ok'=>true] ou ['error'=>…, 'status'=>4xx]. */
+function ws_voucher_upsert(array $o) {
+  $code = strtoupper(trim((string) ($o['code'] ?? '')));
+  if ($code === '') return ['error' => 'code requis', 'status' => 400];
+  $type    = in_array($o['type'] ?? 'percent', ['percent','fixed','free_delivery'], true) ? $o['type'] : 'percent';
+  $kindMap = ['percent'=>'PERCENT','fixed'=>'FIXED','free_delivery'=>'FREE_DELIVERY'];
+  $kind    = $kindMap[$type];
+  $value   = $type === 'free_delivery' ? null : (float) ($o['value'] ?? 0);
+  $minOrd  = (float) ($o['min_order'] ?? 0);
+  $maxUses = isset($o['max_uses']) && $o['max_uses'] !== '' ? (int) $o['max_uses'] : null;
+  $exp     = !empty($o['expires_at']) ? $o['expires_at'] : null;
+  $active  = isset($o['active']) ? (!empty($o['active']) ? 1 : 0) : 1;
+  $status  = $active ? 'ACTIVE' : 'DRAFT';
+  $cstatus = $active ? 'ACTIVE' : 'DISABLED';
+  $idBrand = (int) ($o['id_brand'] ?? 1);
+  $idShop  = isset($o['id_shop']) && $o['id_shop'] !== null && $o['id_shop'] !== '' ? (int) $o['id_shop'] : null;
+  $tkind = strtoupper(trim($o['target_kind'] ?? 'NETWORK'));
+  if (!in_array($tkind, ['NETWORK','CUSTOMER','OFFICE','GROUP'], true)) $tkind = 'NETWORK';
+  $tid   = ($tkind !== 'NETWORK' && isset($o['target_id']) && $o['target_id'] !== '') ? (int) $o['target_id'] : null;
+  if ($tkind !== 'NETWORK' && $tid === null) return ['error' => 'target_id requis pour un bon ciblé', 'status' => 400];
+  $reqCust = $tkind === 'CUSTOMER' ? 1 : 0;
+  $custId  = $tkind === 'CUSTOMER' ? $tid : null;
+  $hasReason = col_exists('voucher_campaign', 'reason_kind');
+  $rKind = isset($o['reason_kind']) && $o['reason_kind'] !== '' ? mb_substr(strtoupper(trim((string) $o['reason_kind'])), 0, 24) : null;
+  $rNote = isset($o['reason_note']) && $o['reason_note'] !== '' ? mb_substr(trim((string) $o['reason_note']), 0, 255) : null;
+  $cBy   = isset($o['created_by']) ? mb_substr(trim((string) $o['created_by']), 0, 64) : null;
+  $name  = ($idShop !== null ? 'Boutique ' . $idShop : 'Webshop') . ' — ' . $code;
+  $pdo = db();
+  $pdo->beginTransaction();
+  try {
+    $ex = row("SELECT vco.id AS code_id, vc.id AS campaign_id, vc.id_promotion AS promotion_id, vc.id_shop
+                 FROM voucher_code vco JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
+                WHERE vco.code = ? LIMIT 1", [$code]);
+    // Verrou d'édition : une boutique ne modifie que SES bons.
+    if ($ex && array_key_exists('owner_guard', $o) && $o['owner_guard'] !== null
+           && (int) ($ex['id_shop'] ?? 0) !== (int) $o['owner_guard']) {
+      $pdo->rollBack();
+      return ['error' => 'code déjà utilisé par ' . ($ex['id_shop'] === null ? 'la marque' : ('la boutique ' . $ex['id_shop'])), 'status' => 403];
+    }
+    $reasonSetSql = $hasReason ? ", reason_kind=?, reason_note=?, created_by=COALESCE(?, created_by)" : "";
+    if ($ex) {
+      q("UPDATE promotion SET status=?, valid_to=? WHERE id=?", [$status, $exp, $ex['promotion_id']]);
+      q("UPDATE promotion_order_discount SET discount_kind=?, discount_value=?, min_order_amount=? WHERE id_promotion=?",
+        [$kind, $value, $minOrd, $ex['promotion_id']]);
+      // NB : id_shop (l'émetteur) n'est JAMAIS modifié à l'update — un bon garde
+      // son propriétaire (marque ou boutique) toute sa vie.
+      $params = [$exp, $maxUses, $idBrand, $tkind, $tid, $reqCust];
+      if ($hasReason) { $params[] = $rKind; $params[] = $rNote; $params[] = $cBy; }
+      $params[] = $ex['campaign_id'];
+      q("UPDATE voucher_campaign SET valid_to=?, usage_limit_total=?, id_brand=?, target_kind=?, target_id=?, requires_customer=?$reasonSetSql WHERE id=?",
+        $params);
+      q("UPDATE voucher_code SET status=?, valid_to=?, usage_limit=?, id_customer=? WHERE id=?",
+        [$cstatus, $exp, $maxUses, $custId, $ex['code_id']]);
+      q("INSERT IGNORE INTO voucher_campaign_channel (id_voucher_campaign, channel) VALUES (?, 'WS')", [$ex['campaign_id']]);
+    } else {
+      q("INSERT INTO promotion (name, description, promotion_type, status, priority, is_exclusive,
+             valid_from, valid_to, is_repeatable, shop_scope_type, activation_mode, soft_delete)
+         VALUES (?, ?, 'ORDER_DISCOUNT', ?, 0, 0, NULL, ?, 0, 'ALL_SHOPS', 'VOUCHER_ONLY', 0)",
+        [$name, $idShop !== null ? 'Bon boutique (franchisé)' : 'Bon marque (franchisor)', $status, $exp]);
+      $pid = $pdo->lastInsertId();
+      q("INSERT INTO promotion_order_discount (id_promotion, discount_kind, discount_value, min_order_amount)
+         VALUES (?,?,?,?)", [$pid, $kind, $value, $minOrd]);
+      $cols = "id_promotion, name, planned_promotion_type, status, code_type,
+               valid_from, valid_to, usage_limit_total, usage_limit_per_code, usage_limit_per_customer,
+               requires_customer, id_brand, id_shop, target_kind, target_id";
+      $vals = "?,?, 'ORDER_DISCOUNT', ?, 'SHARED', NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, ?";
+      $params = [$pid, $name, $status, $exp, $maxUses, $reqCust, $idBrand, $idShop, $tkind, $tid];
+      if ($hasReason) { $cols .= ", reason_kind, reason_note, created_by"; $vals .= ", ?, ?, ?"; $params[] = $rKind; $params[] = $rNote; $params[] = $cBy; }
+      q("INSERT INTO voucher_campaign ($cols) VALUES ($vals)", $params);
+      $cid = $pdo->lastInsertId();
+      q("INSERT INTO voucher_code (id_voucher_campaign, code, status, valid_from, valid_to, usage_limit, usage_count, id_customer)
+         VALUES (?,?,?, NULL, ?, ?, 0, ?)", [$cid, $code, $cstatus, $exp, $maxUses, $custId]);
+      q("INSERT INTO voucher_campaign_channel (id_voucher_campaign, channel) VALUES (?, 'WS')", [$cid]);
+    }
+    $pdo->commit();
+    return ['ok' => true, 'code' => $code];
+  } catch (Throwable $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
+    throw $e;
+  }
+}
+
 /* ─────────────────────────── Routes ─────────────────────────── */
 function dispatch($m, $p) {
   // helper de matching avec :param
@@ -599,11 +687,34 @@ function dispatch($m, $p) {
   if ($m === 'POST' && $p === '/vouchers/redeem') {
     rate_limit('voucher', 15, 600);   // anti brute-force des codes
     $b = body(); $sub = (float) ($b['subtotal'] ?? 0);
+    // Verrou boutique (aligné sur le checkout) : bon de boutique -> sa boutique
+    // seulement ; shop_id NULL = bon marque réseau.
+    $vShop = isset($b['shopId']) && $b['shopId'] !== '' ? (int) $b['shopId'] : 0;
     $v = row("SELECT code, type, value, min_order FROM ws_vouchers
                WHERE code=? AND active=1 AND (expires_at IS NULL OR expires_at>NOW())
-                 AND (max_uses IS NULL OR used_count<max_uses) LIMIT 1",
-             [strtoupper(trim($b['code'] ?? ''))]);
+                 AND (max_uses IS NULL OR used_count<max_uses)
+                 AND (shop_id IS NULL OR shop_id = ?) LIMIT 1",
+             [strtoupper(trim($b['code'] ?? '')), $vShop]);
     if (!$v) json_out(['ok' => false, 'message' => 'Code invalide']);
+    // Ciblage (0009) — même règle que le checkout : un bon CUSTOMER/OFFICE ne
+    // passe que pour la bonne personne. Refusé dès la prévisualisation, pour ne
+    // jamais afficher une remise qui sauterait ensuite à la facturation.
+    $tg = row("SELECT vc.target_kind, vc.target_id, vco.id_customer
+                 FROM voucher_code vco JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
+                WHERE vco.code = ? LIMIT 1", [$v['code']]);
+    if ($tg && ($tg['target_kind'] ?? 'NETWORK') !== 'NETWORK') {
+      $cidV = isset($b['customerId']) && $b['customerId'] !== '' ? (int) $b['customerId'] : null;
+      $okT = false;
+      if ($tg['target_kind'] === 'CUSTOMER') {
+        $okT = $cidV !== null && (int) $tg['id_customer'] === $cidV;
+      } elseif ($tg['target_kind'] === 'OFFICE') {
+        $off = $cidV !== null ? row("SELECT office_id FROM client WHERE id=?", [$cidV]) : null;
+        $okT = $off && $off['office_id'] !== null && (int) $off['office_id'] === (int) $tg['target_id'];
+      }
+      if (!$okT) json_out(['ok' => false, 'message' => $cidV === null
+        ? 'Code nominatif — connectez-vous pour l\'utiliser'
+        : 'Code réservé à un autre client']);
+    }
     if ($sub < (float) $v['min_order']) json_out(['ok' => false, 'message' => "Minimum {$v['min_order']} €"]);
     $disc = $v['type'] === 'percent' ? round($sub * (float) $v['value']) / 100
           : ($v['type'] === 'fixed' ? (float) $v['value'] : 0);
@@ -1066,9 +1177,13 @@ function dispatch($m, $p) {
     // 3. Bon de réduction (lu via la vue ws_vouchers = modèle ERP, canal WS) — validé serveur.
     $voucherCode = null; $voucherDisc = 0; $voucherFreeDelivery = false;
     if (!empty($b['voucher'])) {
+      // Verrou boutique : un bon émis par une boutique (shop_id non NULL) ne
+      // s'applique QUE chez elle ; shop_id NULL = bon marque, valable partout.
       $v = row("SELECT code, type, value, min_order FROM ws_vouchers
                  WHERE code=? AND active=1 AND (expires_at IS NULL OR expires_at>NOW())
-                   AND (max_uses IS NULL OR used_count<max_uses) LIMIT 1", [strtoupper(trim($b['voucher']))]);
+                   AND (max_uses IS NULL OR used_count<max_uses)
+                   AND (shop_id IS NULL OR shop_id = ?) LIMIT 1",
+               [strtoupper(trim($b['voucher'])), $shop]);
       $baseV = $subtotal - $promo - $webshopDisc;
       // Ciblage (0009) : un bon CUSTOMER/OFFICE/GROUP n'est applicable que si le client de
       // la commande appartient à la cible. NETWORK / bon legacy hors modèle -> pas de restriction.
@@ -2025,13 +2140,49 @@ function dispatch($m, $p) {
 
     // Bons marque (ws_vouchers, réseau = shop_id NULL).
     if ($m === 'GET' && $p === '/franchisor/vouchers') {
-      $vs = rows("SELECT code, type, value, expires_at FROM ws_vouchers WHERE active=1 ORDER BY code");
+      // Vue unifiée MARQUE : tous les bons WS du réseau — émetteur (marque /
+      // boutique), cible, motif (0041) et usages inclus.
+      $hasReason = col_exists('voucher_campaign', 'reason_kind');
+      $vs = rows("SELECT vco.code, vc.id_shop, sh.name AS shop_name,
+                         vc.target_kind, vc.target_id, vco.usage_count, vco.usage_limit,
+                         vco.valid_to AS expires_at," .
+                         ($hasReason ? " vc.reason_kind, vc.reason_note," : " NULL AS reason_kind, NULL AS reason_note,") . "
+                         CASE pod.discount_kind WHEN 'PERCENT' THEN 'percent'
+                              WHEN 'FIXED' THEN 'fixed' WHEN 'FREE_DELIVERY' THEN 'free_delivery'
+                              ELSE pod.discount_kind END AS type,
+                         pod.discount_value AS value,
+                         CASE WHEN pr.status='ACTIVE' AND vco.status='ACTIVE' THEN 1 ELSE 0 END AS active
+                    FROM voucher_code vco
+                    JOIN voucher_campaign vc          ON vc.id = vco.id_voucher_campaign
+                    JOIN voucher_campaign_channel vcc ON vcc.id_voucher_campaign = vc.id AND vcc.channel = 'WS'
+                    JOIN promotion pr                 ON pr.id = vc.id_promotion
+                    JOIN promotion_order_discount pod ON pod.id_promotion = pr.id
+                    LEFT JOIN $SHOPS sh               ON sh.id = vc.id_shop
+                   ORDER BY vc.id_shop IS NOT NULL, sh.name, vco.code");
+      $REASON = ['RECLAMATION' => 'Réclamation', 'GESTE_CO' => 'Geste commercial',
+                 'FIDELITE' => 'Fidélité', 'MARKETING' => 'Marketing'];
       $out = [];
       foreach ($vs as $v) {
         $val = $v['type'] === 'percent' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' %'
-             : ($v['type'] === 'fixed' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' €' : $v['type']);
+             : ($v['type'] === 'fixed' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' €' : 'port offert');
+        $cible = 'Réseau';
+        if ($v['target_kind'] === 'CUSTOMER' && $v['target_id']) {
+          $c2 = row("SELECT CONCAT(COALESCE(name,''),' ',COALESCE(surname,'')) n FROM client WHERE id=?", [(int) $v['target_id']]);
+          $cible = 'Client ' . trim(($c2['n'] ?? '') ?: ('#' . $v['target_id']));
+        } elseif ($v['target_kind'] === 'OFFICE' && $v['target_id']) {
+          $o2 = row("SELECT name FROM ws_offices WHERE id=?", [(int) $v['target_id']]);
+          $cible = 'Bureau ' . (($o2['name'] ?? '') ?: ('#' . $v['target_id']));
+        } elseif ($v['target_kind'] === 'GROUP' && $v['target_id']) {
+          $cible = 'Groupe #' . $v['target_id'];
+        }
         $out[] = ['code' => $v['code'], 'valeur' => $val, 'type' => $v['type'],
-                  'validite' => $v['expires_at'] ? ('jusqu\'au ' . substr($v['expires_at'], 0, 10)) : 'permanent'];
+                  'emetteur' => $v['id_shop'] === null ? 'Marque' : ($v['shop_name'] ?: ('Boutique ' . $v['id_shop'])),
+                  'cible'    => $cible,
+                  'motif'    => $v['reason_kind'] ? (($REASON[$v['reason_kind']] ?? $v['reason_kind'])
+                                . ($v['reason_note'] ? ' — ' . $v['reason_note'] : '')) : '—',
+                  'usages'   => (int) $v['usage_count'] . ($v['usage_limit'] !== null ? ' / ' . (int) $v['usage_limit'] : ''),
+                  'validite' => $v['expires_at'] ? ('jusqu\'au ' . substr($v['expires_at'], 0, 10)) : 'permanent',
+                  'act'      => (bool) $v['active']];
       }
       json_out($out);
     }
@@ -2402,46 +2553,18 @@ function dispatch($m, $p) {
       if (!in_array($tkind, ['NETWORK','CUSTOMER','OFFICE','GROUP'], true)) $tkind = 'NETWORK';
       $tid   = ($tkind !== 'NETWORK' && isset($b['target_id']) && $b['target_id'] !== '') ? (int) $b['target_id'] : null;
       if ($tkind !== 'NETWORK' && $tid === null) json_out(['error' => 'target_id requis pour un bon ciblé'], 400);
-      $reqCust = $tkind === 'CUSTOMER' ? 1 : 0;
-      $custId  = $tkind === 'CUSTOMER' ? $tid : null;
-      $pdo = db();
-      $pdo->beginTransaction();
-      try {
-        $ex = row("SELECT vco.id AS code_id, vc.id AS campaign_id, vc.id_promotion AS promotion_id
-                     FROM voucher_code vco JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
-                    WHERE vco.code = ? LIMIT 1", [$code]);
-        if ($ex) {
-          q("UPDATE promotion SET status=?, valid_to=? WHERE id=?", [$status, $exp, $ex['promotion_id']]);
-          q("UPDATE promotion_order_discount SET discount_kind=?, discount_value=?, min_order_amount=? WHERE id_promotion=?",
-            [$kind, $value, $minOrd, $ex['promotion_id']]);
-          q("UPDATE voucher_campaign SET valid_to=?, usage_limit_total=?, id_brand=?, target_kind=?, target_id=?, requires_customer=? WHERE id=?",
-            [$exp, $maxUses, $idBrand, $tkind, $tid, $reqCust, $ex['campaign_id']]);
-          q("UPDATE voucher_code SET status=?, valid_to=?, usage_limit=?, id_customer=? WHERE id=?",
-            [$cstatus, $exp, $maxUses, $custId, $ex['code_id']]);
-          q("INSERT IGNORE INTO voucher_campaign_channel (id_voucher_campaign, channel) VALUES (?, 'WS')", [$ex['campaign_id']]);
-        } else {
-          q("INSERT INTO promotion (name, description, promotion_type, status, priority, is_exclusive,
-                 valid_from, valid_to, is_repeatable, shop_scope_type, activation_mode, soft_delete)
-             VALUES (?, 'Bon marque (franchisor)', 'ORDER_DISCOUNT', ?, 0, 0, NULL, ?, 0, 'ALL_SHOPS', 'VOUCHER_ONLY', 0)",
-            ['Webshop — '.$code, $status, $exp]);
-          $pid = $pdo->lastInsertId();
-          q("INSERT INTO promotion_order_discount (id_promotion, discount_kind, discount_value, min_order_amount)
-             VALUES (?,?,?,?)", [$pid, $kind, $value, $minOrd]);
-          q("INSERT INTO voucher_campaign (id_promotion, name, planned_promotion_type, status, code_type,
-                 valid_from, valid_to, usage_limit_total, usage_limit_per_code, usage_limit_per_customer,
-                 requires_customer, id_brand, id_shop, target_kind, target_id)
-             VALUES (?,?, 'ORDER_DISCOUNT', ?, 'SHARED', NULL, ?, ?, NULL, NULL, ?, ?, NULL, ?, ?)",
-            [$pid, 'Webshop — '.$code, $status, $exp, $maxUses, $reqCust, $idBrand, $tkind, $tid]);
-          $cid = $pdo->lastInsertId();
-          q("INSERT INTO voucher_code (id_voucher_campaign, code, status, valid_from, valid_to, usage_limit, usage_count, id_customer)
-             VALUES (?,?,?, NULL, ?, ?, 0, ?)", [$cid, $code, $cstatus, $exp, $maxUses, $custId]);
-          q("INSERT INTO voucher_campaign_channel (id_voucher_campaign, channel) VALUES (?, 'WS')", [$cid]);
-        }
-        $pdo->commit();
-      } catch (Throwable $e) {
-        if ($pdo->inTransaction()) $pdo->rollBack();
-        throw $e;
-      }
+      // Chemin d'écriture UNIQUE (partagé avec le BO franchisé) : ws_voucher_upsert.
+      $r = ws_voucher_upsert([
+        'code' => $code, 'type' => $type, 'value' => $b['value'] ?? 0,
+        'min_order' => $b['min_order'] ?? 0, 'max_uses' => $b['max_uses'] ?? '',
+        'expires_at' => $b['expires_at'] ?? null, 'active' => $active,
+        'id_brand' => $idBrand, 'id_shop' => null,           // émetteur = MARQUE
+        'target_kind' => $tkind, 'target_id' => $tid,
+        'reason_kind' => $b['reason_kind'] ?? 'MARKETING',
+        'reason_note' => $b['reason_note'] ?? null,
+        'created_by'  => 'franchisor',
+      ]);
+      if (!empty($r['error'])) json_out(['error' => $r['error']], $r['status'] ?? 400);
       $audit('voucher.upsert', 'voucher_code', null, null, ['code' => $code]);
       json_out(['ok' => true]);
     }
@@ -2914,10 +3037,21 @@ function dispatch($m, $p) {
                   (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.customer_id=c.id) AS orders_total";
       else $sel .= ", 0 AS orders_count, NULL AS last_order, 0 AS orders_90d, 0 AS orders_total";
       // Vouchers nominatifs (ws_client_vouchers — migration 0025) : actif / consommé.
-      if ($tblExists('ws_client_vouchers'))
-        $sel .= ", (SELECT COUNT(*) FROM ws_client_vouchers v WHERE v.client_id=c.id AND v.active=1 AND v.used_count < v.max_uses) AS voucher_active,
-                  (SELECT COUNT(*) FROM ws_client_vouchers v WHERE v.client_id=c.id AND v.used_count > 0) AS voucher_used";
-      else $sel .= ", 0 AS voucher_active, 0 AS voucher_used";
+      // Bons nominatifs : modèle UNIFIÉ (cible CUSTOMER) + legacy ws_client_vouchers (0025).
+      $vaParts = []; $vuParts = [];
+      if ($tblExists('voucher_code')) {
+        $vaParts[] = "(SELECT COUNT(*) FROM voucher_code vco JOIN voucher_campaign vc2 ON vc2.id=vco.id_voucher_campaign
+                        WHERE vc2.target_kind='CUSTOMER' AND vc2.target_id=c.id AND vco.status='ACTIVE'
+                          AND (vco.usage_limit IS NULL OR vco.usage_count < vco.usage_limit))";
+        $vuParts[] = "(SELECT COUNT(*) FROM voucher_code vco JOIN voucher_campaign vc2 ON vc2.id=vco.id_voucher_campaign
+                        WHERE vc2.target_kind='CUSTOMER' AND vc2.target_id=c.id AND vco.usage_count > 0)";
+      }
+      if ($tblExists('ws_client_vouchers')) {
+        $vaParts[] = "(SELECT COUNT(*) FROM ws_client_vouchers v WHERE v.client_id=c.id AND v.active=1 AND v.used_count < v.max_uses)";
+        $vuParts[] = "(SELECT COUNT(*) FROM ws_client_vouchers v WHERE v.client_id=c.id AND v.used_count > 0)";
+      }
+      $sel .= $vaParts ? ", (" . implode(' + ', $vaParts) . ") AS voucher_active, (" . implode(' + ', $vuParts) . ") AS voucher_used"
+                       : ", 0 AS voucher_active, 0 AS voucher_used";
       // Réclamation CLIENT ouverte (≠ incident de livraison, sans client_id).
       if ($tblExists('ws_incidents') && col_exists('ws_incidents', 'client_id'))
         $sel .= ", (SELECT COUNT(*) FROM ws_incidents i WHERE i.client_id=c.id AND i.resolved_at IS NULL) AS complaint_open";
@@ -3108,19 +3242,134 @@ function dispatch($m, $p) {
       json_out(['ok' => true, 'corporate' => $corp, 'vat' => $corp ? $vat : null]);
     }
 
-    // ── Fiche client : voucher / remboursement nominatif (ws_client_vouchers). ──
-    //    Table dédiée (0025) — ws_vouchers est une VUE (0007), non inscriptible.
+    // ── BONS de la boutique (modèle ERP unifié — mêmes tables que la marque). ──
+    // Liste : MES bons (éditables) + les bons MARQUE applicables (lecture seule).
+    if ($m === 'GET' && $p === '/franchisee/fr-vouchers') {
+      if (!$tblExists('voucher_code')) json_out([]);
+      $hasReason = col_exists('voucher_campaign', 'reason_kind');
+      $vs = rows("SELECT vco.code, vc.id_shop, vc.target_kind, vc.target_id,
+                         vco.usage_count, vco.usage_limit, vco.valid_to AS expires_at," .
+                         ($hasReason ? " vc.reason_kind, vc.reason_note," : " NULL AS reason_kind, NULL AS reason_note,") . "
+                         CASE pod.discount_kind WHEN 'PERCENT' THEN 'percent'
+                              WHEN 'FIXED' THEN 'fixed' WHEN 'FREE_DELIVERY' THEN 'free_delivery'
+                              ELSE pod.discount_kind END AS type,
+                         pod.discount_value AS value, pod.min_order_amount AS min_order,
+                         CASE WHEN pr.status='ACTIVE' AND vco.status='ACTIVE' THEN 1 ELSE 0 END AS active
+                    FROM voucher_code vco
+                    JOIN voucher_campaign vc          ON vc.id = vco.id_voucher_campaign
+                    JOIN voucher_campaign_channel vcc ON vcc.id_voucher_campaign = vc.id AND vcc.channel = 'WS'
+                    JOIN promotion pr                 ON pr.id = vc.id_promotion
+                    JOIN promotion_order_discount pod ON pod.id_promotion = pr.id
+                   WHERE vc.id_shop IS NULL" . ($shopId ? " OR vc.id_shop = " . (int) $shopId : "") . "
+                   ORDER BY vc.id_shop IS NULL, vco.code");
+      $REASON = ['RECLAMATION' => 'Réclamation', 'GESTE_CO' => 'Geste commercial',
+                 'FIDELITE' => 'Fidélité', 'MARKETING' => 'Marketing'];
+      $out = [];
+      foreach ($vs as $v) {
+        $effet = $v['type'] === 'percent' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' %'
+               : ($v['type'] === 'fixed' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' €' : 'port offert');
+        if ((float) $v['min_order'] > 0) $effet .= ' dès ' . rtrim(rtrim(number_format((float) $v['min_order'], 2, ',', ''), '0'), ',') . ' €';
+        $cible = 'Tous les clients';
+        if ($v['target_kind'] === 'CUSTOMER' && $v['target_id']) {
+          $c2 = $tblExists('client') ? row("SELECT CONCAT(COALESCE(name,''),' ',COALESCE(surname,'')) n FROM client WHERE id=?", [(int) $v['target_id']]) : null;
+          $cible = 'Client ' . trim(($c2['n'] ?? '') ?: ('#' . $v['target_id']));
+        } elseif ($v['target_kind'] === 'OFFICE' && $v['target_id']) {
+          $o2 = $tblExists('ws_offices') ? row("SELECT name FROM ws_offices WHERE id=?", [(int) $v['target_id']]) : null;
+          $cible = 'Bureau ' . (($o2['name'] ?? '') ?: ('#' . $v['target_id']));
+        } elseif ($v['target_kind'] === 'GROUP' && $v['target_id']) {
+          $cible = 'Groupe #' . $v['target_id'];
+        }
+        $mine = $v['id_shop'] !== null && $shopId && (int) $v['id_shop'] === (int) $shopId;
+        $out[] = ['code' => $v['code'], 'effet' => $effet,
+                  'origine' => $v['id_shop'] === null ? 'Marque' : 'Ma boutique',
+                  'cible' => $cible,
+                  'motif' => $v['reason_kind'] ? (($REASON[$v['reason_kind']] ?? $v['reason_kind'])
+                              . ($v['reason_note'] ? ' — ' . $v['reason_note'] : '')) : '—',
+                  'usages' => (int) $v['usage_count'] . ($v['usage_limit'] !== null ? ' / ' . (int) $v['usage_limit'] : ''),
+                  'validite' => $v['expires_at'] ? ('jusqu\'au ' . substr($v['expires_at'], 0, 10)) : 'permanent',
+                  'act' => (bool) $v['active'], 'editable' => $mine,
+                  // Champs bruts pour le formulaire d'édition du BO.
+                  'type' => $v['type'], 'value' => (float) $v['value'], 'min_order' => (float) $v['min_order'],
+                  'max_uses' => $v['usage_limit'] !== null ? (int) $v['usage_limit'] : '',
+                  'expires_at' => $v['expires_at'] ? substr($v['expires_at'], 0, 10) : '',
+                  'target_kind' => $v['target_kind'] ?: 'NETWORK', 'target_id' => $v['target_id'],
+                  'reason_kind' => $v['reason_kind'] ?: '', 'reason_note' => $v['reason_note'] ?: ''];
+      }
+      json_out($out);
+    }
+
+    // Cibles possibles pour un bon de boutique : clients + bureaux de MA boutique.
+    if ($m === 'GET' && $p === '/franchisee/fr-voucher-targets') {
+      $clients = $tblExists('client')
+        ? rows("SELECT id, TRIM(CONCAT(COALESCE(name,''),' ',COALESCE(surname,''))) AS nom
+                  FROM client" .
+                (col_exists('client', 'id_main_shop') && $shopId ? " WHERE id_main_shop = " . (int) $shopId : "") . "
+                 ORDER BY nom LIMIT 500")
+        : [];
+      $offices = $tblExists('ws_offices')
+        ? rows("SELECT id, name AS nom FROM ws_offices WHERE active=1" .
+                (col_exists('ws_offices', 'shop_id') && $shopId ? " AND shop_id = " . (int) $shopId : "") . "
+                 ORDER BY name LIMIT 200")
+        : [];
+      json_out(['clients' => $clients, 'offices' => $offices]);
+    }
+
+    // Création / édition d'un bon de MA boutique (jamais un bon marque).
+    if ($m === 'POST' && $p === '/franchisee/voucher') {
+      if (!$shopId) json_out(['error' => 'boutique requise (?shop=)'], 400);
+      $b = body();
+      $r = ws_voucher_upsert([
+        'code' => $b['code'] ?? '', 'type' => $b['type'] ?? 'percent', 'value' => $b['value'] ?? 0,
+        'min_order' => $b['min_order'] ?? 0, 'max_uses' => $b['max_uses'] ?? '',
+        'expires_at' => $b['expires_at'] ?? null, 'active' => $b['active'] ?? 1,
+        'id_shop' => $shopId, 'owner_guard' => $shopId,       // émetteur = MA boutique, verrou d'édition
+        'target_kind' => $b['target_kind'] ?? 'NETWORK', 'target_id' => $b['target_id'] ?? null,
+        'reason_kind' => $b['reason_kind'] ?? null, 'reason_note' => $b['reason_note'] ?? null,
+        'created_by'  => 'shop:' . $shopId,
+      ]);
+      if (!empty($r['error'])) json_out(['ok' => false, 'error' => $r['error']], $r['status'] ?? 400);
+      json_out(['ok' => true, 'code' => $r['code']]);
+    }
+
+    // Activation / désactivation d'un bon de MA boutique.
+    if ($m === 'POST' && $p === '/franchisee/voucher-toggle') {
+      if (!$shopId) json_out(['error' => 'boutique requise (?shop=)'], 400);
+      $b = body(); $code = strtoupper(trim((string) ($b['code'] ?? '')));
+      $ex = row("SELECT vco.id AS code_id, vc.id_promotion AS promotion_id, vc.id_shop
+                   FROM voucher_code vco JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
+                  WHERE vco.code = ? LIMIT 1", [$code]);
+      if (!$ex) json_out(['ok' => false, 'error' => 'code inconnu'], 404);
+      if ((int) ($ex['id_shop'] ?? 0) !== (int) $shopId)
+        json_out(['ok' => false, 'error' => 'ce bon appartient à ' . ($ex['id_shop'] === null ? 'la marque' : 'une autre boutique')], 403);
+      $on = !empty($b['active']);
+      q("UPDATE voucher_code SET status=? WHERE id=?", [$on ? 'ACTIVE' : 'DISABLED', $ex['code_id']]);
+      q("UPDATE promotion SET status=? WHERE id=?", [$on ? 'ACTIVE' : 'DRAFT', $ex['promotion_id']]);
+      json_out(['ok' => true]);
+    }
+
+    // ── Fiche client : voucher / remboursement nominatif — désormais écrit dans
+    //    le MODÈLE UNIFIÉ (voucher_campaign id_shop=MA boutique, cible CUSTOMER).
+    //    Avant : table à part ws_client_vouchers (0025), JAMAIS lue au checkout
+    //    (codes morts). Les codes RB- émis ici sont maintenant réellement
+    //    utilisables au webshop — uniquement par CE client, dans CETTE boutique.
     if ($m === 'POST' && $p === '/franchisee/client-voucher') {
       $b = body();
       $cid = (int) ($b['client_id'] ?? 0);
       $val = (float) ($b['value'] ?? 0);
       if (!$cid || $val <= 0) json_out(['ok' => false, 'error' => 'client_id et value (>0) requis'], 400);
-      if (!$tblExists('ws_client_vouchers'))
-        json_out(['ok' => false, 'error' => 'ws_client_vouchers absente (migration 0025)'], 501);
+      if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
+      if (!$tblExists('voucher_code')) json_out(['ok' => false, 'error' => 'modèle vouchers ERP absent (migrations 0005+)'], 501);
       $type = in_array(($b['type'] ?? ''), ['percent', 'fixed'], true) ? $b['type'] : 'fixed';
       $code = 'RB-' . $cid . '-' . strtoupper(substr(bin2hex(random_bytes(4)), 0, 6));
-      q("INSERT INTO ws_client_vouchers (client_id, shop_id, code, type, value, max_uses, used_count, active)
-           VALUES (?,?,?,?,?,1,0,1)", [$cid, $shopId ?: null, $code, $type, $val]);
+      $r = ws_voucher_upsert([
+        'code' => $code, 'type' => $type, 'value' => $val, 'max_uses' => 1,
+        'id_shop' => $shopId, 'owner_guard' => $shopId,
+        'target_kind' => 'CUSTOMER', 'target_id' => $cid,
+        'reason_kind' => in_array(($b['reason'] ?? ''), ['RECLAMATION', 'GESTE_CO', 'FIDELITE'], true) ? $b['reason'] : 'GESTE_CO',
+        'reason_note' => $b['note'] ?? null,
+        'created_by'  => 'shop:' . $shopId,
+      ]);
+      if (!empty($r['error'])) json_out(['ok' => false, 'error' => $r['error']], $r['status'] ?? 400);
       json_out(['ok' => true, 'code' => $code, 'type' => $type, 'value' => $val]);
     }
 

@@ -3319,6 +3319,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             voucherInput={voucherInput} setVoucherInput={setVoucherInput}
             voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
             voucherDiscount={voucherDiscount}
+            customerId={user ? user.id : null}
           />
           {invoice && (
           <div className="ws-b2b">
@@ -3670,7 +3671,7 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
 
 function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, isOffice, isB2B, invoice, setInvoice, vat, setVat,
                          shopId, mode, voucherInput, setVoucherInput, voucherApplied, setVoucherApplied, voucherDiscount,
-                         deliveryFee, deliveryFeeResult, profile, companyId }) {
+                         deliveryFee, deliveryFeeResult, profile, companyId, customerId }) {
   const [voucherErr, setVoucherErr] = useState(null);
   const [voucherLoading, setVoucherLoading] = useState(false);
   // Infobulle « facture nominative » : ouverte au TAP, fermée au tap extérieur.
@@ -3693,7 +3694,7 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
     if (voucherApplied && voucherApplied.ok) {
       const code = voucherApplied.voucher.code;
       const validate = window.WSVouchers
-        ? () => window.WSVouchers.redeem({ code, shopId, subtotal, basket })
+        ? () => window.WSVouchers.redeem({ code, shopId, subtotal, basket, customerId })
         : () => Promise.resolve(validateVoucher(code, { subtotal, shopId }));
       validate().then((r) => {
         if (!r.ok) { setVoucherApplied(null); setVoucherErr(r.message); }
@@ -3709,7 +3710,7 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
     setVoucherLoading(true);
     try {
       const r = window.WSVouchers
-        ? await window.WSVouchers.redeem({ code, shopId, subtotal, basket })
+        ? await window.WSVouchers.redeem({ code, shopId, subtotal, basket, customerId })
         : validateVoucher(code, { subtotal, shopId });
       if (r.ok) { setVoucherApplied(r); setVoucherErr(null); }
       else { setVoucherApplied(null); setVoucherErr(r.message || 'Code invalide'); }
