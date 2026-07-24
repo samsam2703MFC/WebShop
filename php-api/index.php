@@ -164,6 +164,7 @@ function ws_voucher_upsert(array $o) {
   $value   = $type === 'free_delivery' ? null : (float) ($o['value'] ?? 0);
   $minOrd  = (float) ($o['min_order'] ?? 0);
   $maxUses = isset($o['max_uses']) && $o['max_uses'] !== '' ? (int) $o['max_uses'] : null;
+  $perCust = isset($o['per_customer']) && $o['per_customer'] !== '' && $o['per_customer'] !== null ? max(1, (int) $o['per_customer']) : null;
   $exp     = !empty($o['expires_at']) ? $o['expires_at'] : null;
   $active  = isset($o['active']) ? (!empty($o['active']) ? 1 : 0) : 1;
   $status  = $active ? 'ACTIVE' : 'DRAFT';
@@ -210,7 +211,8 @@ function ws_voucher_upsert(array $o) {
       $params = [$exp, $maxUses, $idBrand, $tkind, $tid, $reqCust];
       if ($hasReason) { $params[] = $rKind; $params[] = $rNote; $params[] = $cBy; }
       $params[] = $ex['campaign_id'];
-      q("UPDATE voucher_campaign SET valid_to=?, usage_limit_total=?, id_brand=?, target_kind=?, target_id=?, requires_customer=?$reasonSetSql WHERE id=?",
+      array_splice($params, 2, 0, [$perCust]);
+      q("UPDATE voucher_campaign SET valid_to=?, usage_limit_total=?, usage_limit_per_customer=?, id_brand=?, target_kind=?, target_id=?, requires_customer=?$reasonSetSql WHERE id=?",
         $params);
       q("UPDATE voucher_code SET status=?, valid_to=?, usage_limit=?, id_customer=? WHERE id=?",
         [$cstatus, $exp, $maxUses, $custId, $ex['code_id']]);
@@ -231,8 +233,8 @@ function ws_voucher_upsert(array $o) {
       $cols = "id_promotion, name, planned_promotion_type, status, code_type,
                valid_from, valid_to, usage_limit_total, usage_limit_per_code, usage_limit_per_customer,
                requires_customer, id_brand, id_shop, target_kind, target_id";
-      $vals = "?,?, 'ORDER_DISCOUNT', ?, 'SHARED', NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, ?";
-      $params = [$pid, $name, $status, $exp, $maxUses, $reqCust, $idBrand, $idShop, $tkind, $tid];
+      $vals = "?,?, 'ORDER_DISCOUNT', ?, 'SHARED', NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?";
+      $params = [$pid, $name, $status, $exp, $maxUses, $perCust, $reqCust, $idBrand, $idShop, $tkind, $tid];
       if ($hasReason) { $cols .= ", reason_kind, reason_note, created_by"; $vals .= ", ?, ?, ?"; $params[] = $rKind; $params[] = $rNote; $params[] = $cBy; }
       q("INSERT INTO voucher_campaign ($cols) VALUES ($vals)", $params);
       $cid = $pdo->lastInsertId();
@@ -2231,7 +2233,7 @@ function dispatch($m, $p) {
       // boutique), cible, motif (0041) et usages inclus.
       $hasReason = col_exists('voucher_campaign', 'reason_kind');
       $vs = rows("SELECT vco.code, vc.id_shop, sh.name AS shop_name,
-                         vc.target_kind, vc.target_id, vco.usage_count, vco.usage_limit,
+                         vc.target_kind, vc.target_id, vco.usage_count, vco.usage_limit, vc.usage_limit_per_customer,
                          vco.valid_to AS expires_at," .
                          (col_exists('promotion_order_discount', 'scope_id_product') ? " pod.scope_id_product, pod.scope_max_qty," : " NULL AS scope_id_product, NULL AS scope_max_qty,") .
                          ($hasReason ? " vc.reason_kind, vc.reason_note," : " NULL AS reason_kind, NULL AS reason_note,") . "
@@ -2273,7 +2275,8 @@ function dispatch($m, $p) {
                   'cible'    => $cible,
                   'motif'    => $v['reason_kind'] ? (($REASON[$v['reason_kind']] ?? $v['reason_kind'])
                                 . ($v['reason_note'] ? ' — ' . $v['reason_note'] : '')) : '—',
-                  'usages'   => (int) $v['usage_count'] . ($v['usage_limit'] !== null ? ' / ' . (int) $v['usage_limit'] : ''),
+                  'usages'   => (int) $v['usage_count'] . ($v['usage_limit'] !== null ? ' / ' . (int) $v['usage_limit'] : '')
+                              . ($v['usage_limit_per_customer'] !== null ? ' · ' . (int) $v['usage_limit_per_customer'] . '/client' : ''),
                   'validite' => $v['expires_at'] ? ('jusqu\'au ' . substr($v['expires_at'], 0, 10)) : 'permanent',
                   'act'      => (bool) $v['active']];
       }
@@ -2522,9 +2525,16 @@ function dispatch($m, $p) {
       $qq = trim((string) qp('q'));
       if (mb_strlen($qq) < 2) json_out([]);
       $like = '%'.$qq.'%';
-      json_out(rows("SELECT id, name, email, phone FROM client
-                      WHERE active=1 AND (name LIKE ? OR email LIKE ? OR phone LIKE ? OR phone_e164 LIKE ?)
-                      ORDER BY name LIMIT 20", [$like, $like, $like, $like]));
+      // Recherche élargie : nom, PRÉNOM, SOCIÉTÉ (« IBA » -> tous ses employés),
+      // email, téléphone. La société est renvoyée pour l'afficher dans le picker.
+      $hasSoc = col_exists('client', 'company_name');
+      $socSel = $hasSoc ? ", company_name AS soc" : ", NULL AS soc";
+      $socWhere = $hasSoc ? " OR company_name LIKE ?" : "";
+      $params = [$like, $like, $like, $like, $like];
+      if ($hasSoc) $params[] = $like;
+      json_out(rows("SELECT id, name, surname, email, phone$socSel FROM client
+                      WHERE active=1 AND (name LIKE ? OR surname LIKE ? OR email LIKE ? OR phone LIKE ? OR phone_e164 LIKE ?$socWhere)
+                      ORDER BY name LIMIT 20", $params));
     }
     // Recherche entreprise / bureau livré — bon ciblé OFFICE (nom / ville).
     if ($m === 'GET' && $p === '/franchisor/offices') {
@@ -2654,6 +2664,7 @@ function dispatch($m, $p) {
         'id_brand' => $idBrand, 'id_shop' => null,           // émetteur = MARQUE
         'target_kind' => $tkind, 'target_id' => $tid,
         'scope_product_id' => $b['scope_product_id'] ?? null, 'scope_max_qty' => $b['scope_max_qty'] ?? null,
+        'per_customer' => $b['per_customer'] ?? null,
         'reason_kind' => $b['reason_kind'] ?? 'MARKETING',
         'reason_note' => $b['reason_note'] ?? null,
         'created_by'  => 'franchisor',
@@ -3342,7 +3353,7 @@ function dispatch($m, $p) {
       if (!$tblExists('voucher_code')) json_out([]);
       $hasReason = col_exists('voucher_campaign', 'reason_kind');
       $vs = rows("SELECT vco.code, vc.id_shop, vc.target_kind, vc.target_id,
-                         vco.usage_count, vco.usage_limit, vco.valid_to AS expires_at," .
+                         vco.usage_count, vco.usage_limit, vc.usage_limit_per_customer, vco.valid_to AS expires_at," .
                          (col_exists('promotion_order_discount', 'scope_id_product') ? " pod.scope_id_product, pod.scope_max_qty," : " NULL AS scope_id_product, NULL AS scope_max_qty,") .
                          ($hasReason ? " vc.reason_kind, vc.reason_note," : " NULL AS reason_kind, NULL AS reason_note,") . "
                          CASE pod.discount_kind WHEN 'PERCENT' THEN 'percent'
@@ -3385,7 +3396,8 @@ function dispatch($m, $p) {
                   'cible' => $cible,
                   'motif' => $v['reason_kind'] ? (($REASON[$v['reason_kind']] ?? $v['reason_kind'])
                               . ($v['reason_note'] ? ' — ' . $v['reason_note'] : '')) : '—',
-                  'usages' => (int) $v['usage_count'] . ($v['usage_limit'] !== null ? ' / ' . (int) $v['usage_limit'] : ''),
+                  'usages' => (int) $v['usage_count'] . ($v['usage_limit'] !== null ? ' / ' . (int) $v['usage_limit'] : '')
+                            . ($v['usage_limit_per_customer'] !== null ? ' · ' . (int) $v['usage_limit_per_customer'] . '/client' : ''),
                   'validite' => $v['expires_at'] ? ('jusqu\'au ' . substr($v['expires_at'], 0, 10)) : 'permanent',
                   'act' => (bool) $v['active'], 'editable' => $mine,
                   // Champs bruts pour le formulaire d'édition du BO.
@@ -3393,6 +3405,7 @@ function dispatch($m, $p) {
                   'max_uses' => $v['usage_limit'] !== null ? (int) $v['usage_limit'] : '',
                   'expires_at' => $v['expires_at'] ? substr($v['expires_at'], 0, 10) : '',
                   'target_kind' => $v['target_kind'] ?: 'NETWORK', 'target_id' => $v['target_id'],
+                  'per_customer' => $v['usage_limit_per_customer'] !== null ? (int) $v['usage_limit_per_customer'] : '',
                   'scope_product_id' => $v['scope_id_product'] !== null ? (int) $v['scope_id_product'] : '',
                   'scope_max_qty' => $v['scope_max_qty'] !== null ? (int) $v['scope_max_qty'] : '',
                   'reason_kind' => $v['reason_kind'] ?: '', 'reason_note' => $v['reason_note'] ?: ''];
@@ -3403,7 +3416,8 @@ function dispatch($m, $p) {
     // Cibles possibles pour un bon de boutique : clients + bureaux de MA boutique.
     if ($m === 'GET' && $p === '/franchisee/fr-voucher-targets') {
       $clients = $tblExists('client')
-        ? rows("SELECT id, TRIM(CONCAT(COALESCE(name,''),' ',COALESCE(surname,''))) AS nom
+        ? rows("SELECT id, TRIM(CONCAT(COALESCE(name,''),' ',COALESCE(surname,''))) AS nom" .
+                (col_exists('client', 'company_name') ? ", company_name AS soc" : ", NULL AS soc") . "
                   FROM client" .
                 (col_exists('client', 'id_main_shop') && $shopId ? " WHERE id_main_shop = " . (int) $shopId : "") . "
                  ORDER BY nom LIMIT 500")
@@ -3428,6 +3442,7 @@ function dispatch($m, $p) {
         'id_shop' => $shopId, 'owner_guard' => $shopId,       // émetteur = MA boutique, verrou d'édition
         'target_kind' => $b['target_kind'] ?? 'NETWORK', 'target_id' => $b['target_id'] ?? null,
         'scope_product_id' => $b['scope_product_id'] ?? null, 'scope_max_qty' => $b['scope_max_qty'] ?? null,
+        'per_customer' => $b['per_customer'] ?? null,
         'reason_kind' => $b['reason_kind'] ?? null, 'reason_note' => $b['reason_note'] ?? null,
         'created_by'  => 'shop:' . $shopId,
       ]);
