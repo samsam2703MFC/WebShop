@@ -157,7 +157,20 @@ function erp_portion_options($shopId, array $ids) {
    Retourne ['ok'=>true] ou ['error'=>…, 'status'=>4xx]. */
 function ws_voucher_upsert(array $o) {
   $code = strtoupper(trim((string) ($o['code'] ?? '')));
-  if ($code === '') return ['error' => 'code requis', 'status' => 400];
+  if ($code === '') {
+    // Code facultatif : génération d'un code LISIBLE et UNIQUE (sans caractères
+    // ambigus 0/O/1/I). Préfixe selon l'émetteur : « B<shop>- » pour une
+    // boutique, « M- » pour la marque. Vérifié contre voucher_code.
+    $alpha = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    $prefix = !empty($o['id_shop']) ? ('B' . (int) $o['id_shop'] . '-') : 'M-';
+    for ($try = 0; $try < 25 && $code === ''; $try++) {
+      $rnd = '';
+      for ($i = 0; $i < 6; $i++) $rnd .= $alpha[random_int(0, strlen($alpha) - 1)];
+      $cand = $prefix . $rnd;
+      if (!row("SELECT 1 x FROM voucher_code WHERE code=? LIMIT 1", [$cand])) $code = $cand;
+    }
+    if ($code === '') return ['error' => 'génération du code impossible, réessayez', 'status' => 500];
+  }
   $type    = in_array($o['type'] ?? 'percent', ['percent','fixed','free_delivery'], true) ? $o['type'] : 'percent';
   $kindMap = ['percent'=>'PERCENT','fixed'=>'FIXED','free_delivery'=>'FREE_DELIVERY'];
   $kind    = $kindMap[$type];
@@ -2637,7 +2650,6 @@ function dispatch($m, $p) {
 
     if ($m === 'POST' && $p === '/franchisor/voucher') {
       $b = body(); $code = strtoupper(trim($b['code'] ?? ''));
-      if ($code === '') json_out(['error' => 'code requis'], 400);
       // Upsert dans le modèle ERP (ws_vouchers est désormais une vue) : bon marque réseau
       // (SHARED, id_shop NULL), remise portée par promotion_order_discount, canal WS.
       $type    = in_array($b['type'] ?? 'percent', ['percent','fixed','free_delivery'], true) ? $b['type'] : 'percent';
@@ -2671,8 +2683,8 @@ function dispatch($m, $p) {
         'created_by'  => 'franchisor',
       ]);
       if (!empty($r['error'])) json_out(['error' => $r['error']], $r['status'] ?? 400);
-      $audit('voucher.upsert', 'voucher_code', null, null, ['code' => $code]);
-      json_out(['ok' => true]);
+      $audit('voucher.upsert', 'voucher_code', null, null, ['code' => $r['code']]);
+      json_out(['ok' => true, 'code' => $r['code']]);
     }
 
     // Utilisateur back-office — INVITATION (password_hash '' = à définir).
