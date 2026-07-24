@@ -441,6 +441,20 @@ function dispatch($m, $p) {
           ? ($cat['label'] . ' (id ' . $cat['id'] . ') — ' . (((int) $cat['active'] === 1) ? 'active OK'
              : 'ECHEC — catégorie INACTIVE : pas d\'onglet au webshop pour ce produit'))
           : 'ECHEC — cat_id ' . $p2['cat_id'] . ' introuvable dans ws_categories';
+        // Sous-catégorie : le front filtre par p.sub_cat_id quand une puce
+        // (?sub=…) est sélectionnée — un produit sans rattachement disparaît
+        // de cette vue même s'il est visible dans l'onglet catégorie.
+        $sub2 = $p2['sub_cat_id'] !== null
+          ? row("SELECT id, label, active, category_id FROM ws_category_subs WHERE id=?", [(int) $p2['sub_cat_id']]) : null;
+        $chk['2b_sous_categorie'] = $p2['sub_cat_id'] === null
+          ? 'AUCUNE — visible dans l\'onglet catégorie et « Tous », mais PAS quand une puce de sous-catégorie est sélectionnée (rattacher via ws_products.sub_cat_id)'
+          : ($sub2
+             ? ($sub2['label'] . ' (id ' . $sub2['id'] . ') — ' . (((int) $sub2['active'] === 1) ? 'active OK'
+                : 'ECHEC — sous-catégorie INACTIVE : puce absente de la nav')
+                . (((int) $sub2['category_id'] === (int) $p2['cat_id']) ? ''
+                   : ' — ATTENTION : cette sous-catégorie appartient à la catégorie ' . $sub2['category_id']
+                     . ' alors que le produit est en catégorie ' . $p2['cat_id'] . ' (incohérence : jamais affiché sous la puce)'))
+             : 'ECHEC — sub_cat_id ' . $p2['sub_cat_id'] . ' introuvable dans ws_category_subs');
         $twins = rows("SELECT id, active FROM ws_products WHERE TRIM(name)=TRIM(?) AND id<>?", [$p2['name'], $id]);
         $chk['3_doublons_de_nom'] = $twins
           ? ('ATTENTION — ' . count($twins) . ' jumeau(x) du même nom : ' .
