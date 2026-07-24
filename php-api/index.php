@@ -2250,7 +2250,8 @@ function dispatch($m, $p) {
                     LEFT JOIN $SHOPS sh               ON sh.id = vc.id_shop
                    ORDER BY vc.id_shop IS NOT NULL, sh.name, vco.code");
       $REASON = ['RECLAMATION' => 'Réclamation', 'GESTE_CO' => 'Geste commercial',
-                 'FIDELITE' => 'Fidélité', 'MARKETING' => 'Marketing'];
+                 'FIDELITE' => 'Fidélité', 'MARKETING' => 'Marketing',
+                 'PARTENARIAT' => 'Partenariat', 'TEST' => 'Test / interne'];
       $out = [];
       foreach ($vs as $v) {
         $val = $v['type'] === 'percent' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' %'
@@ -3369,7 +3370,8 @@ function dispatch($m, $p) {
                    WHERE vc.id_shop IS NULL" . ($shopId ? " OR vc.id_shop = " . (int) $shopId : "") . "
                    ORDER BY vc.id_shop IS NULL, vco.code");
       $REASON = ['RECLAMATION' => 'Réclamation', 'GESTE_CO' => 'Geste commercial',
-                 'FIDELITE' => 'Fidélité', 'MARKETING' => 'Marketing'];
+                 'FIDELITE' => 'Fidélité', 'MARKETING' => 'Marketing',
+                 'PARTENARIAT' => 'Partenariat', 'TEST' => 'Test / interne'];
       $out = [];
       foreach ($vs as $v) {
         $effet = $v['type'] === 'percent' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' %'
@@ -3423,9 +3425,11 @@ function dispatch($m, $p) {
                  ORDER BY nom LIMIT 500")
         : [];
       $offices = $tblExists('ws_offices')
-        ? rows("SELECT id, name AS nom FROM ws_offices WHERE active=1" .
-                (col_exists('ws_offices', 'shop_id') && $shopId ? " AND shop_id = " . (int) $shopId : "") . "
-                 ORDER BY name LIMIT 200")
+        ? rows("SELECT o.id, o.name AS nom, o.city AS sub," .
+                (col_exists('client', 'office_id') ? " (SELECT COUNT(*) FROM client c2 WHERE c2.office_id = o.id) AS hc" : " NULL AS hc") . "
+                  FROM ws_offices o WHERE o.active=1" .
+                (col_exists('ws_offices', 'shop_id') && $shopId ? " AND o.shop_id = " . (int) $shopId : "") . "
+                 ORDER BY o.name LIMIT 200")
         : [];
       $products = rows("SELECT id, name AS nom FROM ws_products WHERE active=1 ORDER BY name LIMIT 500");
       json_out(['clients' => $clients, 'offices' => $offices, 'products' => $products]);
