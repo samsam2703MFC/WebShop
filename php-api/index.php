@@ -3376,10 +3376,11 @@ function dispatch($m, $p) {
       foreach ($vs as $v) {
         $effet = $v['type'] === 'percent' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' %'
                : ($v['type'] === 'fixed' ? '−' . rtrim(rtrim((string) $v['value'], '0'), '.') . ' €' : 'port offert');
+        $scopeName = '';
         if (!empty($v['scope_id_product'])) {
           $pn3 = row("SELECT name FROM ws_products WHERE id=?", [(int) $v['scope_id_product']]);
-          $effet .= ' sur ' . ($v['scope_max_qty'] !== null ? ((int) $v['scope_max_qty'] . ' × ') : '')
-                  . (($pn3['name'] ?? null) ?: ('produit #' . $v['scope_id_product']));
+          $scopeName = ($pn3['name'] ?? null) ?: ('produit #' . $v['scope_id_product']);
+          $effet .= ' sur ' . ($v['scope_max_qty'] !== null ? ((int) $v['scope_max_qty'] . ' × ') : '') . $scopeName;
         }
         if ((float) $v['min_order'] > 0) $effet .= ' dès ' . rtrim(rtrim(number_format((float) $v['min_order'], 2, ',', ''), '0'), ',') . ' €';
         $cible = 'Tous les clients';
@@ -3409,6 +3410,7 @@ function dispatch($m, $p) {
                   'target_kind' => $v['target_kind'] ?: 'NETWORK', 'target_id' => $v['target_id'],
                   'per_customer' => $v['usage_limit_per_customer'] !== null ? (int) $v['usage_limit_per_customer'] : '',
                   'scope_product_id' => $v['scope_id_product'] !== null ? (int) $v['scope_id_product'] : '',
+                  'scope_product_name' => $scopeName,
                   'scope_max_qty' => $v['scope_max_qty'] !== null ? (int) $v['scope_max_qty'] : '',
                   'reason_kind' => $v['reason_kind'] ?: '', 'reason_note' => $v['reason_note'] ?: ''];
       }
@@ -3431,7 +3433,17 @@ function dispatch($m, $p) {
                 (col_exists('ws_offices', 'shop_id') && $shopId ? " AND o.shop_id = " . (int) $shopId : "") . "
                  ORDER BY o.name LIMIT 200")
         : [];
-      $products = rows("SELECT id, name AS nom FROM ws_products WHERE active=1 ORDER BY name LIMIT 500");
+      $products = rows("SELECT p.id, p.name AS nom, c.label AS sub, COALESCE(pp.price, p.price) AS price
+                          FROM ws_products p
+                          LEFT JOIN ws_categories c ON c.id = p.cat_id
+                          LEFT JOIN ws_product_prices pp ON pp.product_id = p.id AND pp.shop_id = ? AND pp.active = 1
+                         WHERE p.active=1 ORDER BY p.name LIMIT 500", [$shopId ?: 0]);
+      // Prix ERP boutique (shop_product) fait autorité s'il existe.
+      if ($shopId && $products) {
+        $erpP = erp_shop_prices($shopId, array_map(static fn ($x2) => (int) $x2['id'], $products));
+        foreach ($products as &$pp3) { if (isset($erpP[(int) $pp3['id']])) $pp3['price'] = $erpP[(int) $pp3['id']]; $pp3['price'] = (float) $pp3['price']; }
+        unset($pp3);
+      }
       json_out(['clients' => $clients, 'offices' => $offices, 'products' => $products]);
     }
 
