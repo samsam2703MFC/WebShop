@@ -2817,6 +2817,80 @@ function dispatch($m, $p) {
       ]);
     }
 
+    // ── Disponibilité boutique (ws_shop_availability) — SOURCE UNIQUE lue par
+    //    le webshop (jours, heures, durée créneau, cut-off, lead). Le BO lit ET
+    //    écrit DIRECTEMENT cette table (avant : le BO écrivait dans ws_param,
+    //    déconnecté du webshop). Renvoyé en tableau d'une ligne (hydrate BOServer).
+    if ($m === 'GET' && $p === '/franchisee/fr-shop-availability') {
+      if (!$shopId) json_out([]);
+      $r = row("SELECT * FROM ws_shop_availability WHERE shop_id=?", [$shopId]);
+      $hm = fn ($t) => $t ? substr((string) $t, 0, 5) : '';
+      json_out([[
+        'shop_id'                    => $shopId,
+        'collect_enabled'            => $r ? (int) $r['collect_enabled'] : 1,
+        'delivery_enabled'           => $r ? (int) $r['delivery_enabled'] : 1,
+        'collect_open_days'          => $r && $r['collect_open_days'] ? (json_decode($r['collect_open_days'], true) ?: []) : [1,2,3,4,5,6],
+        'delivery_open_days'         => $r && $r['delivery_open_days'] ? (json_decode($r['delivery_open_days'], true) ?: []) : [1,2,3,4,5],
+        'collect_hours_start'        => $hm($r['collect_hours_start'] ?? '08:00'),
+        'collect_hours_end'          => $hm($r['collect_hours_end'] ?? '18:00'),
+        'delivery_hours_start'       => $hm($r['delivery_hours_start'] ?? '08:30'),
+        'delivery_hours_end'         => $hm($r['delivery_hours_end'] ?? '13:30'),
+        'collect_slot_duration_min'  => $r ? (int) $r['collect_slot_duration_min'] : 60,
+        'delivery_slot_duration_min' => $r ? (int) $r['delivery_slot_duration_min'] : 120,
+        'collect_cutoff_hour'        => $r ? (int) $r['collect_cutoff_hour'] : 16,
+        'collect_cutoff_minute'      => $r ? (int) $r['collect_cutoff_minute'] : 0,
+        'collect_lead_hours'         => $r ? (int) $r['collect_lead_hours'] : 2,
+        'delivery_cutoff_hour'       => $r ? (int) $r['delivery_cutoff_hour'] : 11,
+        'delivery_cutoff_minute'     => $r ? (int) $r['delivery_cutoff_minute'] : 0,
+        'delivery_lead_hours'        => $r ? (int) $r['delivery_lead_hours'] : 20,
+        'collect_capacity_per_slot'  => $r ? (int) $r['collect_capacity_per_slot'] : 15,
+        'delivery_capacity_per_slot' => $r ? (int) $r['delivery_capacity_per_slot'] : 30,
+      ]]);
+    }
+    // Écriture : upsert de la ligne ws_shop_availability de CETTE boutique.
+    if ($m === 'POST' && $p === '/franchisee/shop-availability') {
+      if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
+      if (!$tblExists('ws_shop_availability')) json_out(['ok' => false, 'error' => 'ws_shop_availability absente'], 501);
+      $b = body();
+      $dow = function ($v) {
+        $a = is_array($v) ? $v : [];
+        $a = array_values(array_unique(array_filter(array_map('intval', $a), fn ($d) => $d >= 1 && $d <= 7)));
+        sort($a); return json_encode($a);
+      };
+      $hhmm = function ($v, $def) {
+        $v = trim((string) $v);
+        return preg_match('/^\d{1,2}:\d{2}$/', $v) ? (str_pad(explode(':', $v)[0], 2, '0', STR_PAD_LEFT) . ':' . explode(':', $v)[1] . ':00') : $def;
+      };
+      $ci = fn ($k, $def, $min, $max) => max($min, min($max, isset($b[$k]) && $b[$k] !== '' ? (int) $b[$k] : $def));
+      q("INSERT INTO ws_shop_availability
+           (shop_id, collect_enabled, delivery_enabled, collect_open_days, delivery_open_days,
+            collect_hours_start, collect_hours_end, delivery_hours_start, delivery_hours_end,
+            collect_slot_duration_min, delivery_slot_duration_min,
+            collect_cutoff_hour, collect_cutoff_minute, collect_lead_hours,
+            delivery_cutoff_hour, delivery_cutoff_minute, delivery_lead_hours,
+            collect_capacity_per_slot, delivery_capacity_per_slot)
+         VALUES (?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?, ?,?,?, ?,?)
+         ON DUPLICATE KEY UPDATE
+            collect_enabled=VALUES(collect_enabled), delivery_enabled=VALUES(delivery_enabled),
+            collect_open_days=VALUES(collect_open_days), delivery_open_days=VALUES(delivery_open_days),
+            collect_hours_start=VALUES(collect_hours_start), collect_hours_end=VALUES(collect_hours_end),
+            delivery_hours_start=VALUES(delivery_hours_start), delivery_hours_end=VALUES(delivery_hours_end),
+            collect_slot_duration_min=VALUES(collect_slot_duration_min), delivery_slot_duration_min=VALUES(delivery_slot_duration_min),
+            collect_cutoff_hour=VALUES(collect_cutoff_hour), collect_cutoff_minute=VALUES(collect_cutoff_minute), collect_lead_hours=VALUES(collect_lead_hours),
+            delivery_cutoff_hour=VALUES(delivery_cutoff_hour), delivery_cutoff_minute=VALUES(delivery_cutoff_minute), delivery_lead_hours=VALUES(delivery_lead_hours),
+            collect_capacity_per_slot=VALUES(collect_capacity_per_slot), delivery_capacity_per_slot=VALUES(delivery_capacity_per_slot)",
+        [$shopId,
+         !empty($b['collect_enabled']) ? 1 : 0, !empty($b['delivery_enabled']) ? 1 : 0,
+         $dow($b['collect_open_days'] ?? []), $dow($b['delivery_open_days'] ?? []),
+         $hhmm($b['collect_hours_start'] ?? '', '08:00:00'), $hhmm($b['collect_hours_end'] ?? '', '18:00:00'),
+         $hhmm($b['delivery_hours_start'] ?? '', '08:30:00'), $hhmm($b['delivery_hours_end'] ?? '', '13:30:00'),
+         $ci('collect_slot_duration_min', 60, 5, 720), $ci('delivery_slot_duration_min', 120, 5, 720),
+         $ci('collect_cutoff_hour', 16, 0, 23), $ci('collect_cutoff_minute', 0, 0, 59), $ci('collect_lead_hours', 2, 0, 336),
+         $ci('delivery_cutoff_hour', 11, 0, 23), $ci('delivery_cutoff_minute', 0, 0, 59), $ci('delivery_lead_hours', 20, 0, 336),
+         $ci('collect_capacity_per_slot', 15, 1, 9999), $ci('delivery_capacity_per_slot', 30, 1, 9999)]);
+      json_out(['ok' => true]);
+    }
+
     // ── KPIs du jour — shape vstat du design (couleurs CSS brutes). ──
     if ($m === 'GET' && $p === '/franchisee/kpis') {
       if (!$hasOrders) json_out([]);
