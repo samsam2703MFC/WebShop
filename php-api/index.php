@@ -1578,22 +1578,31 @@ function dispatch($m, $p) {
       // Usage du bon via le modèle ERP (ws_vouchers est désormais une vue non-inscriptible) :
       // incrément voucher_code.usage_count + redemption tracée (canal WS, idempotence request_key).
       if ($voucherCode) {
-        $vref = row("SELECT vco.id AS code_id, vco.id_voucher_campaign AS campaign_id, vc.id_promotion AS promotion_id
-                       FROM voucher_code vco JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
-                      WHERE vco.code = ? LIMIT 1", [$voucherCode]);
-        if ($vref) {
-          q("UPDATE voucher_code SET usage_count = usage_count + 1 WHERE id = ?", [$vref['code_id']]);
-          // id_shop est NOT NULL + FK -> franchisee_shop ; ws_shops.id = franchisee_shop.id.
-          // On n'insère la redemption que si le shop existe côté ERP (sinon on ne bloque pas la commande).
-          $fsOk = row("SELECT 1 AS x FROM franchisee_shop WHERE id = ? LIMIT 1", [$shop]);
-          if ($fsOk) {
-            q("INSERT INTO voucher_redemption
-                 (id_voucher_code, id_voucher_campaign, id_promotion, id_transaction, id_shop,
-                  id_customer, id_employee, discount_value, status, channel, request_key)
-               VALUES (?,?,?, NULL, ?, ?, NULL, ?, 'CONFIRMED', 'WS', ?)",
-              [$vref['code_id'], $vref['campaign_id'], $vref['promotion_id'], $shop,
-               $b['customerId'] ?? null, $voucherDisc, 'WS-ORDER-'.$oid]);
+        // SUIVI du bon (compteur + redemption) : ENTOURÉ d'un try/catch dédié.
+        // Une contrainte sur voucher_redemption (FK/NOT NULL/unique) ne doit
+        // JAMAIS annuler la commande — la remise est déjà dans le total et dans
+        // ws_orders.voucher_code/voucher_discount. En MySQL, un INSERT en échec
+        // n'abandonne que SON instruction, pas la transaction : on log et on
+        // poursuit le commit de la commande.
+        try {
+          $vref = row("SELECT vco.id AS code_id, vco.id_voucher_campaign AS campaign_id, vc.id_promotion AS promotion_id
+                         FROM voucher_code vco JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
+                        WHERE vco.code = ? LIMIT 1", [$voucherCode]);
+          if ($vref) {
+            q("UPDATE voucher_code SET usage_count = usage_count + 1 WHERE id = ?", [$vref['code_id']]);
+            // id_shop est NOT NULL + FK -> franchisee_shop ; ws_shops.id = franchisee_shop.id.
+            $fsOk = row("SELECT 1 AS x FROM franchisee_shop WHERE id = ? LIMIT 1", [$shop]);
+            if ($fsOk) {
+              q("INSERT INTO voucher_redemption
+                   (id_voucher_code, id_voucher_campaign, id_promotion, id_transaction, id_shop,
+                    id_customer, id_employee, discount_value, status, channel, request_key)
+                 VALUES (?,?,?, NULL, ?, ?, NULL, ?, 'CONFIRMED', 'WS', ?)",
+                [$vref['code_id'], $vref['campaign_id'], $vref['promotion_id'], $shop,
+                 $b['customerId'] ?? null, $voucherDisc, 'WS-ORDER-'.$oid]);
+            }
           }
+        } catch (Throwable $ev) {
+          error_log('[ws] suivi bon (voucher_redemption) échoué, commande conservée : ' . $ev->getMessage());
         }
       }
       $pdo->commit();
