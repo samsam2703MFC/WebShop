@@ -763,7 +763,7 @@ function dispatch($m, $p) {
              : ($kind === 'FIXED' ? '−' . rtrim(rtrim((string) $r['discount_value'], '0'), '.') . ' €' : 'Livraison offerte');
         if (!empty($r['scope_id_product'])) {
           $pn = row("SELECT name FROM ws_products WHERE id=?", [(int) $r['scope_id_product']]);
-          $pname = ($pn['name'] ?? null) ?: 'un produit';
+          $pname = trim((string) (($pn['name'] ?? null) ?: 'un produit'));
           $val = $isGift ? ($pname . ' offert') : ($val . ' sur ' . ($r['scope_max_qty'] !== null ? ((int) $r['scope_max_qty'] . ' × ') : '') . $pname);
         }
         $minOrd = (float) $r['min_order_amount'];
