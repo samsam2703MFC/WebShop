@@ -498,7 +498,11 @@ function portionOptionList(p) {
       return { v: o.v, d: sh.d, name: o.label || sh.name, price: Number(o.price) || 0 };
     });
   }
+  // Repli historique (sans prix ERP) : ENTIÈRE d'abord (défaut naturel), puis
+  // 1/2, puis 1/4 — l'ordre de PORTION_SHAPES mettait 1/4 en tête, ce qui
+  // sélectionnait « 1/4 » par défaut au lieu de l'entière.
   return PORTION_SHAPES.filter((s) => !s.erpOnly)
+    .slice().reverse()
     .map((s) => ({ v: s.v, d: s.d, name: s.name, price: (p?.price || 0) * s.factor }));
 }
 
@@ -597,7 +601,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     setQty(1);
     // Portion par défaut = la PREMIÈRE option proposée (l'entière quand les
     // options ERP sont fournies, sinon le comportement historique).
-    setPortion(portionOptionList(product)[0]?.v || 'entier');
+    setPortion((portionOptionList(product).find((o) => o.v === 'entier') || portionOptionList(product)[0])?.v || 'entier');
     setBundleSlots({});
     setCarIdx(0);
     if (product?.options) {
@@ -641,12 +645,14 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   const deliveryStockLeft = mode === 'delivery' && qtyAvailable !== null ? Math.max(0, qtyAvailable) : null;
 
   let unit = product?.price || 0;
-  // Prix de la portion choisie : prix EXPLICITE de l'ERP quand fourni
-  // (shop_product_portion_price), sinon repli base × facteur historique.
-  if (product?.portions) {
-    const opt = portionOptionList(product).find((o) => o.v === portion);
-    unit = opt ? opt.price : unit;
-  }
+  // Portion RÉSOLUE : la portion choisie si elle existe dans la liste, sinon
+  // on retombe sur l'Entière (jamais sur une portion fantôme). Prix ET libellé
+  // dérivent de CETTE option -> impossible d'afficher « 1/4 » à prix d'entière.
+  const _plist = product?.portions ? portionOptionList(product) : [];
+  const portOpt = product?.portions
+    ? (_plist.find((o) => o.v === portion) || _plist.find((o) => o.v === 'entier') || _plist[0] || null)
+    : null;
+  if (portOpt) unit = portOpt.price;
   if (product?.options) {
     for (const o of product.options) {
       const choiceId = sel[o.id];
@@ -786,11 +792,13 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     });
     onAdd({
       productId: product.id,
-      name: product.name + (portion === 'demi' ? ' — 1/2' : portion === 'quart' ? ' — 1/4' : ''),
+      // Libellé dérivé de la portion RÉSOLUE (portOpt) : cohérent avec le prix.
+      // Pas de suffixe pour l'Entière.
+      name: product.name + (portOpt && portOpt.v !== 'entier' ? ' — ' + portOpt.name : ''),
       qty,
       price: qty > 0 ? total / qty : (unit + bundleDelta + upsellDelta),
       options: optionLabels.map((label) => ({ label })),
-      portion: product.portions ? portion : null,
+      portion: portOpt ? portOpt.v : null,
       cat: product.cat,
       crossPortion: !!product.crossPortion,
       basePrice: product.price,

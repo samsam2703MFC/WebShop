@@ -805,7 +805,10 @@ function dispatch($m, $p) {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
     json_out(row("SELECT * FROM ws_shop_availability WHERE shop_id = ?", [$s]) ?: []);
   }
-  if ($m === 'GET' && $p === '/calendar/slots') {
+  // /calendar/slots ET /availability/slots (alias) : le front (WSAvailability
+  // en priorité, sinon WSCalendar) interroge /availability/slots — sans cet
+  // alias il recevait 404 et AUCUN créneau ne s'affichait au checkout.
+  if ($m === 'GET' && ($p === '/calendar/slots' || $p === '/availability/slots')) {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
     json_out(rows("SELECT id, mode, label, sort_order FROM ws_slots
                     WHERE shop_id=? AND mode=? AND active=1 ORDER BY sort_order", [$s, qp('mode') ?: 'collect']));
