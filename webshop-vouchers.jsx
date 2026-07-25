@@ -124,6 +124,20 @@
       return validateVoucher(code, { shopId, subtotal });
     },
 
+    /* Bons DISPONIBLES pour ce client + boutique (marketing : affichage +
+       application en un clic). Renvoie [] sans endpoint ou en cas d'erreur. */
+    async available({ shopId, customerId, subtotal } = {}) {
+      if (!WSVouchers.endpoint) return [];
+      try {
+        const qs = new URLSearchParams({ shopId: shopId || '' });
+        if (customerId != null && customerId !== '') qs.set('customerId', String(customerId));
+        if (subtotal != null) qs.set('subtotal', String(subtotal));
+        const r = await fetch(`${WSVouchers.endpoint}/available?${qs}`, { credentials: 'include' });
+        if (r.ok) { const j = await r.json(); return Array.isArray(j) ? j : []; }
+      } catch (_) {}
+      return [];
+    },
+
     /* List all vouchers — admin use only. */
     async list() {
       if (WSVouchers.endpoint) {

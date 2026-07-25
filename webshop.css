@@ -3156,6 +3156,33 @@
 /* Ligne de remise (bon) dans le récapitulatif : verte et lisible. */
 .ws-co-summary__row--promo { color: #2f7a4d; font-weight: 600; }
 .ws-co-summary__row--promo span { color: #2f7a4d; }
+
+/* Bons DISPONIBLES (marketing) — le client applique en un clic. */
+.ws-co-avail { margin-top: 12px; }
+.ws-co-avail__head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--color-primary, #8D1D2C);
+  margin-bottom: 8px;
+}
+.ws-co-avail__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ws-co-avail__item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; border-radius: 10px;
+  background: #fbf3ee; border: 1px solid #eddccf;
+}
+.ws-co-avail__item.is-personal { background: #fdf1f2; border-color: #e6c3c8; }
+.ws-co-avail__info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ws-co-avail__label { font-size: 13px; font-weight: 600; color: var(--color-text, #2c241b); }
+.ws-co-avail__perso { font-size: 11px; font-weight: 500; color: var(--color-primary, #8D1D2C); }
+.ws-co-avail__code { font: 500 11px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .04em; color: var(--color-text-muted, #9a8d7a); }
+.ws-co-avail__apply {
+  flex: 0 0 auto; font: inherit; font-size: 12px; font-weight: 600;
+  padding: 8px 14px; border-radius: 8px; cursor: pointer;
+  background: var(--color-primary, #8D1D2C); color: #fff; border: none;
+  transition: opacity .12s;
+}
+.ws-co-avail__apply:hover { opacity: .88; }
+.ws-co-avail__apply:disabled { background: transparent; color: var(--color-text-muted, #9a8d7a); border: 1px solid var(--color-border-secondary, #d9d2c4); cursor: not-allowed; font-weight: 500; }
 .ws-co-voucher__remove {
   font: inherit; font-size: 11px;
   background: none; border: none; cursor: pointer;

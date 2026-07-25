@@ -3711,16 +3711,29 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
     }
   }, [subtotal, shopId]);
 
-  async function applyVoucher() {
+  // Bons DISPONIBLES (marketing) : chargés pour ce client + boutique, appliqués
+  // en un clic (le client ne retape pas le code).
+  const [availVouchers, setAvailVouchers] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    if (window.WSVouchers && typeof window.WSVouchers.available === 'function') {
+      window.WSVouchers.available({ shopId, customerId, subtotal })
+        .then((list) => { if (alive) setAvailVouchers(Array.isArray(list) ? list : []); })
+        .catch(() => {});
+    }
+    return () => { alive = false; };
+  }, [shopId, customerId, subtotal]);
+
+  async function applyVoucher(forcedCode) {
     setVoucherErr(null);
-    const code = (voucherInput || '').trim();
+    const code = (forcedCode != null ? String(forcedCode) : (voucherInput || '')).trim();
     if (!code) return;
     setVoucherLoading(true);
     try {
       const r = window.WSVouchers
         ? await window.WSVouchers.redeem({ code, shopId, subtotal, basket, customerId })
         : validateVoucher(code, { subtotal, shopId });
-      if (r.ok) { setVoucherApplied(r); setVoucherErr(null); }
+      if (r.ok) { setVoucherApplied(r); setVoucherErr(null); setVoucherInput(code); }
       else { setVoucherApplied(null); setVoucherErr(r.message || 'Code invalide'); }
     } catch (_) {
       setVoucherErr('Erreur réseau lors de la validation du code.');
@@ -3770,6 +3783,32 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
           </div>
         )}
         {voucherErr && <div className="ws-co-voucher__err">{voucherErr}</div>}
+
+        {/* Bons DISPONIBLES — marketing : le client applique en un clic sans retaper. */}
+        {!(voucherApplied && voucherApplied.ok) && availVouchers.length > 0 && (
+          <div className="ws-co-avail">
+            <div className="ws-co-avail__head">
+              <PortionGlyph size={13}/>
+              <span>{availVouchers.length > 1 ? 'Vos codes promo disponibles' : 'Vous avez un code promo'}</span>
+            </div>
+            <ul className="ws-co-avail__list">
+              {availVouchers.map((v) => (
+                <li key={v.code} className={'ws-co-avail__item' + (v.personal ? ' is-personal' : '')}>
+                  <div className="ws-co-avail__info">
+                    <span className="ws-co-avail__label">{v.label}{v.personal && <span className="ws-co-avail__perso"> · rien qu’à vous</span>}</span>
+                    <span className="ws-co-avail__code">{v.code}{v.hint ? ' · ' + v.hint : ''}</span>
+                  </div>
+                  <button type="button" className="ws-co-avail__apply"
+                    disabled={!v.reachable || voucherLoading}
+                    title={v.reachable ? '' : ('Applicable ' + v.hint)}
+                    onClick={() => applyVoucher(v.code)}>
+                    {v.reachable ? 'Appliquer' : v.hint}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
 
       <div className="ws-co-summary">

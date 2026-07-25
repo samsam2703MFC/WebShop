@@ -711,6 +711,63 @@ function dispatch($m, $p) {
                    'threshold' => (int) $r['threshold'], 'scope' => 'crossPortion', 'label' => $r['label']]
                 : ['active' => false]);
   }
+  // Bons DISPONIBLES pour ce client + cette boutique — outil marketing : le
+  // client voit ses codes applicables et les applique en un clic (pas de saisie).
+  //   Réseau (id_shop NULL/=shop) + nominatifs (CUSTOMER/OFFICE de CE client).
+  //   Filtrés : actifs, non expirés, non épuisés (global + par client), éligibles.
+  if ($m === 'GET' && $p === '/vouchers/available') {
+    $s = (int) (qp('shopId') ?: 0); if (!$s) json_out([]);
+    if (!$tblExists('voucher_code')) json_out([]);
+    $cid = is_numeric(qp('customerId')) ? (int) qp('customerId') : null;
+    $sub = (float) (qp('subtotal') ?: 0);
+    $officeId = null;
+    if ($cid) { $c = row("SELECT office_id FROM client WHERE id=?", [$cid]); $officeId = $c['office_id'] ?? null; }
+    $hasScope = col_exists('promotion_order_discount', 'scope_id_product');
+    try {
+      $rows = rows("SELECT vco.id AS code_id, vco.code, vc.id_shop, vc.target_kind, vc.target_id, vco.id_customer,
+                           vc.usage_limit_per_customer, vco.usage_limit, vco.usage_count,
+                           pod.discount_kind, pod.discount_value, pod.min_order_amount" .
+                           ($hasScope ? ", pod.scope_id_product, pod.scope_max_qty" : ", NULL AS scope_id_product, NULL AS scope_max_qty") . "
+                      FROM voucher_code vco
+                      JOIN voucher_campaign vc            ON vc.id = vco.id_voucher_campaign
+                      JOIN voucher_campaign_channel vcc   ON vcc.id_voucher_campaign = vc.id AND vcc.channel='WS'
+                      JOIN promotion pr                   ON pr.id = vc.id_promotion AND pr.status='ACTIVE'
+                      JOIN promotion_order_discount pod   ON pod.id_promotion = pr.id
+                     WHERE vco.status='ACTIVE'
+                       AND (vco.valid_to IS NULL OR vco.valid_to > NOW())
+                       AND (vc.id_shop IS NULL OR vc.id_shop = ?)
+                       AND (vco.usage_limit IS NULL OR vco.usage_count < vco.usage_limit)
+                     ORDER BY vc.id_shop IS NULL, vco.id DESC", [$s]);
+    } catch (Throwable $e) { json_out([]); }
+    $out = [];
+    foreach ($rows as $r) {
+      $tk = $r['target_kind'] ?: 'NETWORK';
+      if ($tk === 'CUSTOMER') { if (!$cid || (int) $r['id_customer'] !== $cid) continue; }
+      elseif ($tk === 'OFFICE') { if (!$officeId || (int) $r['target_id'] !== (int) $officeId) continue; }
+      elseif ($tk === 'GROUP') { continue; }
+      if ($r['usage_limit_per_customer'] !== null) {
+        if (!$cid) continue; // nominatif : nécessite un compte
+        $used = row("SELECT COUNT(*) n FROM voucher_redemption WHERE id_voucher_code=? AND id_customer=? AND status='CONFIRMED'", [$r['code_id'], $cid]);
+        if ((int) ($used['n'] ?? 0) >= (int) $r['usage_limit_per_customer']) continue;
+      }
+      $kind = $r['discount_kind'];
+      $isGift = $kind === 'PERCENT' && (float) $r['discount_value'] >= 100 && !empty($r['scope_id_product']);
+      $val = $kind === 'PERCENT' ? '−' . rtrim(rtrim((string) $r['discount_value'], '0'), '.') . ' %'
+           : ($kind === 'FIXED' ? '−' . rtrim(rtrim((string) $r['discount_value'], '0'), '.') . ' €' : 'Livraison offerte');
+      if (!empty($r['scope_id_product'])) {
+        $pn = row("SELECT name FROM ws_products WHERE id=?", [(int) $r['scope_id_product']]);
+        $pname = ($pn['name'] ?? null) ?: 'un produit';
+        $val = $isGift ? ($pname . ' offert') : ($val . ' sur ' . ($r['scope_max_qty'] !== null ? ((int) $r['scope_max_qty'] . ' × ') : '') . $pname);
+      }
+      $minOrd = (float) $r['min_order_amount'];
+      $out[] = ['code' => $r['code'], 'label' => $val,
+                'min_order' => $minOrd,
+                'reachable' => $minOrd <= 0 || $sub >= $minOrd,
+                'hint' => $minOrd > 0 ? ('dès ' . rtrim(rtrim(number_format($minOrd, 2, ',', ''), '0'), ',') . ' €') : '',
+                'personal' => $tk !== 'NETWORK'];
+    }
+    json_out($out);
+  }
   if ($m === 'POST' && $p === '/vouchers/redeem') {
     rate_limit('voucher', 15, 600);   // anti brute-force des codes
     $b = body(); $sub = (float) ($b['subtotal'] ?? 0);
