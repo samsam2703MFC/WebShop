@@ -717,7 +717,10 @@ function dispatch($m, $p) {
   //   Filtrés : actifs, non expirés, non épuisés (global + par client), éligibles.
   if ($m === 'GET' && $p === '/vouchers/available') {
     $s = (int) (qp('shopId') ?: 0); if (!$s) json_out([]);
-    if (!$tblExists('voucher_code')) json_out([]);
+    // $tblExists n'existe QUE dans le bloc /franchisee/ — ici (racine) on
+    // utilise une vérification directe (sinon « null is not callable » → 500).
+    $tbl = fn ($t) => (bool) row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", [$t]);
+    if (!$tbl('voucher_code')) json_out([]);
     try {
       $cid = is_numeric(qp('customerId')) ? (int) qp('customerId') : null;
       $sub = (float) (qp('subtotal') ?: 0);
@@ -726,7 +729,7 @@ function dispatch($m, $p) {
         $c = row("SELECT office_id FROM client WHERE id=?", [$cid]); $officeId = $c['office_id'] ?? null;
       }
       $hasScope = col_exists('promotion_order_discount', 'scope_id_product');
-      $hasRedem = $tblExists('voucher_redemption');
+      $hasRedem = $tbl('voucher_redemption');
       $rows = rows("SELECT vco.id AS code_id, vco.code, vc.id_shop, vc.target_kind, vc.target_id, vco.id_customer,
                            vc.usage_limit_per_customer, vco.usage_limit, vco.usage_count,
                            pod.discount_kind, pod.discount_value, pod.min_order_amount" .
