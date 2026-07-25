@@ -805,13 +805,38 @@ function dispatch($m, $p) {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
     json_out(row("SELECT * FROM ws_shop_availability WHERE shop_id = ?", [$s]) ?: []);
   }
-  // /calendar/slots ET /availability/slots (alias) : le front (WSAvailability
-  // en priorité, sinon WSCalendar) interroge /availability/slots — sans cet
-  // alias il recevait 404 et AUCUN créneau ne s'affichait au checkout.
+  // Créneaux — /calendar/slots ET /availability/slots (le front interroge
+  // /availability/slots). Deux sources, dans l'ordre, SANS jamais inventer :
+  //   1) créneaux EXPLICITES encodés par la boutique (ws_slots) -> priment ;
+  //   2) sinon GÉNÉRATION depuis les VRAIES heures + durée de la boutique
+  //      (ws_shop_availability.{collect,delivery}_hours_* + *_slot_duration_min).
+  //   3) aucune config -> [] (jamais de créneau fictif).
   if ($m === 'GET' && ($p === '/calendar/slots' || $p === '/availability/slots')) {
-    $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    json_out(rows("SELECT id, mode, label, sort_order FROM ws_slots
-                    WHERE shop_id=? AND mode=? AND active=1 ORDER BY sort_order", [$s, qp('mode') ?: 'collect']));
+    $s = (int) qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+    $mode = qp('mode') ?: 'collect';
+    $explicit = rows("SELECT id, mode, label, sort_order FROM ws_slots
+                       WHERE shop_id=? AND mode=? AND active=1 ORDER BY sort_order", [$s, $mode]);
+    if ($explicit) json_out($explicit);
+    $av = row("SELECT collect_hours_start, collect_hours_end, collect_slot_duration_min, collect_capacity_per_slot,
+                      delivery_hours_start, delivery_hours_end, delivery_slot_duration_min, delivery_capacity_per_slot
+                 FROM ws_shop_availability WHERE shop_id=?", [$s]);
+    if (!$av) json_out([]);
+    if ($mode === 'delivery') {
+      $start = $av['delivery_hours_start']; $end = $av['delivery_hours_end'];
+      $dur = (int) $av['delivery_slot_duration_min']; $cap = (int) $av['delivery_capacity_per_slot'];
+    } else {
+      $start = $av['collect_hours_start']; $end = $av['collect_hours_end'];
+      $dur = (int) $av['collect_slot_duration_min']; $cap = (int) $av['collect_capacity_per_slot'];
+    }
+    if (!$start || !$end || $dur <= 0) json_out([]);
+    $t0 = strtotime($start); $t1 = strtotime($end); $step = $dur * 60;
+    $out = []; $i = 0;
+    for ($t = $t0; $t + $step <= $t1; $t += $step) {
+      $a = date('H:i', $t); $bb = date('H:i', $t + $step);
+      $out[] = ['id' => 'gen-' . $mode . '-' . date('Hi', $t), 'mode' => $mode,
+                'label' => $a . ' – ' . $bb, 'sort_order' => $i++, 'capacity' => $cap];
+    }
+    json_out($out);
   }
   if ($m === 'GET' && $p === '/calendar/cutoff') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
