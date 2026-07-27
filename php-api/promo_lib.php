@@ -96,6 +96,60 @@ function promo_remaining(array $camp, float $amount): float {
   return round(max(0.0, (float) $camp['threshold_amount'] - $amount), 2);
 }
 
+/* Normalise une date/heure d'entrée en 'Y-m-d H:i:s' (accepte 'Y-m-d',
+ * 'Y-m-d H:i', 'Y-m-dTH:i'…). $defaultTime complète une date seule. */
+function promo_norm_dt(string $s, string $defaultTime): string {
+  $s = str_replace('T', ' ', trim($s));
+  if ($s === '') return '';
+  if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $s))            return $s . ' ' . $defaultTime;
+  if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/', $s)) return $s . ':00';
+  return $s;
+}
+
+/* Valide + normalise l'entrée d'une campagne (endpoint admin). Pur, testable.
+ * Retourne ['errors' => [codes], 'clean' => [colonnes prêtes à insérer]]. */
+function promo_campaign_validate(array $in): array {
+  $e = []; $c = [];
+  $c['name'] = trim((string) ($in['name'] ?? ''));
+  if ($c['name'] === '') $e[] = 'name_required';
+
+  $c['id_shop'] = (isset($in['idShop']) && $in['idShop'] !== '' && $in['idShop'] !== null)
+                  ? (int) $in['idShop'] : null;
+
+  $re = '/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$/';
+  $rawStart = trim((string) ($in['startsAt'] ?? ''));
+  $rawEnd   = trim((string) ($in['endsAt'] ?? ''));
+  if (!preg_match($re, $rawStart)) $e[] = 'starts_at_invalid';
+  if (!preg_match($re, $rawEnd))   $e[] = 'ends_at_invalid';
+  $c['starts_at'] = promo_norm_dt($rawStart, '00:00:00');
+  $c['ends_at']   = promo_norm_dt($rawEnd, '23:59:59');
+  if ($c['starts_at'] !== '' && $c['ends_at'] !== '' && $c['starts_at'] > $c['ends_at'])
+    $e[] = 'period_inverted';
+
+  $c['threshold_amount'] = round((float) ($in['thresholdAmount'] ?? 0), 2);
+  if ($c['threshold_amount'] <= 0) $e[] = 'threshold_invalid';
+
+  $c['currency'] = strtoupper(trim((string) ($in['currency'] ?? 'EUR'))) ?: 'EUR';
+
+  $scope = strtolower(trim((string) ($in['conditionScope'] ?? 'total'))) ?: 'total';
+  if (!in_array($scope, ['total', 'per_day'], true)) $e[] = 'condition_scope_invalid';
+  $c['condition_scope'] = $scope;
+
+  $c['reward_product_id'] = (int) ($in['rewardProductId'] ?? 0);
+  if ($c['reward_product_id'] <= 0) $e[] = 'reward_product_required';
+
+  $rdd = trim((string) ($in['rewardDeliveryDate'] ?? ''));
+  if ($rdd !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $rdd)) $e[] = 'reward_delivery_date_invalid';
+  $c['reward_delivery_date'] = $rdd !== '' ? $rdd : null;
+
+  $c['voucher_code_prefix'] = strtoupper(preg_replace('/[^A-Za-z0-9]/', '',
+                                (string) ($in['voucherCodePrefix'] ?? 'GIFT')) ?: 'GIFT');
+  $c['per_customer_limit'] = max(1, (int) ($in['perCustomerLimit'] ?? 1));
+  $c['is_active'] = array_key_exists('isActive', $in) ? (!empty($in['isActive']) ? 1 : 0) : 1;
+
+  return ['errors' => $e, 'clean' => $c];
+}
+
 /* Force le fuseau Europe/Brussels sur la connexion (le temps de la requête promo),
  * pour que les TIMESTAMP ws_orders.created_at se comparent aux bornes de campagne
  * en heure locale Brussels. Best-effort : nom de zone si les tables tz sont chargées,

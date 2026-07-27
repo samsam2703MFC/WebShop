@@ -3153,6 +3153,51 @@ function dispatch($m, $p) {
   if (strpos($p, '/admin/') === 0) {
     require_admin();
 
+    // Campagnes « objectif d'achat cumulé → produit cadeau » — gestion admin.
+    if ($m === 'GET' && $p === '/admin/promo-campaigns') {
+      $list = rows("SELECT * FROM ws_promo_campaign ORDER BY is_active DESC, ends_at DESC");
+      json_out(array_map(fn ($c) => promo_campaign_public($c) + [
+        'isActive'         => (int) $c['is_active'],
+        'conditionScope'   => $c['condition_scope'],
+        'perCustomerLimit' => (int) $c['per_customer_limit'],
+        'voucherCodePrefix'=> $c['voucher_code_prefix'],
+      ], $list));
+    }
+    // Créer (ou modifier si "id" fourni) une campagne.
+    if ($m === 'POST' && $p === '/admin/promo-campaign') {
+      $b = body();
+      $v = promo_campaign_validate($b);
+      if ($v['errors']) json_out(['error' => 'validation', 'fields' => $v['errors']], 422);
+      $c = $v['clean'];
+      // Le produit cadeau doit exister dans le catalogue (réplique ERP).
+      if (!row("SELECT 1 AS x FROM ws_products WHERE id = ?", [$c['reward_product_id']]))
+        json_out(['error' => 'reward_product_not_found'], 422);
+
+      $cols = [$c['name'], $c['id_shop'], $c['is_active'], $c['starts_at'], $c['ends_at'],
+               $c['threshold_amount'], $c['currency'], $c['condition_scope'], $c['reward_product_id'],
+               $c['reward_delivery_date'], $c['voucher_code_prefix'], $c['per_customer_limit']];
+
+      if (!empty($b['id'])) {
+        q("UPDATE ws_promo_campaign SET name=?, id_shop=?, is_active=?, starts_at=?, ends_at=?,
+              threshold_amount=?, currency=?, condition_scope=?, reward_product_id=?,
+              reward_delivery_date=?, voucher_code_prefix=?, per_customer_limit=? WHERE id=?",
+          array_merge($cols, [(int) $b['id']]));
+        json_out(['ok' => true, 'id' => (int) $b['id']]);
+      }
+      q("INSERT INTO ws_promo_campaign
+           (name, id_shop, is_active, starts_at, ends_at, threshold_amount, currency,
+            condition_scope, reward_product_id, reward_delivery_date, voucher_code_prefix, per_customer_limit)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", $cols);
+      json_out(['ok' => true, 'id' => (int) db()->lastInsertId()], 201);
+    }
+    // Activer / désactiver une campagne.
+    if ($m === 'POST' && ($mm = $match('/admin/promo-campaign/:id/active'))) {
+      $b = body();
+      q("UPDATE ws_promo_campaign SET is_active = ? WHERE id = ?",
+        [!empty($b['isActive']) ? 1 : 0, (int) $mm['id']]);
+      json_out(['ok' => true, 'id' => (int) $mm['id'], 'isActive' => !empty($b['isActive']) ? 1 : 0]);
+    }
+
     // Produits (tous) — pour la gestion
     if ($m === 'GET' && $p === '/admin/products') {
       json_out(rows("SELECT p.id, p.cat_id, c.label AS category, p.name, p.price, p.active

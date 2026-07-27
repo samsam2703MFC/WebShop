@@ -153,6 +153,33 @@ check('campagne boutique 2, commande boutique 3 → wrong_shop',
 check('campagne boutique 2, commande boutique 2 → ok',
       promo_gift_redeemable(['id_shop' => 2] + $base, 'client:7', 2, '2026-07-25 10:00:00')['ok'] === true);
 
+echo "── Validation admin d'une campagne ──\n";
+$ok = promo_campaign_validate([
+  'name' => 'Été', 'startsAt' => '2026-07-01', 'endsAt' => '2026-07-31',
+  'thresholdAmount' => 100, 'rewardProductId' => 42, 'rewardDeliveryDate' => '2026-08-05',
+  'voucherCodePrefix' => 'gi ft!', 'idShop' => 2,
+]);
+check('entrée valide → aucune erreur', $ok['errors'] === []);
+check('date seule → 00:00:00 / 23:59:59',
+      $ok['clean']['starts_at'] === '2026-07-01 00:00:00' && $ok['clean']['ends_at'] === '2026-07-31 23:59:59');
+check('préfixe assaini + upper', $ok['clean']['voucher_code_prefix'] === 'GIFT');
+check('idShop typé int', $ok['clean']['id_shop'] === 2);
+check('reward_delivery_date conservée', $ok['clean']['reward_delivery_date'] === '2026-08-05');
+
+$bad = promo_campaign_validate(['name' => '', 'startsAt' => '2026-07-31', 'endsAt' => '2026-07-01',
+                                'thresholdAmount' => 0, 'rewardProductId' => 0]);
+check('name vide → name_required', in_array('name_required', $bad['errors'], true));
+check('période inversée → period_inverted', in_array('period_inverted', $bad['errors'], true));
+check('seuil 0 → threshold_invalid', in_array('threshold_invalid', $bad['errors'], true));
+check('produit manquant → reward_product_required', in_array('reward_product_required', $bad['errors'], true));
+
+check('idShop absent → réseau (null)',
+      promo_campaign_validate(['name' => 'X', 'startsAt' => '2026-07-01', 'endsAt' => '2026-07-31',
+                               'thresholdAmount' => 50, 'rewardProductId' => 1])['clean']['id_shop'] === null);
+check('scope invalide → condition_scope_invalid',
+      in_array('condition_scope_invalid', promo_campaign_validate(['name' => 'X', 'startsAt' => '2026-07-01',
+        'endsAt' => '2026-07-31', 'thresholdAmount' => 50, 'rewardProductId' => 1, 'conditionScope' => 'weekly'])['errors'], true));
+
 echo "\n";
 if ($FAILS === 0) { echo "✅ $TESTS tests OK\n"; exit(0); }
 echo "❌ $FAILS / $TESTS échec(s)\n"; exit(1);
