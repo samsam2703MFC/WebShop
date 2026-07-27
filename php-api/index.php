@@ -2,6 +2,7 @@
 /* Front controller — même API que le buddy-server Node, en PHP sur ws_.
  * .htaccess renvoie toutes les requêtes ici ; on route sur méthode + chemin. */
 require __DIR__ . '/lib.php';
+require __DIR__ . '/promo_lib.php';
 
 /* CORS */
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -459,6 +460,119 @@ function dispatch($m, $p) {
           : ($v['type'] === 'fixed' ? (float) $v['value'] : 0);
     json_out(['ok' => true, 'discount' => $disc, 'freeDelivery' => ($v['type'] === 'free_delivery'),
               'voucher' => ['code' => $v['code'], 'type' => $v['type'], 'value' => (float) $v['value']], 'message' => 'Code appliqué']);
+  }
+
+  /* ── Campagnes « objectif d'achat cumulé → produit cadeau » ──
+   * Le cumul se calcule sur ws_orders (commandes webshop). Le catalogue (produit
+   * cadeau) et les boutiques restent maîtres côté ERP : on ne fait que les lire.
+   * Identité du client : Bearer (client connecté) sinon email invité. */
+
+  // Liste des campagnes actives pour une boutique (réseau + locales de la boutique).
+  if ($m === 'GET' && $p === '/promo/active') {
+    $s = qp('shopId');
+    $now = promo_now();
+    $rowsC = rows(
+      "SELECT id, name, id_shop, threshold_amount, currency, starts_at, ends_at,
+              reward_product_id, reward_delivery_date, voucher_code_prefix
+         FROM ws_promo_campaign
+        WHERE is_active = 1 AND starts_at <= ? AND ends_at >= ?
+          AND (id_shop IS NULL " . ($s ? "OR id_shop = ?" : "") . ")
+        ORDER BY ends_at",
+      $s ? [$now, $now, $s] : [$now, $now]
+    );
+    json_out(array_map(fn ($c) => promo_campaign_public($c), $rowsC));
+  }
+
+  // Progression d'un client sur une campagne (lecture seule : calcul live).
+  if ($m === 'GET' && ($mm = $match('/promo/:id/progress'))) {
+    $camp = promo_campaign((int) $mm['id']);
+    if (!$camp) json_out(['error' => 'Campagne introuvable'], 404);
+
+    $uid   = auth_uid();
+    $guest = $uid ? null : trim((string) qp('guestEmail', ''));
+    $ref   = promo_customer_ref($uid, $guest);
+    if (!$ref) json_out(['error' => 'Identité requise (connexion ou guestEmail)'], 400);
+
+    promo_apply_tz(db());
+    $acc  = promo_accumulate(db(), $camp, $uid, $guest);
+    $prog = row("SELECT unlocked_at, voucher_code, redeemed_at
+                   FROM ws_promo_progress WHERE campaign_id = ? AND customer_ref = ?",
+                [$camp['id'], $ref]);
+    json_out(promo_progress_payload($camp, $acc, $prog));
+  }
+
+  // Attribution / verrouillage du voucher (idempotent).
+  if ($m === 'POST' && ($mm = $match('/promo/:id/claim'))) {
+    $camp = promo_campaign((int) $mm['id']);
+    if (!$camp) json_out(['error' => 'Campagne introuvable'], 404);
+
+    $b     = body();
+    $uid   = auth_uid();
+    $guest = $uid ? null : trim((string) ($b['guestEmail'] ?? qp('guestEmail', '')));
+    $ref   = promo_customer_ref($uid, $guest);
+    if (!$ref) json_out(['error' => 'Identité requise (connexion ou guestEmail)'], 400);
+
+    promo_apply_tz(db());
+    $acc = promo_accumulate(db(), $camp, $uid, $guest);
+    $pdo = db();
+    try {
+      $pdo->beginTransaction();
+
+      // Upsert de la progression (cache du cumul). UNIQUE(campaign_id, customer_ref).
+      q("INSERT INTO ws_promo_progress (campaign_id, customer_ref, accumulated_amount)
+              VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE accumulated_amount = VALUES(accumulated_amount),
+                                 updated_at = CURRENT_TIMESTAMP",
+        [$camp['id'], $ref, $acc['amount']]);
+
+      $prog = row("SELECT id, unlocked_at, voucher_code, redeemed_at
+                     FROM ws_promo_progress WHERE campaign_id = ? AND customer_ref = ?",
+                  [$camp['id'], $ref]);
+
+      // Traçabilité des commandes comptabilisées (idempotent via UNIQUE).
+      foreach ($acc['orders'] as $o) {
+        q("INSERT IGNORE INTO ws_promo_progress_order (progress_id, order_id, counted_amount)
+                VALUES (?, ?, ?)", [$prog['id'], $o['id'], $o['amount']]);
+      }
+
+      // Déblocage : seuil atteint ET dans la période ET pas déjà débloqué.
+      if (empty($prog['unlocked_at']) && promo_is_unlockable($camp, $acc['amount'], promo_now())) {
+        $code = promo_generate_code($camp);
+        q("UPDATE ws_promo_progress
+              SET unlocked_at = CURRENT_TIMESTAMP, voucher_code = ?
+            WHERE id = ? AND unlocked_at IS NULL", [$code, $prog['id']]);
+        $prog = row("SELECT unlocked_at, voucher_code, redeemed_at
+                       FROM ws_promo_progress WHERE id = ?", [$prog['id']]);
+      }
+
+      $pdo->commit();
+    } catch (Throwable $e) {
+      if ($pdo->inTransaction()) $pdo->rollBack();
+      throw $e;
+    }
+
+    json_out(promo_progress_payload($camp, $acc, $prog));
+  }
+
+  // Pré-validation d'un code cadeau au checkout (le front affiche la ligne 0 €
+  // avant de commander). L'attribution réelle (consommation) a lieu à la commande.
+  if ($m === 'POST' && $p === '/promo/redeem') {
+    $b    = body();
+    $code = trim((string) ($b['code'] ?? ''));
+    $shop = (int) ($b['shopId'] ?? qp('shopId', 0));
+    if ($code === '' || !$shop) json_out(['valid' => false, 'reason' => 'code_and_shop_required']);
+
+    $uid   = auth_uid();
+    $guest = $uid ? null : trim((string) ($b['guestEmail'] ?? ''));
+    $ref   = promo_customer_ref($uid, $guest);
+    if (!$ref) json_out(['valid' => false, 'reason' => 'identity_required']);
+
+    $g = promo_gift_row($code);
+    if (!$g) json_out(['valid' => false, 'reason' => 'unknown_code']);
+    $chk = promo_gift_redeemable($g, $ref, $shop, promo_now());
+    json_out($chk['ok']
+      ? ['valid' => true,  'reward' => promo_reward($g['reward_product_id'])]
+      : ['valid' => false, 'reason' => $chk['reason']]);
   }
 
   /* Moyens de paiement autorisés — par boutique ET par profil (guest/registered/
@@ -1033,6 +1147,26 @@ function dispatch($m, $p) {
         q("UPDATE ws_product_stock SET qty_sold = qty_sold + ?
             WHERE product_id=? AND shop_id=? AND date=? AND (mode=? OR mode IS NULL)",
           [$l['qty'], $l['productId'], $shop, $stockDate, $mode]);
+      }
+      // 6c-bis. Cadeau « achat cumulé → produit cadeau » : si un code cadeau valide
+      // est fourni, on ajoute une LIGNE 0 € (produit cadeau) et on marque la
+      // progression consommée (idempotent). Silencieux si invalide (ne bloque pas
+      // la commande — le front pré-valide via POST /promo/redeem). Pas de décrément
+      // de stock pour le cadeau (freebie promotionnel).
+      if (!empty($b['giftCode'])) {
+        $giftRef = promo_customer_ref(!empty($b['customerId']) ? (int) $b['customerId'] : null,
+                                      empty($b['customerId']) ? $guestEmail : null);
+        $g = $giftRef ? promo_gift_row((string) $b['giftCode']) : null;
+        if ($g && promo_gift_redeemable($g, $giftRef, (int) $shop, promo_now())['ok']) {
+          $rp = row("SELECT id, name FROM ws_products WHERE id = ?", [$g['reward_product_id']]);
+          if ($rp) {
+            q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note)
+                    VALUES (?,?,?,?,?,?,?)",
+              [$oid, $rp['id'], $rp['name'], 1, 0, null, 'Cadeau — campagne ' . (int) $g['campaign_id']]);
+            q("UPDATE ws_promo_progress SET redeemed_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND redeemed_at IS NULL", [$g['id']]);
+          }
+        }
       }
       if ($cap) q("UPDATE ws_slot_capacity SET current_orders = current_orders + 1, current_items = current_items + ? WHERE id=?", [$totalQty, $cap['id']]);
       // Usage du bon via le modèle ERP (ws_vouchers est désormais une vue non-inscriptible) :
@@ -3867,4 +4001,62 @@ function stripe_checkout($order, $lines) {
     CURLOPT_POSTFIELDS => http_build_query($f), CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20]);
   $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
   return ($code >= 200 && $code < 300) ? json_decode($res, true) : false;
+}
+
+/* ── Helpers campagnes « achat cumulé → cadeau » (accès DB ; logique pure = promo_lib.php) ── */
+
+// Charge une campagne par id (ou null).
+function promo_campaign($id) {
+  return row("SELECT id, name, id_shop, is_active, starts_at, ends_at, threshold_amount,
+                     currency, condition_scope, reward_product_id, reward_delivery_date,
+                     voucher_code_prefix, per_customer_limit
+                FROM ws_promo_campaign WHERE id = ?", [(int) $id]);
+}
+
+// Ligne progression+campagne par code cadeau (pour valider/consommer au checkout).
+function promo_gift_row($code) {
+  return row("SELECT pp.id, pp.campaign_id, pp.customer_ref, pp.unlocked_at, pp.redeemed_at,
+                     c.reward_product_id, c.reward_delivery_date, c.id_shop
+                FROM ws_promo_progress pp
+                JOIN ws_promo_campaign c ON c.id = pp.campaign_id
+               WHERE pp.voucher_code = ? LIMIT 1", [trim((string) $code)]);
+}
+
+// Produit cadeau (réplique du catalogue ERP) : id, nom, image (par convention si absente).
+function promo_reward($productId) {
+  $p = row("SELECT id, name, img FROM ws_products WHERE id = ?", [(int) $productId]);
+  if (!$p) return null;
+  $img = $p['img'] ?: (product_photo_files()[$p['id']] ?? null);
+  return ['productId' => (int) $p['id'], 'name' => $p['name'], 'img' => $img];
+}
+
+// Vue publique d'une campagne (sans champs internes).
+function promo_campaign_public($c) {
+  return [
+    'id'                 => (int) $c['id'],
+    'name'               => $c['name'],
+    'idShop'             => $c['id_shop'] !== null ? (int) $c['id_shop'] : null,
+    'threshold'          => (float) $c['threshold_amount'],
+    'currency'           => $c['currency'],
+    'startsAt'           => $c['starts_at'],
+    'endsAt'             => $c['ends_at'],
+    'rewardDeliveryDate' => $c['reward_delivery_date'],
+    'reward'             => promo_reward($c['reward_product_id']),
+  ];
+}
+
+// Réponse de progression (GET progress / POST claim).
+function promo_progress_payload($camp, $acc, $prog) {
+  $amount = (float) $acc['amount'];
+  return [
+    'campaign'      => promo_campaign_public($camp),
+    'accumulated'   => $amount,
+    'remaining'     => promo_remaining($camp, $amount),
+    'status'        => promo_status($camp, $amount, promo_now()),
+    'unlocked'      => !empty($prog['unlocked_at']),
+    'unlockedAt'    => $prog['unlocked_at']  ?? null,
+    'voucherCode'   => $prog['voucher_code'] ?? null,
+    'redeemedAt'    => $prog['redeemed_at']  ?? null,
+    'ordersCounted' => count($acc['orders']),
+  ];
 }
