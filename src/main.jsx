@@ -13,6 +13,7 @@ import '../webshop-allergens.css';
 
 // API stubs — must run before the components (they expose window.WSXxx).
 import '../webshop-vouchers.jsx';
+import '../webshop-promo-api.jsx';
 import '../webshop-i18n.jsx';
 import '../webshop-vies.jsx';
 import '../webshop-shops-api.jsx';
