@@ -35,6 +35,7 @@
   if (window.WSCatalog)      window.WSCatalog.endpoint      = BASE_URL + '/catalog';
   if (window.WSPricing)      window.WSPricing.endpoint      = BASE_URL + '/pricing';
   if (window.WSVouchers)     window.WSVouchers.endpoint     = BASE_URL + '/vouchers';
+  if (window.WSPromo)        window.WSPromo.endpoint        = BASE_URL + '/promo';
   if (window.WSDeliveryFees) window.WSDeliveryFees.endpoint = BASE_URL + '/delivery-fees';
   if (window.WSOffices)      window.WSOffices.endpoint      = BASE_URL + '/offices';
   if (window.WSTours)        window.WSTours.endpoint        = BASE_URL + '/tours';

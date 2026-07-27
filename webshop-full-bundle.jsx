@@ -1737,6 +1737,104 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
 // =========================================================================
 
 // Variant A — Subtle: small shop chip after brand
+// ── Bandeau « objectif d'achat cumulé → produit cadeau » (haut de boutique) ──
+// Lit WSPromo.active(shop) puis la progression du client. Barre de progression,
+// message « plus que X € », et à l'objectif : produit cadeau + code (récupéré via
+// claim, idempotent). Masqué si aucune campagne / pas d'identité (invité non
+// connecté) — l'invité applique son code au checkout.
+function GiftIcon({ size = 22, className }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <path d="M20 12v9H4v-9"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/>
+      <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/>
+      <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/>
+    </svg>
+  );
+}
+function GiftProgressBanner({ shop, user }) {
+  const [prog, setProg] = React.useState(null);
+  const [copied, setCopied] = React.useState(false);
+  const shopId = shop && shop.id;
+  const guestEmail = user ? null : null;   // page boutique : identité = client connecté (jeton) ou démo
+
+  React.useEffect(() => {
+    let alive = true;
+    if (!window.WSPromo) return;
+    Promise.resolve(window.WSPromo.active({ shopId }))
+      .then((camps) => {
+        const c = Array.isArray(camps) ? camps[0] : null;
+        if (!c) { if (alive) setProg(null); return; }
+        return Promise.resolve(window.WSPromo.progress(c.id, { guestEmail }))
+          .then((p) => { if (alive) setProg(p && p.campaign ? p : null); });
+      })
+      .catch(() => { if (alive) setProg(null); });
+    return () => { alive = false; };
+  }, [shopId, user && user.id]);
+
+  // Objectif atteint sans code encore émis → claim (idempotent) pour l'obtenir.
+  React.useEffect(() => {
+    if (prog && prog.status === 'unlocked' && !prog.voucherCode && window.WSPromo) {
+      Promise.resolve(window.WSPromo.claim(prog.campaign.id, { guestEmail }))
+        .then((p) => { if (p && p.campaign) setProg(p); }).catch(() => {});
+    }
+  }, [prog && prog.status, prog && prog.voucherCode]);
+
+  if (!prog || !prog.campaign) return null;
+  const c = prog.campaign;
+  const cur = c.currency || 'EUR';
+  const money = (n) => new Intl.NumberFormat('fr-BE', { style: 'currency', currency: cur, maximumFractionDigits: Number.isInteger(n) ? 0 : 2 }).format(n);
+  const pct = Math.max(0, Math.min(100, Math.round((prog.accumulated / c.threshold) * 100)));
+  const unlocked = prog.status === 'unlocked';
+  const reward = c.reward || {};
+  const copy = () => {
+    if (!prog.voucherCode) return;
+    try { navigator.clipboard.writeText(prog.voucherCode); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch (_) {}
+  };
+
+  return (
+    <section className={`ws-giftbar${unlocked ? ' is-unlocked' : ''}`} aria-label="Campagne cadeau">
+      <div className="ws-giftbar__head">
+        <GiftIcon size={22} className="ws-giftbar__ic"/>
+        <div>
+          <div className="ws-giftbar__ttl">{unlocked ? 'Cadeau débloqué' : 'Votre cadeau vous attend'}</div>
+          <div className="ws-giftbar__cap">{c.name}{c.endsAt ? ` · jusqu'au ${String(c.endsAt).slice(8, 10)}/${String(c.endsAt).slice(5, 7)}` : ''}</div>
+        </div>
+      </div>
+      <div className="ws-giftbar__bar"><div className="ws-giftbar__fill" style={{ width: pct + '%' }}/></div>
+      <div className="ws-giftbar__amt">
+        <b>{money(prog.accumulated)}</b><span className="ws-giftbar__goal">objectif {money(c.threshold)}</span>
+      </div>
+      {!unlocked && (
+        <div className="ws-giftbar__remain">Plus que <b>{money(prog.remaining)}</b> d'achats pour débloquer votre cadeau.</div>
+      )}
+      {unlocked && (
+        <>
+          <div className="ws-giftbar__reward">
+            <span className="ws-giftbar__sw"/>
+            <span>
+              <span className="ws-giftbar__pn">{reward.name || 'Votre cadeau'}</span>
+              <span className="ws-giftbar__pp">Cadeau · {money(0)}</span>
+            </span>
+          </div>
+          {prog.voucherCode && (
+            <div className="ws-giftbar__code">
+              <span>
+                <span className="ws-giftbar__lab">Votre code cadeau</span>
+                <span className="ws-giftbar__val">{prog.voucherCode}</span>
+              </span>
+              <button type="button" className="ws-giftbar__copy" onClick={copy}>{copied ? 'Copié' : 'Copier'}</button>
+            </div>
+          )}
+          {c.rewardDeliveryDate && (
+            <div className="ws-giftbar__hint">À ajouter à votre commande dès le {String(c.rewardDeliveryDate).slice(8, 10)}/{String(c.rewardDeliveryDate).slice(5, 7)}.</div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, user, onAccount, onAllergens,
                    collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays }) {
   return (
@@ -3396,6 +3494,9 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   }
   function step2Valid() { return Boolean(slot); }
 
+  // Code cadeau « achat cumulé » appliqué (ajoute une ligne 0 € côté serveur).
+  const [giftCode, setGiftCode] = useState(null);
+
   async function handlePay() {
     setPaying(true); setPayErr(null);
     try {
@@ -3407,6 +3508,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           : { slotId: slot, label: slot },
         basket: basket.map((l) => ({ productId: l.productId, qty: l.qty, portion: l.portion || null, note: l.note || null, options: l.options || [], bundleId: l.bundleId || null, bundleSlots: l.bundleSlots || {} })),
         voucher: voucherApplied && voucherApplied.ok ? voucherApplied.voucher.code : null,
+        giftCode: giftCode || null,
         note: orderNote || null,
         companyId: companyId || null,
         onAccount: !!onAccount,
@@ -3504,6 +3606,8 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             voucherInput={voucherInput} setVoucherInput={setVoucherInput}
             voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
             voucherDiscount={voucherDiscount}
+            giftCode={giftCode} onGift={setGiftCode}
+            giftEmail={user ? (user.email || null) : ((contact && contact.email) || null)}
           />
           {invoice && (
           <div className="ws-b2b">
@@ -3855,8 +3959,32 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
 
 function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, isOffice, isB2B, invoice, setInvoice, vat, setVat,
                          shopId, mode, voucherInput, setVoucherInput, voucherApplied, setVoucherApplied, voucherDiscount,
+                         giftCode, onGift, giftEmail,
                          deliveryFee, deliveryFeeResult, profile, companyId }) {
   const [voucherErr, setVoucherErr] = useState(null);
+  // Cadeau « achat cumulé » : code saisi + produit cadeau validé (ligne 0 €).
+  const [giftInput, setGiftInput] = useState('');
+  const [giftReward, setGiftReward] = useState(null);
+  const [giftErr, setGiftErr] = useState(null);
+  const [giftLoading, setGiftLoading] = useState(false);
+  const GIFT_REASONS = {
+    unknown_code: 'Code cadeau inconnu', already_redeemed: 'Ce cadeau a déjà été utilisé',
+    not_unlocked: "Ce cadeau n'est pas encore débloqué", not_owner: 'Ce code ne vous appartient pas',
+    before_delivery_date: 'Cadeau disponible plus tard', wrong_shop: 'Cadeau non valable dans cette boutique',
+    identity_required: 'Connectez-vous ou saisissez votre e-mail', network: 'Erreur réseau',
+  };
+  async function applyGift() {
+    const code = (giftInput || '').trim();
+    if (!code || !window.WSPromo) return;
+    setGiftErr(null); setGiftLoading(true);
+    try {
+      const r = await window.WSPromo.redeem({ code, shopId, guestEmail: giftEmail });
+      if (r && r.valid) { setGiftReward(r.reward || {}); onGift && onGift(code); setGiftErr(null); }
+      else { setGiftReward(null); onGift && onGift(null); setGiftErr(GIFT_REASONS[r && r.reason] || 'Code cadeau invalide'); }
+    } catch (_) { setGiftErr('Erreur réseau lors de la validation du cadeau.'); }
+    finally { setGiftLoading(false); }
+  }
+  function removeGift() { setGiftReward(null); setGiftInput(''); setGiftErr(null); onGift && onGift(null); }
   const [voucherLoading, setVoucherLoading] = useState(false);
   // Infobulle « facture nominative » : ouverte au TAP, fermée au tap extérieur.
   const [infoOpen, setInfoOpen] = useState(false);
@@ -3948,6 +4076,30 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
         {voucherErr && <div className="ws-co-voucher__err">{voucherErr}</div>}
       </div>
 
+      <div className="ws-co-gift">
+        <div className="ws-co-gift__head">
+          <GiftIcon size={15} className="ws-co-gift__ic"/>
+          <span className="ws-co-gift__lbl">Code cadeau</span>
+        </div>
+        {giftReward ? (
+          <div className="ws-co-gift__ok">
+            <Pict d={<path d="M5 12l4 4 10-10"/>} s={12}/>
+            <span className="ws-co-gift__okname">{giftReward.name || 'Cadeau'} ajouté à votre commande</span>
+            <button type="button" className="ws-co-gift__remove" onClick={removeGift}>Retirer</button>
+          </div>
+        ) : (
+          <div className="ws-co-gift__row">
+            <input type="text" className="ws-co-gift__input" placeholder="Saisir votre code cadeau"
+              value={giftInput}
+              onChange={(e) => { setGiftInput(e.target.value.toUpperCase()); setGiftErr(null); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyGift(); } }}
+              autoComplete="off" spellCheck={false}/>
+            <button type="button" className="ws-co-gift__apply" onClick={applyGift} disabled={!giftInput.trim() || giftLoading}>{giftLoading ? '…' : 'Appliquer'}</button>
+          </div>
+        )}
+        {giftErr && <div className="ws-co-gift__err">{giftErr}</div>}
+      </div>
+
       <div className="ws-co-summary">
         <div className="ws-co-summary__h">Récapitulatif</div>
         <ul className="ws-co-summary__list">
@@ -3965,6 +4117,12 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
           <div className="ws-co-summary__row ws-co-summary__row--promo">
             <span>Code <strong>{voucherApplied.voucher.code}</strong></span>
             <span>−€{voucherDiscount.toFixed(2)}</span>
+          </div>
+        )}
+        {giftReward && (
+          <div className="ws-co-summary__row ws-co-summary__row--gift">
+            <span>{giftReward.name || 'Cadeau'} <span className="ws-co-summary__badge">CADEAU</span></span>
+            <span>€0,00</span>
           </div>
         )}
         {deliveryFeeResult && mode === 'delivery' && (
@@ -4738,6 +4896,8 @@ function ShopFrame({ variant }) {
           )}
 
           {/* page head removed */}
+
+          <GiftProgressBanner shop={shop} user={user} />
 
           {mode === 'delivery' && officeSlots.length >= 2 && (
             <SlotSegmented slots={officeSlots} selected={selectedSlot} onSelect={(t) => requestSlotChange(t)}/>

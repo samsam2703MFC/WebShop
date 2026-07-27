@@ -3565,3 +3565,56 @@
   font-size: 12px; line-height: 1.45; padding: 9px 11px; border-radius: 9px;
   box-shadow: 0 10px 30px rgba(0,0,0,.22);
 }
+
+/* =====================================================================
+   Campagne « objectif d'achat cumulé → produit cadeau »
+   Bandeau boutique (GiftProgressBanner) + code cadeau au checkout.
+   ===================================================================== */
+.ws-giftbar{
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border-tertiary, rgba(36,31,28,.12));
+  border-radius: 14px; padding: 15px 16px 16px; margin: 4px 0 16px;
+}
+.ws-giftbar__head{ display:flex; align-items:center; gap:11px; margin-bottom:12px; }
+.ws-giftbar__ic{ color: var(--color-primary, #8D1D2C); flex-shrink:0; }
+.ws-giftbar.is-unlocked .ws-giftbar__ic{ color:#2D7A3E; }
+.ws-giftbar__ttl{ font-size:14px; font-weight:800; line-height:1.25; }
+.ws-giftbar__cap{ font-size:11.5px; color: var(--color-text-muted, #7A7168); margin-top:2px; }
+.ws-giftbar__bar{ height:8px; border-radius:20px; background:#ECE4D8; overflow:hidden; margin:13px 0 9px; }
+.ws-giftbar__fill{ height:100%; border-radius:20px; background: var(--color-primary, #8D1D2C); transition:width .5s ease; }
+.ws-giftbar.is-unlocked .ws-giftbar__fill{ background:#2D7A3E; }
+.ws-giftbar__amt{ display:flex; justify-content:space-between; align-items:baseline; font-size:12.5px; }
+.ws-giftbar__amt b{ font-size:15px; font-weight:800; }
+.ws-giftbar__goal{ color: var(--color-text-muted, #7A7168); }
+.ws-giftbar__remain{ margin-top:12px; font-size:12.5px; font-weight:600; }
+.ws-giftbar__remain b{ color: var(--color-primary, #8D1D2C); }
+.ws-giftbar__reward{ display:flex; align-items:center; gap:11px; background:#faf7f1;
+  border:1px solid var(--color-border-tertiary, rgba(36,31,28,.12)); border-radius:11px; padding:10px; margin-top:13px; }
+.ws-giftbar__sw{ width:40px; height:40px; border-radius:8px; background:#ece0cd; flex-shrink:0; }
+.ws-giftbar__pn{ display:block; font-size:13px; font-weight:700; }
+.ws-giftbar__pp{ display:block; font-size:11.5px; color:#2D7A3E; font-weight:700; margin-top:1px; }
+.ws-giftbar__code{ display:flex; align-items:center; gap:10px; margin-top:12px;
+  border:1px solid var(--color-border-tertiary, rgba(36,31,28,.12)); background:#faf7f1; border-radius:10px; padding:11px 12px; }
+.ws-giftbar__lab{ display:block; font-size:10px; color: var(--color-text-muted, #7A7168); font-weight:700; text-transform:uppercase; letter-spacing:.5px; }
+.ws-giftbar__val{ display:block; font-size:14.5px; font-weight:800; letter-spacing:.5px; margin-top:2px; font-variant-numeric:tabular-nums; }
+.ws-giftbar__copy{ margin-left:auto; border:1px solid var(--color-border-tertiary, rgba(36,31,28,.12)); background:#fff;
+  color: var(--color-text, #241F1C); font-size:11.5px; font-weight:700; border-radius:8px; padding:7px 12px; cursor:pointer; }
+.ws-giftbar__hint{ font-size:11.5px; color: var(--color-text-muted, #7A7168); margin-top:11px; }
+
+/* Checkout — champ code cadeau */
+.ws-co-gift{ margin:14px 0 4px; }
+.ws-co-gift__head{ display:flex; align-items:center; gap:7px; margin-bottom:8px; }
+.ws-co-gift__ic{ color: var(--color-primary, #8D1D2C); }
+.ws-co-gift__lbl{ font-size:12.5px; font-weight:700; }
+.ws-co-gift__row{ display:flex; gap:8px; }
+.ws-co-gift__input{ flex:1; border:1px solid var(--color-border-tertiary, rgba(36,31,28,.12)); border-radius:9px;
+  padding:11px 12px; font-size:13px; letter-spacing:.5px; font-weight:700; background:#fff; color: var(--color-text, #241F1C); }
+.ws-co-gift__apply{ border:none; background: var(--color-primary, #8D1D2C); color:#fff; font-weight:700; font-size:12.5px; border-radius:9px; padding:0 15px; cursor:pointer; }
+.ws-co-gift__apply:disabled{ opacity:.5; cursor:default; }
+.ws-co-gift__ok{ display:flex; align-items:center; gap:7px; font-size:12px; font-weight:600; color:#2D7A3E; }
+.ws-co-gift__okname{ flex:1; }
+.ws-co-gift__remove{ border:none; background:none; color: var(--color-text-muted, #7A7168); font-size:11.5px; font-weight:700; cursor:pointer; text-decoration:underline; }
+.ws-co-gift__err{ font-size:11.5px; color: var(--color-primary, #8D1D2C); margin-top:6px; }
+.ws-co-summary__row--gift{ color: var(--color-text, #241F1C); font-weight:600; }
+.ws-co-summary__badge{ font-size:9.5px; font-weight:800; letter-spacing:.4px; color:#2D7A3E;
+  border:1px solid #2D7A3E; border-radius:5px; padding:1px 6px; margin-left:6px; vertical-align:middle; }
