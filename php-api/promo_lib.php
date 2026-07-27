@@ -96,6 +96,36 @@ function promo_remaining(array $camp, float $amount): float {
   return round(max(0.0, (float) $camp['threshold_amount'] - $amount), 2);
 }
 
+/* Force le fuseau Europe/Brussels sur la connexion (le temps de la requête promo),
+ * pour que les TIMESTAMP ws_orders.created_at se comparent aux bornes de campagne
+ * en heure locale Brussels. Best-effort : nom de zone si les tables tz sont chargées,
+ * sinon l'offset courant, sinon on laisse le tz serveur. Contenu à la requête promo
+ * (PHP = 1 connexion/requête) → n'affecte aucune autre route. No-op sur SQLite. */
+function promo_apply_tz(PDO $pdo, string $tz = 'Europe/Brussels'): void {
+  try { $pdo->exec("SET time_zone = '" . str_replace("'", '', $tz) . "'"); return; }
+  catch (Throwable $e) { /* tables tz absentes → offset courant */ }
+  try {
+    $off = (new DateTimeImmutable('now', new DateTimeZone($tz)))->format('P');   // ex. +02:00
+    $pdo->exec("SET time_zone = '$off'");
+  } catch (Throwable $e2) { /* laisse le tz serveur */ }
+}
+
+/* Le cadeau (déjà débloqué) est-il consommable maintenant, par ce client, sur cette
+ * boutique ? $g = ligne jointe progression+campagne
+ * (unlocked_at, redeemed_at, customer_ref, reward_delivery_date, id_shop).
+ * Retourne ['ok'=>bool, 'reason'=>string]. Pur, testable. */
+function promo_gift_redeemable(array $g, string $customerRef, int $shopId, string $nowStr): array {
+  if (empty($g['unlocked_at']))                          return ['ok' => false, 'reason' => 'not_unlocked'];
+  if (!empty($g['redeemed_at']))                         return ['ok' => false, 'reason' => 'already_redeemed'];
+  if ((string) $g['customer_ref'] !== $customerRef)      return ['ok' => false, 'reason' => 'not_owner'];
+  if (!empty($g['reward_delivery_date'])
+      && $nowStr < ((string) $g['reward_delivery_date'] . ' 00:00:00'))
+                                                         return ['ok' => false, 'reason' => 'before_delivery_date'];
+  if ($g['id_shop'] !== null && $g['id_shop'] !== '' && (int) $g['id_shop'] !== $shopId)
+                                                         return ['ok' => false, 'reason' => 'wrong_shop'];
+  return ['ok' => true, 'reason' => 'ok'];
+}
+
 /* Génère un code cadeau : {PREFIX}-{campaignId}-{8 hex}. $rand injectable pour test. */
 function promo_generate_code(array $camp, ?string $rand = null): string {
   $prefix = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string) ($camp['voucher_code_prefix'] ?? 'GIFT')) ?: 'GIFT');

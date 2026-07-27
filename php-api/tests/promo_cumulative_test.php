@@ -132,6 +132,27 @@ $code = promo_generate_code(campaign(), 'ABCD1234');
 check('format {PREFIX}-{id}-{suffixe}', $code === 'GIFT-1-ABCD1234');
 check('préfixe assaini', promo_generate_code(campaign(['voucher_code_prefix' => 'gi ft!']), 'X') === 'GIFT-1-X');
 
+echo "── Consommation du cadeau au checkout ──\n";
+// $g = ligne jointe progression+campagne.
+$base = ['unlocked_at' => '2026-07-21 10:00:00', 'redeemed_at' => null,
+         'customer_ref' => 'client:7', 'reward_delivery_date' => null, 'id_shop' => null];
+check('cadeau débloqué, bon client, réseau → ok',
+      promo_gift_redeemable($base, 'client:7', 2, '2026-07-25 10:00:00')['ok'] === true);
+check('pas encore débloqué → not_unlocked',
+      promo_gift_redeemable(['unlocked_at' => null] + $base, 'client:7', 2, '2026-07-25 10:00:00')['reason'] === 'not_unlocked');
+check('déjà consommé → already_redeemed',
+      promo_gift_redeemable(['redeemed_at' => '2026-07-26 09:00:00'] + $base, 'client:7', 2, '2026-07-25 10:00:00')['reason'] === 'already_redeemed');
+check('autre client → not_owner',
+      promo_gift_redeemable($base, 'client:99', 2, '2026-07-25 10:00:00')['reason'] === 'not_owner');
+check('avant date de remise → before_delivery_date',
+      promo_gift_redeemable(['reward_delivery_date' => '2026-08-01'] + $base, 'client:7', 2, '2026-07-25 10:00:00')['reason'] === 'before_delivery_date');
+check('à/après date de remise → ok',
+      promo_gift_redeemable(['reward_delivery_date' => '2026-08-01'] + $base, 'client:7', 2, '2026-08-01 08:00:00')['ok'] === true);
+check('campagne boutique 2, commande boutique 3 → wrong_shop',
+      promo_gift_redeemable(['id_shop' => 2] + $base, 'client:7', 3, '2026-07-25 10:00:00')['reason'] === 'wrong_shop');
+check('campagne boutique 2, commande boutique 2 → ok',
+      promo_gift_redeemable(['id_shop' => 2] + $base, 'client:7', 2, '2026-07-25 10:00:00')['ok'] === true);
+
 echo "\n";
 if ($FAILS === 0) { echo "✅ $TESTS tests OK\n"; exit(0); }
 echo "❌ $FAILS / $TESTS échec(s)\n"; exit(1);

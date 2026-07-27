@@ -383,6 +383,7 @@ function dispatch($m, $p) {
     $ref   = promo_customer_ref($uid, $guest);
     if (!$ref) json_out(['error' => 'Identité requise (connexion ou guestEmail)'], 400);
 
+    promo_apply_tz(db());
     $acc  = promo_accumulate(db(), $camp, $uid, $guest);
     $prog = row("SELECT unlocked_at, voucher_code, redeemed_at
                    FROM ws_promo_progress WHERE campaign_id = ? AND customer_ref = ?",
@@ -401,6 +402,7 @@ function dispatch($m, $p) {
     $ref   = promo_customer_ref($uid, $guest);
     if (!$ref) json_out(['error' => 'Identité requise (connexion ou guestEmail)'], 400);
 
+    promo_apply_tz(db());
     $acc = promo_accumulate(db(), $camp, $uid, $guest);
     $pdo = db();
     try {
@@ -440,6 +442,27 @@ function dispatch($m, $p) {
     }
 
     json_out(promo_progress_payload($camp, $acc, $prog));
+  }
+
+  // Pré-validation d'un code cadeau au checkout (le front affiche la ligne 0 €
+  // avant de commander). L'attribution réelle (consommation) a lieu à la commande.
+  if ($m === 'POST' && $p === '/promo/redeem') {
+    $b    = body();
+    $code = trim((string) ($b['code'] ?? ''));
+    $shop = (int) ($b['shopId'] ?? qp('shopId', 0));
+    if ($code === '' || !$shop) json_out(['valid' => false, 'reason' => 'code_and_shop_required']);
+
+    $uid   = auth_uid();
+    $guest = $uid ? null : trim((string) ($b['guestEmail'] ?? ''));
+    $ref   = promo_customer_ref($uid, $guest);
+    if (!$ref) json_out(['valid' => false, 'reason' => 'identity_required']);
+
+    $g = promo_gift_row($code);
+    if (!$g) json_out(['valid' => false, 'reason' => 'unknown_code']);
+    $chk = promo_gift_redeemable($g, $ref, $shop, promo_now());
+    json_out($chk['ok']
+      ? ['valid' => true,  'reward' => promo_reward($g['reward_product_id'])]
+      : ['valid' => false, 'reason' => $chk['reason']]);
   }
 
   /* Moyens de paiement autorisés — par boutique ET par profil (guest/registered/
@@ -945,6 +968,26 @@ function dispatch($m, $p) {
         q("UPDATE ws_product_stock SET qty_sold = qty_sold + ?
             WHERE product_id=? AND shop_id=? AND date=? AND (mode=? OR mode IS NULL)",
           [$l['qty'], $l['productId'], $shop, $stockDate, $mode]);
+      }
+      // 6c-bis. Cadeau « achat cumulé → produit cadeau » : si un code cadeau valide
+      // est fourni, on ajoute une LIGNE 0 € (produit cadeau) et on marque la
+      // progression consommée (idempotent). Silencieux si invalide (ne bloque pas
+      // la commande — le front pré-valide via POST /promo/redeem). Pas de décrément
+      // de stock pour le cadeau (freebie promotionnel).
+      if (!empty($b['giftCode'])) {
+        $giftRef = promo_customer_ref(!empty($b['customerId']) ? (int) $b['customerId'] : null,
+                                      empty($b['customerId']) ? $guestEmail : null);
+        $g = $giftRef ? promo_gift_row((string) $b['giftCode']) : null;
+        if ($g && promo_gift_redeemable($g, $giftRef, (int) $shop, promo_now())['ok']) {
+          $rp = row("SELECT id, name FROM ws_products WHERE id = ?", [$g['reward_product_id']]);
+          if ($rp) {
+            q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note)
+                    VALUES (?,?,?,?,?,?,?)",
+              [$oid, $rp['id'], $rp['name'], 1, 0, null, 'Cadeau — campagne ' . (int) $g['campaign_id']]);
+            q("UPDATE ws_promo_progress SET redeemed_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND redeemed_at IS NULL", [$g['id']]);
+          }
+        }
       }
       if ($cap) q("UPDATE ws_slot_capacity SET current_orders = current_orders + 1, current_items = current_items + ? WHERE id=?", [$totalQty, $cap['id']]);
       // Usage du bon via le modèle ERP (ws_vouchers est désormais une vue non-inscriptible) :
@@ -2643,6 +2686,15 @@ function promo_campaign($id) {
                      currency, condition_scope, reward_product_id, reward_delivery_date,
                      voucher_code_prefix, per_customer_limit
                 FROM ws_promo_campaign WHERE id = ?", [(int) $id]);
+}
+
+// Ligne progression+campagne par code cadeau (pour valider/consommer au checkout).
+function promo_gift_row($code) {
+  return row("SELECT pp.id, pp.campaign_id, pp.customer_ref, pp.unlocked_at, pp.redeemed_at,
+                     c.reward_product_id, c.reward_delivery_date, c.id_shop
+                FROM ws_promo_progress pp
+                JOIN ws_promo_campaign c ON c.id = pp.campaign_id
+               WHERE pp.voucher_code = ? LIMIT 1", [trim((string) $code)]);
 }
 
 // Produit cadeau (réplique du catalogue ERP) : id, nom, image (par convention si absente).
