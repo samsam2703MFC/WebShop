@@ -1,13 +1,20 @@
--- 0011 — Campagne « objectif d'achat cumulé → produit cadeau ».
+-- 0012 — Campagne « objectif d'achat cumulé → produit cadeau ».
 --
 -- Mécanique NOUVELLE, absente de l'ERP : le moteur `promotion` (ERP) ne déclenche
 -- que sur une QUANTITÉ de produits dans UNE transaction (BUY_X_GET_Y) ; il ne sait
 -- pas suivre un MONTANT € cumulé par client sur PLUSIEURS commandes et une période.
 -- Le cumul se calcule donc côté webshop, sur `ws_orders` (commandes webshop, dont
--- le webshop est maître). Les DONNÉES DE BASE restent maîtresses côté ERP : cette
--- feature ne fait que RÉFÉRENCER le catalogue (produit cadeau) et les boutiques par
--- leur id ERP via les répliques webshop (`ws_products.id = product.id`,
--- `ws_shops.id = franchisee_shop.id`). Aucune écriture de donnée de base.
+-- le webshop est maître). Les DONNÉES DE BASE restent maîtresses côté ERP.
+--
+-- ⚠️ Réf. ERP = RÉFÉRENCES LOGIQUES, PAS de FK :
+--   - le catalogue et les boutiques sont maîtres côté ERP et répliqués côté webshop ;
+--   - l'unification boutiques est en cours : la table vivante est `shops`, et `ws_shops`
+--     est (ou devient) une VUE → on NE PEUT PAS poser de FK dessus. L'id de boutique
+--     reste l'id Buddy/ERP (= franchisee_shop.id = ws_orders.shop_id), stable quel que
+--     soit le nom de table. `reward_product_id` référence ws_products.id (= product.id
+--     ERP), potentiellement une vue à terme aussi.
+--   → id_shop et reward_product_id sont des réfs logiques (validées côté code), sans FK,
+--     comme le repo le fait déjà (ex. ws_office_delivery_sites.shop_id).
 --
 -- Idempotent : CREATE TABLE IF NOT EXISTS (rejouable sans casse). MySQL 8 / MariaDB.
 -- Aucune valeur métier en dur : objectif, période, produit, code = configuration.
@@ -16,22 +23,21 @@
 CREATE TABLE IF NOT EXISTS ws_promo_campaign (
   id                   INT AUTO_INCREMENT PRIMARY KEY,
   name                 VARCHAR(150)  NOT NULL,
-  id_shop              INT NULL,                       -- NULL = réseau ; sinon ws_shops.id (= franchisee_shop.id, maître ERP). Réf logique (schéma boutiques en cours d'unification) → pas de FK.
+  id_shop              INT NULL,                       -- NULL = réseau ; sinon id boutique Buddy/ERP (= franchisee_shop.id = ws_orders.shop_id). Réf logique, pas de FK (table `shops`/vue `ws_shops`).
   is_active            TINYINT(1)    NOT NULL DEFAULT 1,
   starts_at            DATETIME      NOT NULL,          -- borne incluse, Europe/Brussels
   ends_at              DATETIME      NOT NULL,          -- borne incluse, Europe/Brussels
   threshold_amount     DECIMAL(10,2) NOT NULL,          -- objectif € cumulé
   currency             VARCHAR(3)    NOT NULL DEFAULT 'EUR',
   condition_scope      VARCHAR(10)   NOT NULL DEFAULT 'total',  -- 'total' (actif) | 'per_day' (prévu, désactivé)
-  reward_product_id    INT           NOT NULL,          -- ws_products.id (= product.id ERP) — catalogue maître ERP
+  reward_product_id    INT           NOT NULL,          -- ws_products.id (= product.id ERP) — catalogue maître ERP. Réf logique, pas de FK.
   reward_delivery_date DATE NULL,                       -- date de remise du cadeau
   voucher_code_prefix  VARCHAR(20)   NOT NULL DEFAULT 'GIFT',
   per_customer_limit   INT           NOT NULL DEFAULT 1,
   created_at           DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at           DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_promo_campaign_active (is_active, starts_at, ends_at),
-  KEY idx_promo_campaign_shop (id_shop),
-  CONSTRAINT fk_promo_campaign_product FOREIGN KEY (reward_product_id) REFERENCES ws_products(id)
+  KEY idx_promo_campaign_shop (id_shop)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ── Progression par client (cumul + attribution du voucher) ──
