@@ -460,7 +460,11 @@ function dispatch($m, $p) {
       // mode livraison quand c'est faux (cf. no_delivery).
       $x['office_delivery'] = (bool) $x['office_delivery'];
       $x['price'] = (float) $x['price'];
-      $x['allergens'] = $x['allergens'] ? json_decode($x['allergens']) : [];
+      // TROIS états d'allergènes, jamais confondus (sécurité alimentaire) :
+      //   liste  = allergènes connus ; []  = recette évaluée, réellement aucun ;
+      //   null   = NON RENSEIGNÉ (le front l'affiche comme tel).
+      // Un réplica ws_product_allergens vide signifie « inconnu », pas « aucun ».
+      $x['allergens'] = $x['allergens'] ? json_decode($x['allergens']) : null;
     }
     unset($x);
     // PORTIONS pilotées par l'ERP : candidats (product_portion) × PRIX PAR
@@ -485,27 +489,35 @@ function dispatch($m, $p) {
     } catch (Throwable $e) { /* portions ERP indisponibles — comportement historique */ }
     // Allergènes RÉELS (source de vérité = ERP, même base atelierby_db) : dérivés du
     // modèle recette → matières → allergènes. Clé de liaison : ws_products.id =
-    // product.id (produits semés depuis l'ERP avec le même identifiant). Calcul en
-    // direct ici (JOIN live) ; la ligne ws_product_allergens décodée ci-dessus sert
-    // de REPLI si le modèle ERP est indisponible → aucun 500 catalogue.
-    // LEFT JOIN (comme la requête ERP de référence) : un produit présent dans
-    // `product` mais sans allergène renvoie codes=NULL → liste vide FAISANT AUTORITÉ ;
-    // un id absent de `product` (pas de correspondance ERP) conserve le repli ws_.
+    // product.id. SÉMANTIQUE STRICTE (sécurité alimentaire, règle « vraies
+    // données ou bug ») — l'ERP ne fait autorité pour dire « aucun allergène »
+    // QUE si la recette a réellement été évaluée :
+    //   • codes non vides                       → liste d'allergènes ;
+    //   • recette liée ET ≥1 ingrédient, 0 code → [] (évaluée : aucun) ;
+    //   • pas de recette / recette vide         → null (NON RENSEIGNÉ — l'ancien
+    //     comportement affichait ces produits comme « sans allergène »).
+    // Un id absent de `product` conserve l'état issu du réplica ws_ (liste ou null).
     if ($r) {
       $ids = array_map(static fn($p2) => (int) $p2['id'], $r);
       $in = implode(',', $ids);
       try {
-        $erp = rows("SELECT erp.id AS pid, GROUP_CONCAT(DISTINCT al.code) AS codes
+        $erp = rows("SELECT erp.id AS pid, erp.id_recipe,
+                            COUNT(fri.id_material)            AS nb_ing,
+                            GROUP_CONCAT(DISTINCT al.code)    AS codes
                        FROM product erp
                        LEFT JOIN flattened_recipe_ingredient fri ON fri.id_recipe = erp.id_recipe
                        LEFT JOIN material_allergen_connection mac ON mac.id_material = fri.id_material
                        LEFT JOIN allergen al ON al.id = mac.id_allergen
                       WHERE erp.id IN ($in)
-                      GROUP BY erp.id");
+                      GROUP BY erp.id, erp.id_recipe");
         $byId = [];
         foreach ($erp as $a) {
-          $byId[(int) $a['pid']] = $a['codes'] === null ? []
-            : array_values(array_filter(array_map('trim', explode(',', (string) $a['codes'])), 'strlen'));
+          if ($a['codes'] !== null) {
+            $byId[(int) $a['pid']] = array_values(array_filter(array_map('trim', explode(',', (string) $a['codes'])), 'strlen'));
+          } else {
+            $evaluated = !empty($a['id_recipe']) && (int) $a['nb_ing'] > 0;
+            $byId[(int) $a['pid']] = $evaluated ? [] : null;
+          }
         }
         foreach ($r as &$x) {
           if (array_key_exists((int) $x['id'], $byId)) $x['allergens'] = $byId[(int) $x['id']];
@@ -513,7 +525,8 @@ function dispatch($m, $p) {
         unset($x);
       } catch (Throwable $e) {
         // Modèle allergènes ERP indisponible (table absente, id_recipe manquant…) :
-        // on garde le repli ws_product_allergens. Le catalogue n'est jamais cassé.
+        // on garde l'état du réplica ws_ (liste réelle ou null « non renseigné »).
+        // Le catalogue n'est jamais cassé, mais rien n'est affirmé à tort.
         error_log('[ws] allergènes ERP indisponibles: ' . $e->getMessage());
       }
     }

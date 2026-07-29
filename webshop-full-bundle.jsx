@@ -865,8 +865,17 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
               <p className="pdm-eyebrow">{product.cat === 'sandwiches' ? 'Sandwich' : product.cat === 'plats' ? 'Plat du jour' : 'Notre sélection'}</p>
               <h2 className="pdm-title">{product.name}</h2>
               <p className="pdm-desc">{product.description || 'Préparé chaque matin par nos artisans, avec des ingrédients sélectionnés au plus près de leur saison.'}</p>
-              {product.allergens?.length > 0 && (
+              {/* Allergènes — 3 états distincts (sécurité alimentaire) :
+                  liste = connus · [] = recette évaluée, aucun · null = NON
+                  RENSEIGNÉ (on le dit, on ne laisse jamais croire « aucun »). */}
+              {Array.isArray(product.allergens) && product.allergens.length > 0 && (
                 <div className="pdm-allergens"><Allergens list={product.allergens}/></div>
+              )}
+              {Array.isArray(product.allergens) && product.allergens.length === 0 && (
+                <p className="pdm-allergens pdm-allergens--none">Sans allergène déclaré (recette évaluée).</p>
+              )}
+              {!Array.isArray(product.allergens) && (
+                <p className="pdm-allergens pdm-allergens--unknown">Allergènes non renseignés — renseignez-vous en boutique.</p>
               )}
               {product.portions && (
                 <PortionOptions
