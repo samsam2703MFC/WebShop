@@ -1,146 +1,29 @@
-// vouchers.jsx — Voucher management
-// Dense table (status, code, type, scope, usage bar, validity) + create/edit drawer
-// Realistic L'Atelier-flavored campaigns
+// vouchers.jsx — Gestion des vouchers
+// Table dense (statut, code, type, périmètre, barre d'usage, validité) + tiroir création/édition
+// Go-live : aucune campagne de démonstration — tout vient de la source réelle.
 
-const VOUCHER_PRODUCTS = [
-  { id: 'tarte-citron',      name: 'Tarte au citron meringuée' },
-  { id: 'tarte-praline',     name: 'Tarte praliné noisette' },
-  { id: 'salade-bressane',   name: 'Salade bressane' },
-  { id: 'parfait-vanille',   name: 'Parfait vanille bourbon' },
-  { id: 'plat-saumon',       name: 'Saumon, riz, légumes verts' },
-  { id: 'plat-volaille',     name: 'Volaille fermière' },
-  { id: 'cookie-chocolat',   name: 'Cookie double chocolat' },
-  { id: 'pain-cereales',     name: 'Pain aux céréales' },
-];
+// Go-live : aucun catalogue de démonstration — produits, catégories et
+// collections proviennent de l'API. Structures vides tant que la source
+// réelle n'est pas branchée.
+const VOUCHER_PRODUCTS = [];
+const VOUCHER_CATEGORIES = [];
+const VOUCHER_COLLECTIONS = [];
 
-const VOUCHER_CATEGORIES = [
-  { id: 'patisseries',  name: 'Pâtisseries' },
-  { id: 'salades',      name: 'Salades' },
-  { id: 'plats',        name: 'Plats du jour' },
-  { id: 'douceurs',     name: 'Douceurs' },
-  { id: 'boulangerie',  name: 'Boulangerie' },
-];
+// Go-live : aucune boutique de démonstration — la liste vient de la source réelle.
+const VOUCHER_SHOPS = [];
 
-const VOUCHER_COLLECTIONS = [
-  { id: 'menu-midi',    name: 'Menu de midi' },
-  { id: 'brunch',       name: 'Le Brunch' },
-  { id: 'goute',        name: 'Le Goûter' },
-  { id: 'apero',        name: 'Apéro Box' },
-];
-
-const VOUCHER_SHOPS = ['chatelain', 'sablon', 'carre', 'zuid', 'grognon', 'brugge'];
-
-// Sample vouchers — realistic L'Atelier campaigns
-const SEED_VOUCHERS = [
-  {
-    id: 'v1', code: 'RENTREE2026', type: 'percent', value: 15,
-    scope: 'cart', products: [], categories: [], collections: [],
-    shops: VOUCHER_SHOPS, channels: 'both',
-    minOrder: 25, usageLimit: 500, used: 187,
-    validFrom: '2026-04-15', validTo: '2026-05-31',
-    status: 'active',
-  },
-  {
-    id: 'v2', code: 'CHATELAIN-VIP', type: 'percent', value: 20,
-    scope: 'shops', products: [], categories: [], collections: [],
-    shops: ['chatelain'], channels: 'webshop',
-    minOrder: 0, usageLimit: 100, used: 42,
-    validFrom: '2026-05-01', validTo: '2026-06-30',
-    status: 'active',
-  },
-  {
-    id: 'v3', code: 'BRUNCH-SABLON', type: 'fixed', value: 5,
-    scope: 'collections', products: [], categories: [], collections: ['brunch'],
-    shops: ['sablon', 'chatelain'], channels: 'webshop',
-    minOrder: 35, usageLimit: 200, used: 89,
-    validFrom: '2026-04-01', validTo: '2026-12-31',
-    status: 'active',
-  },
-  {
-    id: 'v4', code: 'OFFICE-LAUNCH', type: 'percent', value: 10,
-    scope: 'cart', products: [], categories: [], collections: [],
-    shops: VOUCHER_SHOPS, channels: 'office',
-    minOrder: 100, usageLimit: 50, used: 12,
-    validFrom: '2026-05-01', validTo: '2026-07-31',
-    status: 'active',
-  },
-  {
-    id: 'v5', code: 'TARTES-SAMEDI', type: 'percent', value: 25,
-    scope: 'categories', products: [], categories: ['patisseries'], collections: [],
-    shops: VOUCHER_SHOPS, channels: 'webshop',
-    minOrder: 0, usageLimit: 1000, used: 736,
-    validFrom: '2026-03-01', validTo: '2026-05-15',
-    status: 'expiring',
-  },
-  {
-    id: 'v6', code: 'GOUTER10', type: 'fixed', value: 3,
-    scope: 'collections', products: [], categories: [], collections: ['goute'],
-    shops: VOUCHER_SHOPS, channels: 'both',
-    minOrder: 12, usageLimit: 300, used: 298,
-    validFrom: '2026-04-01', validTo: '2026-06-30',
-    status: 'expiring',
-  },
-  {
-    id: 'v7', code: 'BIENVENUE', type: 'fixed', value: 8,
-    scope: 'cart', products: [], categories: [], collections: [],
-    shops: VOUCHER_SHOPS, channels: 'webshop',
-    minOrder: 30, usageLimit: 0, used: 1240,
-    validFrom: '2026-01-01', validTo: '2026-12-31',
-    status: 'active',
-  },
-  {
-    id: 'v8', code: 'APERO-VENDREDI', type: 'percent', value: 12,
-    scope: 'collections', products: [], categories: [], collections: ['apero'],
-    shops: ['chatelain', 'sablon', 'carre'], channels: 'webshop',
-    minOrder: 25, usageLimit: 400, used: 156,
-    validFrom: '2026-05-01', validTo: '2026-09-30',
-    status: 'active',
-  },
-  {
-    id: 'v9', code: 'NOEL2025', type: 'percent', value: 30,
-    scope: 'cart', products: [], categories: [], collections: [],
-    shops: VOUCHER_SHOPS, channels: 'both',
-    minOrder: 50, usageLimit: 200, used: 200,
-    validFrom: '2025-12-01', validTo: '2025-12-31',
-    status: 'expired',
-  },
-  {
-    id: 'v10', code: 'BRUGGE-OPEN', type: 'fixed', value: 10,
-    scope: 'shops', products: [], categories: [], collections: [],
-    shops: ['brugge'], channels: 'webshop',
-    minOrder: 25, usageLimit: 150, used: 0,
-    validFrom: '2026-06-01', validTo: '2026-07-31',
-    status: 'scheduled',
-  },
-  {
-    id: 'v11', code: 'PARFAIT-DUO', type: 'percent', value: 20,
-    scope: 'products', products: ['parfait-vanille'], categories: [], collections: [],
-    shops: VOUCHER_SHOPS, channels: 'webshop',
-    minOrder: 0, usageLimit: 100, used: 23,
-    validFrom: '2026-05-01', validTo: '2026-06-30',
-    status: 'active',
-  },
-  {
-    id: 'v12', code: 'TEAM-NAMUR', type: 'percent', value: 15,
-    scope: 'shops', products: [], categories: [], collections: [],
-    shops: ['grognon'], channels: 'office',
-    minOrder: 75, usageLimit: 80, used: 8,
-    validFrom: '2026-05-01', validTo: '2026-08-31',
-    status: 'active',
-  },
-];
-
-// Persist vouchers to localStorage so admin <-> storefront stay in sync (and survive reload)
+// Persistance locale des vouchers créés depuis l'admin (survit au reload).
 const VOUCHERS_KEY = 'latelier-admin:vouchers';
 
+// Go-live : plus aucun seed de secours — si le stockage est vide, la liste est vide.
 function loadVouchers() {
   try {
     const raw = localStorage.getItem(VOUCHERS_KEY);
-    if (!raw) return SEED_VOUCHERS;
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length) return parsed;
+    if (Array.isArray(parsed)) return parsed;
   } catch {}
-  return SEED_VOUCHERS;
+  return [];
 }
 
 function saveVouchers(list) {
@@ -175,11 +58,13 @@ const CHANNEL_LABELS = {
 };
 
 function formatScope(v) {
+  // Go-live : la donnée réelle peut ne pas porter toutes les listes — accès sûrs.
+  const n = (a) => (a || []).length;
   if (v.scope === 'cart')        return 'Panier entier';
-  if (v.scope === 'products')    return `${v.products.length} produit${v.products.length > 1 ? 's' : ''}`;
-  if (v.scope === 'categories')  return `${v.categories.length} catégorie${v.categories.length > 1 ? 's' : ''}`;
-  if (v.scope === 'collections') return `${v.collections.length} collection${v.collections.length > 1 ? 's' : ''}`;
-  if (v.scope === 'shops')       return `${v.shops.length} boutique${v.shops.length > 1 ? 's' : ''}`;
+  if (v.scope === 'products')    return `${n(v.products)} produit${n(v.products) > 1 ? 's' : ''}`;
+  if (v.scope === 'categories')  return `${n(v.categories)} catégorie${n(v.categories) > 1 ? 's' : ''}`;
+  if (v.scope === 'collections') return `${n(v.collections)} collection${n(v.collections) > 1 ? 's' : ''}`;
+  if (v.scope === 'shops')       return `${n(v.shops)} boutique${n(v.shops) > 1 ? 's' : ''}`;
   return '—';
 }
 
@@ -203,7 +88,7 @@ function VouchersPage() {
 
   useEffect(() => { saveVouchers(vouchers); }, [vouchers]);
 
-  // Recompute status from dates so seeded data stays accurate over time
+  // Statut recalculé à partir des dates de validité de la donnée réelle
   const enriched = useMemo(
     () => vouchers.map((v) => ({ ...v, status: deriveStatus(v) })),
     [vouchers],
@@ -260,8 +145,9 @@ function VouchersPage() {
       <div className="vstats">
         <VStat label="Vouchers actifs" value={counts.active} accent="active"/>
         <VStat label="Utilisations ce mois" value={enriched.reduce((s, v) => s + (v.status !== 'expired' ? v.used : 0), 0).toLocaleString('fr-FR')}/>
-        <VStat label="Économie offerte" value="€4 287" sub="cumulé 30 j."/>
-        <VStat label="Taux d'utilisation" value="58%" sub="vouchers actifs"/>
+        {/* Go-live : plus de métriques inventées — la valeur reste vide tant que la source ne la fournit pas. */}
+        <VStat label="Économie offerte" value="—" sub="Données indisponibles"/>
+        <VStat label="Taux d'utilisation" value="—" sub="Données indisponibles"/>
       </div>
 
       <div className="toolbar">
@@ -312,8 +198,13 @@ function VouchersPage() {
             {filtered.map((v) => (
               <VoucherRow key={v.id} voucher={v} onClick={() => setEditing(v)}/>
             ))}
+            {/* Go-live : aucun voucher de démonstration — état vide explicite. */}
             {filtered.length === 0 && (
-              <tr><td colSpan={9} className="voucher-table__empty">Aucun voucher ne correspond aux filtres.</td></tr>
+              <tr><td colSpan={9} className="voucher-table__empty">
+                {vouchers.length === 0
+                  ? 'Aucune donnée — connectez la source.'
+                  : 'Aucun voucher ne correspond aux filtres.'}
+              </td></tr>
             )}
           </tbody>
         </table>
@@ -345,9 +236,13 @@ function VoucherRow({ voucher, onClick }) {
   const v = voucher;
   const s = STATUS_LABELS[v.status] || STATUS_LABELS.active;
   const pct = v.usageLimit > 0 ? Math.min(100, Math.round((v.used / v.usageLimit) * 100)) : null;
-  const shops = v.shops.length === VOUCHER_SHOPS.length
+  // Go-live : les boutiques viennent de la source réelle — accès sûr, aucun seed de repli.
+  const vShops = v.shops || [];
+  const shops = VOUCHER_SHOPS.length > 0 && vShops.length === VOUCHER_SHOPS.length
     ? 'Toutes'
-    : v.shops.slice(0, 3).map((id) => SHOPS[id].short).join(' · ') + (v.shops.length > 3 ? ` +${v.shops.length - 3}` : '');
+    : vShops.length === 0
+      ? '—'
+      : vShops.slice(0, 3).map((id) => getShop(id).short).join(' · ') + (vShops.length > 3 ? ` +${vShops.length - 3}` : '');
 
   return (
     <tr className="voucher-row" onClick={onClick}>
@@ -372,8 +267,8 @@ function VoucherRow({ voucher, onClick }) {
       <td>
         <div className="vshops">
           <div className="vshops__dots">
-            {v.shops.slice(0, 6).map((id) => (
-              <span key={id} className="vshops__dot" style={{ background: SHOPS[id].color }} title={SHOPS[id].name}/>
+            {vShops.slice(0, 6).map((id) => (
+              <span key={id} className="vshops__dot" style={{ background: getShop(id).color }} title={getShop(id).name}/>
             ))}
           </div>
           <span className="vshops__txt">{shops}</span>
@@ -457,7 +352,7 @@ function VoucherDrawer({ voucher, onClose, onSave, onDelete }) {
                 className="input input--mono"
                 value={draft.code}
                 onChange={(e) => set('code', e.target.value.toUpperCase().replace(/\s+/g, '-'))}
-                placeholder="RENTREE2026"
+                placeholder="Code du voucher"
               />
               <button className="ghost-btn" type="button" onClick={() => set('code', genCode())}>Générer</button>
             </Field>
@@ -522,7 +417,7 @@ function VoucherDrawer({ voucher, onClose, onSave, onDelete }) {
           <Section title="Boutiques">
             <div className="shop-multi">
               {VOUCHER_SHOPS.map((id) => {
-                const shop = SHOPS[id];
+                const shop = getShop(id);
                 const active = draft.shops.includes(id);
                 return (
                   <button
@@ -540,6 +435,10 @@ function VoucherDrawer({ voucher, onClose, onSave, onDelete }) {
                   </button>
                 );
               })}
+              {/* Go-live : aucune boutique de démonstration — état vide si la source ne renvoie rien. */}
+              {VOUCHER_SHOPS.length === 0 && (
+                <div className="shop-multi__empty">Aucune donnée — connectez la source.</div>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
               <button className="ghost-btn" type="button" onClick={() => set('shops', VOUCHER_SHOPS.slice())}>Tout sélectionner</button>
@@ -675,6 +574,10 @@ function ChipMultiSelect({ label, options, selected, toggle }) {
   return (
     <Field label={label}>
       <div className="chip-multi">
+        {/* Go-live : catalogue vide tant que la source réelle n'est pas branchée. */}
+        {options.length === 0 && (
+          <span className="chip-multi__empty">Aucune donnée — connectez la source.</span>
+        )}
         {options.map((o) => (
           <button
             key={o.id}
