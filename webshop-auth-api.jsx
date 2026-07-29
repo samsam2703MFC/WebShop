@@ -156,21 +156,17 @@
 
     /* ── Config front (ws_param en liste blanche) : flag onglet Fidélité,
        icônes des deux touches de première position de la nav catégories…
-       Le repli reprend les mêmes références média que les défauts serveur
-       (des chemins vers la bibliothèque, pas des fichiers en dur). ── */
+       GO-LIVE : plus de repli codé en dur. L'ancien FALLBACK forçait
+       fidelityTabEnabled:true — un onglet pouvait donc s'afficher alors que
+       la boutique l'a désactivé en base. Sans config serveur on renvoie {} :
+       l'UI applique ses propres règles d'absence, aucune option n'est
+       inventée. ── */
     async config() {
-      const FALLBACK = {
-        fidelityTabEnabled: true,
-        categoryNavAllIcon: '/webshop/assets/all.png',
-        categoryNavBackIcon: '/webshop/assets/back.png',
-      };
-      if (!api.endpoint) return FALLBACK;
-      try {
-        const base = api.endpoint.replace(/\/auth\/?$/, '');
-        const r = await fetch(`${base}/config`, { credentials: 'include' });
-        if (r.ok) return { ...FALLBACK, ...(await r.json()) };
-      } catch (_) {}
-      return FALLBACK;
+      if (!api.endpoint) throw new Error('API configuration non disponible.');
+      const base = api.endpoint.replace(/\/auth\/?$/, '');
+      const r = await fetch(`${base}/config`, { credentials: 'include' });
+      if (!r.ok) throw new Error('Configuration indisponible (HTTP ' + r.status + ').');
+      return await r.json();
     },
 
     /* ── Mes achats : liste unifiée tickets + commandes (12 mois, paginée) ── */

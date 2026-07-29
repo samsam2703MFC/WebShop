@@ -194,26 +194,34 @@ function bo_resource_route($m, $bo, $rest) {
                          COUNT(DISTINCT tour_id) tours
                     FROM ws_orders WHERE $w AND delivery_date BETWEEN ? AND ?",
                  array_merge($p, [$from, $to]));
-      // Paramètres de coût (ws_param) — repli sur des valeurs neutres si absents.
-      $costs = [
-        'prep'   => (float) ws_param('cost_prep_per_order',   '0'),
-        'emb'    => (float) ws_param('cost_packaging_unit',   '0'),
-        'carb'   => (float) ws_param('cost_fuel_per_km',      '0'),
-        'struct' => (float) ws_param('cost_struct_per_tour',  '0'),
-        'charg'  => (float) ws_param('cost_labor_per_tour',   '0'),
-      ];
+      // Paramètres de coût (ws_param). Un coût ABSENT valait 0 : le coût total
+      // était sous-estimé et la marge présentée comme si elle était réelle. On
+      // remonte désormais les paramètres manquants ; sans eux, coût et marge
+      // valent null (« non calculable ») plutôt qu'un chiffre trompeur.
+      $costKeys = ['prep' => 'cost_prep_per_order', 'emb' => 'cost_packaging_unit',
+                   'carb' => 'cost_fuel_per_km', 'struct' => 'cost_struct_per_tour',
+                   'charg' => 'cost_labor_per_tour'];
+      $costs = []; $missing = [];
+      foreach ($costKeys as $k => $param) {
+        $v = ws_param($param, null);
+        if ($v === null) { $missing[] = $param; $costs[$k] = null; }
+        else { $costs[$k] = (float) $v; }
+      }
       $orders = (int) $agg['n'];
       $revenue = (float) $agg['rev'];
-      $variable = $orders * ($costs['prep'] + $costs['emb']);
-      $fixed    = (int) $agg['tours'] * ($costs['struct'] + $costs['charg']);
+      $configured = !$missing;
+      $variable = $configured ? $orders * ($costs['prep'] + $costs['emb']) : null;
+      $fixed    = $configured ? (int) $agg['tours'] * ($costs['struct'] + $costs['charg']) : null;
       json_out([
         'from' => $from, 'to' => $to,
         'orders' => $orders, 'revenue' => $revenue,
         'avgBasket' => round((float) $agg['avg_basket'], 2),
         'tours' => (int) $agg['tours'],
         'costs' => $costs,
-        'estimatedCost' => round($variable + $fixed, 2),
-        'estimatedMargin' => round($revenue - $variable - $fixed, 2),
+        'costsConfigured' => $configured,
+        'costsMissing' => $missing,
+        'estimatedCost' => $configured ? round($variable + $fixed, 2) : null,
+        'estimatedMargin' => $configured ? round($revenue - $variable - $fixed, 2) : null,
       ]);
     }
 

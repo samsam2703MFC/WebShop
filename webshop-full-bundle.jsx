@@ -9,10 +9,10 @@ const { useState, useMemo, useEffect } = React;
 // DATA
 // =========================================================================
 // Go-live : AUCUNE boutique en dur. Les boutiques viennent exclusivement de
-// l'API /shops ; si elle est injoignable, l'UI affiche une erreur — jamais
-// de données de démo (« Maison Châtelain » et consorts ont été purgés).
-const W_SHOPS = {};
-window.W_SHOPS = W_SHOPS;
+// l'API /shops (table `shops`) ; si elle est injoignable, l'UI affiche une
+// erreur — jamais de données de démo (« Maison Châtelain » et consorts).
+// L'objet global window.W_SHOPS a été supprimé : tant qu'il existait, un
+// repli pouvait y puiser une liste de boutiques fictive.
 
 const W_CATEGORIES = [];
 
@@ -2228,7 +2228,10 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   const [siteBusy, setSiteBusy] = useState(false);
   const [siteErr, setSiteErr] = useState('');
   // Onglets (l'actif survit au rafraîchissement) + config serveur (flags).
-  const [cfg, setCfg] = useState({ fidelityTabEnabled: true });
+  // Vide au départ : aucun flag n'est supposé activé tant que le serveur ne
+  // l'a pas dit (l'ancien défaut fidelityTabEnabled:true affichait l'onglet
+  // même pour une boutique qui l'a désactivé).
+  const [cfg, setCfg] = useState({});
   const [tab, setTab] = useState(() => {
     try { return localStorage.getItem(ACCOUNT_TAB_LS) || 'profil'; } catch (_) { return 'profil'; }
   });
@@ -3080,42 +3083,24 @@ function FidelityLinkPanel({ open, user, onClose }) {
 // =========================================================================
 // Slots now come from WSCalendar.listSlots(). The deprecated stub was removed.
 //
-// Payment methods are loaded async from WSPricing.listPaymentMethods().
-// The FALLBACK array is used only during the first render before the
-// async call resolves, or when no endpoint is configured.
-const W_PAYMENTS_FALLBACK = [
-  { id: 'bancontact', label: 'Bancontact',   sub: 'Paiement instantané' },
-  { id: 'visa',       label: 'Carte bancaire', sub: 'Visa · Mastercard · Amex' },
-  { id: 'apple',      label: 'Apple Pay',    sub: 'Touch ID / Face ID' },
-];
-
-const W_PAYMENTS_DEFERRED = [
-  { id: 'deferred', label: 'Paiement différé', sub: 'Facturation mensuelle · paiement sur facture' },
-];
-
+// Moyens de paiement : SOURCE UNIQUE = le serveur (/payment-methods), qui
+// applique les règles réelles (boutique × profil guest/registered/company, et
+// paiement différé selon ws_offices.deferred_billing_enabled). Les listes
+// codées en dur (bancontact/visa/apple, « paiement différé ») ont été
+// SUPPRIMÉES : elles proposaient au client des moyens de paiement qui ne sont
+// pas forcément configurés pour sa boutique. Sans réponse du serveur la liste
+// reste VIDE et l'étape Paiement affiche une erreur — jamais d'option inventée.
 function usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId) {
-  const [methods, setMethods] = React.useState(W_PAYMENTS_FALLBACK);
+  const [methods, setMethods] = React.useState([]);
   React.useEffect(() => {
     let alive = true;
-    // Profile-aware list from the backend (shop × profil : guest/registered/company).
-    if (window.WSPayments && window.WSPayments.endpoint) {
-      window.WSPayments.list({ shopId, profile: profile || 'guest', companyId })
-        .then((m) => { if (alive && m && m.length) setMethods(m.map((x) => ({ id: x.method, label: x.label || x.method, sub: '' }))); })
-        .catch(() => {});
-      return () => { alive = false; };
-    }
-    // Repli (démo / ancien backend).
-    if (mode === 'delivery' && deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') {
-      setMethods(W_PAYMENTS_DEFERRED);
-      return () => { alive = false; };
-    }
-    if (window.WSPricing && typeof window.WSPricing.listPaymentMethods === 'function') {
-      window.WSPricing.listPaymentMethods({ shopId, mode })
-        .then((m) => { if (alive && m && m.length) setMethods(m); })
-        .catch(() => {});
-    } else {
-      setMethods(W_PAYMENTS_FALLBACK);
-    }
+    if (!(window.WSPayments && window.WSPayments.endpoint)) { setMethods([]); return () => { alive = false; }; }
+    window.WSPayments.list({ shopId, profile: profile || 'guest', companyId })
+      .then((m) => {
+        if (!alive) return;
+        setMethods(Array.isArray(m) ? m.map((x) => ({ id: x.method, label: x.label || x.method, sub: '' })) : []);
+      })
+      .catch(() => { if (alive) setMethods([]); });
     return () => { alive = false; };
   }, [shopId, mode, deliveryFeeResult && deliveryFeeResult.payment_type, profile, companyId]);
   return methods;
@@ -3251,9 +3236,13 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         total,
         invoice: invoice ? { requested: true, vat, po: poNumber || null, note: orderNote || null } : null,
       };
-      const result = window.WSOrders
-        ? await window.WSOrders.place(payload)
-        : { ok: true, orderId: 'ord-demo', total, slot, payment };
+      // Une commande n'est « passée » que si le serveur l'a ENREGISTRÉE. L'ancien
+      // repli renvoyait un faux succès (orderId 'ord-demo') quand le module de
+      // commande était absent : le client voyait une confirmation pour une
+      // commande qui n'existait nulle part. Sans module → erreur, jamais de
+      // confirmation inventée.
+      if (!window.WSOrders) throw new Error('Service de commande indisponible — commande non enregistrée.');
+      const result = await window.WSOrders.place(payload);
       // Live backend + immediate payment → Stripe hosted Checkout
       // (cards + Bancontact). The webhook marks the order paid.
       if (result && result.checkoutUrl) {
@@ -3701,13 +3690,12 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
   useEffect(() => {
     if (voucherApplied && voucherApplied.ok) {
       const code = voucherApplied.voucher.code;
-      const validate = window.WSVouchers
-        ? () => window.WSVouchers.redeem({ code, shopId, subtotal, basket, customerId })
-        : () => Promise.resolve(validateVoucher(code, { subtotal, shopId }));
-      validate().then((r) => {
+      // Seul le serveur revalide un bon (compteurs, ciblage, périmètre, dates).
+      if (!window.WSVouchers) { setVoucherApplied(null); setVoucherErr('Service codes promo indisponible.'); return; }
+      window.WSVouchers.redeem({ code, shopId, subtotal, basket, customerId }).then((r) => {
         if (!r.ok) { setVoucherApplied(null); setVoucherErr(r.message); }
         else setVoucherApplied(r);
-      }).catch(() => {});
+      }).catch(() => { setVoucherApplied(null); setVoucherErr('Service codes promo indisponible.'); });
     }
   }, [subtotal, shopId]);
 
@@ -3730,9 +3718,8 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
     if (!code) return;
     setVoucherLoading(true);
     try {
-      const r = window.WSVouchers
-        ? await window.WSVouchers.redeem({ code, shopId, subtotal, basket, customerId })
-        : validateVoucher(code, { subtotal, shopId });
+      if (!window.WSVouchers) throw new Error('Service codes promo indisponible.');
+      const r = await window.WSVouchers.redeem({ code, shopId, subtotal, basket, customerId });
       if (r.ok) { setVoucherApplied(r); setVoucherErr(null); setVoucherInput(code); }
       else { setVoucherApplied(null); setVoucherErr(r.message || 'Code invalide'); }
     } catch (_) {
@@ -3844,7 +3831,14 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
       </div>
 
       <div className="ws-pay">
-        {paymentMethods.map((p) => (
+        {paymentMethods.length === 0 ? (
+          // Aucun moyen de paiement renvoyé par le serveur : on le DIT au lieu
+          // d'afficher des options inventées (règle go-live « vraies données »).
+          <p className="ws-co-error" role="alert">
+            Moyens de paiement indisponibles pour cette boutique. La commande ne peut pas être
+            finalisée — réessayez dans un instant ou contactez la boutique.
+          </p>
+        ) : paymentMethods.map((p) => (
           <label key={p.id} className={`ws-pay__opt${payment === p.id ? ' is-active' : ''}`}>
             <input type="radio" name="payment" value={p.id} checked={payment === p.id} onChange={() => setPayment(p.id)}/>
             <span className="ws-pay__radio"/>
@@ -4127,7 +4121,7 @@ function ShopFrame({ variant }) {
   const [orderToast, setOrderToast] = useState(null);
 
   // Shops directory — sourced from API stub (or remote endpoint when wired).
-  const [shops, setShops] = useState(() => (window.WSShops ? window.WSShops.getCacheSync() : Object.values(W_SHOPS || {})));
+  const [shops, setShops] = useState(() => (window.WSShops ? window.WSShops.getCacheSync() : []));
   const [shopsFailed, setShopsFailed] = React.useState(false);
   React.useEffect(() => {
     let alive = true;

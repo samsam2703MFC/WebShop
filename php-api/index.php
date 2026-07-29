@@ -3167,7 +3167,10 @@ function dispatch($m, $p) {
       json_out(array_map(fn ($z) => ['id' => (int) $z['id'], 'name' => $z['name'],
         'sort_order' => (int) $z['sort_order'], 'active' => (bool) $z['active'],
         'cp' => $z['postcodes'] ?: '—', 'type' => $z['zone_type'] ?: 'secondary',
-        'vehicule' => 'Standard', 'franco' => '—', 'delai' => 'J+1',
+        // Véhicule / franco / délai ne sont PAS stockés sur ws_delivery_zones :
+        // on renvoie null (« non renseigné ») au lieu d'affirmer « Standard » /
+        // « J+1 », qui étaient des valeurs inventées affichées comme réelles.
+        'vehicule' => null, 'franco' => null, 'delai' => null,
         'service' => (int) (float) ws_param('cost_service_minutes', '15'),
         'catchment' => $z['catchment_name'] ?: ''], $rs));
     }
@@ -4718,8 +4721,12 @@ function dispatch($m, $p) {
       if (!$tblExists('ws_categories')) json_out([]);
       $rs = rows("SELECT slug, label, active FROM ws_categories WHERE " . $scope('shop_id') . " OR shop_id IS NULL ORDER BY sort_order, label LIMIT 50");
       $cut = ws_param('order.cutoff_default', '17:00');
+      // Le délai par catégorie n'a pas de source en base : on renvoie la valeur
+      // de configuration si elle existe, sinon null (« non renseigné »). L'ancien
+      // '1' en dur affichait un délai identique inventé pour CHAQUE catégorie.
+      $delai = ws_param('order.lead_days_default', null);
       json_out(array_map(fn ($r) => ['key' => $r['slug'] ?: $r['label'], 'nom' => $r['label'],
-        'delai' => '1', 'cut' => $cut, 'def' => (bool) $r['active']], $rs));
+        'delai' => $delai, 'cut' => $cut, 'def' => (bool) $r['active']], $rs));
     }
 
     /* Sans source serveur (analytique/telemetrie absentes) → [] ⇒ seed :

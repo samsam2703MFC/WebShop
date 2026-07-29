@@ -4,66 +4,14 @@
 
 (function () {
   // ─────────────────────────────────────────────────────────────────────────
-  // Read codes from localStorage (admin-managed); fall back to a small seed
-  // so the storefront still has real codes before the admin app is opened.
-  // Shape mirrors what the admin saves:
-  //   { id, code, type, value, minOrder, scope, channel, shopIds,
-  //     validFrom, validUntil, usage:{used,limit}, status }
+  // GO-LIVE — les bons vivent en base (promotion → voucher_campaign →
+  // voucher_code) et SEUL le serveur peut les valider : il connaît les
+  // compteurs d'utilisation, le ciblage client/bureau, le périmètre produit
+  // et les dates. L'ancien couple loadVouchers()/validateVoucher() lisait
+  // localStorage et recalculait la remise dans le navigateur : un code
+  // pouvait être « accepté » sans exister en base, ou une remise différer
+  // de celle réellement facturée. Supprimé — aucune validation locale.
   // ─────────────────────────────────────────────────────────────────────────
-  function loadVouchers() {
-    try {
-      const raw = localStorage.getItem('atelier_vouchers');
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr) && arr.length) return arr;
-      }
-    } catch (e) {}
-    // Go-live : plus aucun code promo de démo (BIENVENUE10 & co purgés).
-    return [];
-  }
-
-  function validateVoucher(code, ctx) {
-    ctx = ctx || {};
-    if (!code) return { ok: false, reason: 'empty' };
-    const all = loadVouchers();
-    const v = all.find((x) => x.code.toUpperCase() === String(code).toUpperCase());
-    if (!v) return { ok: false, reason: 'unknown', message: 'Code inconnu' };
-    if (v.status === 'expired')   return { ok: false, reason: 'expired',   message: 'Ce code a expiré', voucher: v };
-    if (v.status === 'exhausted') return { ok: false, reason: 'exhausted', message: "Ce code n'est plus disponible", voucher: v };
-    if (v.status === 'scheduled') return { ok: false, reason: 'scheduled', message: "Ce code n'est pas encore actif", voucher: v };
-    const now = new Date();
-    if (v.validFrom && new Date(v.validFrom) > now) {
-      return { ok: false, reason: 'scheduled', message: "Ce code n'est pas encore actif", voucher: v };
-    }
-    if (v.validUntil) {
-      const u = new Date(v.validUntil); u.setHours(23, 59, 59, 999);
-      if (u < now) return { ok: false, reason: 'expired', message: 'Ce code a expiré', voucher: v };
-    }
-    if (v.usage && v.usage.limit && v.usage.used >= v.usage.limit) {
-      return { ok: false, reason: 'exhausted', message: "Ce code n'est plus disponible", voucher: v };
-    }
-    if (v.channel === 'office') {
-      return { ok: false, reason: 'channel', message: 'Code réservé aux clients Office', voucher: v };
-    }
-    if (v.shopIds && v.shopIds.length && ctx.shopId && !v.shopIds.includes(ctx.shopId)) {
-      return { ok: false, reason: 'shop', message: 'Code non valable dans cette boutique', voucher: v };
-    }
-    const sub = ctx.subtotal || 0;
-    if (v.minOrder && sub < v.minOrder) {
-      return { ok: false, reason: 'minOrder',
-        message: `Minimum €${Number(v.minOrder).toFixed(2)} requis`, voucher: v };
-    }
-    let discount = 0;
-    if (v.type === 'percent') discount = sub * (v.value / 100);
-    else if (v.type === 'amount') discount = Math.min(v.value, sub);
-    // 'shipping' = free shipping signal — not modeled here
-    return {
-      ok: true, voucher: v, discount,
-      message: v.type === 'percent' ? `−${v.value}% appliqué`
-            : v.type === 'amount'   ? `−€${Number(v.value).toFixed(2)} appliqué`
-            : 'Livraison offerte',
-    };
-  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Deep-link parser. Admin's link generator writes
@@ -116,12 +64,9 @@
           return j; // server returns { ok, voucher, discount, message } or { ok:false, reason, message }
         } catch (_) {}
       }
-      // Go-live : si l'API est configurée mais injoignable, on refuse le code
-      // (jamais de validation « à blanc » côté client).
-      if (WSVouchers.endpoint) {
-        return { ok: false, reason: 'offline', message: 'Service codes promo indisponible — réessayez.' };
-      }
-      return validateVoucher(code, { shopId, subtotal });
+      // Le serveur est le SEUL juge d'un code : injoignable ou non configuré,
+      // on refuse — jamais de validation « à blanc » côté client.
+      return { ok: false, reason: 'offline', message: 'Service codes promo indisponible — réessayez.' };
     },
 
     /* Bons DISPONIBLES pour ce client + boutique (marketing : affichage +
@@ -138,17 +83,14 @@
       return [];
     },
 
-    /* List all vouchers — admin use only. */
+    /* Liste des bons (usage admin) — base uniquement, sinon erreur. */
     async list() {
-      if (WSVouchers.endpoint) {
-        try {
-          const r = await fetch(WSVouchers.endpoint, { credentials: 'include' });
-          if (r.ok) return await r.json();
-        } catch (_) {}
-      }
-      return loadVouchers();
+      if (!WSVouchers.endpoint) throw new Error('API bons non configurée.');
+      const r = await fetch(WSVouchers.endpoint, { credentials: 'include' });
+      if (!r.ok) throw new Error('Bons indisponibles (HTTP ' + r.status + ').');
+      return await r.json();
     },
   };
 
-  Object.assign(window, { loadVouchers, validateVoucher, parseDeepLink, WSVouchers });
+  Object.assign(window, { parseDeepLink, WSVouchers });
 })();

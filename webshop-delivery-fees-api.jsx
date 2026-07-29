@@ -114,11 +114,10 @@
       if (paymentType === 'deferred') {
         return [{ id: 'deferred', label: 'Paiement différé', sub: 'Facturation mensuelle · paiement sur facture' }];
       }
-      return defaultMethods || [
-        { id: 'bancontact', label: 'Bancontact',     sub: 'Paiement instantané' },
-        { id: 'visa',       label: 'Carte bancaire', sub: 'Visa · Mastercard · Amex' },
-        { id: 'apple',      label: 'Apple Pay',      sub: 'Touch ID / Face ID' },
-      ];
+      // GO-LIVE : plus de liste bancontact/visa/apple codée en dur. Les moyens
+      // de paiement viennent de /payment-methods (boutique × profil). Sans
+      // liste fournie par l'appelant, on renvoie vide — l'UI affiche l'erreur.
+      return defaultMethods || [];
     },
   };
 

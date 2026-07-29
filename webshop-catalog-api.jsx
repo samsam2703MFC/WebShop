@@ -1,157 +1,107 @@
 /* =====================================================================
-   WSCatalog — products / bundles / assortments API stub
+   WSCatalog — catalogue / assortiments / stock
    ---------------------------------------------------------------------
-   The UI must NEVER hardcode catalog data. It calls these helpers,
-   which default to in-memory seeds (window._CATALOG_SEED). To wire a
-   real backend:
-     window.WSCatalog.endpoint = 'https://your-host/catalog';
-   Endpoints expected:
-     GET  {endpoint}/products?shopId=&cat=     -> [Product]  (price already shop-specific)
-     GET  {endpoint}/products/:id?shopId=      -> Product
-     GET  {endpoint}/bundles?productId=        -> [Bundle]
-     GET  {endpoint}/assortments?shopId=       -> [Assortment]
-     GET  {endpoint}/categories?shopId=        -> [Category]
-     GET  {endpoint}/stock?shopId=&date=&mode= -> [StockEntry]
-          StockEntry: { productId, qty_total, qty_reserved, qty_sold, qty_available }
-     POST {endpoint}/stock/reserve             -> { ok, reservationId, expiresAt }
-     POST {endpoint}/stock/release             -> { ok }
+   GO-LIVE — SOURCE UNIQUE : l'API (tables ws_products, ws_categories,
+   ws_product_shops, ws_product_prices, prix magasin ERP…). Toute la
+   machinerie de seeds mémoire (window._CATALOG_SEED : produits, prix par
+   boutique, assortiments, delivery_stock) a été SUPPRIMÉE, ainsi que les
+   `catch` qui avalaient une panne serveur pour retomber dessus.
 
-   Per-shop pricing + availability (seed):
-     window._CATALOG_SEED.prices  = { shopId: { productId: price } }
-     window._CATALOG_SEED.shopProducts = { shopId: [productId, ...] }
-       absent shopId key = all products available at that shop
+   Règle : soit la donnée réelle arrive, soit on lève une erreur que
+   l'écran affiche. Jamais un catalogue inventé, jamais un catalogue vide
+   silencieux qui ferait croire à une boutique sans produits.
+
+   Endpoints attendus :
+     GET  {endpoint}/products?shopId=&cat=&mode= -> [Product] (prix déjà résolu boutique)
+     GET  {endpoint}/products/:id?shopId=        -> Product
+     GET  {endpoint}/bundles?productId=          -> [Bundle]
+     GET  {endpoint}/assortments?shopId=         -> [Assortment]
+     GET  {endpoint}/categories?shopId=          -> [Category]
+     GET  {endpoint}/stock?shopId=&date=&mode=   -> [StockEntry]
+          StockEntry: { productId, qty_total, qty_reserved, qty_sold, qty_available }
+     POST {endpoint}/stock/reserve               -> { ok, reservationId, expiresAt }
+     POST {endpoint}/stock/release               -> { ok }
    ===================================================================== */
 (function () {
 
-  // Apply shop-specific price override and availability filter to a product list.
-  function applyShopOverrides(products, shopId) {
-    const seed = window._CATALOG_SEED || {};
-    // Availability: if shopProducts defined for this shop, filter to that list
-    const allowed = seed.shopProducts && seed.shopProducts[shopId];
-    let list = allowed
-      ? products.filter((p) => allowed.includes(p.id))
-      : products;
-    // Price: apply per-shop override if defined
-    const prices = seed.prices && seed.prices[shopId];
-    if (!prices) return list;
-    return list.map((p) => {
-      const override = prices[p.id];
-      return override !== undefined ? { ...p, price: override } : p;
-    });
+  function requireEndpoint() {
+    if (!api.endpoint) throw new Error('API catalogue non configurée.');
+    return api.endpoint;
+  }
+
+  async function getJson(url, label) {
+    const r = await fetch(url, { credentials: 'include' });
+    if (!r.ok) throw new Error(label + ' indisponible (HTTP ' + r.status + ').');
+    return await r.json();
   }
 
   const api = {
     endpoint: null,
+
     async listCategories({ shopId } = {}) {
-      if (api.endpoint) {
-        try {
-          const r = await fetch(`${api.endpoint}/categories?shopId=${encodeURIComponent(shopId||'')}`, { credentials: 'include' });
-          if (r.ok) return await r.json();
-        } catch (_) {}
-      }
-      return (window._CATALOG_SEED && window._CATALOG_SEED.categories) || [];
+      const base = requireEndpoint();
+      return await getJson(`${base}/categories?shopId=${encodeURIComponent(shopId || '')}`, 'Catégories');
     },
+
     async listProducts({ shopId, cat, mode } = {}) {
-      if (api.endpoint) {
-        try {
-          // `mode=delivery` → l'API exclut serveur-side les produits non éligibles
-          // à la livraison bureau (source unique du filtre, cf. /catalog/products).
-          const modeQs = mode ? `&mode=${encodeURIComponent(mode)}` : '';
-          const r = await fetch(`${api.endpoint}/products?shopId=${encodeURIComponent(shopId||'')}&cat=${encodeURIComponent(cat||'')}${modeQs}`, { credentials: 'include' });
-          if (r.ok) return await r.json();
-        } catch (_) {}
-      }
-      const seed = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
-      const filtered = !cat || cat === 'all' ? seed : seed.filter((p) => p.cat === cat);
-      return applyShopOverrides(filtered, shopId);
+      const base = requireEndpoint();
+      // `mode=delivery` → l'API exclut serveur-side les produits non éligibles
+      // à la livraison bureau (source unique du filtre, cf. /catalog/products).
+      const modeQs = mode ? `&mode=${encodeURIComponent(mode)}` : '';
+      return await getJson(
+        `${base}/products?shopId=${encodeURIComponent(shopId || '')}&cat=${encodeURIComponent(cat || '')}${modeQs}`,
+        'Catalogue'
+      );
     },
+
     async getProduct(id, shopId) {
-      if (api.endpoint) {
-        try {
-          const qs = shopId ? `?shopId=${encodeURIComponent(shopId)}` : '';
-          const r = await fetch(`${api.endpoint}/products/${encodeURIComponent(id)}${qs}`, { credentials: 'include' });
-          if (r.ok) return await r.json();
-        } catch (_) {}
-      }
-      const seed = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
-      const p = seed.find((p) => String(p.id) === String(id)) || null;
-      if (!p || !shopId) return p;
-      return applyShopOverrides([p], shopId)[0] || null;
+      const base = requireEndpoint();
+      const qs = shopId ? `?shopId=${encodeURIComponent(shopId)}` : '';
+      return await getJson(`${base}/products/${encodeURIComponent(id)}${qs}`, 'Produit');
     },
+
     async listBundles({ productId } = {}) {
-      if (api.endpoint) {
-        try {
-          const r = await fetch(`${api.endpoint}/bundles?productId=${encodeURIComponent(productId||'')}`, { credentials: 'include' });
-          if (r.ok) return await r.json();
-        } catch (_) {}
-      }
-      const p = await api.getProduct(productId);
-      return (p && p.bundles) || [];
+      const base = requireEndpoint();
+      return await getJson(`${base}/bundles?productId=${encodeURIComponent(productId || '')}`, 'Formules');
     },
+
     async listAssortments({ shopId } = {}) {
-      if (api.endpoint) {
-        try {
-          const r = await fetch(`${api.endpoint}/assortments?shopId=${encodeURIComponent(shopId||'')}`, { credentials: 'include' });
-          if (r.ok) return await r.json();
-        } catch (_) {}
-      }
-      return (window._CATALOG_SEED && window._CATALOG_SEED.assortments) || [];
+      const base = requireEndpoint();
+      return await getJson(`${base}/assortments?shopId=${encodeURIComponent(shopId || '')}`, 'Assortiments');
     },
-    // Returns a map of productId -> { qty_total, qty_reserved, qty_sold, qty_available }
-    // Falls back to delivery_stock on the product seed when no endpoint is configured.
+
+    // Map productId -> { qty_total, qty_reserved, qty_sold, qty_available }.
     async getStock({ shopId, date, mode } = {}) {
-      if (api.endpoint) {
-        try {
-          const iso = date instanceof Date ? date.toISOString().slice(0, 10) : (date || '');
-          const r = await fetch(
-            `${api.endpoint}/stock?shopId=${encodeURIComponent(shopId||'')}&date=${encodeURIComponent(iso)}&mode=${encodeURIComponent(mode||'')}`,
-            { credentials: 'include' }
-          );
-          if (r.ok) {
-            const rows = await r.json();
-            const map = {};
-            for (const row of rows) map[row.productId] = row;
-            return map;
-          }
-        } catch (_) {}
-      }
-      // Seed fallback: build map from delivery_stock on each product
-      const seed = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
+      const base = requireEndpoint();
+      const iso = date instanceof Date ? date.toISOString().slice(0, 10) : (date || '');
+      const rows = await getJson(
+        `${base}/stock?shopId=${encodeURIComponent(shopId || '')}&date=${encodeURIComponent(iso)}&mode=${encodeURIComponent(mode || '')}`,
+        'Stock'
+      );
       const map = {};
-      for (const p of seed) {
-        if (typeof p.delivery_stock === 'number') {
-          map[p.id] = {
-            productId: p.id,
-            qty_total: p.delivery_stock,
-            qty_reserved: 0,
-            qty_sold: 0,
-            qty_available: p.delivery_stock,
-          };
-        }
-      }
+      for (const row of (rows || [])) map[row.productId] = row;
       return map;
     },
-    // Reserve qty for a logged-in user's basket (15-min hold).
-    // Only called when user is authenticated. No-op when no endpoint is set.
-    // POST {endpoint}/stock/reserve { productId, shopId, date, mode, qty, customerId }
-    // -> { ok, reservationId, expiresAt }
+
+    // Réservation de stock (maintien 15 min) pour un client authentifié.
+    // Un échec DOIT remonter : sans réservation confirmée, le stock n'est pas
+    // tenu et la boutique pourrait survendre.
     async reserve({ productId, shopId, date, mode, qty, customerId } = {}) {
-      if (!api.endpoint) return null;
-      try {
-        const iso = date instanceof Date ? date.toISOString().slice(0, 10) : (date || '');
-        const r = await fetch(`${api.endpoint}/stock/reserve`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ productId, shopId, date: iso, mode, qty, customerId }),
-        });
-        if (r.ok) return await r.json();
-      } catch (_) {}
-      return null;
+      const base = requireEndpoint();
+      const iso = date instanceof Date ? date.toISOString().slice(0, 10) : (date || '');
+      const r = await fetch(`${base}/stock/reserve`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId, shopId, date: iso, mode, qty, customerId }),
+      });
+      if (!r.ok) throw new Error('Réservation de stock impossible (HTTP ' + r.status + ').');
+      return await r.json();
     },
-    // Release one or all reservations for a customer.
-    // POST {endpoint}/stock/release { customerId, reservationIds? }
-    // reservationIds absent = release all for that customer.
+
+    // Libération de réservations. Nettoyage non bloquant : un échec est tracé
+    // en console (la réservation expire d'elle-même côté serveur) mais ne
+    // fabrique aucune donnée.
     async release({ customerId, reservationIds } = {}) {
       if (!api.endpoint) return;
       try {
@@ -161,7 +111,9 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ customerId, reservationIds: reservationIds || null }),
         });
-      } catch (_) {}
+      } catch (e) {
+        console.error('[ws] libération des réservations impossible', e);
+      }
     },
   };
   window.WSCatalog = api;
