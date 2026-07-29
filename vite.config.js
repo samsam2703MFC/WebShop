@@ -32,7 +32,33 @@ export default defineConfig({
           { src: 'pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
-      workbox: { globPatterns: ['**/*.{js,css,html,png,svg,woff2}'] },
+      // FRAÎCHEUR GARANTIE. Un service worker qui précache la coquille HTML a
+      // re-servi en production une version PÉRIMÉE du webshop (l'ancien bundle
+      // portait encore les boutiques de démo purgées depuis) : le client voyait
+      // des données qui n'existent plus nulle part dans le code ni en base.
+      //   • cleanupOutdatedCaches : purge les caches des versions précédentes ;
+      //   • skipWaiting + clientsClaim : la nouvelle version prend la main tout
+      //     de suite, sans attendre la fermeture de tous les onglets ;
+      //   • navigateFallbackDenylist /api/ : une navigation vers l'API ne doit
+      //     JAMAIS être servie par la coquille en cache ;
+      //   • runtimeCaching NetworkFirst sur les navigations : la coquille est
+      //     toujours redemandée au serveur (repli cache seulement hors-ligne),
+      //     donc un déploiement est visible au rechargement suivant.
+      // L'API (/api/…) n'est jamais mise en cache : les données restent vraies.
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
+        cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
+        navigateFallbackDenylist: [/^\/api\//, /\/api\//],
+        runtimeCaching: [
+          {
+            urlPattern: ({ request }) => request.mode === 'navigate',
+            handler: 'NetworkFirst',
+            options: { cacheName: 'ws-html', networkTimeoutSeconds: 5 },
+          },
+        ],
+      },
     }),
   ],
   build: { outDir: 'dist', chunkSizeWarningLimit: 2500 },
