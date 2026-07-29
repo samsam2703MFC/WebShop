@@ -301,10 +301,24 @@ function dispatch($m, $p) {
 
   /* ── Shops / Brand ── */
   if ($m === 'GET' && $p === '/shops') {
-    json_out(rows("SELECT id, slug, name, city, email, phone, accent, tint, logo_url,
-                          discount_type AS webshop_discount_type, discount_value AS webshop_discount_value,
-                          TRIM(CONCAT_WS(' ', street, street_num)) AS address
-                     FROM shops WHERE active = 1 AND webshop_enabled = 1 ORDER BY name"));
+    // La liste des boutiques est la PORTE D'ENTRÉE du webshop : si elle tombe, le
+    // client ne voit AUCUNE boutique. Le handler global renverrait « Erreur interne »
+    // sans dire pourquoi — on remonte donc ici l'erreur RÉELLE (message, ligne et
+    // base connectée), conformément à la règle « soit ça marche avec les vraies
+    // données, soit ça renvoie un bug » : jamais de liste inventée en repli.
+    try {
+      json_out(rows("SELECT id, slug, name, city, email, phone, accent, tint, logo_url,
+                            discount_type AS webshop_discount_type, discount_value AS webshop_discount_value,
+                            TRIM(CONCAT_WS(' ', street, street_num)) AS address
+                       FROM shops WHERE active = 1 AND webshop_enabled = 1 ORDER BY name"));
+    } catch (Throwable $e) {
+      $base = null;
+      try { $base = (row("SELECT DATABASE() d")['d'] ?? null); } catch (Throwable $e2) { $base = 'inconnue'; }
+      json_out(['error' => 'liste des boutiques KO',
+                'detail' => $e->getMessage(),
+                'ligne' => $e->getLine(),
+                'base' => $base], 500);
+    }
   }
   if ($m === 'GET' && $p === '/brand') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
