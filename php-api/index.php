@@ -530,17 +530,31 @@ function dispatch($m, $p) {
         error_log('[ws] allergènes ERP indisponibles: ' . $e->getMessage());
       }
     }
-    // Prix magasin RÉEL (ERP shop_product.portion_price par boutique) : fait
-    // autorité sur COALESCE(ws_product_prices, ws_products.price). Le prix facturé
-    // par /orders est aligné sur la MÊME source (cf. erp_shop_prices). Repli ws_
-    // si la boutique n'a pas de ligne shop_product (ou ERP indisponible).
+    // Prix magasin RÉEL (ERP shop_product.portion_price par boutique) — SOURCE
+    // UNIQUE. Règle go-live « vraies données ou bug » : le repli sur le prix
+    // répliqué ws_ (COALESCE ws_product_prices/ws_products.price) est SUPPRIMÉ —
+    // il a servi des prix de test (1,00 €) comme s'ils étaient réels.
+    //   • produit sans ligne shop_product → prix 0 → écarté par le filtre
+    //     « price > 0 » ci-dessous (non vendable tant que l'ERP n'a pas son
+    //     prix ; il revient AUTOMATIQUEMENT dès l'import) ;
+    //   • aucune ligne shop_product pour toute la boutique (source prix
+    //     indisponible) → erreur 503 explicite, on ne publie pas un catalogue
+    //     tarifé sur le réplica.
     if ($r) {
       $store = erp_shop_prices($s, array_map(static fn($p2) => (int) $p2['id'], $r));
-      if ($store) {
-        foreach ($r as &$x) {
-          if (isset($store[(int) $x['id']])) $x['price'] = $store[(int) $x['id']];
-        }
-        unset($x);
+      if (!$store) {
+        json_out(['error' => 'Prix magasin (ERP shop_product) indisponibles pour cette boutique — catalogue non publiable.'], 503);
+      }
+      $sansPrix = [];
+      foreach ($r as &$x) {
+        if (isset($store[(int) $x['id']])) $x['price'] = $store[(int) $x['id']];
+        else { $x['price'] = 0.0; $sansPrix[] = (int) $x['id']; }
+      }
+      unset($x);
+      if ($sansPrix) {
+        error_log('[ws] catalogue boutique ' . (int) $s . ' : ' . count($sansPrix)
+          . ' produit(s) sans prix ERP shop_product, masqués (ids: '
+          . implode(',', array_slice($sansPrix, 0, 30)) . (count($sansPrix) > 30 ? ',…' : '') . ')');
       }
     }
     // Le prix de la portion ENTIÈRE suit le prix FINAL (magasin ERP inclus) —
@@ -1301,29 +1315,37 @@ function dispatch($m, $p) {
     $dl['tourneeStopId']  = $dl['tourneeStopId']  ?? ($dl['tournee_stop_id']           ?? null);
 
     // 1. Lignes + sous-total (prix serveur), avec le flag promo croisée + note produit.
-    //    Prix facturé = MÊME source que l'affichage catalogue : prix magasin ERP
-    //    (shop_product.portion_price) s'il existe pour cette boutique, sinon repli
-    //    sur COALESCE(ws_product_prices, ws_products.price). Aligné sur /catalog.
+    //    Prix facturé = SOURCE UNIQUE, la même que l'affichage catalogue : le prix
+    //    magasin ERP (shop_product.portion_price). Règle go-live « vraies données
+    //    ou bug » : plus AUCUN repli — ni sur le réplica ws_ (il a facturé des
+    //    prix de test), ni sur les facteurs de portion inventés (×0.27/0.52/0.15).
+    //    Produit sans prix ERP → commande REFUSÉE (409) avec le nom du produit ;
+    //    portion sans prix ERP de portion → idem. Le client ne paie jamais un
+    //    montant que la boutique n'a pas réellement fixé.
     $subtotal = 0; $lines = [];
     $storePrices = erp_shop_prices($shop, array_map(static fn($it) => (int) ($it['productId'] ?? 0), $basket));
-    // PRIX DE PORTION appliqué CÔTÉ SERVEUR : le prix EXPLICITE de la boutique
-    // (ERP shop_product_portion_price) fait foi ; sans prix ERP, repli sur les
-    // facteurs historiques (1/4 ×0.27 · 1/2 ×0.52 · 1/8 ×0.15 · entière ×1).
-    $PFACT = ['quart' => 0.27, 'demi' => 0.52, 'huitieme' => 0.15, 'entier' => 1.0];
     $portPx = erp_portion_options($shop, array_map(static fn ($it2) => (int) ($it2['productId'] ?? 0), $basket));
     foreach ($basket as $it) {
-      $p2 = row("SELECT p.id, p.name, p.cross_portion, COALESCE(pp.price, p.price) AS price
-                   FROM ws_products p LEFT JOIN ws_product_prices pp ON pp.product_id=p.id AND pp.shop_id=? AND pp.active=1
-                  WHERE p.id=? AND p.active=1", [$shop, $it['productId'] ?? 0]);
+      $p2 = row("SELECT p.id, p.name, p.cross_portion
+                   FROM ws_products p
+                  WHERE p.id=? AND p.active=1", [$it['productId'] ?? 0]);
       if (!$p2) continue;
-      $unit = isset($storePrices[(int) $p2['id']]) ? $storePrices[(int) $p2['id']] : (float) $p2['price'];
+      if (!isset($storePrices[(int) $p2['id']])) {
+        json_out(['error' => 'Prix indisponible pour « ' . trim((string) $p2['name'])
+          . ' » dans cette boutique — retirez-le du panier ou réessayez plus tard.'], 409);
+      }
+      $unit = (float) $storePrices[(int) $p2['id']];
       $portion2 = mb_strtolower(trim((string) ($it['portion'] ?? '')));
       if ($portion2 !== '' && $portion2 !== 'entier') {
         $unitP = null;
         foreach (($portPx[(int) $p2['id']] ?? []) as $c2) {
           if ($c2['v'] === $portion2 && $c2['price'] !== null) { $unitP = (float) $c2['price']; break; }
         }
-        $unit = $unitP !== null ? $unitP : round($unit * ($PFACT[$portion2] ?? 1.0), 2);
+        if ($unitP === null) {
+          json_out(['error' => 'Prix de portion indisponible pour « ' . trim((string) $p2['name'])
+            . ' » — choisissez la pièce entière ou retirez la ligne.'], 409);
+        }
+        $unit = $unitP;
       }
       $qty = max(1, (int) ($it['qty'] ?? 1));
       $subtotal += $unit * $qty;

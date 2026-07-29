@@ -479,18 +479,21 @@ function OfferStrip({ offer, qty, unit, calc, onAddOne }) {
 }
 
 // Portion glyph shapes (1/8, 1/4, 1/2, entier) — shared by card hint + modal
-// options. `erpOnly` = jamais proposé en repli historique (uniquement quand
-// l'ERP le déclare via product_portion).
+// options. Glyphes d'affichage uniquement : les PRIX de portion viennent
+// exclusivement de l'ERP (shop_product_portion_price via le catalogue).
 const PORTION_SHAPES = [
-  { v: 'huitieme', d: <path d="M12 12L12 3 A9 9 0 0 1 18.36 5.64 Z" fill="currentColor"/>, name: '1/8',     factor: 0.15, erpOnly: true },
-  { v: 'quart',  d: <path d="M12 12L12 3 A9 9 0 0 1 21 12 Z" fill="currentColor"/>,        name: '1/4',     factor: 0.27 },
-  { v: 'demi',   d: <path d="M12 3 A9 9 0 0 1 12 21 Z" fill="currentColor"/>,              name: '1/2',     factor: 0.52 },
-  { v: 'entier', d: <circle cx="12" cy="12" r="9" fill="currentColor"/>,                   name: 'Entière', factor: 1 },
+  { v: 'huitieme', d: <path d="M12 12L12 3 A9 9 0 0 1 18.36 5.64 Z" fill="currentColor"/>, name: '1/8' },
+  { v: 'quart',  d: <path d="M12 12L12 3 A9 9 0 0 1 21 12 Z" fill="currentColor"/>,        name: '1/4' },
+  { v: 'demi',   d: <path d="M12 3 A9 9 0 0 1 12 21 Z" fill="currentColor"/>,              name: '1/2' },
+  { v: 'entier', d: <circle cx="12" cy="12" r="9" fill="currentColor"/>,                   name: 'Entière' },
 ];
 
-// Options de portion d'un produit : PRIX EXPLICITES de l'ERP quand fournis
+// Options de portion d'un produit : UNIQUEMENT les prix explicites de l'ERP
 // (product.portionOptions = [{v,label,price}] servis par le catalogue —
-// shop_product_portion_price), sinon repli historique base × facteur.
+// shop_product_portion_price). Go-live « vraies données ou bug » : le repli
+// « prix de base × facteur (0.27/0.52/0.15) » est SUPPRIMÉ — il affichait et
+// facturait des prix de portion que la boutique n'a jamais fixés. Sans prix
+// ERP de portion, seule la pièce ENTIÈRE (prix réel) est proposée.
 function portionOptionList(p) {
   if (Array.isArray(p?.portionOptions) && p.portionOptions.length) {
     return p.portionOptions.map((o) => {
@@ -498,12 +501,8 @@ function portionOptionList(p) {
       return { v: o.v, d: sh.d, name: o.label || sh.name, price: Number(o.price) || 0 };
     });
   }
-  // Repli historique (sans prix ERP) : ENTIÈRE d'abord (défaut naturel), puis
-  // 1/2, puis 1/4 — l'ordre de PORTION_SHAPES mettait 1/4 en tête, ce qui
-  // sélectionnait « 1/4 » par défaut au lieu de l'entière.
-  return PORTION_SHAPES.filter((s) => !s.erpOnly)
-    .slice().reverse()
-    .map((s) => ({ v: s.v, d: s.d, name: s.name, price: (p?.price || 0) * s.factor }));
+  const entier = PORTION_SHAPES.find((s) => s.v === 'entier');
+  return [{ v: 'entier', d: entier.d, name: entier.name, price: p?.price || 0 }];
 }
 
 // Libellé des portions d'une carte produit — types proposés avec le PRIX de
