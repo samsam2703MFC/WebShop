@@ -3473,7 +3473,36 @@ function dispatch($m, $p) {
      de rendu cassé). Écritures = incrément suivant (comme le franchisor).
      ══════════════════════════════════════════════════════════════════════ */
   if (strpos($p, '/franchisee/') === 0) {
-    require_admin();
+    /* GARDE : jeton admin ERP, OU session tablette (PIN).
+       Avant, seul le jeton admin passait : une tablette voyait bien son menu
+       filtré, mais CHAQUE écran renvoyait 401 — les comptes PIN ne donnaient
+       accès à aucune donnée, la fonctionnalité était décorative.
+       Une session PIN est doublement bornée :
+         • à SA boutique (le ?shop= de l'URL est ignoré — sinon n'importe quel
+           porteur de PIN lisait les données d'une autre boutique) ;
+         • à SES sections (bo_endpoint_section) — un endpoint non cartographié
+           est refusé, jamais ouvert par défaut. */
+    $pinSes = is_admin_request() ? null : bo_pin_session();
+    if (!$pinSes) {
+      require_admin();
+    } else {
+      $epName = substr($p, strlen('/franchisee/'));
+      // /franchisee/save est l'écriture GÉNÉRIQUE de toutes les tables : la
+      // section dépend de la table visée, pas de l'endpoint. Le nom de table du
+      // back-office est celui de l'endpoint avec des « _ » (ws_tours ↔ ws-tours).
+      if ($epName === 'save') {
+        $tbl  = (string) (body()['table'] ?? '');
+        $need = $tbl !== '' ? bo_endpoint_section(str_replace('_', '-', $tbl)) : null;
+        if ($need === null || $need === '*')
+          json_out(['error' => 'Écriture non autorisée pour ce compte (table « ' . ($tbl ?: '?') . ' »).'], 403);
+      } else {
+        $need = bo_endpoint_section($epName);
+      }
+      if ($need === null)
+        json_out(['error' => 'Section inconnue pour cet écran (' . $epName . ') — accès refusé.'], 403);
+      if ($need !== '*' && !in_array($need, $pinSes['sections'], true))
+        json_out(['error' => 'Accès refusé : la section « ' . $need . ' » n’est pas autorisée pour ce compte.'], 403);
+    }
 
     $tblExists = function ($t) { return (bool) row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", [$t]); };
     $SHOPS = 'shops';
@@ -3500,6 +3529,11 @@ function dispatch($m, $p) {
         : row("SELECT id FROM $SHOPS WHERE slug=?", [$shopParam]);
       if ($sr) $shopId = (int) $sr['id'];
     }
+    // Session tablette : la portée est CELLE DE LA SESSION, pas celle de l'URL.
+    // Sans ça, changer ?shop= dans la barre d'adresse suffisait à lire les
+    // données d'une autre boutique avec un PIN local — et l'absence de ?shop=
+    // donnait la vue réseau complète.
+    if ($pinSes) $shopId = (int) $pinSes['shop_id'];
     // Fragment WHERE de portée pour une colonne shop (réseau → 1=1). $shopId est un int contrôlé.
     $scope = function ($col) use ($shopId) { return $shopId ? "$col = " . (int) $shopId : '1=1'; };
 
@@ -6869,6 +6903,94 @@ function rate_limit($bucket, $max, $windowSec) {
 
 /* Le jeton admin est-il présenté sur CETTE requête ? (garde optionnelle pour
  * des lectures sensibles aussi accessibles au propriétaire connecté). */
+/* ── Session tablette (PIN) ───────────────────────────────────────────────────
+   Renvoie ['user_id','shop_id','sections'] pour un X-Pin-Token valide, sinon
+   null. Le compte est REVÉRIFIÉ à chaque requête (active = 1) : désactiver un
+   compte depuis la console marque ferme immédiatement la tablette, sans
+   attendre l'expiration des 12 h. */
+function bo_pin_session() {
+  static $cached = false;
+  if ($cached !== false) return $cached;
+  $tok = req_header('X-Pin-Token');
+  if ($tok === '') return $cached = null;
+  try {
+    $s = row("SELECT s.user_id, s.shop_id, u.sections, u.active
+                FROM bo_pin_session s JOIN bo_users u ON u.id = s.user_id
+               WHERE s.token = ? AND s.expires_at > NOW()", [$tok]);
+  } catch (Throwable $e) { return $cached = null; }
+  if (!$s || !$s['active']) return $cached = null;
+  return $cached = [
+    'user_id'  => (int) $s['user_id'],
+    'shop_id'  => (int) $s['shop_id'],
+    'sections' => $s['sections'] ? (json_decode((string) $s['sections'], true) ?: []) : [],
+  ];
+}
+
+/* Section du back-office franchisé à laquelle appartient un endpoint. C'est
+   cette table qui rend les droits RÉELS : sans elle, le cloisonnement n'était
+   qu'un masquage de menu — la tablette n'avait de toute façon accès à AUCUNE
+   donnée, /franchisee/* exigeant le jeton admin.
+   Un endpoint absent de la table est REFUSÉ à une session PIN (jamais ouvert
+   par défaut) ; l'admin ERP, lui, garde tout. */
+function bo_endpoint_section($name) {
+  static $MAP = [
+    // Pilotage
+    'kpis' => 'tdb', 'fr-alertes' => 'tdb', 'fr-tdb-tournees' => 'tdb', 'fr-tdb-tree' => 'tdb',
+    'fr-net-stats' => 'statsReseau',
+    'fr-rentabilite' => 'rentabilite', 'fr-renta-kpis' => 'rentabilite',
+    'fr-cout-params' => 'params',
+    'geo-clients' => 'geoAnalyse',
+    // Vente
+    'fr-orders' => 'commandes', 'order-status' => 'commandes',
+    'fr-stock-catalog' => 'stockJour', 'stock-adjust' => 'stockJour', 'stock-set' => 'stockJour',
+    'stock-defaults' => 'stockJour', 'stock-product-orders' => 'stockJour',
+    'fr-assortiment' => 'assortiment', 'assortiment-toggle' => 'assortiment', 'erp-portion-rules' => 'assortiment',
+    'fr-vouchers' => 'vouchers', 'voucher' => 'vouchers', 'voucher-toggle' => 'vouchers',
+    'ws-vouchers-local' => 'vouchers', 'fr-voucher-targets' => 'vouchers', 'client-voucher' => 'vouchers',
+    'ws-pricing-rules-local' => 'pricingRules',
+    'ws-payment-methods' => 'paiements',
+    // Logistique
+    'fr-prep-lines' => 'prep', 'fr-prep-points' => 'prep',
+    'ws-tours' => 'tournees', 'ws-tour-postcodes' => 'tournees', 'tour-dispatch' => 'tournees',
+    'tour-dispatch-status' => 'tournees', 'drivers' => 'tournees',
+    'fr-live-table' => 'suivi', 'fr-live-drivers' => 'suivi', 'fr-live-eta' => 'suivi',
+    'ws-tour-availability' => 'horaires',
+    'ws-tour-closures' => 'fermetures',
+    'fr-incidents' => 'incidents', 'client-complaint' => 'incidents',
+    'ws-delivery-fee-rules' => 'frais',
+    'ws-delivery-zones' => 'zones', 'ws-franchisor-catchment' => 'zones',
+    'catchment-postcodes' => 'zones', 'zone-check' => 'zones',
+    // Clients B2B
+    'ws-office-delivery-sites' => 'sites',
+    'ws-offices' => 'offices', 'onboard-office' => 'offices', 'route-office' => 'offices',
+    'b2b-clients' => 'b2bClients', 'b2b-departments' => 'b2bClients', 'fr-clients' => 'b2bClients',
+    'client-active' => 'b2bClients', 'client-attach' => 'b2bClients', 'client-billing' => 'b2bClients',
+    'client-block' => 'b2bClients', 'client-office-delivery' => 'b2bClients', 'client-zip' => 'b2bClients',
+    'client-orders' => 'b2bClients', 'vies-check' => 'b2bClients',
+    'ws-office-delivery-settings' => 'bureauParams',
+    'ws-office-emails' => 'emailsBureau',
+    'fr-validations' => 'validations', 'validation-decide' => 'validations',
+    'fr-join-requests' => 'demandesBureau', 'join-decide' => 'demandesBureau',
+    // Disponibilité
+    'ws-slots' => 'creneaux',
+    'fr-capacity' => 'capacite',
+    'fr-shop-availability' => 'reglesBoutique', 'shop-availability' => 'reglesBoutique',
+    'ws-shop-exceptions' => 'joursExcept',
+    'ws-calendar-rules' => 'calendarRules',
+    'fr-dispo-cats' => 'dispoCat',
+    'ws-product-availability' => 'dispoProd',
+    // Réglages
+    'params' => 'shopParams',
+    // 'save' n'est PAS ici : c'est l'écriture générique, sa section dépend de
+    // la table visée (traitée à part dans la garde /franchisee/).
+  ];
+  // Toujours ouverts à une session PIN : identité et état d'interface. Ils ne
+  // portent aucune donnée métier propre à une section.
+  static $FREE = ['me' => true, 'bo-store' => true];
+  if (isset($FREE[$name])) return '*';
+  return $MAP[$name] ?? null;
+}
+
 function is_admin_request() {
   $expected = (string) (cfg()['admin_token'] ?? '');
   if ($expected === '') return false;
