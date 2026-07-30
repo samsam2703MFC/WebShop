@@ -2371,9 +2371,14 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   }
 
   // ── Office: unplug / reconnect / add new ───────────────────────────
+  // Boutique de référence des bureaux : la préférée du profil, sinon celle que
+  // le client consulte. Sans ce repli, un client dont preferred_shop_id est vide
+  // (compte créé côté PWA, par exemple) restait bloqué sur « choisissez d'abord
+  // votre boutique préférée » et ne pouvait pas se rattacher.
+  const officeShopId = form.preferredShopId || currentShopId;
   async function loadApprovedOffices() {
     if (!window.WSOffices) { setOfficeErr('Service bureaux indisponible — please debug.'); return; }
-    const shopId = form.preferredShopId; // offices are scoped to the preferred shop
+    const shopId = officeShopId; // boutique préférée, sinon celle consultée
     setOfficeBusy(true);
     try {
       const list = await window.WSOffices.listApproved(shopId);
@@ -2433,7 +2438,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   function chooseLinkAnother() {
     setPickedOfficeId(''); setOfficeErr('');
     setOfficeStep('pick');
-    if (form.preferredShopId) loadApprovedOffices();
+    if (officeShopId) loadApprovedOffices();
   }
   function chooseDone() {
     setOfficeStep('idle');
@@ -2460,7 +2465,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       // le back-office d'une AUTRE boutique (celle de sa fiche ERP).
       const r = await window.WSOffices.contactFranchise({
         officeName: newOffice.name, phone: newOffice.phone, email: newOffice.email, address: newOffice.address,
-        shopId: form.preferredShopId || currentShopId, requestedBy: user.email,
+        shopId: officeShopId, requestedBy: user.email,
       });
       if (r && r.ok === false) { setOfficeErr(r.error || 'Échec de l\'envoi.'); return; }
       setNewOffice({ name: '', vat: '', address: '', postalCode: '', city: '', contact: '', email: '', phone: '', preferredShopId: '' });
@@ -2843,6 +2848,10 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           <div className="ws-acc__card ws-acc__card--empty">
             <p className="ws-acc__note">Aucun bureau associé. Liez-vous à un bureau de livraison de votre boutique.</p>
             <button className="ws-cta ws-cta--block" onClick={openSitePicker}>Lier un bureau</button>
+            {/* Le rattachement à une ENTREPRISE (ws_offices) n'était atteignable
+                qu'après avoir délié un bureau existant : un client sans bureau ne
+                pouvait ni se rattacher, ni demander l'ajout du sien. */}
+            <button type="button" className="ws-acc__addlink" onClick={chooseLinkAnother}>Me rattacher à une entreprise / demander l'ajout de mon bureau</button>
             <button type="button" className="ws-acc__unplug" onClick={() => window.open('/landing/livraison-bureau.html', '_blank', 'noopener')}>Ma zone est-elle desservie&nbsp;?</button>
           </div>
         )}
@@ -2898,7 +2907,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           </div>
         )}
 
-        {officeStep === 'pick' && !form.preferredShopId && (
+        {officeStep === 'pick' && !officeShopId && (
           <div className="ws-acc__card">
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Choisir un bureau</div>
             <p className="ws-acc__hint">Sélectionnez d'abord votre <strong>boutique préférée</strong> (ci-dessus) : la liste des bureaux en dépend.</p>
@@ -2908,10 +2917,10 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           </div>
         )}
 
-        {officeStep === 'pick' && form.preferredShopId && (
+        {officeStep === 'pick' && officeShopId && (
           <div className="ws-acc__card">
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>
-              Bureaux de {((shops || []).find((s) => s.id === form.preferredShopId) || {}).name || 'votre boutique'}
+              Bureaux de {((shops || []).find((s) => s.id === officeShopId) || {}).name || 'votre boutique'}
             </div>
             {officeBusy && <p className="ws-acc__hint">Chargement…</p>}
             {!officeBusy && approvedOffices.length === 0 && (
