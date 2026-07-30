@@ -1,0 +1,91 @@
+{
+  "key": "webshop",
+  "slug": "webshop",
+  "group": "Ventes",
+  "icon": "shopping-cart",
+  "isNew": false,
+  "sortOrder": 1,
+  "name": {
+    "fr": "Webshop",
+    "en": "Webshop",
+    "ar": "المتجر الإلكتروني"
+  },
+  "description": {
+    "fr": "La boutique en ligne du réseau : catalogue par magasin, créneaux, livraison et B2B.",
+    "en": "The network's online store: per-store catalogue, slots, delivery and B2B.",
+    "ar": "متجر الشبكة على الإنترنت: كتالوج لكل فرع، ومواعيد، وتوصيل، وخدمات الشركات."
+  },
+  "overview": {
+    "fr": "Le client commande sur le site de son magasin, pas sur un site générique : le catalogue, les prix, les jours d'ouverture et les créneaux sont ceux de ce point de vente. La disponibilité est vérifiée avant le paiement — stock du jour, capacité du créneau, heure limite de commande — pour qu'aucune commande acceptée en ligne ne soit impossible à produire. Les commandes atterrissent directement dans la console franchisé.",
+    "en": "The customer orders from their store's site, not a generic one: catalogue, prices, opening days and slots are that location's. Availability is checked before payment — day stock, slot capacity, order cutoff — so no order accepted online is impossible to produce. Orders land straight in the franchisee console."
+  },
+  "metric": {
+    "value": "4",
+    "label": { "fr": "langues au comptoir en ligne", "en": "languages at the online counter" }
+  },
+  "features": [
+    {
+      "key": "catalogue",
+      "icon": "book-open",
+      "name": { "fr": "Catalogue par boutique", "en": "Per-store catalogue" },
+      "description": {
+        "fr": "Le même catalogue réseau, filtré et tarifé pour la boutique choisie : assortiment, prix local, saison, allergènes. Changer de boutique change la vitrine, pas le référentiel.",
+        "en": "One network catalogue, filtered and priced for the chosen store: assortment, local price, season, allergens. Switching store changes the shopfront, not the reference data."
+      }
+    },
+    {
+      "key": "creneaux",
+      "icon": "calendar",
+      "name": { "fr": "Créneaux et heure limite", "en": "Slots and cutoff" },
+      "description": {
+        "fr": "Le moteur de disponibilité croise les jours d'ouverture, le stock du jour et le remplissage du créneau. L'heure limite de commande est lue depuis la configuration de la boutique et réévaluée en continu : passé l'heure, le mode livraison se referme de lui-même.",
+        "en": "The availability engine crosses opening days, day stock and slot fill. The order cutoff is read from the store's configuration and re-evaluated continuously: past the hour, delivery mode closes itself."
+      }
+    },
+    {
+      "key": "tarifs",
+      "icon": "percent",
+      "name": { "fr": "Tarifs, bons et remises", "en": "Prices, vouchers and discounts" },
+      "description": {
+        "fr": "Le devis du panier est calculé côté serveur : règles de prix du siège, promotions locales, bons de réduction validés à l'usage, et l'offre croisée par portion. Le client voit un prix, pas une estimation.",
+        "en": "The basket quote is computed server-side: head-office pricing rules, local offers, vouchers validated on use, and the cross-portion offer. The customer sees a price, not an estimate."
+      }
+    },
+    {
+      "key": "b2b",
+      "icon": "building-2",
+      "name": { "fr": "Commande B2B", "en": "B2B ordering" },
+      "description": {
+        "fr": "Les entreprises commandent pour un bureau et un service, sur une tournée existante, avec leurs frais de livraison propres et leur numéro de TVA vérifié. La facture part au bon service.",
+        "en": "Businesses order for an office and a department, on an existing tour, with their own delivery fees and a checked VAT number. The invoice goes to the right department."
+      }
+    },
+    {
+      "key": "compte",
+      "icon": "users",
+      "name": { "fr": "Compte et suivi de commande", "en": "Account and order tracking" },
+      "description": {
+        "fr": "Inscription, session, historique et suivi : le client retrouve ses commandes passées et l'état de celle du jour, la même donnée que celle affichée en magasin.",
+        "en": "Sign-up, session, history and tracking: the customer finds past orders and the state of today's — the same data the store is looking at."
+      }
+    },
+    {
+      "key": "marque",
+      "icon": "image",
+      "name": { "fr": "Thème par enseigne", "en": "Per-brand theme" },
+      "description": {
+        "fr": "Couleurs, logo et typographies viennent des jetons de la boutique servis par l'API. Une enseigne de plus dans le réseau ne demande pas un nouveau front.",
+        "en": "Colours, logo and type come from the store's tokens served by the API. One more brand in the network does not call for a new front end."
+      }
+    },
+    {
+      "key": "langues",
+      "icon": "languages",
+      "name": { "fr": "Quatre langues", "en": "Four languages" },
+      "description": {
+        "fr": "Français, néerlandais, anglais et allemand, choisis par le client — indispensable pour un réseau belge où deux boutiques voisines ne parlent pas la même langue.",
+        "en": "French, Dutch, English and German, picked by the customer — table stakes for a Belgian network where two neighbouring stores don't share a language."
+      }
+    }
+  ]
+}
