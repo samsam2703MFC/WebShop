@@ -2454,9 +2454,13 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     if (!window.WSOffices) { setOfficeErr('Service indisponible.'); return; }
     setOfficeBusy(true); setOfficeErr('');
     try {
+      // La demande va à la boutique où le client se trouve : sa boutique
+      // préférée si elle est renseignée, sinon celle qu'il consulte. Sans ce
+      // repli, un client sans boutique préférée voyait sa demande atterrir dans
+      // le back-office d'une AUTRE boutique (celle de sa fiche ERP).
       const r = await window.WSOffices.contactFranchise({
         officeName: newOffice.name, phone: newOffice.phone, email: newOffice.email, address: newOffice.address,
-        shopId: form.preferredShopId, requestedBy: user.email,
+        shopId: form.preferredShopId || currentShopId, requestedBy: user.email,
       });
       if (r && r.ok === false) { setOfficeErr(r.error || 'Échec de l\'envoi.'); return; }
       setNewOffice({ name: '', vat: '', address: '', postalCode: '', city: '', contact: '', email: '', phone: '', preferredShopId: '' });
