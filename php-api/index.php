@@ -1983,7 +1983,27 @@ function dispatch($m, $p) {
     if ($ident === '') json_out(['error' => 'Identifiants incorrects.'], 401);
     // Identifiant téléphone : on le normalise en E.164 + national pour le retrouver.
     [, $identNat, $identE164] = norm_phone($b['phonePrefix'] ?? '+32', $ident);
-    $u = row("SELECT id, password_hash FROM client WHERE (LOWER(TRIM(email))=? OR (? <> '' AND (phone_e164=? OR phone=? OR phone=?))) AND active=1 LIMIT 1", [$ident, $identE164, $identE164, $identNat, $ident]);
+    // RÉSOLUTION DÉTERMINISTE. L'ancienne requête combinait email et téléphone
+    // avec « LIMIT 1 » SANS « ORDER BY » : quand deux comptes partagent un
+    // numéro (cas constaté en base), MySQL renvoyait l'un OU l'autre au hasard,
+    // et le mot de passe pourtant correct pouvait être refusé.
+    // 1) L'EMAIL prime — c'est l'identifiant non ambigu.
+    $u = row("SELECT id, password_hash FROM client
+               WHERE LOWER(TRIM(email)) = ? AND active = 1
+               ORDER BY id LIMIT 1", [$ident]);
+    // 2) Sinon téléphone : s'il désigne PLUSIEURS comptes, on refuse
+    //    explicitement au lieu d'en choisir un — l'utilisateur est invité à se
+    //    connecter par email (« vraies données ou erreur », jamais de devinette).
+    if (!$u && $identE164 !== '') {
+      $cands2 = rows("SELECT id, password_hash FROM client
+                       WHERE (phone_e164 = ? OR phone = ? OR phone = ?) AND active = 1
+                       ORDER BY id", [$identE164, $identNat, $ident]);
+      if (count($cands2) > 1) {
+        json_out(['error' => 'phone_ambigu',
+                  'message' => 'Plusieurs comptes utilisent ce numéro de téléphone. Connectez-vous avec votre adresse email.'], 409);
+      }
+      $u = $cands2[0] ?? null;
+    }
     // Compte existant mais sans mot de passe (client importé / créé côté PWA) :
     // on ne renvoie pas "identifiants incorrects" -> on invite à définir un mot de passe.
     if ($u && empty($u['password_hash'])) {
@@ -2009,6 +2029,18 @@ function dispatch($m, $p) {
     [, $identNat, $identE164] = norm_phone($b['phonePrefix'] ?? '+32', $ident);
     $pass = (string) ($b['password'] ?? '');
     if (strlen($pass) < 6) json_out(['error' => 'Mot de passe trop court (min. 6 caractères).'], 400);
+    // Un TÉLÉPHONE partagé par plusieurs comptes ne doit pas servir à choisir
+    // sur lequel poser le mot de passe : le choix serait arbitraire et pourrait
+    // viser le compte d'un autre client. On refuse et on demande l'email.
+    if ($mail === '' && ($phoneE164 !== '' || $identE164 !== '')) {
+      $e1 = $phoneE164 ?: $identE164; $n1 = $phoneNat ?: $identNat;
+      $nb1 = (int) (row("SELECT COUNT(*) n FROM client WHERE phone_e164 = ? OR phone = ? OR phone = ?",
+                        [$e1, $n1, $ident])['n'] ?? 0);
+      if ($nb1 > 1) {
+        json_out(['error' => 'phone_ambigu',
+                  'message' => 'Plusieurs comptes utilisent ce numéro. Indiquez votre adresse email pour définir votre mot de passe.'], 409);
+      }
+    }
     $u = row("SELECT id, password_hash FROM client
                 WHERE (? <> '' AND LOWER(TRIM(email))=?)
                    OR (? <> '' AND (phone_e164=? OR phone=?))
