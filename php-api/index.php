@@ -4856,14 +4856,37 @@ function dispatch($m, $p) {
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") . "
                    WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))
                    ORDER BY c.sort_order, c.label, " . ($hasSub ? "COALESCE(sc2.sort_order, 999), sc2.label, " : "") . "pr.name LIMIT 400");
-      json_out(array_map(fn ($r) => ['id' => (int) $r['pid'], 'nom' => $r['name'], 'cat' => $r['cat'] ?: '—',
+      // NON TARIFÉ = pas de prix ERP strictement positif pour cette boutique
+      // (ligne shop_product absente, ou portion_price à 0 : live, 56 à 108
+      // produits par boutique). Ces produits sont hors vente — masqués du
+      // catalogue et refusés à la commande — mais ils DISPARAISSAIENT sans
+      // explication de l'écran du franchisé. On expose l'état pour qu'il le
+      // voie ; il redevient vendable AUTOMATIQUEMENT dès que l'ERP pose un
+      // prix (aucune bascule manuelle à faire, donc aucune exclusion
+      // persistante posée en base).
+      $tarife = [];
+      if ($shopId && $rs) {
+        $ids4 = implode(',', array_map(static fn ($r) => (int) $r['pid'], $rs));
+        try {
+          foreach (rows("SELECT id_product AS pid FROM shop_product
+                          WHERE id_shop = ? AND id_product IN ($ids4) AND portion_price > 0
+                          GROUP BY id_product", [$shopId]) as $t) { $tarife[(int) $t['pid']] = true; }
+        } catch (Throwable $e) { $tarife = []; error_log('[ws] tarifs ERP indisponibles (assortiment): ' . $e->getMessage()); }
+      }
+      json_out(array_map(function ($r) use ($tarife, $shopId) {
+        $pid = (int) $r['pid'];
+        $nonTarife = $shopId ? !isset($tarife[$pid]) : false;
+        return ['id' => $pid, 'nom' => $r['name'], 'cat' => $r['cat'] ?: '—',
         'sub' => $r['sub'] ?: null,
         'locked' => (bool) $r['brand_mandatory'],
         'canal' => ((int) $r['ws_on'] && (int) $r['od_on']) ? 'Webshop + Livraison'
                  : ((int) $r['ws_on'] ? 'Webshop' : 'Livraison bureau'),
         // Un obligatoire est TOUJOURS actif chez le franchisé (verrou marque).
         'defA' => (bool) $r['brand_mandatory'] ? true : ($r['ps_active'] !== null ? (bool) $r['ps_active'] : true),
-        'defND' => $r['no_delivery'] !== null ? (bool) $r['no_delivery'] : false], $rs));
+        'defND' => $r['no_delivery'] !== null ? (bool) $r['no_delivery'] : false,
+        'nonTarife' => $nonTarife,
+        'etatVente' => $nonTarife ? 'Non tarifé — hors vente' : 'Tarifé'];
+      }, $rs));
     }
 
     // Dispo par catégorie — ws_categories (délai/cut-off par défaut ws_param).
