@@ -93,7 +93,14 @@ function erp_shop_prices($shopId, array $ids) {
                    ORDER BY id_product, id", [$shopId]);
     foreach ($rows as $r) {
       $pid = (int) $r['pid'];
-      if (!array_key_exists($pid, $out)) $out[$pid] = (float) $r['portion_price'];
+      // Un prix ERP à 0 (ou négatif) signifie « produit listé, prix NON FIXÉ » —
+      // pas « gratuit ». Live : 56 à 108 lignes par boutique dans ce cas. On ne
+      // le retient donc PAS : le produit est traité comme non tarifé, donc
+      // masqué du catalogue ET refusé à la commande (au lieu d'être facturé
+      // 0 €, ce que faisait isset() sur une valeur nulle).
+      $px = (float) $r['portion_price'];
+      if ($px <= 0) continue;
+      if (!array_key_exists($pid, $out)) $out[$pid] = $px;
     }
   } catch (Throwable $e) {
     error_log('[ws] prix magasin ERP indisponible: ' . $e->getMessage());
@@ -140,8 +147,12 @@ function erp_portion_options($shopId, array $ids) {
     foreach ($rows2 as $r) {
       $v = $MAP[mb_strtolower(trim((string) $r['portion_type']))] ?? null;
       if (!$v) continue;
-      $price = $r['px_shop'] !== null ? (float) $r['px_shop']
-             : ($r['px_any'] !== null ? (float) $r['px_any'] : null);
+      // Même règle que erp_shop_prices() : un prix de portion à 0 = NON FIXÉ,
+      // pas gratuit. Sans prix strictement positif, la portion n'est pas
+      // proposable (et ne peut donc pas être facturée 0 €).
+      $pxS = $r['px_shop'] !== null ? (float) $r['px_shop'] : null;
+      $pxA = $r['px_any']  !== null ? (float) $r['px_any']  : null;
+      $price = ($pxS !== null && $pxS > 0) ? $pxS : (($pxA !== null && $pxA > 0) ? $pxA : null);
       $out[(int) $r['id_product']][] = ['v' => $v, 'label' => $LBL[$v], 'price' => $price, 'pp_id' => (int) $r['id']];
     }
   } catch (Throwable $e) { error_log('[ws] portions ERP indisponibles: ' . $e->getMessage()); return []; }
