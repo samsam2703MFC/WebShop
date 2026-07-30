@@ -727,6 +727,23 @@ function dispatch($m, $p) {
       $b['slots'] = $slots;
     }
     unset($b);
+    // Une formule SANS contenu configurable (aucune étape, ou aucune étape
+    // ayant au moins un choix actif) n'est pas une formule : c'est un brouillon
+    // du constructeur resté publié. Live : 2 formules « Nouvelle formule » vides
+    // et ACTIVES sur un produit, dont une à +10,00 € — le client la choisissait,
+    // n'avait rien à configurer, et payait le supplément pour rien.
+    // On ne les sert plus (et on les trace pour que la marque les corrige).
+    $vides = [];
+    $bundles = array_values(array_filter($bundles, static function ($b2) use (&$vides) {
+      $utile = false;
+      foreach (($b2['slots'] ?? []) as $sl2) { if (!empty($sl2['choices'])) { $utile = true; break; } }
+      if (!$utile) $vides[] = $b2['id'] . ' « ' . $b2['name'] . ' »';
+      return $utile;
+    }));
+    if ($vides) {
+      error_log('[ws] formules vides NON proposées (brouillons actifs à corriger dans le constructeur) : '
+        . implode(', ', $vides));
+    }
     json_out($bundles);
   }
   if ($m === 'GET' && $p === '/catalog/stock') {
@@ -2543,6 +2560,15 @@ function dispatch($m, $p) {
           }
           unset($sl);
           $b['slots'] = $slots;
+          // Marqueur « formule vide » : aucune étape ayant un choix ACTIF. Ces
+          // formules ne sont PAS proposées au client (cf. /catalog/bundles) —
+          // le constructeur doit donc les signaler pour qu'on les complète ou
+          // les supprime, au lieu de les croire publiées.
+          $utile2 = false;
+          foreach ($slots as $sl3) {
+            foreach (($sl3['choices'] ?? []) as $ch3) { if (!empty($ch3['active'])) { $utile2 = true; break 2; } }
+          }
+          $b['vide'] = !$utile2;
         }
         unset($b);
         $db[$pid] = [
