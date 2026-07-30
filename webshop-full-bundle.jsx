@@ -4466,20 +4466,35 @@ function ShopFrame({ variant }) {
   const cartCount = basket.reduce((t, l) => t + l.qty, 0);
   const userCanDeliver = !!(userOffice && userOffice.status === 'validated' && userTour);
 
-  // Stock reservation helpers — only called for logged-in users (15-min hold).
-  // No-op when WSCatalog has no endpoint configured (demo/seed mode).
+  // Maintien de stock (15 min) — clients connectés. Trois corrections :
+  //  • l'échec n'est plus avalé : il est affiché (sinon le produit était au
+  //    panier SANS être tenu, et le client l'apprenait au paiement) ;
+  //  • la date était calculée en UTC (toISOString) : après 22 h en heure belge
+  //    d'été, la réservation partait sur le JOUR PRÉCÉDENT, donc sur une autre
+  //    ligne de stock que celle réellement vendue ;
+  //  • retirer UNE ligne relâchait TOUT le panier (release sans productId).
+  const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const [stockErr, setStockErr] = React.useState('');
+  function refreshStock() {
+    return window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {}));
+  }
   function stockReserve(productId, qty = 1) {
     if (!user || !window.WSCatalog || !window.WSCatalog.reserve) return;
-    const iso = date instanceof Date ? date.toISOString().slice(0, 10) : '';
+    const iso = date instanceof Date ? isoLocal(date) : (date || '');
     window.WSCatalog.reserve({ productId, shopId, date: iso, mode, qty, customerId: user.id })
-      .then(() => window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {})))
-      .catch(() => {});
+      .then((r) => {
+        setStockErr(r && r.ok === false ? (r.error || 'Stock non tenu — please debug.') : '');
+        return refreshStock();
+      })
+      .catch((e) => { console.error('[stock] réservation refusée', e);
+                      setStockErr('Stock non tenu : ' + (e && e.message ? e.message : 'erreur serveur') + ' — la disponibilité sera revérifiée au paiement.');
+                      refreshStock().catch(() => {}); });
   }
   function stockRelease(productId, qty = 1) {
     if (!user || !window.WSCatalog || !window.WSCatalog.release) return;
-    window.WSCatalog.release({ customerId: user.id })
-      .then(() => window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {})))
-      .catch(() => {});
+    window.WSCatalog.release({ customerId: user.id, productId })
+      .then(() => refreshStock())
+      .catch((e) => console.error('[stock] libération', e));
   }
   function stockReleaseAll() {
     if (!user || !window.WSCatalog || !window.WSCatalog.release) return;
@@ -4788,6 +4803,16 @@ function ShopFrame({ variant }) {
               setPrefNudge(null);
             }}>Définir comme préférée</button>
           </div>
+        </div>
+      )}
+      {stockErr && (
+        <div className="ws-toast ws-toast--err" role="alert" style={{ background: '#7a1f1f' }}>
+          <div>
+            <div className="ws-toast__title">Stock non tenu</div>
+            <div className="ws-toast__sub">{stockErr}</div>
+          </div>
+          <button type="button" onClick={() => setStockErr('')}
+            style={{ marginLeft: 'auto', background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', font: '600 13px var(--font-ui)' }}>Fermer</button>
         </div>
       )}
       {orderToast && (

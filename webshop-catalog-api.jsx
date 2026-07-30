@@ -102,14 +102,16 @@
     // Libération de réservations. Nettoyage non bloquant : un échec est tracé
     // en console (la réservation expire d'elle-même côté serveur) mais ne
     // fabrique aucune donnée.
-    async release({ customerId, reservationIds } = {}) {
+    // productId : ne relâche que CE produit (retrait d'une ligne du panier).
+    // Sans lui, tout le panier du client était libéré d'un coup.
+    async release({ customerId, productId, reservationIds } = {}) {
       if (!api.endpoint) return;
       try {
         await fetch(`${api.endpoint}/stock/release`, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ customerId, reservationIds: reservationIds || null }),
+          body: JSON.stringify({ customerId, productId: productId || null, reservationIds: reservationIds || null }),
         });
       } catch (e) {
         console.error('[ws] libération des réservations impossible', e);

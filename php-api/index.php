@@ -766,6 +766,104 @@ function dispatch($m, $p) {
       'qty_available' => (int) $r['qty_available'],
     ], $rs));
   }
+  /* ── RÉSERVATION DE STOCK (maintien) ──────────────────────────────────────
+     Le webshop appelle ces deux routes depuis toujours (ajout / retrait au
+     panier) ; elles n'existaient PAS : chaque appel partait en 404 et l'échec
+     était avalé côté client. Résultat : qty_reserved restait à 0 et deux clients
+     pouvaient mettre la même dernière pièce au panier, l'arbitrage n'ayant lieu
+     qu'au passage de commande (« Stock insuffisant » après saisie du paiement).
+     qty_reserved est un REFLET recalculé depuis ws_stock_reservation : pas de
+     compteur incrémenté à l'aveugle qui dérive au premier échec. ── */
+  if ($m === 'POST' && ($p === '/catalog/stock/reserve' || $p === '/catalog/stock/release')) {
+    if (!row("SELECT 1 AS x FROM information_schema.tables
+               WHERE table_schema = DATABASE() AND table_name = 'ws_stock_reservation' LIMIT 1"))
+      json_out(['ok' => false, 'error' => 'Table ws_stock_reservation absente — réservation impossible (migration 0049).'], 501);
+    $b   = body();
+    $cid = auth_uid() ?: (isset($b['customerId']) ? (int) $b['customerId'] : 0);
+    if (!$cid) json_out(['ok' => false, 'error' => 'Réservation réservée aux clients connectés.'], 401);
+
+    // Purge paresseuse des réservations expirées, puis recalcul de qty_reserved
+    // pour les seuls créneaux touchés (jamais un UPDATE global : la valeur des
+    // autres créneaux ne nous appartient pas).
+    $recount = function (array $slots) {
+      $seen = [];
+      foreach ($slots as $s) {
+        $k = $s['product_id'] . '|' . $s['shop_id'] . '|' . $s['date'] . '|' . $s['mode'];
+        if (isset($seen[$k])) continue;
+        $seen[$k] = true;
+        $sum = (int) (row("SELECT COALESCE(SUM(qty),0) AS q FROM ws_stock_reservation
+                            WHERE product_id=? AND shop_id=? AND date=? AND mode=?
+                              AND released_at IS NULL AND expires_at > NOW()",
+                          [$s['product_id'], $s['shop_id'], $s['date'], $s['mode']])['q'] ?? 0);
+        q("UPDATE ws_product_stock SET qty_reserved=?
+            WHERE product_id=? AND shop_id=? AND date=? AND (mode=? OR mode IS NULL)",
+          [$sum, $s['product_id'], $s['shop_id'], $s['date'], $s['mode']]);
+      }
+    };
+    $expired = rows("SELECT DISTINCT product_id, shop_id, date, mode FROM ws_stock_reservation
+                      WHERE released_at IS NULL AND expires_at <= NOW()");
+    if ($expired) {
+      q("UPDATE ws_stock_reservation SET released_at=NOW()
+          WHERE released_at IS NULL AND expires_at <= NOW()");
+      $recount($expired);
+    }
+
+    if ($p === '/catalog/stock/release') {
+      // Libération du panier (tout le client) ou d'un seul produit — le retrait
+      // d'UNE ligne ne doit pas relâcher le reste du panier.
+      $pid = isset($b['productId']) ? (int) $b['productId'] : 0;
+      $ids = (isset($b['reservationIds']) && is_array($b['reservationIds']))
+             ? array_values(array_filter(array_map('intval', $b['reservationIds']))) : [];
+      $w = "customer_id=? AND released_at IS NULL"; $a = [$cid];
+      if ($ids) { $w .= " AND id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")"; $a = array_merge($a, $ids); }
+      elseif ($pid) { $w .= " AND product_id=?"; $a[] = $pid; }
+      $touched = rows("SELECT DISTINCT product_id, shop_id, date, mode FROM ws_stock_reservation WHERE $w", $a);
+      if ($touched) { q("UPDATE ws_stock_reservation SET released_at=NOW() WHERE $w", $a); $recount($touched); }
+      json_out(['ok' => true, 'released' => count($touched)]);
+    }
+
+    // ── Réservation ──
+    $pid  = (int) ($b['productId'] ?? 0);
+    $shop = (int) ($b['shopId'] ?? 0);
+    $day  = trim((string) ($b['date'] ?? ''));
+    $mode = (($b['mode'] ?? 'collect') === 'delivery') ? 'delivery' : 'collect';
+    $qty  = max(1, (int) ($b['qty'] ?? 1));
+    if (!$pid || !$shop) json_out(['ok' => false, 'error' => 'productId et shopId requis.'], 400);
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $day)) json_out(['ok' => false, 'error' => 'Date de retrait/livraison requise (AAAA-MM-JJ).'], 400);
+    $slot = ['product_id' => $pid, 'shop_id' => $shop, 'date' => $day, 'mode' => $mode];
+
+    // Disponible = total − vendu − réservations des AUTRES clients. Sans le
+    // « autres », le client se bloquerait lui-même en ajustant son panier.
+    $st = row("SELECT qty_total, qty_sold FROM ws_product_stock
+                WHERE product_id=? AND shop_id=? AND date=? AND (mode=? OR mode IS NULL) LIMIT 1",
+              [$pid, $shop, $day, $mode]);
+    if ($st === null) {
+      // Aucune ligne de stock du jour : rien à tenir (le plafond hebdomadaire
+      // est appliqué au passage de commande). On ne fabrique pas de ligne ici.
+      json_out(['ok' => true, 'held' => 0, 'reason' => 'aucun stock du jour pour ce produit']);
+    }
+    $others = (int) (row("SELECT COALESCE(SUM(qty),0) AS q FROM ws_stock_reservation
+                           WHERE product_id=? AND shop_id=? AND date=? AND mode=?
+                             AND released_at IS NULL AND expires_at > NOW()
+                             AND (customer_id IS NULL OR customer_id <> ?)",
+                         [$pid, $shop, $day, $mode, $cid])['q'] ?? 0);
+    $mine = (int) (row("SELECT COALESCE(SUM(qty),0) AS q FROM ws_stock_reservation
+                         WHERE product_id=? AND shop_id=? AND date=? AND mode=? AND customer_id=?
+                           AND released_at IS NULL AND expires_at > NOW()",
+                       [$pid, $shop, $day, $mode, $cid])['q'] ?? 0);
+    $avail = max(0, (int) $st['qty_total'] - (int) $st['qty_sold'] - $others);
+    if ($qty + $mine > $avail)
+      json_out(['ok' => false, 'error' => 'Stock insuffisant', 'available' => max(0, $avail - $mine)], 409);
+
+    $min = (int) ws_param('stock.reservation_minutes', 15);
+    if ($min < 1) $min = 15;
+    q("INSERT INTO ws_stock_reservation (product_id, shop_id, date, mode, qty, customer_id, expires_at)
+       VALUES (?,?,?,?,?,?, DATE_ADD(NOW(), INTERVAL ? MINUTE))",
+      [$pid, $shop, $day, $mode, $qty, $cid, $min]);
+    $rid = (int) db()->lastInsertId();
+    $recount([$slot]);
+    json_out(['ok' => true, 'reservationId' => $rid, 'qty' => $qty, 'holdMinutes' => $min]);
+  }
   if ($m === 'GET' && $p === '/catalog/assortments') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
     // Saisons = ws_season (source unique, basée sur le slug). ws_assortments a
@@ -1754,6 +1852,31 @@ function dispatch($m, $p) {
                  [$shop, (int) $pid, $wdStock, $mode]);
         return $d !== null ? (int) $d['qty'] : null;
       };
+      // Le client CONVERTIT son maintien en vente : on relâche d'abord SES
+      // réservations pour ce créneau, sinon le contrôle ci-dessous les
+      // compterait contre lui (qty_reserved inclut sa propre tenue) et sa
+      // commande serait refusée pour un stock qu'il tient lui-même.
+      $buyerId = (int) ($b['customerId'] ?? ($b['customer']['id'] ?? 0));
+      if ($buyerId && row("SELECT 1 AS x FROM information_schema.tables
+                            WHERE table_schema = DATABASE() AND table_name = 'ws_stock_reservation' LIMIT 1")) {
+        $mySlots = rows("SELECT DISTINCT product_id, shop_id, date, mode FROM ws_stock_reservation
+                          WHERE customer_id=? AND shop_id=? AND date=? AND mode=? AND released_at IS NULL",
+                        [$buyerId, $shop, $stockDate, $mode]);
+        if ($mySlots) {
+          q("UPDATE ws_stock_reservation SET released_at=NOW()
+              WHERE customer_id=? AND shop_id=? AND date=? AND mode=? AND released_at IS NULL",
+            [$buyerId, $shop, $stockDate, $mode]);
+          foreach ($mySlots as $ms) {
+            $sum = (int) (row("SELECT COALESCE(SUM(qty),0) AS q FROM ws_stock_reservation
+                                WHERE product_id=? AND shop_id=? AND date=? AND mode=?
+                                  AND released_at IS NULL AND expires_at > NOW()",
+                              [$ms['product_id'], $ms['shop_id'], $ms['date'], $ms['mode']])['q'] ?? 0);
+            q("UPDATE ws_product_stock SET qty_reserved=?
+                WHERE product_id=? AND shop_id=? AND date=? AND (mode=? OR mode IS NULL)",
+              [$sum, $ms['product_id'], $ms['shop_id'], $ms['date'], $ms['mode']]);
+          }
+        }
+      }
       foreach ($lines as $l) {
         $st = row("SELECT GREATEST(0, qty_total - qty_reserved - qty_sold) AS avail
                      FROM ws_product_stock
