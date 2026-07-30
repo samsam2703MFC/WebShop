@@ -1028,6 +1028,11 @@ function dispatch($m, $p) {
       json_out(['error' => 'aucun polygone exploitable',
                 'detail' => 'Aucune feature ne porte de code postal reconnaissable (properties.postcode/postal_code/zip/cp).'], 503);
     }
+    // Métadonnées du jeu de contours (granularité, source, note) remontées sous
+    // « _meta » : l'écran affiche un avertissement quand la granularité n'est
+    // pas le code postal lui-même — aucune approximation n'est présentée comme
+    // un contour exact. Clé préfixée : les appelants lisent par code postal.
+    if (!empty($raw['meta']) && is_array($raw['meta'])) $out['_meta'] = $raw['meta'];
     json_out($out);
   }
   if ($m === 'GET' && $p === '/geo/postcodes') {
