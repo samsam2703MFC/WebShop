@@ -721,10 +721,22 @@ function dispatch($m, $p) {
   if ($m === 'GET' && $p === '/catalog/stock') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
     $day = qp('date') ?: date('Y-m-d'); $mode = qp('mode') ?: 'collect';
-    json_out(rows("SELECT product_id, GREATEST(0, qty_total - qty_reserved - qty_sold) AS available
-                     FROM ws_product_stock
-                    WHERE shop_id = ? AND date = ? AND active = 1 AND (mode = ? OR mode IS NULL)",
-                  [$s, $day, $mode]));
+    // CONTRAT StockEntry du front (webshop-catalog-api.jsx) :
+    // { productId, qty_total, qty_reserved, qty_sold, qty_available } — en
+    // ENTIERS. L'ancienne forme (product_id/available, chaînes) ne matchait
+    // jamais le lookup du front : le « Stock épuisé » ne bloquait RIEN.
+    $rs = rows("SELECT product_id, qty_total, qty_reserved, qty_sold,
+                       GREATEST(0, qty_total - qty_reserved - qty_sold) AS qty_available
+                  FROM ws_product_stock
+                 WHERE shop_id = ? AND date = ? AND active = 1 AND (mode = ? OR mode IS NULL)",
+                [$s, $day, $mode]);
+    json_out(array_map(fn ($r) => [
+      'productId'     => (int) $r['product_id'],
+      'qty_total'     => (int) $r['qty_total'],
+      'qty_reserved'  => (int) $r['qty_reserved'],
+      'qty_sold'      => (int) $r['qty_sold'],
+      'qty_available' => (int) $r['qty_available'],
+    ], $rs));
   }
   if ($m === 'GET' && $p === '/catalog/assortments') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
