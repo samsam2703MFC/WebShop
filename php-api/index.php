@@ -1235,6 +1235,61 @@ function dispatch($m, $p) {
     $o['defaultSiteId'] = $def ? (int) $def['id'] : null;
     json_out($o);
   }
+  /* ── DEMANDE DE RATTACHEMENT À UN BUREAU (webshop, client connecté) ────────
+     « Mon bureau n'est pas dans la liste » → le client NE se rattache PAS
+     lui-même : la demande part au franchisé (BO › Demandes de rattachement) qui
+     décide (POST /franchisee/join-decide). C'est cette décision qui écrit
+     client.office_id — la précondition de la livraison au bureau.
+     Écriture réelle dans ws_office_join_requests : aucun faux succès, la table
+     ou la colonne manquante renvoie une erreur explicite. ── */
+  if ($m === 'POST' && $p === '/offices/contact') {
+    rate_limit('officejoin', 6, 600);
+    $uid = auth_uid();
+    if (!$uid) json_out(['ok' => false, 'error' => 'Connectez-vous pour demander un rattachement.'], 401);
+    if (!row("SELECT 1 AS x FROM information_schema.tables
+               WHERE table_schema = DATABASE() AND table_name = 'ws_office_join_requests' LIMIT 1"))
+      json_out(['ok' => false, 'error' => 'Table ws_office_join_requests absente — demande non enregistrée (migration 0047).'], 501);
+    if (!col_exists('ws_office_join_requests', 'client_id'))
+      json_out(['ok' => false, 'error' => 'Colonne client_id absente de ws_office_join_requests — impossible de savoir qui rattacher (migration 0047).'], 501);
+    $b    = body();
+    $name = trim((string) ($b['officeName'] ?? ''));
+    if ($name === '') json_out(['ok' => false, 'error' => 'Indiquez le nom du bureau ou de la société.'], 400);
+    $addr  = trim((string) ($b['address'] ?? ''));
+    $mail  = trim((string) ($b['email'] ?? ''));
+    $tel   = trim((string) ($b['phone'] ?? ''));
+    if ($addr === '' && $mail === '' && $tel === '')
+      json_out(['ok' => false, 'error' => 'Indiquez au moins un moyen de contact (téléphone, e-mail ou adresse).'], 400);
+    // Boutique : celle transmise par le formulaire, sinon celle du client.
+    $shop = (int) ($b['shopId'] ?? 0);
+    if (!$shop) {
+      $sc = col_exists('client', 'preferred_shop_id') ? 'COALESCE(preferred_shop_id, id_main_shop)' : 'id_main_shop';
+      $shop = (int) (row("SELECT $sc AS s FROM client WHERE id = ?", [$uid])['s'] ?? 0);
+    }
+    if (!$shop) json_out(['ok' => false, 'error' => 'Aucune boutique rattachée à votre compte — choisissez votre boutique avant de demander un rattachement.'], 409);
+    // Anti-doublon : une seule demande en attente par client (on met à jour la
+    // demande existante plutôt que d'empiler des lignes dans l'écran franchisé).
+    $prev = row("SELECT id FROM ws_office_join_requests
+                  WHERE client_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1", [$uid]);
+    $set = ['office_name_raw' => $name, 'client_id' => $uid];
+    if (col_exists('ws_office_join_requests', 'address_raw'))   $set['address_raw']   = ($addr ?: null);
+    if (col_exists('ws_office_join_requests', 'contact_email'))  $set['contact_email'] = ($mail ?: null);
+    if (col_exists('ws_office_join_requests', 'contact_phone'))  $set['contact_phone'] = ($tel ?: null);
+    if (col_exists('ws_office_join_requests', 'shop_id'))        $set['shop_id']       = $shop;
+    if ($prev) {
+      $sql = implode(', ', array_map(fn ($c) => "$c = ?", array_keys($set)));
+      q("UPDATE ws_office_join_requests SET $sql, status = 'pending' WHERE id = ?",
+        array_merge(array_values($set), [(int) $prev['id']]));
+      $rid = (int) $prev['id'];
+    } else {
+      $set['status'] = 'pending';
+      $cols = array_keys($set);
+      q("INSERT INTO ws_office_join_requests (" . implode(', ', $cols) . ")
+         VALUES (" . implode(', ', array_fill(0, count($cols), '?')) . ")", array_values($set));
+      $rid = (int) db()->lastInsertId();
+    }
+    json_out(['ok' => true, 'requestId' => $rid, 'status' => 'pending',
+              'message' => 'Demande transmise à votre boutique. Vous serez rattaché après validation.'], 201);
+  }
   // Sites de livraison d'un bureau (validé) — alimente WSDeliveryFees.listSites
   // au checkout (le module WSDeliveryFees appelle tout en POST + body JSON).
   // Même 0/1 que l'éligibilité : bureau et site doivent être actifs.
@@ -2389,9 +2444,19 @@ function dispatch($m, $p) {
       $sets[] = 'preferred_shop_id=?';
       $vals[] = ($b['preferredShopId'] !== '' && $b['preferredShopId'] !== null) ? (int) $b['preferredShopId'] : null;
     }
+    // Rattachement bureau : le client ne peut se lier qu'à un bureau VALIDÉ
+    // (ws_offices.active = 1). Sans ce contrôle, un POST de profil suffisait à
+    // se rattacher à n'importe quel bureau — donc à devenir éligible à la
+    // livraison bureau ET aux bons nominatifs ciblant ce bureau (cf. la
+    // vérification client.office_id = voucher_campaign_target.target_id).
+    // Un bureau non listé passe par la demande /offices/contact, validée par le
+    // franchisé (POST /franchisee/join-decide).
     if (array_key_exists('officeId', $b)) {
+      $ov = ($b['officeId'] !== '' && $b['officeId'] !== null) ? (int) $b['officeId'] : null;
+      if ($ov !== null && !row("SELECT 1 AS x FROM ws_offices WHERE id = ? AND active = 1", [$ov]))
+        json_out(['error' => 'Bureau inconnu ou non validé — demandez le rattachement à votre boutique.'], 409);
       $sets[] = 'office_id=?';
-      $vals[] = ($b['officeId'] !== '' && $b['officeId'] !== null) ? (int) $b['officeId'] : null;
+      $vals[] = $ov;
     }
     if (isset($b['fidelityApp']) && is_array($b['fidelityApp'])) {
       $fa = $b['fidelityApp'];
@@ -4687,16 +4752,46 @@ function dispatch($m, $p) {
     }
 
     // Demandes de rattachement bureau — ws_office_join_requests (pending).
+    // On identifie le DEMANDEUR (client.id, nom, e-mail) : sans lui, la
+    // décision « Lier » ne sait pas qui rattacher — c'était le trou du flow.
     if ($m === 'GET' && $p === '/franchisee/fr-join-requests') {
       if (!$tblExists('ws_office_join_requests')) json_out([]);
+      $hasCli  = col_exists('ws_office_join_requests', 'client_id');
+      $hasMail = col_exists('ws_office_join_requests', 'contact_email');
+      $hasTel  = col_exists('ws_office_join_requests', 'contact_phone');
+      $joinCli = ($hasCli && $tblExists('client')) ? " LEFT JOIN client c ON c.id = r.client_id" : "";
+      $cliName = $joinCli ? "NULLIF(TRIM(CONCAT_WS(' ', c.name, c.surname)), '')" : "NULL";
+      $cliMail = $joinCli ? "NULLIF(TRIM(c.email), '')" : "NULL";
+      // Bureau candidat : même boutique que la demande quand ws_offices porte
+      // le shop (0022), et seulement des bureaux VALIDÉS (active = 1).
+      $oScope = col_exists('ws_offices', 'shop_id') ? " AND (r.shop_id IS NULL OR f.shop_id = r.shop_id)" : "";
+      $cand   = "FROM ws_offices f WHERE f.active = 1
+                  AND f.name LIKE CONCAT('%', LEFT(r.office_name_raw, 12), '%') $oScope LIMIT 1";
       $rs = rows("SELECT r.id, r.office_name_raw, r.address_raw,
-                         (SELECT f.name FROM ws_offices f WHERE f.name LIKE CONCAT('%', LEFT(r.office_name_raw, 12), '%') LIMIT 1) AS proche
-                    FROM ws_office_join_requests r
+                         " . ($hasCli  ? 'r.client_id'    : 'NULL') . " AS client_id,
+                         " . ($hasMail ? 'r.contact_email' : 'NULL') . " AS contact_email,
+                         " . ($hasTel  ? 'r.contact_phone' : 'NULL') . " AS contact_phone,
+                         $cliName AS cli_name, $cliMail AS cli_mail,
+                         (SELECT f.id   $cand) AS office_id,
+                         (SELECT f.name $cand) AS proche
+                    FROM ws_office_join_requests r$joinCli
                    WHERE " . $scope('r.shop_id') . " AND r.status='pending' ORDER BY r.created_at DESC LIMIT 50");
-      json_out(array_map(fn ($r) => ['id' => 'jr' . $r['id'], 'client' => 'Client #' . $r['id'],
-        'demande' => '« Rattacher à ' . $r['office_name_raw'] . ' »',
-        'proche' => $r['proche'] ? ($r['proche'] . ' (' . $r['address_raw'] . ')') : ($r['office_name_raw'] . ' (' . $r['address_raw'] . ')'),
-        'dup' => (bool) $r['proche']], $rs));
+      json_out(array_map(function ($r) {
+        $who = $r['cli_name'] ?: ($r['cli_mail'] ?: ($r['contact_email'] ?: $r['contact_phone']));
+        $cid = (int) ($r['client_id'] ?? 0);
+        return [
+          'id'       => 'jr' . $r['id'],
+          'clientId' => $cid ?: null,
+          'officeId' => $r['office_id'] ? (int) $r['office_id'] : null,
+          'client'   => $who ? ($who . ($cid ? ' · client #' . $cid : '')) : ($cid ? 'Client #' . $cid : 'Demandeur non identifié'),
+          'demande'  => '« Rattacher à ' . $r['office_name_raw'] . ' »'
+                        . ($r['contact_phone'] ? ' · ' . $r['contact_phone'] : ''),
+          'proche'   => $r['office_id']
+            ? ($r['proche'] . ($r['address_raw'] ? ' (' . $r['address_raw'] . ')' : ''))
+            : 'aucun bureau validé ne correspond — créez le bureau (Clients B2B › Bureaux) avant de lier',
+          'dup'      => (bool) $r['office_id'],
+        ];
+      }, $rs));
     }
 
     // ── Commandes du jour — RÉEL (ws_orders, portée boutique). Remplace la
@@ -4845,15 +4940,54 @@ function dispatch($m, $p) {
       json_out(['ok' => true, 'action' => $act]);
     }
 
-    // ── Décision sur une demande de rattachement bureau (fr-join-requests). ──
+    /* ── Décision sur une demande de rattachement bureau (fr-join-requests).
+       « Lier » ÉCRIT client.office_id — c'est cette écriture qui ouvre la
+       livraison au bureau au client. Elle échoue explicitement si le demandeur
+       n'est pas identifié ou si aucun bureau validé ne correspond : on ne
+       marque JAMAIS la demande « linked » sans avoir rattaché quelqu'un.
+       On ne touche ni is_b2b ni office_delivery sur la personne : ces deux
+       drapeaux déclenchent le trigger 0019 qui CRÉERAIT un bureau à son nom. ── */
     if ($m === 'POST' && $p === '/franchisee/join-decide') {
       $b = body(); $id = (int) preg_replace('/\D/', '', (string) ($b['id'] ?? ''));
       $act = (string) ($b['action'] ?? '');
       if (!$id || !in_array($act, ['link', 'reject'], true)) json_out(['ok' => false, 'error' => 'id + action requis'], 400);
       if (!$tblExists('ws_office_join_requests')) json_out(['ok' => false, 'error' => 'table absente'], 501);
-      q("UPDATE ws_office_join_requests SET status=? WHERE id=?" . ($shopId && col_exists('ws_office_join_requests', 'shop_id') ? " AND shop_id=" . (int) $shopId : ""),
-        [$act === 'link' ? 'linked' : 'rejected', $id]);
-      json_out(['ok' => true, 'action' => $act]);
+      $sc = ($shopId && col_exists('ws_office_join_requests', 'shop_id')) ? " AND shop_id=" . (int) $shopId : "";
+      $r  = row("SELECT * FROM ws_office_join_requests WHERE id=?$sc", [$id]);
+      if (!$r) json_out(['ok' => false, 'error' => 'Demande introuvable (ou hors de votre boutique).'], 404);
+      $hasDec = col_exists('ws_office_join_requests', 'decided_at');
+
+      if ($act === 'reject') {
+        q("UPDATE ws_office_join_requests SET status='rejected'" . ($hasDec ? ", decided_at=NOW()" : "") . " WHERE id=?$sc", [$id]);
+        json_out(['ok' => true, 'action' => 'reject']);
+      }
+
+      // ── Liaison ──
+      $cid = (int) ($r['client_id'] ?? 0);
+      if (!$cid) json_out(['ok' => false, 'error' => 'Demande sans client identifié (ancienne ligne) — le client doit refaire sa demande depuis le webshop.'], 409);
+      if (!col_exists('client', 'office_id')) json_out(['ok' => false, 'error' => 'Colonne client.office_id absente — rattachement impossible.'], 501);
+      if (!row("SELECT 1 AS x FROM client WHERE id=? AND active=1", [$cid]))
+        json_out(['ok' => false, 'error' => 'Client #' . $cid . ' introuvable ou inactif.'], 409);
+
+      // Bureau : celui choisi par le franchisé, sinon le candidat détecté par nom.
+      $oid = (int) ($b['officeId'] ?? 0);
+      $oSc = col_exists('ws_offices', 'shop_id') && !empty($r['shop_id'])
+             ? " AND (shop_id IS NULL OR shop_id=" . (int) $r['shop_id'] . ")" : "";
+      if (!$oid) {
+        $cand = row("SELECT id FROM ws_offices
+                      WHERE active=1 AND name LIKE CONCAT('%', ?, '%')$oSc ORDER BY id LIMIT 1",
+                    [mb_substr((string) $r['office_name_raw'], 0, 12)]);
+        $oid = (int) ($cand['id'] ?? 0);
+      }
+      if (!$oid) json_out(['ok' => false, 'error' => 'Aucun bureau validé ne correspond à « ' . $r['office_name_raw'] . ' » — créez-le dans Clients B2B › Bureaux, puis liez.'], 409);
+      if (!row("SELECT 1 AS x FROM ws_offices WHERE id=? AND active=1$oSc", [$oid]))
+        json_out(['ok' => false, 'error' => 'Bureau #' . $oid . ' inconnu, non validé, ou hors de votre boutique.'], 409);
+
+      q("UPDATE client SET office_id=? WHERE id=?", [$oid, $cid]);
+      q("UPDATE ws_office_join_requests SET status='linked'"
+        . (col_exists('ws_office_join_requests', 'office_id') ? ", office_id=" . $oid : "")
+        . ($hasDec ? ", decided_at=NOW()" : "") . " WHERE id=?$sc", [$id]);
+      json_out(['ok' => true, 'action' => 'link', 'clientId' => $cid, 'officeId' => $oid]);
     }
 
     // Stock du jour — catalogue catégories › produits (online/en shop/seuil).

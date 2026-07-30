@@ -57,27 +57,9 @@ const W_SHOP_PRODUCTS = {};
 // A client may be linked to one office; an office may be linked to one tour.
 // Delivery is enabled only if both links exist (office validated + tour set).
 // =========================================================================
-// Go-live : plus aucune tournée de démo — les tournées viennent de /tours.
-const W_TOURS = {};
-// Go-live : plus aucun bureau de démo — les bureaux viennent de /offices.
-const W_OFFICES_SEED = {};
-// Go-live : plus aucun utilisateur de démo. L'authentification passe par
-// l'API /auth (WSAuth) ; ce store local reste vide.
-const W_USERS_SEED = {};
-const _AUTH_STORE = { users: { ...W_USERS_SEED }, offices: { ...W_OFFICES_SEED } };
-if (typeof window !== 'undefined') window._AUTH_STORE = _AUTH_STORE;
-
-function authLogin(email, password) {
-  const u = _AUTH_STORE.users[email.trim().toLowerCase()];
-  if (!u || u.password !== password) return { ok: false, error: 'Identifiants incorrects.' };
-  return { ok: true, user: u };
-}
-function authRegister() {
-  // Go-live : plus d'inscription locale fictive — l'API /auth est requise.
-  return { ok: false, error: 'Service inscription indisponible — réessayez.' };
-}
-function getOffice(id) { return id ? _AUTH_STORE.offices[id] : null; }
-function getTour(id)   { return id ? W_TOURS[id] : null; }
+// Go-live : AUCUN store local. Utilisateurs (WSAuth), bureaux (WSOffices) et
+// tournées (WSTours) viennent du serveur ; sans lui, l'écran affiche une erreur.
+const SRV_REQUIRED = (what) => ({ ok: false, error: 'Service ' + what + ' indisponible — please debug.' });
 
 // =========================================================================
 // SHARED PRIMITIVES
@@ -1848,7 +1830,7 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
         if (!form.identifier || !form.password) { setErr('Email/téléphone et mot de passe requis.'); return; }
         const r = window.WSAuth
           ? await window.WSAuth.login({ identifier: form.identifier, password: form.password, phonePrefix: form.phonePrefix, authMethod: form.authMethod })
-          : authLogin(form.identifier, form.password);
+          : SRV_REQUIRED('de connexion');
         if (!r.ok) {
           // Compte existant sans mot de passe -> panneau "définir votre mot de passe"
           // (on pré-remplit avec ce qui vient d'être tapé au login).
@@ -1865,7 +1847,7 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
         if (cpOpts.length > 1 && !form.locality) { setErr('Choisissez votre localité.'); return; }
         const r = window.WSAuth
           ? await window.WSAuth.register(form)
-          : authRegister(form);
+          : SRV_REQUIRED("d'inscription");
         if (!r.ok) {
           if (r.exists) { setPwStep(true); return; }   // compte déjà présent -> set-password
           setErr(r.error || "Erreur lors de l'inscription."); return;
@@ -2390,7 +2372,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
 
   // ── Office: unplug / reconnect / add new ───────────────────────────
   async function loadApprovedOffices() {
-    if (!window.WSOffices) return;
+    if (!window.WSOffices) { setOfficeErr('Service bureaux indisponible — please debug.'); return; }
     const shopId = form.preferredShopId; // offices are scoped to the preferred shop
     setOfficeBusy(true);
     try {
@@ -2404,6 +2386,11 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         );
         setApprovedOfficeTours(Object.fromEntries(tourEntries));
       }
+    } catch (e) {
+      // L'échec est VISIBLE : sans lui, la liste restait vide sans explication
+      // et l'utilisateur croyait qu'aucun bureau n'existait.
+      setApprovedOffices([]);
+      setOfficeErr(e && e.message ? e.message : 'Bureaux indisponibles — please debug.');
     } finally { setOfficeBusy(false); }
   }
   // ── Bureau « site de livraison » (parité PWA) : lier / changer / délier ──
@@ -4182,14 +4169,16 @@ function ShopFrame({ variant }) {
     let alive = true;
     async function load() {
       if (!user || !user.officeId) { setUserOffice(null); setUserTour(null); return; }
+      // Serveur uniquement : sans WSOffices/WSTours, pas de bureau — l'écran
+      // « Mon bureau » affichera l'absence, jamais un bureau fabriqué.
       const office = window.WSOffices
-        ? await window.WSOffices.get(user.officeId).catch(() => null)
-        : getOffice(user.officeId);
+        ? await window.WSOffices.get(user.officeId).catch((e) => { console.error('[bureau]', e); return null; })
+        : null;
       if (!alive || !office) { setUserOffice(null); setUserTour(null); return; }
       setUserOffice(office);
       const tour = window.WSTours
         ? await window.WSTours.get(office.tourId).catch(() => null)
-        : getTour(office.tourId);
+        : null;
       if (alive) setUserTour(tour || null);
     }
     load();

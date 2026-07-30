@@ -1,9 +1,9 @@
 /* =====================================================================
-   WSAuth — authentication / session API stub
+   WSAuth — authentification / session : SERVEUR UNIQUEMENT
    ---------------------------------------------------------------------
-   The UI must NEVER call _AUTH_STORE directly. It calls these helpers,
-   which default to the in-memory seed while no backend is wired.
-   To wire a real backend, set:
+   Go-live : aucun store local, aucun repli. Sans endpoint (ou en cas de
+   panne réseau), les helpers renvoient une erreur explicite — jamais une
+   session fabriquée. Câblage :
      window.WSAuth.endpoint = 'https://your-host/auth';
    Endpoints expected:
      POST {endpoint}/register            -> { user, token }
@@ -28,29 +28,25 @@
     endpoint: null,
 
     /* ── Login (identifiant = email OU téléphone) ──────────────────── */
+    // Go-live : SERVEUR UNIQUEMENT. Aucun repli sur un store local — un échec
+    // réseau doit dire « réseau », jamais « identifiants incorrects » (le repli
+    // faisait passer une panne pour un mauvais mot de passe).
     async login({ identifier, email, password, phonePrefix, authMethod }) {
       const ident = (identifier || email || '').trim();
-      if (api.endpoint) {
-        try {
-          const r = await fetch(`${api.endpoint}/login`, {
-            method: 'POST', credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ identifier: ident, password, phonePrefix: phonePrefix || '+32', authMethod }),
-          });
-          const j = await r.json();
-          if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
-          // Compte existant sans mot de passe -> le front bascule sur "définir un mot de passe".
-          return { ok: false, needsPassword: !!j.needsPassword, error: j.message || j.error?.message || 'Identifiants incorrects.' };
-        } catch (_) {}
+      if (!api.endpoint) return { ok: false, error: 'Service de connexion non configuré — please debug.' };
+      try {
+        const r = await fetch(`${api.endpoint}/login`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier: ident, password, phonePrefix: phonePrefix || '+32', authMethod }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
+        // Compte existant sans mot de passe -> le front bascule sur "définir un mot de passe".
+        return { ok: false, needsPassword: !!j.needsPassword, error: j.message || j.error?.message || 'Identifiants incorrects.' };
+      } catch (_) {
+        return { ok: false, error: 'Réseau indisponible — connexion impossible.' };
       }
-      // Fallback: in-memory _AUTH_STORE (email OU téléphone).
-      const store = window._AUTH_STORE;
-      if (!store || !store.users) return { ok: false, error: 'Store unavailable.' };
-      const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, '');
-      let u = store.users[ident.toLowerCase()];
-      if (!u) u = Object.values(store.users).find((x) => x.phone && norm(x.phone) === norm(ident));
-      if (!u || u.password !== password) return { ok: false, error: 'Identifiants incorrects.' };
-      return { ok: true, user: u };
     },
 
     /* ── Register ──────────────────────────────────────────────────── */
