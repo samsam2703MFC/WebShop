@@ -286,8 +286,15 @@ function dispatch($m, $p) {
   /* ── Back-offices Franchise Buddy (sessions isolées franchisé / franchiseur) ──
      Tout « /bo/… » est routé par bo_dispatch() ; chaque route y est protégée par
      son guard require_bo(). Placé en tête pour ne jamais retomber sur une route
-     publique. ── */
-  if (strpos($p, '/bo/') === 0) { bo_dispatch($m, $p); json_out(['error' => 'Not found', 'path' => $p], 404); }
+     publique.
+     EXCEPTION : /bo/pin-* (connexion tablette par PIN). Ces trois routes sont
+     définies plus bas et sont PUBLIQUES par nature — c'est l'écran de connexion
+     lui-même. Sans cette exception, elles n'étaient jamais atteintes : le pavé
+     PIN recevait « Not found » à chaque saisie, quel que soit le code. ── */
+  if (strpos($p, '/bo/') === 0 && strpos($p, '/bo/pin-') !== 0) {
+    bo_dispatch($m, $p);
+    json_out(['error' => 'Not found', 'path' => $p], 404);
+  }
 
   /* ── Health ── */
   if ($m === 'GET' && $p === '/health') { db()->query('SELECT 1'); json_out(['ok' => true]); }
