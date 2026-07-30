@@ -2312,7 +2312,15 @@ function dispatch($m, $p) {
   if (strpos($p, '/franchisor/') === 0) {
     require_admin();
 
-    $eurk = function ($n) { return number_format(round($n / 1000)) . ' k€'; };
+    // Montant ADAPTATIF : l'arrondi systématique en k€ affichait « 0 k€ » pour
+    // 343,58 € de CA réel — du chiffre d'affaires existant présenté comme nul.
+    // Sous 10 000 € on montre l'euro exact, au-delà le k€ (lisibilité réseau).
+    $eurk = function ($n) {
+      $n = (float) $n;
+      return abs($n) < 10000
+        ? number_format($n, 2, ',', ' ') . ' €'
+        : number_format(round($n / 1000)) . ' k€';
+    };
     $tblExists = function ($t) { return (bool) row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", [$t]); };
     $hasOrders = $tblExists('ws_orders');
     // Source boutiques : table unifiée `shops` (webshop_enabled/active réels),
@@ -2331,16 +2339,25 @@ function dispatch($m, $p) {
         $caDeliv   = (float) (row("SELECT COALESCE(SUM(total),0) s FROM ws_orders WHERE mode='delivery' AND created_at >= DATE_FORMAT(NOW(),'%Y-%m-01')")['s'] ?? 0);
         $ordToday  = (int)   (row("SELECT COUNT(*) n FROM ws_orders WHERE DATE(created_at)=CURDATE()")['n'] ?? 0);
       }
-      $pct = $caPrev > 0 ? round(($caMonth - $caPrev) / $caPrev * 100, 1) : 0;
+      // Sans mois précédent, aucune évolution n'est calculable : on l'affiche
+      // « — » au lieu d'un « ▲ +0 % » qui laisse croire à une stagnation mesurée.
+      $hasPrev = $caPrev > 0;
+      $pct = $hasPrev ? round(($caMonth - $caPrev) / $caPrev * 100, 1) : 0;
       $up  = $pct >= 0;
+      $deltaCa = $hasPrev
+        ? (($up ? '▲ +' : '▼ ') . str_replace('.', ',', (string) $pct) . ' %')
+        : '— pas de mois précédent';
+      // « Boutiques en ligne » : c'est bien ce qui est calculé (actives / total).
+      // L'ancien libellé « Adoption whitelist » annonçait une mesure d'adoption
+      // du catalogue marque que ce chiffre ne calcule pas.
       $adoption = $totalShops > 0 ? round(100 * $activeShops / $totalShops) : 0;
       json_out([
-        ['label' => 'CA réseau (mois)',     'value' => $eurk($caMonth),   'valColor' => 'var(--color-text)',    'delta' => ($up ? '▲ +' : '▼ ') . str_replace('.', ',', (string) $pct) . ' %', 'deltaColor' => $up ? '#2d7a3e' : 'var(--color-primary)'],
+        ['label' => 'CA réseau (mois)',     'value' => $eurk($caMonth),   'valColor' => 'var(--color-text)',    'delta' => $deltaCa, 'deltaColor' => $hasPrev ? ($up ? '#2d7a3e' : 'var(--color-primary)') : 'var(--color-text-muted)'],
         ['label' => 'CA boutique',          'value' => $eurk($caCollect), 'valColor' => 'var(--color-primary)', 'delta' => 'collecte', 'deltaColor' => 'var(--color-text-muted)'],
         ['label' => 'CA livraison bureau',  'value' => $eurk($caDeliv),   'valColor' => '#C87A3F',              'delta' => 'livraison', 'deltaColor' => 'var(--color-text-muted)'],
         ['label' => 'Boutiques actives',    'value' => $activeShops . ' / ' . $totalShops, 'valColor' => 'var(--color-text)', 'delta' => 'réseau', 'deltaColor' => 'var(--color-text-muted)'],
         ['label' => 'Commandes du jour',    'value' => (string) $ordToday, 'valColor' => 'var(--color-text)',   'delta' => "aujourd'hui", 'deltaColor' => 'var(--color-text-muted)'],
-        ['label' => 'Adoption whitelist',   'value' => $adoption . ' %',   'valColor' => 'var(--color-text)',    'delta' => 'boutiques en ligne', 'deltaColor' => 'var(--color-text-muted)'],
+        ['label' => 'Boutiques en ligne',   'value' => $adoption . ' %',   'valColor' => 'var(--color-text)',    'delta' => $activeShops . ' actives sur ' . $totalShops, 'deltaColor' => 'var(--color-text-muted)'],
       ]);
     }
 
@@ -2995,7 +3012,15 @@ function dispatch($m, $p) {
     $tblExists = function ($t) { return (bool) row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", [$t]); };
     $SHOPS = 'shops';
     $eur0  = function ($n) { return number_format((float) $n, 0, ',', ' ') . ' €'; };
-    $eurk  = function ($n) { return number_format(round($n / 1000)) . ' k€'; };
+    // Montant ADAPTATIF (même règle que la console marque) : l'arrondi
+    // systématique en k€ affichait « 0 k€ » pour des centaines d'euros de CA
+    // réel. Sous 10 000 € → euro exact ; au-delà → k€.
+    $eurk  = function ($n) {
+      $n = (float) $n;
+      return abs($n) < 10000
+        ? number_format($n, 2, ',', ' ') . ' €'
+        : number_format(round($n / 1000)) . ' k€';
+    };
     $today = qp('date', date('Y-m-d'));
     $hasOrders = $tblExists('ws_orders');
     $DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
