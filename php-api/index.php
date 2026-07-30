@@ -978,18 +978,35 @@ function dispatch($m, $p) {
      Polygon/MultiPolygon. Réponse : { "1000": <geometry>, … } filtrable par
      ?cp=1000,1050 pour ne charger que les CP utilisés. ── */
   if ($m === 'GET' && $p === '/geo/postcode-polygons') {
-    // Repli d'EXTENSION (deux noms de fichier réels acceptés, pas de donnée
-    // inventée) : .geojson puis .json.
-    $file = null;
-    foreach (['/data/zipcodes_be_polygons.geojson', '/data/zipcodes_be_polygons.json'] as $cand) {
-      if (is_file(__DIR__ . $cand)) { $file = __DIR__ . $cand; break; }
+    // Noms de fichier réels acceptés (aucune donnée inventée) — la variante
+    // COMPRESSÉE est prioritaire : le GeoJSON des contours pèse plusieurs
+    // dizaines de Mo en clair (trop gros pour un dépôt git), alors qu'il
+    // compresse d'un facteur ~8. Le serveur le décompresse à la lecture.
+    $file = null; $gz = false;
+    foreach ([['/data/zipcodes_be_polygons.geojson.gz', true],
+              ['/data/zipcodes_be_polygons.json.gz', true],
+              ['/data/zipcodes_be_polygons.geojson', false],
+              ['/data/zipcodes_be_polygons.json', false]] as [$cand, $isGz]) {
+      if (is_file(__DIR__ . $cand)) { $file = __DIR__ . $cand; $gz = $isGz; break; }
     }
     if ($file === null) {
       json_out(['error' => 'polygones des codes postaux non installés',
-                'detail' => 'Déposez le GeoJSON des contours dans api/data/zipcodes_be_polygons.geojson (ou .json).',
-                'fichier_attendu' => 'data/zipcodes_be_polygons.geojson'], 503);
+                'detail' => 'Déposez les contours dans api/data/zipcodes_be_polygons.geojson.gz (recommandé, compressé) ou .geojson.',
+                'fichier_attendu' => 'data/zipcodes_be_polygons.geojson.gz'], 503);
     }
-    $raw = json_decode((string) file_get_contents($file), true);
+    $blob = (string) file_get_contents($file);
+    if ($gz) {
+      if (!function_exists('gzdecode')) {
+        json_out(['error' => 'contours compressés illisibles',
+                  'detail' => "L'extension PHP zlib est absente : déposez la version non compressée (.geojson)."], 503);
+      }
+      $blob = (string) gzdecode($blob);
+      if ($blob === '') {
+        json_out(['error' => 'contours compressés illisibles',
+                  'detail' => 'Décompression impossible — fichier .gz corrompu ?'], 503);
+      }
+    }
+    $raw = json_decode($blob, true);
     if (!is_array($raw) || empty($raw['features'])) {
       json_out(['error' => 'polygones illisibles',
                 'detail' => 'FeatureCollection attendue avec une clé "features" non vide.'], 503);

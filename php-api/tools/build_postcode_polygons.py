@@ -100,8 +100,15 @@ def main():
     ap.add_argument('--sectors', required=True, help='GeoJSON des secteurs statistiques (Statbel)')
     ap.add_argument('--dict', dest='dico', help='be-dictionary.csv (si les secteurs ne portent pas le CP)')
     ap.add_argument('--out', required=True, help='GeoJSON de sortie (contours par code postal)')
-    ap.add_argument('--simplify', type=float, default=0.0002,
-                    help='tolérance de simplification en degrés (0 = aucune ; défaut 0.0002 ≈ 20 m)')
+    ap.add_argument('--simplify', type=float, default=0.0005,
+                    help='tolérance de simplification en degrés (0 = aucune ; défaut 0.0005 ≈ 50 m, '
+                         'largement suffisant pour une carte au zoom ≤ 11)')
+    ap.add_argument('--precision', type=int, default=5,
+                    help='décimales conservées sur les coordonnées (défaut 5 ≈ 1 m). '
+                         'Shapely écrit sinon 17 chiffres par nombre : c’est CE point qui '
+                         'faisait exploser la taille du fichier.')
+    ap.add_argument('--gzip', action='store_true',
+                    help='écrire un .gz (recommandé : ~8× plus petit, lu directement par l’API)')
     ap.add_argument('--source-crs', default='auto', choices=['auto', 'wgs84', 'lambert72'],
                     help="système de coordonnées d'entrée (auto = détecté d'après l'étendue)")
     args = ap.parse_args()
@@ -159,6 +166,15 @@ def main():
     if not groups:
         die('aucun code postal résolu — fournissez --dict, ou vérifiez les champs du fichier secteurs')
 
+    def round_coords(obj, nd):
+        """Arrondit toutes les coordonnées : shapely sérialise sinon 17 chiffres
+        par nombre, ce qui multiplie la taille du fichier par ~3."""
+        if isinstance(obj, (list, tuple)):
+            if obj and isinstance(obj[0], (int, float)):
+                return [round(float(v), nd) for v in obj]
+            return [round_coords(v, nd) for v in obj]
+        return obj
+
     out_feats = []
     for pc in sorted(groups):
         merged = unary_union(groups[pc])
@@ -166,14 +182,33 @@ def main():
             simplified = merged.simplify(args.simplify, preserve_topology=True)
             if not simplified.is_empty:
                 merged = simplified
+        geom = mapping(merged)
+        if args.precision >= 0:
+            geom = dict(geom)
+            geom['coordinates'] = round_coords(geom['coordinates'], args.precision)
         out_feats.append({'type': 'Feature',
                           'properties': {'postcode': pc},
-                          'geometry': mapping(merged)})
+                          'geometry': geom})
 
-    with open(args.out, 'w', encoding='utf-8') as fh:
-        json.dump({'type': 'FeatureCollection', 'features': out_feats}, fh, separators=(',', ':'))
+    payload = json.dumps({'type': 'FeatureCollection', 'features': out_feats},
+                         separators=(',', ':')).encode('utf-8')
+    out_path = args.out
+    if args.gzip:
+        import gzip
+        if not out_path.endswith('.gz'):
+            out_path += '.gz'
+        with gzip.open(out_path, 'wb', compresslevel=9) as fh:
+            fh.write(payload)
+    else:
+        with open(out_path, 'wb') as fh:
+            fh.write(payload)
 
-    print('%d codes postaux écrits dans %s' % (len(out_feats), args.out))
+    import os
+    mo = os.path.getsize(out_path) / (1024.0 * 1024.0)
+    print('%d codes postaux écrits dans %s (%.1f Mo)' % (len(out_feats), out_path, mo))
+    if not args.gzip and mo > 40:
+        print('⚠ fichier volumineux : relancez avec --gzip (≈8× plus petit, lu tel quel par l’API), '
+              'et/ou --simplify 0.001 --precision 4', file=sys.stderr)
     if sans_cp:
         print('%d secteur(s) sans code postal résolu (ignorés)' % sans_cp)
 
