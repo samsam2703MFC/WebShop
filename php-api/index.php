@@ -968,6 +968,51 @@ function dispatch($m, $p) {
   // ── Référentiel géo : codes postaux belges (bpost open data, embarqué). ──
   //    ?all=1 → liste compacte [[cp, commune, lat, lng]…] (~100 Ko, à cacher côté client)
   //    ?q=…   → recherche par préfixe de CP ou nom de commune (12 max)
+  /* ── POLYGONES des codes postaux (contours réels, pour la carte des zones de
+     chalandise). Source = fichier GeoJSON déposé dans data/. AUCUN REPLI : sans
+     le fichier, on renvoie une ERREUR explicite (503) — la carte affiche le
+     message au lieu de dessiner des pastilles approximatives au centre du CP,
+     qui laissaient croire à un contour de territoire.
+     Format attendu (FeatureCollection) : chaque feature porte le code postal
+     dans properties.postcode | postal_code | zip | cp, et une géométrie
+     Polygon/MultiPolygon. Réponse : { "1000": <geometry>, … } filtrable par
+     ?cp=1000,1050 pour ne charger que les CP utilisés. ── */
+  if ($m === 'GET' && $p === '/geo/postcode-polygons') {
+    // Repli d'EXTENSION (deux noms de fichier réels acceptés, pas de donnée
+    // inventée) : .geojson puis .json.
+    $file = null;
+    foreach (['/data/zipcodes_be_polygons.geojson', '/data/zipcodes_be_polygons.json'] as $cand) {
+      if (is_file(__DIR__ . $cand)) { $file = __DIR__ . $cand; break; }
+    }
+    if ($file === null) {
+      json_out(['error' => 'polygones des codes postaux non installés',
+                'detail' => 'Déposez le GeoJSON des contours dans api/data/zipcodes_be_polygons.geojson (ou .json).',
+                'fichier_attendu' => 'data/zipcodes_be_polygons.geojson'], 503);
+    }
+    $raw = json_decode((string) file_get_contents($file), true);
+    if (!is_array($raw) || empty($raw['features'])) {
+      json_out(['error' => 'polygones illisibles',
+                'detail' => 'FeatureCollection attendue avec une clé "features" non vide.'], 503);
+    }
+    $want = [];
+    if (($cpq = qp('cp')) !== null && $cpq !== '') {
+      foreach (preg_split('/[^0-9]+/', (string) $cpq) as $c) { if ($c !== '') $want[$c] = true; }
+    }
+    $out = [];
+    foreach ($raw['features'] as $f) {
+      $pr = $f['properties'] ?? [];
+      $cp = (string) ($pr['postcode'] ?? $pr['postal_code'] ?? $pr['zip'] ?? $pr['cp'] ?? '');
+      $cp = trim($cp);
+      if ($cp === '' || empty($f['geometry'])) continue;
+      if ($want && !isset($want[$cp])) continue;
+      $out[$cp] = $f['geometry'];
+    }
+    if (!$out) {
+      json_out(['error' => 'aucun polygone exploitable',
+                'detail' => 'Aucune feature ne porte de code postal reconnaissable (properties.postcode/postal_code/zip/cp).'], 503);
+    }
+    json_out($out);
+  }
   if ($m === 'GET' && $p === '/geo/postcodes') {
     $file = __DIR__ . '/data/zipcodes_be.json';
     if (!is_file($file)) json_out([]);
