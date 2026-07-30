@@ -1011,11 +1011,28 @@ function dispatch($m, $p) {
     $disc = 0; $scopeMsg = '';
     if ($sc && $sc['scope_id_product'] !== null && $v['type'] !== 'free_delivery') {
       // Remise limitée aux pièces de CE produit (les moins chères d'abord).
+      // Le prix unitaire vient de l'ERP, PAS du panier envoyé par le client :
+      // la facturation le résout ainsi (erp_shop_prices / erp_portion_options),
+      // et un aperçu calculé sur un autre prix aurait annoncé une remise
+      // différente de celle réellement appliquée. Sans prix ERP, on ne devine
+      // pas : la pièce ne compte pas dans l'assiette.
       $units = [];
+      $scPid  = (int) $sc['scope_id_product'];
+      $scPx   = $vShop ? erp_shop_prices($vShop, [$scPid]) : [];
+      $scPort = $vShop ? erp_portion_options($vShop, [$scPid]) : [];
       foreach ((is_array($b['basket'] ?? null) ? $b['basket'] : []) as $l2) {
-        if ((int) ($l2['productId'] ?? 0) !== (int) $sc['scope_id_product']) continue;
+        if ((int) ($l2['productId'] ?? 0) !== $scPid) continue;
         $q2 = max(1, (int) ($l2['qty'] ?? 1));
-        for ($k2 = 0; $k2 < $q2; $k2++) $units[] = (float) ($l2['price'] ?? 0);
+        $u2 = $scPx[$scPid] ?? null;
+        $po2 = mb_strtolower(trim((string) ($l2['portion'] ?? '')));
+        if ($po2 !== '' && $po2 !== 'entier') {
+          $u2 = null;
+          foreach (($scPort[$scPid] ?? []) as $c3) {
+            if ($c3['v'] === $po2 && $c3['price'] !== null) { $u2 = (float) $c3['price']; break; }
+          }
+        }
+        if ($u2 === null) continue;
+        for ($k2 = 0; $k2 < $q2; $k2++) $units[] = (float) $u2;
       }
       $pn = row("SELECT name FROM ws_products WHERE id=?", [(int) $sc['scope_id_product']]);
       $pname = $pn['name'] ?? ('produit #' . $sc['scope_id_product']);
