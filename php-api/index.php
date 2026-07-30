@@ -2144,15 +2144,21 @@ function dispatch($m, $p) {
                             WHERE table_schema=DATABASE() AND table_name='bo_users' AND column_name='pin_hash'");
     if (!$hasPin3) json_out(['error' => 'Comptes tablette non configurés (migration 0046 absente)'], 503);
     // Candidats : comptes ACTIFS rattachés à cette boutique et ayant un PIN.
-    $cands = rows("SELECT u.id, u.display_name, u.pin_hash, u.sections
+    // Les SECTIONS viennent du PROFIL attribué par le franchisé parmi ceux
+    // publiés par la marque (repli sur les sections propres pour les comptes
+    // créés avant le modèle par profils).
+    $hasRole3 = col_exists('bo_users', 'role_id');
+    $cands = rows("SELECT u.id, u.display_name, u.pin_hash, u.sections" .
+                  ($hasRole3 ? ", r.sections AS role_sections" : ", NULL AS role_sections") . "
                      FROM bo_users u
-                     JOIN bo_user_shops bus ON bus.user_id = u.id AND bus.shop_id = ?
+                     JOIN bo_user_shops bus ON bus.user_id = u.id AND bus.shop_id = ?" .
+                  ($hasRole3 ? " LEFT JOIN bo_role r ON r.id = u.role_id AND r.active = 1" : "") . "
                     WHERE u.active = 1 AND u.pin_hash IS NOT NULL AND u.pin_hash <> ''", [$shopId3]);
     $me3 = null;
     foreach ($cands as $c3) { if (password_verify($pin3, (string) $c3['pin_hash'])) { $me3 = $c3; break; } }
     if (!$me3) json_out(['error' => 'PIN incorrect'], 401);
-    $sections3 = $me3['sections'] ? (json_decode((string) $me3['sections'], true) ?: []) : [];
-    if (!$sections3) json_out(['error' => 'Aucune section autorisée pour ce compte — voyez la console marque'], 403);
+    $sections3 = bo_user_sections($me3);
+    if (!$sections3) json_out(['error' => 'Aucun profil actif sur ce compte — le gérant doit lui en attribuer un'], 403);
     $tok3 = bin2hex(random_bytes(32));
     q("INSERT INTO bo_pin_session (token, user_id, shop_id, expires_at)
          VALUES (?,?,?, DATE_ADD(NOW(), INTERVAL 12 HOUR))", [$tok3, (int) $me3['id'], $shopId3]);
@@ -2166,12 +2172,15 @@ function dispatch($m, $p) {
   if ($m === 'GET' && $p === '/bo/pin-me') {
     $tok4 = req_header('X-Pin-Token');
     if ($tok4 === '') json_out(['error' => 'session absente'], 401);
-    $s4 = row("SELECT s.user_id, s.shop_id, u.display_name, u.sections, u.active
-                 FROM bo_pin_session s JOIN bo_users u ON u.id = s.user_id
+    $hasRole4 = col_exists('bo_users', 'role_id');
+    $s4 = row("SELECT s.user_id, s.shop_id, u.display_name, u.sections, u.active" .
+              ($hasRole4 ? ", r.sections AS role_sections, r.label AS role_label" : ", NULL AS role_sections, NULL AS role_label") . "
+                 FROM bo_pin_session s JOIN bo_users u ON u.id = s.user_id" .
+              ($hasRole4 ? " LEFT JOIN bo_role r ON r.id = u.role_id AND r.active = 1" : "") . "
                 WHERE s.token = ? AND s.expires_at > NOW()", [$tok4]);
     if (!$s4 || !$s4['active']) json_out(['error' => 'session expirée ou compte désactivé'], 401);
     json_out(['ok' => true, 'nom' => $s4['display_name'] ?: 'Utilisateur', 'shopId' => (int) $s4['shop_id'],
-              'sections' => $s4['sections'] ? (json_decode((string) $s4['sections'], true) ?: []) : []]);
+              'profil' => $s4['role_label'] ?: null, 'sections' => bo_user_sections($s4)]);
   }
   if ($m === 'POST' && $p === '/bo/pin-logout') {
     $tok5 = req_header('X-Pin-Token');
@@ -3296,151 +3305,104 @@ function dispatch($m, $p) {
        cette liste, le back-office franchisé applique les mêmes clés. Éviter de
        dupliquer les 37 clés d'écran dans deux fronts qui divergeraient. */
     if ($m === 'GET' && $p === '/franchisor/bo-sections') {
-      $S = [
-        'Pilotage'   => ['tdb' => 'Tableau de bord', 'statsReseau' => 'Stats réseau consolidées',
-                         'rentabilite' => 'Rentabilité', 'params' => 'Coût-temps & coûts',
-                         'geoAnalyse' => 'Analyse géographique'],
-        'Vente'      => ['commandes' => 'Commandes du jour', 'stockJour' => 'Stock du jour',
-                         'assortiment' => 'Assortiment & disponibilité', 'vouchers' => 'Bons / codes',
-                         'pricingRules' => 'Règles de prix', 'remiseWebshop' => 'Remise auto webshop',
-                         'paiements' => 'Moyens de paiement'],
-        'Logistique' => ['prep' => 'Préparation / bon de chargement', 'tournees' => 'Constructeur de tournées',
-                         'suivi' => 'Suivi temps réel', 'horaires' => 'Horaires des tournées',
-                         'fermetures' => 'Fermetures ponctuelles', 'incidents' => 'Incidents',
-                         'frais' => 'Frais de livraison', 'zones' => 'Zone de chalandise'],
-        'Clients B2B'=> ['sites' => 'Sites de livraison', 'offices' => 'Offices (bureaux)',
-                         'clients' => 'Bureaux (comptes B2B)', 'b2bClients' => 'Clients',
-                         'bureauParams' => 'Paramètres livraison par bureau',
-                         'emailsBureau' => 'Emails bureau', 'validations' => 'Validations',
-                         'demandesBureau' => 'Demandes de rattachement bureau', 'demandesB2B' => 'Demandes B2B'],
-        'Disponibilité' => ['creneaux' => 'Créneaux', 'capacite' => 'Capacité (calendrier)',
-                         'reglesBoutique' => 'Disponibilité boutique', 'joursExcept' => 'Jours exceptionnels',
-                         'calendarRules' => 'Règles calendrier', 'dispoCat' => 'Disponibilité par catégorie',
-                         'dispoProd' => 'Disponibilité par produit'],
-        'Réglages'   => ['shopParams' => 'Paramètres du shop'],
-      ];
-      // Rôles prédéfinis : ils PRÉ-COCHENT des sections, l'admin ajuste ensuite.
-      // Ce sont les sections enregistrées qui donnent les droits, pas le rôle.
-      $PRESETS = [
-        ['key' => 'vendeur',        'label' => 'Vendeur (comptoir)',
-         'sections' => ['tdb', 'commandes', 'stockJour', 'creneaux']],
-        ['key' => 'preparateur',    'label' => 'Préparateur',
-         'sections' => ['prep', 'commandes', 'stockJour', 'dispoProd', 'assortiment']],
-        ['key' => 'chauffeur',      'label' => 'Chauffeur',
-         'sections' => ['suivi', 'tournees', 'incidents', 'horaires']],
-        ['key' => 'gerant',         'label' => 'Gérant boutique',
-         'sections' => []],   // rempli ci-dessous : tout sauf finances/réseau
-        ['key' => 'admin_boutique', 'label' => 'Admin boutique',
-         'sections' => []],   // rempli ci-dessous : tout
-      ];
-      $toutes = [];
-      foreach ($S as $grp => $items) { foreach ($items as $k => $lab) $toutes[] = $k; }
-      foreach ($PRESETS as &$pz) {
-        if ($pz['key'] === 'admin_boutique') $pz['sections'] = $toutes;
-        if ($pz['key'] === 'gerant') {
-          $pz['sections'] = array_values(array_diff($toutes, ['rentabilite', 'params', 'statsReseau']));
-        }
-      }
-      unset($pz);
+      $cat = bo_sections_catalog();
       $groupes = [];
-      foreach ($S as $grp => $items) {
+      foreach ($cat as $grp => $items) {
         $groupes[] = ['groupe' => $grp,
                       'sections' => array_map(static fn ($k, $lab) => ['key' => $k, 'label' => $lab],
                                               array_keys($items), array_values($items))];
       }
-      json_out(['groupes' => $groupes, 'roles' => $PRESETS, 'total' => count($toutes)]);
+      $toutes = [];
+      foreach ($cat as $items) { foreach ($items as $k => $lab) $toutes[] = $k; }
+      json_out(['groupes' => $groupes, 'roles' => bo_role_presets(), 'total' => count($toutes)]);
     }
 
-    /* ══ COMPTES TABLETTE BOUTIQUE (PIN + sections) ══════════════════════════
-       Créés ICI (console franchiseur) et consommés par le back-office
-       franchisé : un PIN ouvre une session limitée aux sections cochées.
-       L'accès admin complet reste le jeton ERP — un PIN ne le remplace jamais.
-       Les SECTIONS font foi ; role_preset ne sert qu'à les pré-cocher. ── */
-    if ($m === 'GET' && $p === '/franchisor/shop-users') {
-      if (!$tblExists('bo_users')) json_out([]);
-      $hasPin = col_exists('bo_users', 'pin_hash');
-      $rs = rows("SELECT u.id, u.display_name AS nom, u.email, u.role, u.active" .
-                 ($hasPin ? ", u.sections, u.role_preset, (u.pin_hash IS NOT NULL AND u.pin_hash <> '') AS pin_pose, u.pin_set_at" : ", NULL AS sections, NULL AS role_preset, 0 AS pin_pose, NULL AS pin_set_at") . ",
-                        (SELECT GROUP_CONCAT(bus.shop_id) FROM bo_user_shops bus WHERE bus.user_id = u.id) AS shop_ids,
-                        (SELECT GROUP_CONCAT(sh.name SEPARATOR ', ') FROM bo_user_shops bus
-                          JOIN $SHOPS sh ON sh.id = bus.shop_id WHERE bus.user_id = u.id) AS boutiques
-                   FROM bo_users u ORDER BY u.display_name, u.id");
+    /* ══ PROFILS TABLETTE (marque) ═══════════════════════════════════════════
+       La MARQUE définit les profils et, pour chacun, les sections du
+       back-office qu'ils ouvrent. Elle ne crée PAS les comptes : le personnel
+       d'une boutique est connu du franchisé, pas du réseau. Le franchisé crée
+       ses comptes (nom + PIN) et leur attribue un de ces profils — il ne peut
+       donc jamais s'octroyer un accès que la marque n'a pas prévu. ── */
+    if ($m === 'GET' && $p === '/franchisor/bo-roles') {
+      if (!$tblExists('bo_role')) json_out([]);
+      $rs = rows("SELECT r.id, r.role_key, r.label, r.sections, r.active,
+                         (SELECT COUNT(*) FROM bo_users u WHERE u.role_id = r.id) AS nb_comptes
+                    FROM bo_role r ORDER BY r.active DESC, r.label");
       json_out(array_map(static function ($r) {
         $sec = $r['sections'] ? (json_decode((string) $r['sections'], true) ?: []) : [];
-        return ['id' => (int) $r['id'], 'nom' => $r['nom'] ?: '(sans nom)', 'email' => $r['email'],
-                'role' => $r['role'], 'active' => (bool) $r['active'],
-                'rolePreset' => $r['role_preset'], 'sections' => $sec, 'nbSections' => count($sec),
-                'pinPose' => (bool) $r['pin_pose'], 'pinDepuis' => $r['pin_set_at'],
-                'shopIds' => $r['shop_ids'] ? array_map('intval', explode(',', (string) $r['shop_ids'])) : [],
-                'boutiques' => $r['boutiques'] ?: '—'];
+        return ['id' => (int) $r['id'], 'key' => $r['role_key'], 'label' => $r['label'],
+                'sections' => $sec, 'nbSections' => count($sec),
+                'active' => (bool) $r['active'], 'nbComptes' => (int) $r['nb_comptes']];
       }, $rs));
     }
 
-    // Création / mise à jour d'un compte tablette (nom, boutique, sections, PIN).
-    if ($m === 'POST' && $p === '/franchisor/shop-user') {
-      if (!$tblExists('bo_users')) json_out(['ok' => false, 'error' => 'table bo_users absente'], 501);
-      if (!col_exists('bo_users', 'pin_hash')) {
-        json_out(['ok' => false, 'error' => 'migration 0046 non appliquée (colonnes pin_hash/sections absentes)'], 500);
-      }
+    // Création / mise à jour d'un profil. Les sections sont la seule chose qui
+    // donne des droits ; le libellé n'est qu'un nom d'usage.
+    if ($m === 'POST' && $p === '/franchisor/bo-role') {
+      if (!$tblExists('bo_role')) json_out(['ok' => false, 'error' => 'table bo_role absente (migration 0050)'], 501);
       $b = body();
-      $id   = (int) ($b['id'] ?? 0);
-      $nom  = trim((string) ($b['nom'] ?? ''));
-      if ($nom === '') json_out(['ok' => false, 'error' => 'nom requis'], 400);
-      // Email FACULTATIF (un employé de comptoir n'en a pas forcément) ; s'il
-      // est fourni il doit être valide, car il reste unique en base.
-      $email = trim((string) ($b['email'] ?? ''));
-      if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) json_out(['ok' => false, 'error' => 'email invalide'], 400);
-      $shopId2 = (int) ($b['shopId'] ?? 0);
-      if (!$shopId2 || !row("SELECT 1 x FROM $SHOPS WHERE id=?", [$shopId2])) {
-        json_out(['ok' => false, 'error' => 'boutique de rattachement requise'], 400);
+      $id    = (int) ($b['id'] ?? 0);
+      $label = trim((string) ($b['label'] ?? ''));
+      if ($label === '') json_out(['ok' => false, 'error' => 'libellé du profil requis'], 400);
+      $key = preg_replace('/[^a-z0-9_]/', '', strtolower((string) ($b['key'] ?? '')));
+      if ($key === '') {
+        $key = preg_replace('/[^a-z0-9]+/', '_', strtolower(iconv('UTF-8', 'ASCII//TRANSLIT', $label) ?: $label));
+        $key = trim(preg_replace('/_+/', '_', $key), '_');
       }
-      $active = !empty($b['active']) || !isset($b['active']) ? 1 : 0;
-      $preset = preg_replace('/[^a-z_]/', '', strtolower((string) ($b['rolePreset'] ?? '')));
-      // Sections : on n'accepte que des clés d'écran plausibles (liste blanche
-      // de forme), et on dédoublonne. Ce sont ELLES qui donnent les droits.
+      if ($key === '') json_out(['ok' => false, 'error' => 'clé de profil impossible à déduire du libellé'], 400);
       $sections = [];
       foreach ((array) ($b['sections'] ?? []) as $s2) {
         $s2 = preg_replace('/[^A-Za-z0-9_]/', '', (string) $s2);
         if ($s2 !== '' && !in_array($s2, $sections, true)) $sections[] = $s2;
       }
+      if (!$sections) json_out(['ok' => false, 'error' => 'un profil sans aucune section ne donnerait accès à rien'], 400);
+      $active = array_key_exists('active', $b) ? (!empty($b['active']) ? 1 : 0) : 1;
       $secJson = json_encode(array_values($sections), JSON_UNESCAPED_UNICODE);
-      // PIN : exactement 4 chiffres, haché. Absent = on ne touche pas au PIN
-      // existant (permet de modifier un compte sans le redéfinir).
-      $pin = preg_replace('/\D/', '', (string) ($b['pin'] ?? ''));
-      if ($pin !== '' && strlen($pin) !== 4) json_out(['ok' => false, 'error' => 'le PIN doit comporter exactement 4 chiffres'], 400);
-      $pinHash = $pin !== '' ? password_hash($pin, PASSWORD_DEFAULT) : null;
-
+      $dup = row("SELECT id FROM bo_role WHERE role_key = ?" . ($id ? " AND id <> " . (int) $id : ""), [$key]);
+      if ($dup) json_out(['ok' => false, 'error' => 'un profil porte déjà la clé « ' . $key . ' »'], 409);
       if ($id) {
-        $sets = ['display_name=?', 'active=?', 'sections=?', 'role_preset=?'];
-        $vals = [$nom, $active, $secJson, $preset ?: null];
-        $sets[] = 'email=?'; $vals[] = ($email !== '' ? strtolower($email) : null);
-        if ($pinHash !== null) { $sets[] = 'pin_hash=?'; $vals[] = $pinHash; $sets[] = 'pin_set_at=NOW()'; }
-        $vals[] = $id;
-        q("UPDATE bo_users SET " . implode(', ', $sets) . " WHERE id=?", $vals);
+        q("UPDATE bo_role SET role_key=?, label=?, sections=?, active=? WHERE id=?", [$key, $label, $secJson, $active, $id]);
       } else {
-        // Un compte tablette est un compte de boutique : rôle 'franchise'.
-        q("INSERT INTO bo_users (email, password_hash, display_name, role, active, sections, role_preset, pin_hash, pin_set_at)
-             VALUES (?, '', ?, 'franchise', ?, ?, ?, ?, " . ($pinHash !== null ? 'NOW()' : 'NULL') . ")",
-          [($email !== '' ? strtolower($email) : null), $nom, $active, $secJson, $preset ?: null, $pinHash]);
+        q("INSERT INTO bo_role (role_key, label, sections, active) VALUES (?,?,?,?)", [$key, $label, $secJson, $active]);
         $id = (int) db()->lastInsertId();
       }
-      // Portée : un seul rattachement boutique par compte tablette.
-      q("DELETE FROM bo_user_shops WHERE user_id=?", [$id]);
-      q("INSERT INTO bo_user_shops (user_id, shop_id) VALUES (?,?)", [$id, $shopId2]);
-      $audit('shop_user.upsert', 'bo_users', $id, null,
-             ['nom' => $nom, 'shop' => $shopId2, 'sections' => count($sections), 'pin' => $pinHash !== null]);
-      json_out(['ok' => true, 'id' => $id, 'sections' => count($sections), 'pinPose' => $pinHash !== null]);
+      $audit('bo_role.upsert', 'bo_role', $id, null, ['label' => $label, 'sections' => count($sections)]);
+      json_out(['ok' => true, 'id' => $id, 'key' => $key, 'nbSections' => count($sections)]);
     }
 
-    // Suppression d'un compte tablette (session révoquée dans la foulée).
-    if ($m === 'POST' && $p === '/franchisor/shop-user-delete') {
+    // Retrait d'un profil. Un profil PORTÉ par des comptes n'est pas supprimé :
+    // il est désactivé — sinon ces comptes perdraient leurs droits sans trace,
+    // et la tablette se fermerait au milieu d'un service.
+    if ($m === 'POST' && $p === '/franchisor/bo-role-delete') {
+      if (!$tblExists('bo_role')) json_out(['ok' => false, 'error' => 'table bo_role absente'], 501);
       $b = body(); $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['ok' => false, 'error' => 'id requis'], 400);
-      if ($tblExists('bo_pin_session')) q("DELETE FROM bo_pin_session WHERE user_id=?", [$id]);
-      q("DELETE FROM bo_user_shops WHERE user_id=?", [$id]);
-      q("DELETE FROM bo_users WHERE id=?", [$id]);
-      $audit('shop_user.delete', 'bo_users', $id, null, null);
-      json_out(['ok' => true]);
+      $n = (int) (row("SELECT COUNT(*) n FROM bo_users WHERE role_id = ?", [$id])['n'] ?? 0);
+      if ($n > 0) {
+        q("UPDATE bo_role SET active = 0 WHERE id = ?", [$id]);
+        $audit('bo_role.disable', 'bo_role', $id, null, ['comptes' => $n]);
+        json_out(['ok' => true, 'desactive' => true, 'comptes' => $n,
+                  'message' => $n . ' compte(s) utilisent ce profil : il est désactivé (plus attribuable) mais conservé.']);
+      }
+      q("DELETE FROM bo_role WHERE id = ?", [$id]);
+      $audit('bo_role.delete', 'bo_role', $id, null, null);
+      json_out(['ok' => true, 'desactive' => false]);
+    }
+
+    // Création des profils standard — action EXPLICITE de la marque, jamais un
+    // remplissage automatique. N'écrase aucun profil existant (clé unique).
+    if ($m === 'POST' && $p === '/franchisor/bo-roles-init') {
+      if (!$tblExists('bo_role')) json_out(['ok' => false, 'error' => 'table bo_role absente (migration 0050)'], 501);
+      $std = bo_role_presets();
+      $n = 0;
+      foreach ($std as $r) {
+        if (row("SELECT id FROM bo_role WHERE role_key = ?", [$r['key']])) continue;
+        q("INSERT INTO bo_role (role_key, label, sections, active) VALUES (?,?,?,1)",
+          [$r['key'], $r['label'], json_encode($r['sections'], JSON_UNESCAPED_UNICODE)]);
+        $n++;
+      }
+      $audit('bo_role.init', 'bo_role', null, null, ['crees' => $n]);
+      json_out(['ok' => true, 'crees' => $n]);
     }
 
     // Menu builder — remplace transactionnellement TOUT l'arbre d'un produit
@@ -4932,6 +4894,99 @@ function dispatch($m, $p) {
                 'segment' => 'horeca', 'tva' => $r['vat'] ?: '—',
                 'vies' => $r['vat'] ? 'ok' : 'pending', 'date' => $r['d']];
       }, $rs));
+    }
+
+    /* ══ COMPTES TABLETTE DE LA BOUTIQUE ═════════════════════════════════════
+       Gérés par le FRANCHISÉ : c'est lui qui connaît son personnel. Il choisit
+       un PROFIL publié par la marque — les sections en découlent, il ne peut
+       donc pas s'octroyer un accès non prévu.
+       Réservé au jeton admin ERP : ces routes ne figurent PAS dans
+       bo_endpoint_section, donc une session PIN ne peut jamais les atteindre —
+       un vendeur ne se crée pas un compte « admin boutique ». ── */
+    if ($m === 'GET' && $p === '/franchisee/bo-roles') {
+      if (!$tblExists('bo_role')) json_out([]);
+      json_out(array_map(static function ($r) {
+        $sec = $r['sections'] ? (json_decode((string) $r['sections'], true) ?: []) : [];
+        return ['id' => (int) $r['id'], 'label' => $r['label'], 'key' => $r['role_key'],
+                'sections' => $sec, 'nbSections' => count($sec)];
+      }, rows("SELECT id, role_key, label, sections FROM bo_role WHERE active = 1 ORDER BY label")));
+    }
+
+    if ($m === 'GET' && $p === '/franchisee/bo-users') {
+      if (!$tblExists('bo_users') || !$shopId) json_out([]);
+      $hasRole = col_exists('bo_users', 'role_id');
+      $rs = rows("SELECT u.id, u.display_name AS nom, u.active,
+                         (u.pin_hash IS NOT NULL AND u.pin_hash <> '') AS pin_pose, u.pin_set_at,
+                         u.last_login_at, u.sections" .
+                 ($hasRole ? ", u.role_id, r.label AS role_label, r.sections AS role_sections"
+                           : ", NULL AS role_id, NULL AS role_label, NULL AS role_sections") . "
+                    FROM bo_users u
+                    JOIN bo_user_shops bus ON bus.user_id = u.id AND bus.shop_id = ?" .
+                 ($hasRole ? " LEFT JOIN bo_role r ON r.id = u.role_id" : "") . "
+                   ORDER BY u.display_name, u.id", [$shopId]);
+      json_out(array_map(static function ($r) {
+        $sec = bo_user_sections($r);
+        return ['id' => (int) $r['id'], 'nom' => $r['nom'] ?: '(sans nom)',
+                'active' => (bool) $r['active'],
+                'roleId' => $r['role_id'] !== null ? (int) $r['role_id'] : null,
+                'role' => $r['role_label'] ?: '— aucun profil',
+                'nbSections' => count($sec),
+                'pinPose' => (bool) $r['pin_pose'], 'pinDepuis' => $r['pin_set_at'],
+                'derniereConnexion' => $r['last_login_at'] ?: '—'];
+      }, $rs));
+    }
+
+    if ($m === 'POST' && $p === '/franchisee/bo-user') {
+      if (!$tblExists('bo_users')) json_out(['ok' => false, 'error' => 'table bo_users absente'], 501);
+      if (!col_exists('bo_users', 'pin_hash')) json_out(['ok' => false, 'error' => 'migration 0046 non appliquée'], 500);
+      if (!col_exists('bo_users', 'role_id')) json_out(['ok' => false, 'error' => 'migration 0050 non appliquée'], 500);
+      if (!$shopId) json_out(['ok' => false, 'error' => 'ouvrez le back-office avec ?shop=<id> — un compte appartient à une boutique'], 400);
+      $b   = body();
+      $id  = (int) ($b['id'] ?? 0);
+      $nom = trim((string) ($b['nom'] ?? ''));
+      if ($nom === '') json_out(['ok' => false, 'error' => 'nom requis'], 400);
+      $roleId = (int) ($b['roleId'] ?? 0);
+      if (!$roleId) json_out(['ok' => false, 'error' => 'profil requis — c’est lui qui détermine les accès'], 400);
+      $role = row("SELECT id, label, sections FROM bo_role WHERE id = ? AND active = 1", [$roleId]);
+      if (!$role) json_out(['ok' => false, 'error' => 'profil inconnu ou désactivé par la marque'], 409);
+      $active = array_key_exists('active', $b) ? (!empty($b['active']) ? 1 : 0) : 1;
+      // PIN : 4 chiffres. Absent à la modification = PIN inchangé ; obligatoire
+      // à la création (un compte sans PIN ne peut ouvrir aucune session).
+      $pin = preg_replace('/\D/', '', (string) ($b['pin'] ?? ''));
+      if ($pin !== '' && strlen($pin) !== 4) json_out(['ok' => false, 'error' => 'le PIN doit comporter exactement 4 chiffres'], 400);
+      if (!$id && $pin === '') json_out(['ok' => false, 'error' => 'PIN à 4 chiffres requis à la création'], 400);
+      $pinHash = $pin !== '' ? password_hash($pin, PASSWORD_DEFAULT) : null;
+
+      if ($id) {
+        // Un franchisé ne modifie que SES comptes.
+        if (!row("SELECT 1 x FROM bo_user_shops WHERE user_id = ? AND shop_id = ?", [$id, $shopId]))
+          json_out(['ok' => false, 'error' => 'ce compte n’appartient pas à votre boutique'], 403);
+        $sets = ['display_name=?', 'active=?', 'role_id=?'];
+        $vals = [$nom, $active, $roleId];
+        if ($pinHash !== null) { $sets[] = 'pin_hash=?'; $vals[] = $pinHash; $sets[] = 'pin_set_at=NOW()'; }
+        $vals[] = $id;
+        q("UPDATE bo_users SET " . implode(', ', $sets) . " WHERE id=?", $vals);
+        // Compte désactivé ⇒ sessions ouvertes fermées immédiatement.
+        if (!$active && $tblExists('bo_pin_session')) q("DELETE FROM bo_pin_session WHERE user_id=?", [$id]);
+      } else {
+        q("INSERT INTO bo_users (email, password_hash, display_name, role, active, role_id, pin_hash, pin_set_at)
+             VALUES (NULL, '', ?, 'franchise', ?, ?, ?, NOW())", [$nom, $active, $roleId, $pinHash]);
+        $id = (int) db()->lastInsertId();
+        q("INSERT INTO bo_user_shops (user_id, shop_id) VALUES (?,?)", [$id, $shopId]);
+      }
+      json_out(['ok' => true, 'id' => $id, 'role' => $role['label'], 'pinPose' => $pinHash !== null]);
+    }
+
+    if ($m === 'POST' && $p === '/franchisee/bo-user-delete') {
+      if (!$tblExists('bo_users')) json_out(['ok' => false, 'error' => 'table bo_users absente'], 501);
+      $b = body(); $id = (int) ($b['id'] ?? 0);
+      if (!$id || !$shopId) json_out(['ok' => false, 'error' => 'id et boutique requis'], 400);
+      if (!row("SELECT 1 x FROM bo_user_shops WHERE user_id = ? AND shop_id = ?", [$id, $shopId]))
+        json_out(['ok' => false, 'error' => 'ce compte n’appartient pas à votre boutique'], 403);
+      if ($tblExists('bo_pin_session')) q("DELETE FROM bo_pin_session WHERE user_id=?", [$id]);
+      q("DELETE FROM bo_user_shops WHERE user_id=?", [$id]);
+      q("DELETE FROM bo_users WHERE id=?", [$id]);
+      json_out(['ok' => true]);
     }
 
     // Demandes de rattachement bureau — ws_office_join_requests (pending).
@@ -6938,16 +6993,84 @@ function bo_pin_session() {
   $tok = req_header('X-Pin-Token');
   if ($tok === '') return $cached = null;
   try {
-    $s = row("SELECT s.user_id, s.shop_id, u.sections, u.active
-                FROM bo_pin_session s JOIN bo_users u ON u.id = s.user_id
+    $hasRole = col_exists('bo_users', 'role_id');
+    $s = row("SELECT s.user_id, s.shop_id, u.sections, u.active" .
+             ($hasRole ? ", r.sections AS role_sections" : ", NULL AS role_sections") . "
+                FROM bo_pin_session s JOIN bo_users u ON u.id = s.user_id" .
+             ($hasRole ? " LEFT JOIN bo_role r ON r.id = u.role_id AND r.active = 1" : "") . "
                WHERE s.token = ? AND s.expires_at > NOW()", [$tok]);
   } catch (Throwable $e) { return $cached = null; }
   if (!$s || !$s['active']) return $cached = null;
   return $cached = [
     'user_id'  => (int) $s['user_id'],
     'shop_id'  => (int) $s['shop_id'],
-    'sections' => $s['sections'] ? (json_decode((string) $s['sections'], true) ?: []) : [],
+    // Sections EFFECTIVES = celles du profil (la marque les fixe) : modifier un
+    // profil côté marque change immédiatement les droits des tablettes.
+    'sections' => bo_user_sections($s),
   ];
+}
+
+/* Catalogue des SECTIONS du back-office franchisé, groupées comme au menu.
+   Source unique : la console marque l'affiche pour composer les profils, et
+   bo_role_presets() y puise pour les profils standard. */
+function bo_sections_catalog() {
+  return [
+    'Pilotage'   => ['tdb' => 'Tableau de bord', 'statsReseau' => 'Stats réseau consolidées',
+                     'rentabilite' => 'Rentabilité', 'params' => 'Coût-temps & coûts',
+                     'geoAnalyse' => 'Analyse géographique'],
+    'Vente'      => ['commandes' => 'Commandes du jour', 'stockJour' => 'Stock du jour',
+                     'assortiment' => 'Assortiment & disponibilité', 'vouchers' => 'Bons / codes',
+                     'pricingRules' => 'Règles de prix', 'remiseWebshop' => 'Remise auto webshop',
+                     'paiements' => 'Moyens de paiement'],
+    'Logistique' => ['prep' => 'Préparation / bon de chargement', 'tournees' => 'Constructeur de tournées',
+                     'suivi' => 'Suivi temps réel', 'horaires' => 'Horaires des tournées',
+                     'fermetures' => 'Fermetures ponctuelles', 'incidents' => 'Incidents',
+                     'frais' => 'Frais de livraison', 'zones' => 'Zone de chalandise'],
+    'Clients B2B'=> ['sites' => 'Sites de livraison', 'offices' => 'Offices (bureaux)',
+                     'clients' => 'Bureaux (comptes B2B)', 'b2bClients' => 'Clients',
+                     'bureauParams' => 'Paramètres livraison par bureau',
+                     'emailsBureau' => 'Emails bureau', 'validations' => 'Validations',
+                     'demandesBureau' => 'Demandes de rattachement bureau', 'demandesB2B' => 'Demandes B2B'],
+    'Disponibilité' => ['creneaux' => 'Créneaux', 'capacite' => 'Capacité (calendrier)',
+                     'reglesBoutique' => 'Disponibilité boutique', 'joursExcept' => 'Jours exceptionnels',
+                     'calendarRules' => 'Règles calendrier', 'dispoCat' => 'Disponibilité par catégorie',
+                     'dispoProd' => 'Disponibilité par produit'],
+    'Réglages'   => ['shopParams' => 'Paramètres du shop'],
+  ];
+}
+
+/* Profils STANDARD proposés à la marque (action explicite « créer les profils
+   standard »). Ce ne sont pas des données de démonstration : rien n'est écrit
+   sans un clic, et la marque reste libre de les modifier ou d'en créer d'autres. */
+function bo_role_presets() {
+  $toutes = [];
+  foreach (bo_sections_catalog() as $items) { foreach ($items as $k => $lab) $toutes[] = $k; }
+  return [
+    ['key' => 'vendeur',     'label' => 'Vendeur (comptoir)',
+     'sections' => ['tdb', 'commandes', 'stockJour', 'creneaux']],
+    ['key' => 'preparateur', 'label' => 'Préparateur',
+     'sections' => ['prep', 'commandes', 'stockJour', 'dispoProd', 'assortiment']],
+    ['key' => 'chauffeur',   'label' => 'Chauffeur',
+     'sections' => ['suivi', 'tournees', 'incidents', 'horaires']],
+    ['key' => 'gerant',      'label' => 'Gérant boutique',
+     'sections' => array_values(array_diff($toutes, ['rentabilite', 'params', 'statsReseau']))],
+    ['key' => 'admin_boutique', 'label' => 'Admin boutique', 'sections' => $toutes],
+  ];
+}
+
+/* Sections EFFECTIVES d'un compte tablette : celles de son profil (la marque
+   les fixe). Repli sur les sections propres du compte pour les comptes créés
+   avant le modèle par profils. */
+function bo_user_sections($u) {
+  if (!empty($u['role_sections'])) {
+    $r = json_decode((string) $u['role_sections'], true);
+    if (is_array($r) && $r) return $r;
+  }
+  if (!empty($u['sections'])) {
+    $r = json_decode((string) $u['sections'], true);
+    if (is_array($r)) return $r;
+  }
+  return [];
 }
 
 /* Section du back-office franchisé à laquelle appartient un endpoint. C'est
