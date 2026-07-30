@@ -272,6 +272,71 @@ est-elle vide ».
 
 ---
 
+## 12. 🔴 Matrice complète des paiements ⚠️ priorité
+
+Les moyens de paiement **réels** sont au nombre de trois — les libellés
+« Bancontact », « Visa », « Apple Pay » qui traînaient dans l'interface ne
+correspondaient à rien côté serveur :
+
+| Méthode | Libellé client | Comportement attendu |
+|---|---|---|
+| `stripe` | Carte / Bancontact (en ligne) | redirection Stripe, retour sur la confirmation, `payment_status` mis à jour |
+| `shop` | Paiement en boutique | commande enregistrée **sans** paiement, à régler au retrait |
+| `deferred` | Sur compte (facturation) | commande enregistrée sans paiement, facturée au bureau |
+
+La liste proposée dépend de **la boutique × le profil** (`ws_shop_payment_options`,
+profils `guest` / `registered` / `company`). Sans configuration, le défaut est
+`stripe` + `shop` (et `stripe` + `deferred` pour une société).
+
+**Deux défauts corrigés en préparant ce test**
+- la confirmation affichait **« Bancontact »** pour toute méthode non reconnue —
+  donc aussi pour un paiement **en boutique** ou **sur compte**, que le client
+  n'avait pas fait. Le libellé vient maintenant de la liste serveur.
+- la sélection initiale valait `bancontact`, un identifiant **qui n'existe pas** ;
+  elle est désormais posée par la réponse de `/payment-methods`.
+
+### Configuration à vérifier AVANT le test
+```sql
+SELECT shop_id, profile_type, method, active
+  FROM atelierby_db.ws_shop_payment_options
+ WHERE shop_id = 2 ORDER BY profile_type, method;
+```
+Table vide = comportement par défaut. Si une méthode manque à l'écran, c'est
+cette table qu'il faut corriger, pas le code.
+
+### Matrice à parcourir
+
+| # | Profil | Mode | Méthode | Attendu |
+|---|---|---|---|---|
+| 12.1 | Invité | Click & Collect | `stripe` | redirection Stripe → paiement → confirmation → `payment_status` payé |
+| 12.2 | Invité | Click & Collect | `shop` | commande créée, `payment_status = pending`, aucune redirection |
+| 12.3 | Invité | Click & Collect | `deferred` | **ne doit pas être proposé** |
+| 12.4 | Connecté | Click & Collect | `stripe` | idem 12.1 + commande rattachée au client |
+| 12.5 | Connecté | Click & Collect | `shop` | idem 12.2 + visible dans « Mes achats » |
+| 12.6 | Connecté | Livraison bureau | `stripe` | + frais de livraison au bon montant |
+| 12.7 | Connecté | Livraison bureau | `deferred` | proposé **uniquement** si `deferred_billing_enabled = 1` |
+| 12.8 | Société | Click & Collect | `stripe` | facture avec identité société |
+| 12.9 | Société | Livraison bureau | `deferred` | **seule** méthode proposée si le site est en différé |
+| 12.10 | Tous | — | abandon du paiement Stripe | commande **non** confirmée, stock **libéré** |
+| 12.11 | Tous | — | échec de paiement Stripe | message d'erreur, panier conservé |
+| 12.12 | Connecté | — | avec bon de réduction | montant envoyé à Stripe = total **après** remise |
+| 12.13 | Tous | — | aucun moyen configuré | écran d'erreur explicite, commande impossible |
+
+**À vérifier sur chaque ligne** : le libellé affiché dans la confirmation
+correspond bien à la méthode choisie (c'est le défaut qui vient d'être corrigé).
+
+```sql
+SELECT id, order_ref, mode, payment_method, payment_status, payment_type,
+       total, voucher_code, voucher_discount, created_at
+  FROM atelierby_db.ws_orders ORDER BY id DESC LIMIT 15;
+```
+
+**Point de vigilance** : 12.10 et 12.11 sont les cas les plus rarement testés et
+les plus coûteux — un abandon qui laisse du stock réservé bloque la vente pour
+tout le monde jusqu'à l'expiration du maintien.
+
+---
+
 # Déjà validé — ne pas refaire
 
 | Sujet | Résultat |

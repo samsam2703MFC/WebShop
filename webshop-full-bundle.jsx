@@ -3134,7 +3134,10 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const [vat, setVat] = useState('');
 
   // Payment — reset to 'deferred' for deferred sites, 'bancontact' otherwise
-  const defaultPayment = (deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : 'bancontact';
+  // Aucun moyen par défaut inventé : « bancontact » n'existe pas côté serveur
+  // (les méthodes réelles sont stripe / shop / deferred). La sélection est
+  // posée par l'effet dès que /payment-methods a répondu.
+  const defaultPayment = (deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : '';
   const [payment, setPayment] = useState(defaultPayment);
 
   // B2B « commander pour une entreprise » + remarque + PO (facturation pro).
@@ -3175,7 +3178,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
     if (open) {
       setStep(1); setSlot(null); setInvoice(false); setVat(''); setForceAuth(false); setPaying(false); setPayErr(null);
       setOrderNote(''); setPoNumber(''); setCompanyId(''); setOnAccount(false);
-      setPayment((deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : 'bancontact');
+      setPayment((deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : '');
     }
   }, [open]);
 
@@ -3260,7 +3263,11 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         window.location.href = result.checkoutUrl;
         return;
       }
-      onPlaced({ ...result, slot, payment, total });
+      // Le LIBELLÉ vient de la liste serveur : la confirmation annonçait
+      // « Bancontact » pour toute méthode non reconnue — donc aussi pour un
+      // paiement en boutique ou sur compte, que le client n'a pas fait.
+      const payLabel = (paymentMethods.find((x) => x.id === payment) || {}).label || payment;
+      onPlaced({ ...result, slot, payment, paymentLabel: payLabel, total });
     } catch (ex) {
       setPayErr(ex.message || 'Erreur lors du paiement. Veuillez réessayer.');
     } finally {
@@ -4820,7 +4827,7 @@ function ShopFrame({ variant }) {
           <span className="ws-toast__check"><Pict d={<path d="M5 12l4 4 10-10"/>} s={14}/></span>
           <div>
             <div className="ws-toast__title">Commande confirmée</div>
-            <div className="ws-toast__sub">Créneau {typeof orderToast.slot === 'object' ? orderToast.slot?.label : orderToast.slot} · {orderToast.payment === 'visa' ? 'Carte' : orderToast.payment === 'apple' ? 'Apple Pay' : 'Bancontact'} · €{orderToast.total.toFixed(2)}</div>
+            <div className="ws-toast__sub">Créneau {typeof orderToast.slot === 'object' ? orderToast.slot?.label : orderToast.slot} · {orderToast.paymentLabel || orderToast.payment} · €{orderToast.total.toFixed(2)}</div>
           </div>
         </div>
       )}

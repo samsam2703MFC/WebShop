@@ -19,6 +19,13 @@ compléter · ⚪ décision à prendre · ✅ validé
 | T9 | Test | Société de facturation + VIES | 🔴 | non | P2 | saisir un vrai n° de TVA belge |
 | T10 | Test | Handoff PWA → webshop (SSO) | 🔴 | non | — | ouvrir le webshop depuis la PWA via `?handoff=` |
 | T11 | Test | Dispatch tablette chauffeur | ⛔ | non | A3 | pas testable : l'application chauffeur n'existe pas |
+| T12 | Test | **Matrice complète des paiements** (13 scénarios) | 🟠 | **oui** | — | 3 méthodes × 3 profils × 2 modes + abandon, échec, bon, aucun moyen |
+| T12.1 | Test | `stripe` — invité, connecté, société, collecte et livraison | 🔴 | oui | — | redirection, retour, `payment_status` |
+| T12.2 | Test | `shop` (paiement en boutique) | 🔴 | oui | — | commande sans paiement, `pending` |
+| T12.3 | Test | `deferred` (sur compte) | 🔴 | oui | T1 | proposé **seulement** si `deferred_billing_enabled = 1` |
+| T12.4 | Test | Abandon et échec de paiement Stripe | 🔴 | **oui** | T5 | commande non confirmée, **stock libéré** |
+| T12.5 | Test | Paiement avec bon de réduction | 🔴 | oui | T3 | montant envoyé à Stripe = total après remise |
+| T12.6 | Test | Aucun moyen configuré | 🔴 | non | — | écran d'erreur explicite, commande impossible |
 | A1 | Dév | Écran **Profils tablette** (console marque) | ⛔ | oui (T6) | — | API prête : `bo-roles`, `bo-role`, `bo-roles-init` |
 | A2 | Dév | Écran **Comptes tablette** (BO franchisé) | ⛔ | oui (T6) | — | API prête : `bo-users`, `bo-user`, `bo-roles` |
 | A3 | Dév | **Vue chauffeur** + endpoints de validation d'arrêt | ⛔ | non | — | tout est à faire : arrêts, QR/PIN/signature, positions |
@@ -50,6 +57,8 @@ compléter · ⚪ décision à prendre · ✅ validé
 | P1 | Rotation du jeton admin | jeton exposé, tous les droits sur les deux back-offices |
 | P5 | Sauvegarde | aucun retour arrière possible sans elle |
 | T1–T5 | Flows qui touchent à l'argent | rattachement, livraison, bon, paiement, stock |
+| T12 | Matrice des paiements | c'est l'encaissement : un moyen mal proposé ou mal libellé se voit en litige client |
+| T12.4 | Abandon / échec Stripe | cas le plus rarement testé : un abandon qui laisse du stock réservé bloque la vente pour tout le monde |
 
 ---
 
@@ -59,6 +68,7 @@ compléter · ⚪ décision à prendre · ✅ validé
 |---|---|---|
 | 1 | A1 + A2 | deux petits écrans qui débloquent T6, le plus gros bloc de code jamais exercé |
 | 2 | T1 → T5 | les flows qui touchent à l'argent |
+| 2 bis | T12 (matrice paiements) | c'est l'encaissement : à faire avec T1–T5, pas après |
 | 3 | D1 puis D4 | seul blocage commercial dur, puis l'enjeu réglementaire |
 | 4 | T6 → T10 | le reste des parcours |
 | 5 | P5, P1, P4 | juste avant l'ouverture, dans cet ordre |
