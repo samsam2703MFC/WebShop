@@ -1271,7 +1271,9 @@ function dispatch($m, $p) {
     $prev = row("SELECT id FROM ws_office_join_requests
                   WHERE client_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1", [$uid]);
     $set = ['office_name_raw' => $name, 'client_id' => $uid];
-    if (col_exists('ws_office_join_requests', 'address_raw'))   $set['address_raw']   = ($addr ?: null);
+    // address_raw est NOT NULL sans défaut sur la table historique : on écrit
+    // une chaîne vide quand le client n'a donné que téléphone ou e-mail.
+    if (col_exists('ws_office_join_requests', 'address_raw'))   $set['address_raw']   = $addr;
     if (col_exists('ws_office_join_requests', 'contact_email'))  $set['contact_email'] = ($mail ?: null);
     if (col_exists('ws_office_join_requests', 'contact_phone'))  $set['contact_phone'] = ($tel ?: null);
     if (col_exists('ws_office_join_requests', 'shop_id'))        $set['shop_id']       = $shop;
@@ -4955,10 +4957,16 @@ function dispatch($m, $p) {
       $sc = ($shopId && col_exists('ws_office_join_requests', 'shop_id')) ? " AND shop_id=" . (int) $shopId : "";
       $r  = row("SELECT * FROM ws_office_join_requests WHERE id=?$sc", [$id]);
       if (!$r) json_out(['ok' => false, 'error' => 'Demande introuvable (ou hors de votre boutique).'], 404);
-      $hasDec = col_exists('ws_office_join_requests', 'decided_at');
+      // Colonnes historiques de la table (resolved_*) : c'est elles qui font foi.
+      $hasDec = col_exists('ws_office_join_requests', 'resolved_at');
+      $hasRes = col_exists('ws_office_join_requests', 'resolved_office_id');
 
       if ($act === 'reject') {
-        q("UPDATE ws_office_join_requests SET status='rejected'" . ($hasDec ? ", decided_at=NOW()" : "") . " WHERE id=?$sc", [$id]);
+        $why = mb_substr(trim((string) ($b['reason'] ?? '')), 0, 200);
+        q("UPDATE ws_office_join_requests SET status='rejected'"
+          . ($hasDec ? ", resolved_at=NOW()" : "")
+          . (($why !== '' && col_exists('ws_office_join_requests', 'reject_reason')) ? ", reject_reason=" . db()->quote($why) : "")
+          . " WHERE id=?$sc", [$id]);
         json_out(['ok' => true, 'action' => 'reject']);
       }
 
@@ -4985,8 +4993,8 @@ function dispatch($m, $p) {
 
       q("UPDATE client SET office_id=? WHERE id=?", [$oid, $cid]);
       q("UPDATE ws_office_join_requests SET status='linked'"
-        . (col_exists('ws_office_join_requests', 'office_id') ? ", office_id=" . $oid : "")
-        . ($hasDec ? ", decided_at=NOW()" : "") . " WHERE id=?$sc", [$id]);
+        . ($hasRes ? ", resolved_office_id=" . $oid : "")
+        . ($hasDec ? ", resolved_at=NOW()" : "") . " WHERE id=?$sc", [$id]);
       json_out(['ok' => true, 'action' => 'link', 'clientId' => $cid, 'officeId' => $oid]);
     }
 
