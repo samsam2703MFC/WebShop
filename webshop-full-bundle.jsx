@@ -3117,7 +3117,7 @@ function usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId) 
 function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPlaced,
                           voucherInput, setVoucherInput, voucherApplied, setVoucherApplied,
                           office, tour, date,
-                          deliveryFeeResult, officeSites, selectedSiteId, setSelectedSiteId }) {
+                          deliveryFeeResult, deliveryFeeErr, officeSites, selectedSiteId, setSelectedSiteId }) {
   const [step, setStep] = useState(1);
   const [forceAuth, setForceAuth] = useState(false);
   const [paying, setPaying] = useState(false);
@@ -3206,6 +3206,9 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   function step2Valid() { return Boolean(slot); }
 
   async function handlePay() {
+    // Livraison bureau sans frais résolus : on REFUSE au lieu de facturer 0 €
+    // et de forcer un paiement immédiat à un bureau en facturation différée.
+    if (mode === 'delivery' && deliveryFeeErr) { setPayErr(deliveryFeeErr); return; }
     setPaying(true); setPayErr(null);
     try {
       // Jour choisi au format YYYY-MM-DD LOCAL (isoOf évite le décalage UTC de
@@ -3316,7 +3319,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           <>
           <CheckoutStep3
             mode={mode} basket={basket} subtotal={subtotal} promo={promo} total={total}
-            deliveryFee={deliveryFee} deliveryFeeResult={deliveryFeeResult}
+            deliveryFee={deliveryFee} deliveryFeeResult={deliveryFeeResult} deliveryFeeErr={deliveryFeeErr}
             payment={payment} setPayment={setPayment}
             profile={checkoutProfile} companyId={companyId || null}
             isOffice={isOffice} isB2B={isB2B} invoice={invoice} setInvoice={setInvoice} vat={vat} setVat={setVat}
@@ -3676,7 +3679,7 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
 
 function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, isOffice, isB2B, invoice, setInvoice, vat, setVat,
                          shopId, mode, voucherInput, setVoucherInput, voucherApplied, setVoucherApplied, voucherDiscount,
-                         deliveryFee, deliveryFeeResult, profile, companyId, customerId }) {
+                         deliveryFee, deliveryFeeResult, deliveryFeeErr, profile, companyId, customerId }) {
   const [voucherErr, setVoucherErr] = useState(null);
   const [voucherLoading, setVoucherLoading] = useState(false);
   // Infobulle « facture nominative » : ouverte au TAP, fermée au tap extérieur.
@@ -3834,6 +3837,9 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
             </span>
             <span>{deliveryFee === 0 ? 'Offerts' : `€${deliveryFee.toFixed(2)}`}</span>
           </div>
+        )}
+        {mode === 'delivery' && deliveryFeeErr && (
+          <p className="ws-co-error" role="alert">{deliveryFeeErr}</p>
         )}
         <div className="ws-co-summary__row ws-co-summary__row--total"><span>Total TTC</span><span>€{total.toFixed(2)}</span></div>
       </div>
@@ -4151,26 +4157,27 @@ function ShopFrame({ variant }) {
     else setShopId(shops[0].id); // ref inconnue (vieille memoire demo) -> premiere boutique reelle
   }, [shops]);
 
-  // Categories — loaded from API, seed used as instant fallback.
-  const [categories, setCategories] = React.useState((window._CATALOG_SEED && window._CATALOG_SEED.categories) || []);
+  // Catégories — serveur uniquement (window._CATALOG_SEED n'existe plus).
+  // L'échec est tracé : sans ça, la boutique s'affichait vide sans un mot.
+  const [categories, setCategories] = React.useState([]);
   React.useEffect(() => {
     let alive = true;
     if (window.WSCatalog && typeof window.WSCatalog.listCategories === 'function') {
       window.WSCatalog.listCategories({ shopId })
         .then((c) => { if (alive && c && c.length) setCategories(c); })
-        .catch(() => {});
+        .catch((e) => console.error('[catalogue] catégories indisponibles', e));
     }
     return () => { alive = false; };
   }, [shopId]);
 
-  // Assortments — loaded from API, seed used as instant fallback.
-  const [assortments, setAssortments] = React.useState((window._CATALOG_SEED && window._CATALOG_SEED.assortments) || []);
+  // Assortiments (saisons) — serveur uniquement.
+  const [assortments, setAssortments] = React.useState([]);
   React.useEffect(() => {
     let alive = true;
     if (window.WSCatalog) {
       window.WSCatalog.listAssortments({ shopId })
         .then((a) => { if (alive) setAssortments(a || []); })
-        .catch(() => {});
+        .catch((e) => console.error('[catalogue] assortiments indisponibles', e));
     }
     return () => { alive = false; };
   }, [shopId]);
@@ -4228,17 +4235,25 @@ function ShopFrame({ variant }) {
   // Delivery fee — recomputed whenever basket subtotal or selected site changes.
   const subtotalForFee = basket.reduce((t, l) => t + l.price * l.qty, 0);
   const [deliveryFeeResult, setDeliveryFeeResult] = React.useState(null);
+  // L'échec du calcul des frais était AVALÉ (.catch(() => {})). Conséquences :
+  // frais de livraison facturés 0 €, ligne « Frais de livraison » masquée, et
+  // payment_type retombant sur 'immediate' — donc un bureau en facturation
+  // différée se voyait demander un paiement immédiat. On garde l'erreur et la
+  // commande est refusée en mode livraison tant qu'elle n'est pas résolue.
+  const [deliveryFeeErr, setDeliveryFeeErr] = React.useState('');
   React.useEffect(() => {
     let alive = true;
-    if (mode !== 'delivery' || !userOffice) { setDeliveryFeeResult(null); return; }
-    if (!window.WSDeliveryFees) { setDeliveryFeeResult(null); return; }
+    if (mode !== 'delivery' || !userOffice) { setDeliveryFeeResult(null); setDeliveryFeeErr(''); return; }
+    if (!window.WSDeliveryFees) { setDeliveryFeeResult(null); setDeliveryFeeErr('Frais de livraison indisponibles — please debug.'); return; }
     window.WSDeliveryFees.quote({
       siteId:          selectedSite ? selectedSite.id          : null,
       officeClientId:  userOffice.id,
       tourneeId:       selectedSite ? selectedSite.tournee_id  : (userOffice.tourId || null),
       shopId:          shop ? shop.id : shopId,
       subtotal:        subtotalForFee,
-    }).then((r) => { if (alive) setDeliveryFeeResult(r); }).catch(() => {});
+    }).then((r) => { if (!alive) return; setDeliveryFeeResult(r); setDeliveryFeeErr(r ? '' : 'Frais de livraison indisponibles — please debug.'); })
+      .catch((e) => { if (!alive) return; setDeliveryFeeResult(null); console.error('[frais livraison]', e);
+                      setDeliveryFeeErr('Frais de livraison indisponibles — commande impossible. ' + (e && e.message ? e.message : '')); });
     return () => { alive = false; };
   }, [mode, userOffice?.id, selectedSite?.id, subtotalForFee, shopId]);
 
@@ -4278,8 +4293,7 @@ function ShopFrame({ variant }) {
   const isAssortment = typeof cat === 'string' && cat.startsWith('season:');
   const assortmentId = isAssortment ? cat.slice('season:'.length) : null;
   const assortment = assortmentId ? assortments.find((a) => a.id === assortmentId) : null;
-  const seedProducts = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
-  const [allProducts, setAllProducts] = React.useState(seedProducts);
+  const [allProducts, setAllProducts] = React.useState([]);
   // Mode livraison : marque <body> pour recolorer (CSS, mobile) les boutons
   // d'action principaux du parcours en Abricot Pastel. Retiré hors livraison.
   React.useEffect(() => {
@@ -4751,7 +4765,7 @@ function ShopFrame({ variant }) {
         voucherInput={voucherInput} setVoucherInput={setVoucherInput}
         voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
         office={userOffice} tour={userTour} date={date}
-        deliveryFeeResult={deliveryFeeResult}
+        deliveryFeeResult={deliveryFeeResult} deliveryFeeErr={deliveryFeeErr}
         officeSites={officeSites} selectedSiteId={selectedSiteId} setSelectedSiteId={setSelectedSiteId}
       />
       {prefNudge && (
