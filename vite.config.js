@@ -50,6 +50,12 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         skipWaiting: true,
         clientsClaim: true,
+        // PAS de fallback de navigation : le scope du SW couvre /webshop/* et
+        // le fallback par défaut servait la coquille du WEBSHOP à la place des
+        // apps sœurs (/webshop/backoffice_franchisee/…) — le BO s'affichait
+        // remplacé par le webshop avec une API introuvable. Chaque navigation
+        // part TOUJOURS au serveur (NetworkFirst ci-dessous).
+        navigateFallback: null,
         navigateFallbackDenylist: [/^\/api\//, /\/api\//],
         runtimeCaching: [
           {
