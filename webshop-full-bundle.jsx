@@ -3832,27 +3832,40 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
         {voucherErr && <div className="ws-co-voucher__err">{voucherErr}</div>}
 
         {/* Bons DISPONIBLES — marketing : le client applique en un clic sans retaper. */}
-        {!(voucherApplied && voucherApplied.ok) && availVouchers.length > 0 && (
+        {/* La liste reste VISIBLE une fois un code appliqué. Auparavant elle
+            disparaissait entièrement : impossible de voir les autres bons ni
+            d'en choisir un autre sans passer par « Retirer », ce qui donnait
+            l'impression que le choix était définitif. Un seul code par commande
+            (le serveur n'en accepte qu'un) — c'est désormais écrit, et cliquer
+            un autre bon le remplace directement. */}
+        {availVouchers.length > 0 && (
           <div className="ws-co-avail">
             <div className="ws-co-avail__head">
               <PortionGlyph size={13}/>
               <span>{availVouchers.length > 1 ? 'Vos codes promo disponibles' : 'Vous avez un code promo'}</span>
+              {availVouchers.length > 1 && (
+                <span className="ws-co-avail__rule"> · un seul par commande</span>
+              )}
             </div>
             <ul className="ws-co-avail__list">
-              {availVouchers.map((v) => (
-                <li key={v.code} className={'ws-co-avail__item' + (v.personal ? ' is-personal' : '')}>
-                  <div className="ws-co-avail__info">
-                    <span className="ws-co-avail__label">{v.label}{v.personal && <span className="ws-co-avail__perso"> · rien qu’à vous</span>}</span>
-                    <span className="ws-co-avail__code">{v.code}{v.hint ? ' · ' + v.hint : ''}</span>
-                  </div>
-                  <button type="button" className="ws-co-avail__apply"
-                    disabled={!v.reachable || voucherLoading}
-                    title={v.reachable ? '' : ('Applicable ' + v.hint)}
-                    onClick={() => applyVoucher(v.code)}>
-                    {v.reachable ? 'Appliquer' : v.hint}
-                  </button>
-                </li>
-              ))}
+              {availVouchers.map((v) => {
+                const isOn = !!(voucherApplied && voucherApplied.ok && voucherApplied.voucher
+                                && String(voucherApplied.voucher.code) === String(v.code));
+                return (
+                  <li key={v.code} className={'ws-co-avail__item' + (v.personal ? ' is-personal' : '')}>
+                    <div className="ws-co-avail__info">
+                      <span className="ws-co-avail__label">{v.label}{v.personal && <span className="ws-co-avail__perso"> · rien qu’à vous</span>}</span>
+                      <span className="ws-co-avail__code">{v.code}{v.hint ? ' · ' + v.hint : ''}</span>
+                    </div>
+                    <button type="button" className="ws-co-avail__apply"
+                      disabled={isOn || !v.reachable || voucherLoading}
+                      title={isOn ? 'Déjà appliqué' : (v.reachable ? 'Remplace le code en cours' : ('Applicable ' + v.hint))}
+                      onClick={() => applyVoucher(v.code)}>
+                      {isOn ? 'Appliqué' : (v.reachable ? 'Appliquer' : v.hint)}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}

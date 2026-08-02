@@ -3164,6 +3164,8 @@
   font-size: 12px; font-weight: 600; color: var(--color-primary, #8D1D2C);
   margin-bottom: 8px;
 }
+/* Règle « un seul code par commande » : ton discret, elle informe sans crier. */
+.ws-co-avail__rule { font-weight: 500; color: var(--color-text-muted, #9a8d7a); }
 .ws-co-avail__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .ws-co-avail__item {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
