@@ -48,6 +48,7 @@ compléter · ⚪ décision à prendre · ✅ validé
 | V3 | Décision | 6 clients sur 10 708 ont un `office_id` | ⚪ | non | — | normal en démarrage B2B ? |
 | V4 | Décision | 1 prospect non rattaché (`id_main_shop = 0`) | ⚪ | non | — | à traiter dans l'écran Prospect |
 | V5 | Décision | Emplacement de l'écran Comptes tablette dans le BO | ⚪ | oui (A2) | — | sous Réglages, ou entrée de menu séparée ? |
+| V6 | Décision | Maintien de stock réservé aux clients CONNECTÉS | ✅ | — | — | **tranché : on garde tel quel.** Un panier invité ne tient pas de stock ; l'arbitrage a lieu au paiement. Le maintien devient un avantage de la création de compte |
 
 ---
 

@@ -148,6 +148,11 @@ Trois défauts client corrigés au passage : échec silencieux ; **date calculé
 UTC** (après 22 h en heure belge d'été, réservation sur le **jour précédent**) ;
 retrait d'une ligne qui **relâchait tout le panier**.
 
+⚠️ **Le maintien ne concerne QUE les clients connectés** — décision assumée : un
+panier invité ne tient pas de stock, l'arbitrage a lieu au paiement. Un test fait
+en visiteur anonyme ne créera donc AUCUNE ligne, et la console l'annonce
+(« pas de maintien : client non connecté »). Ce n'est pas une panne.
+
 **Étapes** : connecté, boutique Corbais → ajouter **Brookie (1150002)** en Click
 & Collect — il n'y a qu'**1 pièce**, l'effet est immédiat → vérifier la
 réservation → retirer du panier → vérifier la libération. Puis, depuis un autre
