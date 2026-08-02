@@ -4505,7 +4505,13 @@ function ShopFrame({ variant }) {
     return window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {}));
   }
   function stockReserve(productId, qty = 1) {
-    if (!user || !window.WSCatalog || !window.WSCatalog.reserve) return;
+    // Visiteur non connecté : aucun maintien possible (pas d'identité à qui le
+    // rattacher). On le TRACE — sans ça, l'absence de réservation était
+    // indiscernable d'une panne, y compris en test.
+    if (!user) { console.info('[stock] pas de maintien : client non connecté (panier invité)'); return; }
+    if (!window.WSCatalog || !window.WSCatalog.reserve) {
+      setStockErr('Service stock indisponible — please debug.'); return;
+    }
     const iso = date instanceof Date ? isoLocal(date) : (date || '');
     window.WSCatalog.reserve({ productId, shopId, date: iso, mode, qty, customerId: user.id })
       .then((r) => {
