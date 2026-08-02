@@ -4549,7 +4549,14 @@ function ShopFrame({ variant }) {
   // encore revenue du serveur), repli sur le produit : mieux vaut libérer un peu
   // trop que geler du stock vendable.
   function stockRelease(productId, reservationId = null) {
-    if (!user || !window.WSCatalog || !window.WSCatalog.release) return;
+    // Sortie silencieuse = enquête impossible : la libération n'était jamais
+    // appelée (session perdue, module absent) et la table restait à
+    // released_at NULL sans le moindre message, alors que TOUT le reste de la
+    // chaîne était tracé.
+    if (!user) { console.info('[stock] pas de libération : client non connecté — le maintien expirera seul'); return; }
+    if (!window.WSCatalog || !window.WSCatalog.release) {
+      console.error('[stock] pas de libération : module catalogue absent'); return;
+    }
     window.WSCatalog.release(reservationId
         ? { customerId: user.id, reservationIds: [reservationId] }
         : { customerId: user.id, productId })
@@ -4562,7 +4569,8 @@ function ShopFrame({ variant }) {
       .catch((e) => console.error('[stock] libération', e));
   }
   function stockReleaseAll() {
-    if (!user || !window.WSCatalog || !window.WSCatalog.release) return;
+    if (!user) { console.info('[stock] pas de libération globale : client non connecté'); return; }
+    if (!window.WSCatalog || !window.WSCatalog.release) return;
     window.WSCatalog.release({ customerId: user.id }).catch(() => {});
   }
 
