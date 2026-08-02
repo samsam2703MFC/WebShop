@@ -5658,8 +5658,39 @@ function dispatch($m, $p) {
         json_out(['ok' => false, 'error' => 'Colonne min_threshold absente — seuil par produit indisponible (migration 0054).'], 501);
       $pr = $findProduct($b);
       if (!$pr) $prodKo($b);
+      /* Mode AUTO : seuil calcule sur l'historique reel plutot que devine.
+         Fenetre : les 6 dernieres semaines revolues (on exclut aujourd'hui, la
+         journee n'est pas finie et fausserait la moyenne vers le bas).
+         Diviseur : le nombre de JOURS OU LA BOUTIQUE A TOURNE sur la fenetre —
+         pas le nombre de jours ou CE produit s'est vendu. Diviser par les seuls
+         jours avec ventes gonflerait la moyenne en ignorant les jours a zero,
+         et le seuil deviendrait systematiquement trop haut.
+         Marge : +20 %, arrondie au superieur. */
+      $auto = !empty($b['auto']);
       $raw = $b['min'] ?? null;
       $min = ($raw === null || $raw === '') ? null : max(0, (int) $raw);
+      $detail = null;
+      if ($auto) {
+        if (!$tblExists('ws_order_lines')) json_out(['ok' => false, 'error' => 'ws_order_lines absente — calcul impossible'], 501);
+        $win = "COALESCE(o.delivery_date, DATE(o.created_at))";
+        $vend = row("SELECT COALESCE(SUM(l.qty),0) AS q
+                       FROM ws_order_lines l JOIN ws_orders o ON o.id = l.order_id
+                      WHERE l.product_id = ? AND o.shop_id = ? AND o.status <> 'cancelled'
+                        AND $win >= DATE_SUB(?, INTERVAL 42 DAY) AND $win < ?",
+                    [(int) $pr['id'], (int) $shopId, $today, $today]);
+        $jours = row("SELECT COUNT(DISTINCT $win) AS n
+                        FROM ws_orders o
+                       WHERE o.shop_id = ? AND o.status <> 'cancelled'
+                         AND $win >= DATE_SUB(?, INTERVAL 42 DAY) AND $win < ?",
+                     [(int) $shopId, $today, $today]);
+        $q = (int) ($vend['q'] ?? 0);
+        $n = (int) ($jours['n'] ?? 0);
+        if ($n < 1) json_out(['ok' => false,
+          'error' => "Aucun jour d'activite sur les 6 dernieres semaines — seuil non calculable."], 409);
+        $moy = $q / $n;
+        $min = (int) ceil($moy * 1.2);
+        $detail = ['vendu' => $q, 'jours' => $n, 'moyenne' => round($moy, 2), 'marge' => '20%'];
+      }
       // La ligne d'assortiment peut ne pas exister : sans elle, le produit est
       // vendu tel quel (cf. /catalog/products). On la cree en la laissant ACTIVE
       // pour ne pas retirer le produit de la vente en reglant un seuil.
@@ -5668,7 +5699,8 @@ function dispatch($m, $p) {
            ON DUPLICATE KEY UPDATE min_threshold = VALUES(min_threshold)",
         [(int) $pr['id'], (int) $shopId, $min]);
       json_out(['ok' => true, 'min' => $min,
-                'effectif' => $min ?? (int) ws_param('stock.default_min_threshold', '10')]);
+                'effectif' => $min ?? (int) ws_param('stock.default_min_threshold', '10'),
+                'calcul' => $detail]);
     }
 
     if ($m === 'POST' && $p === '/franchisee/stock-adjust') {
