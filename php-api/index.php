@@ -4021,7 +4021,12 @@ function dispatch($m, $p) {
       $hasTk = $tblExists('ws_tour_tracking');
       $hasZ  = $tblExists('ws_delivery_zones');
       $hasFV = col_exists('ws_tours', 'delivery_fee');
-      $rs = rows("SELECT t.id, t.name, t.max_items" . ($hasZ ? ", z.name AS zone" : ", NULL AS zone") .
+      // `active` REMONTE, et le filtre `t.active=1` est levé : sans cela, une
+      // tournée désactivée disparaissait du back-office, donc impossible à
+      // réactiver — l'interrupteur aurait été à sens unique. C'est au BO de
+      // n'afficher/proposer que ce qui est actif ; le webshop, lui, filtre déjà
+      // sur active=1 de son côté (/delivery-zones, /delivery-fees).
+      $rs = rows("SELECT t.id, t.name, t.max_items, t.active" . ($hasZ ? ", z.name AS zone" : ", NULL AS zone") .
                  ($hasFV ? ", t.delivery_fee, t.vehicle" : ", NULL AS delivery_fee, NULL AS vehicle") .
                  ($hasTk ? ", tk.driver_name" : ", NULL AS driver_name") . ",
                          (SELECT COUNT(*) FROM ws_orders o
@@ -4029,7 +4034,7 @@ function dispatch($m, $p) {
                            WHERE COALESCE(o.tour_id, stt.tournee_id) = t.id AND o.delivery_date=?) AS used
                     FROM ws_tours t" . ($hasZ ? " LEFT JOIN ws_delivery_zones z ON z.id = t.zone_id" : "") .
                  ($hasTk ? " LEFT JOIN ws_tour_tracking tk ON tk.tour_id = t.id" : "") . "
-                   WHERE " . $scope('t.shop_id') . " AND t.active=1 ORDER BY t.name", [$today]);
+                   WHERE " . $scope('t.shop_id') . " ORDER BY t.name", [$today]);
       // Fenêtre du jour (départ) + jours actifs depuis ws_tour_availability quand dispo.
       $hasAv = $tblExists('ws_tour_availability');
       $svc = (float) ws_param('cost_service_minutes', '15');
@@ -4055,7 +4060,8 @@ function dispatch($m, $p) {
                 'forfait' => $t['delivery_fee'] !== null ? (float) $t['delivery_fee'] : 0,
                 'vehicule' => $t['vehicle'] ?: '', 'days' => $days,
                 'amplitude' => $amp, 'decharge' => (int) $svc, 'trajet' => (int) $svc,
-                'used' => (int) $t['used'], 'zone' => $t['zone'] ?: '—'];
+                'used' => (int) $t['used'], 'zone' => $t['zone'] ?: '—',
+                'active' => ((int) ($t['active'] ?? 1)) !== 0];
       }, $rs));
     }
 
@@ -6269,6 +6275,11 @@ function dispatch($m, $p) {
             if (col_exists('ws_tours', 'delivery_fee') && isset($r['forfait'])) { $fvSets[] = 'delivery_fee=?'; $fvVals[] = (float) $r['forfait']; }
             if (col_exists('ws_tours', 'vehicle') && isset($r['vehicule'])) { $fvSets[] = 'vehicle=?'; $fvVals[] = (string) $r['vehicule']; }
             if (col_exists('ws_tours', 'return_to_depot') && array_key_exists('ret', $r)) { $fvSets[] = 'return_to_depot=?'; $fvVals[] = !empty($r['ret']) ? 1 : 0; }
+            // Activation de la tournée. Une tournée en préparation ou suspendue
+            // ne doit plus être proposée nulle part (sites, bureaux, webshop),
+            // sans être supprimée : la supprimer perdrait ses codes postaux,
+            // ses horaires et son historique.
+            if (array_key_exists('active', $r)) { $fvSets[] = 'active=?'; $fvVals[] = !empty($r['active']) ? 1 : 0; }
             if ($fvSets) { $fvVals[] = $tid; q("UPDATE ws_tours SET " . implode(',', $fvSets) . " WHERE id=?", $fvVals); }
           }
           // Jours + heure de départ → ws_tour_availability (fenêtre 'morning'), NON destructif :
