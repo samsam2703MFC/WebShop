@@ -3479,6 +3479,13 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
   if (mode === 'delivery' && user && office) {
     const activeSite = (officeSites || []).find((s) => s.id === selectedSiteId) || null;
     const feeResult = deliveryFeeResult;
+    // Un complément d'adresse réduit à un tiret n'est pas un complément : c'est
+    // un placeholder saisi ou repris comme donnée. Il était concaténé tel quel
+    // et l'adresse s'affichait « … Louvain-la-Neuve · — ».
+    const complement = (v) => {
+      const s = String(v == null ? '' : v).trim();
+      return (s === '' || s === '—' || s === '-' || s === '–') ? '' : s;
+    };
     return (
       <div className="ws-co-step">
         <h3 className="ws-co-step__title">Adresse de livraison</h3>
@@ -3493,7 +3500,7 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
                 <span className="ws-co-site-opt__radio"/>
                 <span className="ws-co-site-opt__body">
                   <span className="ws-co-site-opt__name">{site.name}</span>
-                  <span className="ws-co-site-opt__addr">{site.address}{site.floor_room ? ' · ' + site.floor_room : ''}</span>
+                  <span className="ws-co-site-opt__addr">{site.address}{complement(site.floor_room) ? ' · ' + complement(site.floor_room) : ''}</span>
                 </span>
               </label>
             ))}
@@ -3502,10 +3509,15 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
 
         <div className="ws-co-readbox">
           <ReadRow k="Entreprise" v={office.name}/>
-          <ReadRow k="Contact"    v={activeSite ? activeSite.contact_name : (user.firstName + ' ' + user.lastName)}/>
+          {/* Repli sur le titulaire du compte, comme la ligne Téléphone juste en
+              dessous : un site sans contact nommé affichait une ligne VIDE. */}
+          <ReadRow k="Contact"    v={(activeSite ? activeSite.contact_name : null)
+                                     || ((user.firstName || '') + ' ' + (user.lastName || '')).trim() || '—'}/>
           <ReadRow k="Email"      v={user.email}/>
           <ReadRow k="Téléphone"  v={(activeSite ? activeSite.contact_phone : office.phone) || user.phone || '—'}/>
-          <ReadRow k="Adresse"    v={activeSite ? (activeSite.address + (activeSite.floor_room ? ' · ' + activeSite.floor_room : '')) : (office.address || '—')}/>
+          <ReadRow k="Adresse"    v={activeSite
+                                     ? (activeSite.address + (complement(activeSite.floor_room) ? ' · ' + complement(activeSite.floor_room) : ''))
+                                     : (office.address || '—')}/>
           <ReadRow k="Tournée"    v={tour ? tour.name + ' · ' + tour.window : '—'}/>
           {feeResult && (
             <ReadRow k="Livraison"
