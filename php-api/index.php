@@ -5274,7 +5274,15 @@ function dispatch($m, $p) {
       $OK = ['pending', 'confirmed', 'preparing', 'ready', 'delivered', 'completed', 'cancelled'];
       if ($ref === '' || !in_array($st, $OK, true)) json_out(['ok' => false, 'error' => 'ref + statut valides requis'], 400);
       if (!$hasOrders) json_out(['ok' => false, 'error' => 'ws_orders absente'], 501);
-      q("UPDATE ws_orders SET status=? WHERE order_ref=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [$st, $ref]);
+      // Horodatage de la remise : la colonne delivered_at existait depuis
+      // toujours et n'était JAMAIS écrite — la boutique ne pouvait donc pas
+      // savoir quand une commande avait été remise ou livrée. C'est ce qui
+      // tranche un litige (« je suis passé à 17 h ») et ce qui date le service
+      // rendu. Posé au passage en statut terminal, et seulement s'il est encore
+      // vide : repasser par le même statut ne réécrit pas l'heure d'origine.
+      $stampDone = in_array($st, ['delivered', 'completed'], true) && col_exists('ws_orders', 'delivered_at');
+      q("UPDATE ws_orders SET status=?" . ($stampDone ? ", delivered_at = COALESCE(delivered_at, NOW())" : "")
+         . " WHERE order_ref=?" . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [$st, $ref]);
       json_out(['ok' => true, 'status' => $st]);
     }
 
