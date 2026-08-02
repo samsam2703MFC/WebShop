@@ -111,14 +111,25 @@ jobs:
       # (idempotent, non destructif). À FAIRE APRÈS le déploiement du front (les photos
       # arrivent avec dist/). Toute nouvelle photo {id}.png|jpg est ainsi câblée à son
       # produit sans SQL manuel, pour tous les consommateurs (webshop, PWA).
+      # Étape ACCESSOIRE : elle ne conditionne pas la mise en ligne (API, migrations
+      # et front sont déjà déployés au-dessus). Son échec émet un AVERTISSEMENT
+      # visible au lieu de faire passer tout le déploiement en rouge — un
+      # déploiement réussi affiché en échec est aussi trompeur que l'inverse.
       - name: Sync product photos → ws_products.img (idempotent)
         env:
           SSHPASS: ${{ secrets.SSH_PASSWORD }}
         run: |
-          sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
+          set +e
+          out=$(sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "php '${{ vars.WEB_ROOT || '/var/www/html' }}/api/sync_product_images.php'"
+            "php '${{ vars.WEB_ROOT || '/var/www/html' }}/api/sync_product_images.php'" 2>&1)
+          code=$?
+          echo "$out"
+          if [ $code -ne 0 ]; then
+            echo "::warning title=Photos produits non synchronisées::le déploiement est en place ; seule la synchronisation des photos a échoué (code $code)"
+          fi
+          exit 0
 
       # Le site /landing (alias Apache → /var/www/latelierby-landing) est déployé
       # EXCLUSIVEMENT par le dépôt `landing` (git reset --hard origin/main côté
