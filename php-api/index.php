@@ -5648,6 +5648,29 @@ function dispatch($m, $p) {
     }
 
     // ── Stock du jour : ajustement +/− réel (ws_product_stock, jour courant). ──
+    /* Seuil d'alerte stock d'un produit, propre a la boutique (migration 0054).
+       Vider le champ (min = null) rend la main au parametre global — il faut
+       pouvoir revenir en arriere sans deviner quel etait le nombre d'origine. */
+    if ($m === 'POST' && $p === '/franchisee/stock-threshold') {
+      $b = body();
+      if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
+      if (!$tblExists('ws_product_shops') || !col_exists('ws_product_shops', 'min_threshold'))
+        json_out(['ok' => false, 'error' => 'Colonne min_threshold absente — seuil par produit indisponible (migration 0054).'], 501);
+      $pr = $findProduct($b);
+      if (!$pr) $prodKo($b);
+      $raw = $b['min'] ?? null;
+      $min = ($raw === null || $raw === '') ? null : max(0, (int) $raw);
+      // La ligne d'assortiment peut ne pas exister : sans elle, le produit est
+      // vendu tel quel (cf. /catalog/products). On la cree en la laissant ACTIVE
+      // pour ne pas retirer le produit de la vente en reglant un seuil.
+      q("INSERT INTO ws_product_shops (product_id, shop_id, active, min_threshold)
+           VALUES (?,?,1,?)
+           ON DUPLICATE KEY UPDATE min_threshold = VALUES(min_threshold)",
+        [(int) $pr['id'], (int) $shopId, $min]);
+      json_out(['ok' => true, 'min' => $min,
+                'effectif' => $min ?? (int) ws_param('stock.default_min_threshold', '10')]);
+    }
+
     if ($m === 'POST' && $p === '/franchisee/stock-adjust') {
       $b = body();
       if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
@@ -5782,6 +5805,16 @@ function dispatch($m, $p) {
           $defs[(int) $d['product_id']][$d['mode'] === 'delivery' ? 'delivery' : 'collect'] = (int) $d['qty'];
         }
       }
+      // Seuils d'alerte propres a la boutique (migration 0054). NULL/absent =>
+      // le parametre global s'applique, comme avant.
+      $mins = [];
+      if ($shopId && $hasPS && col_exists('ws_product_shops', 'min_threshold')) {
+        foreach (rows("SELECT product_id, min_threshold FROM ws_product_shops
+                        WHERE shop_id=? AND min_threshold IS NOT NULL", [(int) $shopId]) as $mt) {
+          $mins[(int) $mt['product_id']] = (int) $mt['min_threshold'];
+        }
+      }
+      $minGlobal = (int) ws_param('stock.default_min_threshold', '10');
       $cats = [];
       foreach ($rs as $r) {
         $cat = $r['cat'] ?: 'Autres';
@@ -5791,7 +5824,9 @@ function dispatch($m, $p) {
         $cats[$cat]['prods'][] = ['id' => $pid, 'nom' => $r['name'], 'mand' => (bool) $r['brand_mandatory'],
           'online' => $r['online'] !== null ? max(0, (int) $r['online']) : (int) ($defs[$pid]['delivery'] ?? 0),
           'shop' => $r['shopq'] !== null ? max(0, (int) $r['shopq']) : (int) ($defs[$pid]['collect'] ?? 0),
-          'min' => (int) ws_param('stock.default_min_threshold', '10')];
+          // Seuil EFFECTIF : celui de la boutique s'il existe, sinon le global.
+          'min' => $mins[$pid] ?? $minGlobal,
+          'minOwn' => isset($mins[$pid])];
       }
       json_out(array_values($cats));
     }
@@ -7536,6 +7571,7 @@ function bo_endpoint_section($name) {
     // Vente
     'fr-orders' => 'commandes', 'order-status' => 'commandes',
     'fr-stock-catalog' => 'stockJour', 'stock-adjust' => 'stockJour', 'stock-set' => 'stockJour',
+    'stock-threshold' => 'stockJour',
     'stock-defaults' => 'stockJour', 'stock-product-orders' => 'stockJour',
     'fr-assortiment' => 'assortiment', 'assortiment-toggle' => 'assortiment', 'erp-portion-rules' => 'assortiment',
     'fr-vouchers' => 'vouchers', 'voucher' => 'vouchers', 'voucher-toggle' => 'vouchers',
