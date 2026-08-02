@@ -4177,7 +4177,13 @@ function dispatch($m, $p) {
         if ($off && $siteAdr !== '' && $tblExists('ws_office_delivery_sites')) {
           $tpl = row("SELECT name, tournee_id, site_access_minutes, shop_id FROM ws_office_delivery_sites
                        WHERE TRIM(COALESCE(address,''))=? AND active=1 ORDER BY id LIMIT 1", [$siteAdr]);
-          $ex = row("SELECT id FROM ws_office_delivery_sites WHERE office_client_id=? AND active=1 LIMIT 1", [(int) $off['id']]);
+          // Chercher le site du bureau SANS filtrer sur active : en le filtrant,
+          // un site désactivé (livraison coupée puis reprise) n'était pas
+          // retrouvé et un NOUVEAU était inséré. Chaque cycle arrêt/reprise
+          // ajoutait ainsi un doublon — même nom, même adresse, même tournée —
+          // rendant le choix du site ambigu côté franchisé. L'UPDATE remet
+          // active=1, ce qui réactive la ligne existante au lieu d'en créer une.
+          $ex = row("SELECT id FROM ws_office_delivery_sites WHERE office_client_id=? ORDER BY active DESC, id LIMIT 1", [(int) $off['id']]);
           if ($ex) q("UPDATE ws_office_delivery_sites SET address=?, name=COALESCE(?, name), tournee_id=COALESCE(?, tournee_id), active=1 WHERE id=?",
                      [$siteAdr, $tpl['name'] ?? null, $tpl['tournee_id'] ?? null, (int) $ex['id']]);
           else q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, tournee_id, site_access_minutes, active, shop_id)
