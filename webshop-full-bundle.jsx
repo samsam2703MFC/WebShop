@@ -3199,6 +3199,10 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const isB2B = companies.length > 0 || !!(user && user.companyClientId);
   // Profil de paiement : société (companyId) > enregistré (user) > visiteur (guest).
   const checkoutProfile = companyId ? 'company' : (user ? 'registered' : 'guest');
+  // La liste des moyens de paiement est chargée ICI (et non plus seulement dans
+  // l'étape 3) : le récapitulatif de commande a besoin du LIBELLÉ du moyen
+  // choisi. Une seule source, un seul appel — l'étape 3 la reçoit en prop.
+  const paymentMethods = usePaymentMethods(shop && shop.id, mode, deliveryFeeResult, checkoutProfile, companyId || null);
 
   // Step 1 validity
   function step1Valid() {
@@ -3327,7 +3331,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           <CheckoutStep3
             mode={mode} basket={basket} subtotal={subtotal} promo={promo} total={total}
             deliveryFee={deliveryFee} deliveryFeeResult={deliveryFeeResult} deliveryFeeErr={deliveryFeeErr}
-            payment={payment} setPayment={setPayment}
+            payment={payment} setPayment={setPayment} paymentMethods={paymentMethods}
             profile={checkoutProfile} companyId={companyId || null}
             isOffice={isOffice} isB2B={isB2B} invoice={invoice} setInvoice={setInvoice} vat={vat} setVat={setVat}
             shopId={shop && shop.id}
@@ -3686,7 +3690,8 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
 
 function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, isOffice, isB2B, invoice, setInvoice, vat, setVat,
                          shopId, mode, voucherInput, setVoucherInput, voucherApplied, setVoucherApplied, voucherDiscount,
-                         deliveryFee, deliveryFeeResult, deliveryFeeErr, profile, companyId, customerId }) {
+                         deliveryFee, deliveryFeeResult, deliveryFeeErr, profile, companyId, customerId,
+                         paymentMethods }) {
   const [voucherErr, setVoucherErr] = useState(null);
   const [voucherLoading, setVoucherLoading] = useState(false);
   // Infobulle « facture nominative » : ouverte au TAP, fermée au tap extérieur.
@@ -3698,7 +3703,7 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
     document.addEventListener('pointerdown', off, true);
     return () => document.removeEventListener('pointerdown', off, true);
   }, [infoOpen]);
-  const paymentMethods = usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId);
+  // paymentMethods vient du wizard (prop) : plus de second appel à /payment-methods.
   // Si le moyen sélectionné n'est plus proposé (profil/boutique), prendre le premier dispo.
   useEffect(() => {
     if (paymentMethods.length && !paymentMethods.some((p) => p.id === payment)) setPayment(paymentMethods[0].id);
