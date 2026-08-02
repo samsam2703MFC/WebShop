@@ -54,6 +54,20 @@ function product_photo_files() {
   return $map;
 }
 
+/* Image produit legacy (ws_products.img) : renvoyée UNIQUEMENT si elle est
+   réellement servable. Une URL absolue est conservée telle quelle (on ne peut
+   pas la vérifier ici) ; un chemin relatif n'est renvoyé que si le fichier
+   existe sous la racine du webshop. Sinon null — le front dessine alors son
+   illustration de repli, au lieu d'afficher une image cassée et de consigner
+   une erreur à chaque rendu. */
+function product_img_or_null($img) {
+  $img = trim((string) ($img ?? ''));
+  if ($img === '') return null;
+  if (preg_match('#^(https?:)?//#i', $img) || str_starts_with($img, 'data:')) return $img;
+  $rel = ltrim($img, '/');
+  return is_file(__DIR__ . '/../' . $rel) ? $img : null;
+}
+
 /* Prix de vente magasin (source de vérité = ERP). La table ERP `shop_product`
  * (même base atelierby_db) porte le prix par boutique : `portion_price` pour un
  * couple (id_shop, id_product). Clés de liaison : id_product = ws_products.id et
@@ -477,7 +491,12 @@ function dispatch($m, $p) {
       // AUTORITÉ si le fichier existe (c'est la vraie photo produit, uploadée
       // exprès) ; sinon on retombe sur ws_products.img (legacy) ; sinon null (le
       // front affiche l'illustration line-art de repli).
-      $x['img'] = $photos[$x['id']] ?? ($x['img'] ?: null);
+      // Le repli legacy n'était pas vérifié : un chemin mort partait au front,
+      // qui affichait une image cassée ET consignait une erreur par produit et
+      // par rendu (des centaines en navigation). On ne renvoie une image que si
+      // le fichier existe réellement ; sinon null, et le front dessine son
+      // illustration de repli — ce que le commentaire promettait déjà.
+      $x['img'] = $photos[$x['id']] ?? product_img_or_null($x['img'] ?? null);
       $x['portions'] = (bool) $x['portions'];
       $x['cross_portion'] = (bool) $x['cross_portion'];
       $x['has_menu_options'] = (bool) $x['has_menu_options'];

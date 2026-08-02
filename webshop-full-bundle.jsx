@@ -1109,6 +1109,17 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
           className={p.img ? 'ws-card__photo-img' : 'ws-card__photo-img ws-card__photo-img--lineart'}
           src={p.img || getPlaceholder(p)}
           alt=""
+          // Filet de sécurité : si la photo casse quand même (fichier retiré du
+          // serveur entre deux déploiements, URL externe morte), on bascule sur
+          // l'illustration de repli au lieu de laisser une image cassée. Le
+          // drapeau coupe la boucle si le repli échoue à son tour.
+          onError={(e) => {
+            const el = e.currentTarget;
+            if (el.dataset.imgFallback === '1') return;
+            el.dataset.imgFallback = '1';
+            el.classList.add('ws-card__photo-img--lineart');
+            el.src = getPlaceholder(p);
+          }}
         />
       </div>
       {/* Meta strip BELOW the (1:1) photo — allergens, info, add */}
