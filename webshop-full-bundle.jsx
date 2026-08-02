@@ -3808,7 +3808,12 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
 
   async function applyVoucher(forcedCode) {
     setVoucherErr(null);
-    const code = (forcedCode != null ? String(forcedCode) : (voucherInput || '')).trim();
+    // Un « code forcé » ne peut être qu'une chaîne (ou un nombre). Tout autre
+    // type est un appel mal câblé — typiquement un événement de clic passé par
+    // React — et doit retomber sur la saisie, pas être converti en
+    // « [object Object] » puis envoyé au serveur comme un vrai code.
+    const forced = (typeof forcedCode === 'string' || typeof forcedCode === 'number') ? String(forcedCode) : null;
+    const code = (forced != null ? forced : (voucherInput || '')).trim();
     if (!code) return;
     setVoucherLoading(true);
     try {
@@ -3869,7 +3874,12 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
               autoComplete="off"
               spellCheck={false}
             />
-            <button type="button" className="ws-co-voucher__apply" onClick={applyVoucher} disabled={!voucherInput.trim() || voucherLoading}>{voucherLoading ? '…' : 'Appliquer'}</button>
+            {/* onClick={applyVoucher} passait l'ÉVÉNEMENT de clic en premier
+                argument, donc en « code forcé » : String(event) valait
+                « [object Object] » et le code saisi n'était jamais lu. Aucun
+                code tapé à la main ne pouvait aboutir — seuls les bons cliqués
+                dans la liste fonctionnaient, eux qui passent leur code. */}
+            <button type="button" className="ws-co-voucher__apply" onClick={() => applyVoucher()} disabled={!voucherInput.trim() || voucherLoading}>{voucherLoading ? '…' : 'Appliquer'}</button>
           </div>
         )}
         {voucherErr && <div className="ws-co-voucher__err">{voucherErr}</div>}
