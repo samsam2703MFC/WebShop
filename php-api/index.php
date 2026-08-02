@@ -5648,6 +5648,30 @@ function dispatch($m, $p) {
     }
 
     // ── Stock du jour : ajustement +/− réel (ws_product_stock, jour courant). ──
+    /* Contexte du seuil : ce que l'ecran affiche dans son (i). Renvoie des
+       valeurs REELLES — seuil global en vigueur, fenetre de calcul, nombre de
+       jours ou la boutique a tourne — plutot qu'un texte generique. Un chiffre
+       explique se verifie ; une formule racontee ne se verifie pas. */
+    if ($m === 'GET' && $p === '/franchisee/stock-threshold-info') {
+      $glob = (int) ws_param('stock.default_min_threshold', '10');
+      $du = date('Y-m-d', strtotime($today . ' -42 day'));
+      $jours = null;
+      if ($hasOrders) {
+        $w = "COALESCE(o.delivery_date, DATE(o.created_at))";
+        $r = row("SELECT COUNT(DISTINCT $w) AS n FROM ws_orders o
+                   WHERE " . $scope('o.shop_id') . " AND o.status <> 'cancelled'
+                     AND $w >= ? AND $w < ?", [$du, $today]);
+        $jours = (int) ($r['n'] ?? 0);
+      }
+      $perso = 0;
+      if ($shopId && $tblExists('ws_product_shops') && col_exists('ws_product_shops', 'min_threshold')) {
+        $perso = (int) (row("SELECT COUNT(*) n FROM ws_product_shops
+                              WHERE shop_id=? AND min_threshold IS NOT NULL", [(int) $shopId])['n'] ?? 0);
+      }
+      json_out(['ok' => true, 'global' => $glob, 'du' => $du, 'au' => $today,
+                'jours' => $jours, 'marge' => 20, 'perso' => $perso]);
+    }
+
     /* Seuil d'alerte stock d'un produit, propre a la boutique (migration 0054).
        Vider le champ (min = null) rend la main au parametre global — il faut
        pouvoir revenir en arriere sans deviner quel etait le nombre d'origine. */
@@ -7603,7 +7627,7 @@ function bo_endpoint_section($name) {
     // Vente
     'fr-orders' => 'commandes', 'order-status' => 'commandes',
     'fr-stock-catalog' => 'stockJour', 'stock-adjust' => 'stockJour', 'stock-set' => 'stockJour',
-    'stock-threshold' => 'stockJour',
+    'stock-threshold' => 'stockJour', 'stock-threshold-info' => 'stockJour',
     'stock-defaults' => 'stockJour', 'stock-product-orders' => 'stockJour',
     'fr-assortiment' => 'assortiment', 'assortiment-toggle' => 'assortiment', 'erp-portion-rules' => 'assortiment',
     'fr-vouchers' => 'vouchers', 'voucher' => 'vouchers', 'voucher-toggle' => 'vouchers',
