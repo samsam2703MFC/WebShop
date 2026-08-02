@@ -1479,7 +1479,10 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
               const isOn = String(active) === String(c.id);
               return (
                 <button key={c.id} className={`ws-cat${isOn ? ' is-active' : ''}`} onClick={() => onSelect(c.id)} style={isOn ? activeStyle : {}}>
-                  <span className="ws-cat__tile"><img src={c.img} alt=""/></span>
+                  {/* Garde identique aux tuiles voisines (icons.all / icons.back) :
+                      une src vide fait recharger la PAGE comme image, échoue au
+                      décodage et log une erreur console par tuile et par rendu. */}
+                  <span className="ws-cat__tile">{c.img ? <img src={c.img} alt=""/> : null}</span>
                   <span className="ws-cat__lbl">{tCategory(c.id, c.label)}</span>
                 </button>
               );
@@ -1491,7 +1494,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
               return (
                 <button key={a.id} className={`ws-cat ws-cat--season${isOn ? ' is-active' : ''}`} onClick={() => onSelect(`season:${a.id}`)} style={isOn ? activeStyle : {}}>
                   <span className="ws-cat__tile">
-                    <img src={a.img} alt=""/>
+                    {a.img ? <img src={a.img} alt=""/> : null}
                   </span>
                   <span className="ws-cat__lbl">{a.label}</span>
                 </button>
@@ -1514,7 +1517,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
                 <button key={s.id} className={`ws-subcat${isOn ? ' is-active' : ''}`}
                         aria-pressed={isOn}
                         onClick={() => onSelectSub(isOn ? null : s.id)} style={isOn ? activeStyle : {}}>
-                  <span className="ws-subcat__tile"><img src={s.img} alt=""/></span>
+                  <span className="ws-subcat__tile">{s.img ? <img src={s.img} alt=""/> : null}</span>
                   <span className="ws-subcat__lbl">{s.label}</span>
                 </button>
               );
