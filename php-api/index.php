@@ -2776,6 +2776,106 @@ function dispatch($m, $p) {
     json_out(['ok' => true, 'orderId' => (int) $o['id'], 'checkoutUrl' => $sess['url']]);
   }
 
+  /* ── WEBHOOK STRIPE : la seule source de vérité sur un encaissement ────────
+     Rien ne faisait jamais passer payment_status de 'pending' à 'paid'. Toutes
+     les commandes réglées par carte restaient donc « en attente de paiement » :
+     le franchisé ne pouvait distinguer un paiement réussi d'un abandon, ni
+     savoir ce qu'il lui restait à encaisser. Une commande pouvait être remise
+     au client sans que personne ne sache si elle avait été payée.
+
+     Pourquoi un webhook et pas le retour du navigateur : checkout_success est
+     déclenché par le CLIENT. Il peut payer et fermer l'onglet sans revenir, ou
+     forger l'URL sans avoir rien payé. Seul Stripe, qui SIGNE son événement,
+     fait foi.
+
+     Trois exigences, toutes tenues ici :
+       • signature vérifiée (HMAC-SHA256 sur "timestamp.corps brut") — sans
+         secret configuré, on refuse tout plutôt que d'ouvrir une porte ;
+       • tolérance de 5 min sur l'horodatage, pour qu'un événement capté ne
+         puisse pas être rejoué des heures plus tard ;
+       • idempotence : Stripe REJOUE ses webhooks (plusieurs fois, parfois des
+         jours après). Le même événement ne doit pas être compté deux fois. ── */
+  if ($m === 'POST' && $p === '/payments/stripe-webhook') {
+    $whsec = cfg()['stripe_webhook_secret'] ?? '';
+    $raw   = file_get_contents('php://input');
+    $sig   = req_header('Stripe-Signature');
+    if ($whsec === '')  json_out(['ok' => false, 'error' => 'Webhook non configuré (stripe_webhook_secret absent)'], 503);
+    if ($raw === '' || $sig === '') json_out(['ok' => false, 'error' => 'Requête non signée'], 400);
+
+    // En-tête Stripe : « t=1690000000,v1=<hex>,v1=<hex>… »
+    $ts = null; $v1 = [];
+    foreach (explode(',', $sig) as $part) {
+      $kv = explode('=', trim($part), 2);
+      if (count($kv) !== 2) continue;
+      if ($kv[0] === 't')  $ts = $kv[1];
+      if ($kv[0] === 'v1') $v1[] = $kv[1];
+    }
+    if ($ts === null || !$v1) json_out(['ok' => false, 'error' => 'Signature illisible'], 400);
+    if (abs(time() - (int) $ts) > 300) json_out(['ok' => false, 'error' => 'Signature expirée'], 400);
+    $expected = hash_hmac('sha256', $ts . '.' . $raw, $whsec);
+    $match = false;
+    foreach ($v1 as $cand) if (hash_equals($expected, $cand)) $match = true;   // temps constant
+    if (!$match) json_out(['ok' => false, 'error' => 'Signature invalide'], 400);
+
+    $evt  = json_decode($raw, true);
+    $type = (string) ($evt['type'] ?? '');
+    $obj  = $evt['data']['object'] ?? [];
+    $evId = (string) ($evt['id'] ?? '');
+
+    // Idempotence : un événement déjà traité renvoie 200 sans rien refaire —
+    // répondre en erreur ferait recommencer Stripe indéfiniment.
+    $hasLog = (bool) row("SELECT 1 x FROM information_schema.tables
+                           WHERE table_schema=DATABASE() AND table_name='ws_stripe_event' LIMIT 1");
+    if ($hasLog && $evId !== '' && row("SELECT 1 x FROM ws_stripe_event WHERE event_id=? LIMIT 1", [$evId]))
+      json_out(['ok' => true, 'duplicate' => true]);
+
+    // La commande est retrouvée par les métadonnées posées à la création de la
+    // session (stripe_checkout), jamais par un montant ou un e-mail.
+    $oid = (int) ($obj['metadata']['order_id'] ?? 0);
+    $ref = (string) ($obj['metadata']['order_ref'] ?? '');
+    $ord = $oid ? row("SELECT id, total, payment_status FROM ws_orders WHERE id=?", [$oid])
+                : ($ref !== '' ? row("SELECT id, total, payment_status FROM ws_orders WHERE order_ref=?", [$ref]) : null);
+
+    $applied = 'ignored';
+    if ($ord) {
+      if ($type === 'checkout.session.completed' || $type === 'checkout.session.async_payment_succeeded') {
+        // « completed » ne suffit pas : une session peut se terminer sans que
+        // l'argent soit arrivé (virement, prélèvement en attente). C'est
+        // payment_status = 'paid' côté Stripe qui atteste l'encaissement.
+        $paid = ($obj['payment_status'] ?? '') === 'paid';
+        if ($paid) {
+          // Contrôle du MONTANT : un écart signifie que la session ne
+          // correspond pas à cette commande (panier modifié entre-temps, session
+          // réutilisée). On ne marque pas payé sur la foi du seul identifiant.
+          $cents = (int) ($obj['amount_total'] ?? 0);
+          $du    = (int) round(((float) $ord['total']) * 100);
+          if ($cents > 0 && abs($cents - $du) > 1) {
+            $applied = 'montant_different';
+          } else {
+            q("UPDATE ws_orders SET payment_status='paid'"
+              . (col_exists('ws_orders', 'status') ? ", status = CASE WHEN status='pending' THEN 'confirmed' ELSE status END" : "")
+              . " WHERE id=?", [(int) $ord['id']]);
+            $applied = 'paid';
+          }
+        }
+      } elseif ($type === 'checkout.session.expired' || $type === 'checkout.session.async_payment_failed') {
+        // Paiement abandonné ou refusé. La commande n'est PAS annulée d'office :
+        // le franchisé décide (le client peut repasser payer). On enregistre le
+        // fait, ce qui rend enfin « abandonné » distinguable de « payé ».
+        q("UPDATE ws_orders SET payment_status='failed' WHERE id=? AND payment_status <> 'paid'", [(int) $ord['id']]);
+        $applied = 'failed';
+      }
+    }
+
+    if ($hasLog && $evId !== '') {
+      q("INSERT INTO ws_stripe_event (event_id, type, order_id, applied, payload)
+         VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE event_id = event_id",
+        [$evId, $type, $ord ? (int) $ord['id'] : null, $applied, mb_substr($raw, 0, 60000)]);
+    }
+    // 200 même quand l'événement ne nous concerne pas : sinon Stripe le rejoue.
+    json_out(['ok' => true, 'type' => $type, 'applied' => $applied]);
+  }
+
   /* ══════════════════════════════════════════════════════════════════════
      Console marque (franchisor) — lecture réseau. Toutes gardées admin.
      Renvoie exactement les shapes attendues par le back-office franchisor

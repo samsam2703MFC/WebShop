@@ -25,6 +25,19 @@ return [
   'stripe_secret'    => getenv('WS_STRIPE_SECRET') ?: '',
   'checkout_success' => getenv('WS_CHECKOUT_SUCCESS') ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html?paid=1',
   'checkout_cancel'  => getenv('WS_CHECKOUT_CANCEL')  ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html?canceled=1',
+  /* Secret de signature du WEBHOOK Stripe (whsec_…). À créer dans le tableau de
+   * bord Stripe › Développeurs › Webhooks, en pointant vers :
+   *     <origine>/webshop/api/payments/stripe-webhook
+   * abonné à : checkout.session.completed, checkout.session.expired,
+   *            checkout.session.async_payment_succeeded / _failed.
+   *
+   * SANS ce secret, l'endpoint REFUSE tout. Un webhook non signé n'est qu'une
+   * URL publique qui marque des commandes « payées » : qui la connaît s'offre
+   * la boutique. Le retour du navigateur sur checkout_success ne fait pas foi
+   * non plus — c'est le CLIENT qui le déclenche, il peut ne jamais revenir
+   * après avoir payé, ou forger l'URL sans avoir payé. Seul Stripe, signant
+   * son événement, dit la vérité sur un encaissement. */
+  'stripe_webhook_secret' => getenv('WS_STRIPE_WEBHOOK_SECRET') ?: '',
 
   /* ── Back-offices Franchise Buddy : deux sessions TOTALEMENT isolées ──────────
    * Chaque BO a SON secret HMAC (jetons non interchangeables) et SON cookie.
