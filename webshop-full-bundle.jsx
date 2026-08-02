@@ -2983,7 +2983,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         {officeStep === 'add' && (
           <div className="ws-acc__card">
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Votre bureau n'est pas dans la liste ?</div>
-            <p className="ws-acc__hint">Envoyez une demande à la franchise : elle contactera votre bureau pour l'ajouter. Indiquez son nom et <strong>au moins un</strong> moyen de contact.</p>
+            <p className="ws-acc__hint">Envoyez une demande à votre Atelier : il contactera votre bureau pour l'ajouter. Indiquez son nom et <strong>au moins un</strong> moyen de contact.</p>
             <div className="ws-acc__grid">
               <label className="ws-acc__field ws-acc__field--full">
                 <span className="ws-acc__field-label">Nom du bureau ou de la société *</span>
@@ -3006,7 +3006,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             {officeErr && <p className="ws-form__err">{officeErr}</p>}
             <div className="ws-acc__row-foot">
               <button type="button" className="ws-fid__cancel" onClick={() => { setOfficeErr(''); setOfficeStep('pick'); }}>Retour</button>
-              <button type="button" className="ws-cta" onClick={submitContactRequest} disabled={officeBusy}>{officeBusy ? 'Envoi…' : 'Envoyer à la franchise'}</button>
+              <button type="button" className="ws-cta" onClick={submitContactRequest} disabled={officeBusy}>{officeBusy ? 'Envoi…' : 'Envoyer à votre Atelier'}</button>
             </div>
           </div>
         )}
@@ -3014,7 +3014,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         {officeStep === 'sent' && (
           <div className="ws-acc__card">
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Demande envoyée ✓</div>
-            <p className="ws-acc__hint">Merci ! La franchise a reçu votre demande et contactera votre bureau. Vous pourrez le sélectionner dès qu'il aura été validé.</p>
+            <p className="ws-acc__hint">Merci ! Votre Atelier a reçu votre demande et contactera votre bureau. Vous pourrez le sélectionner dès qu'il aura été validé.</p>
             <div className="ws-acc__row-foot">
               <button type="button" className="ws-cta" onClick={() => setOfficeStep('idle')}>Fermer</button>
             </div>
