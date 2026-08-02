@@ -4640,12 +4640,18 @@ function ShopFrame({ variant }) {
   }, []);
   function handleAddConfigured(line) {
     const product = allProducts.find((p) => p.id === line.productId);
+    // Même rattachement ligne ↔ réservation que dans handleAdd : sans lui, les
+    // produits configurables (portions, options, formules) retombaient sur le
+    // repli « par produit » et leur retrait libérait TOUTES les réservations du
+    // même produit.
+    const lineId = line.line != null ? line.line : Date.now();
     setBasket((b) => [...b, {
-      line: Date.now(), ...line,
+      ...line,
+      line: lineId,
       lead_time: line.lead_time ?? product?.lead_time ?? 0,
       no_delivery: line.no_delivery ?? !!product?.no_delivery,
     }]);
-    stockReserve(line.productId, line.qty || 1);
+    stockReserve(line.productId, line.qty || 1, lineId);
   }
 
   const Nav = variant === 'A' ? NavbarA : variant === 'B' ? NavbarB : NavbarC;
