@@ -1565,16 +1565,55 @@ function dispatch($m, $p) {
                     WHERE e.email = ? AND e.active = 1 AND o.active = 1 AND o.status = 'validated'
                     ORDER BY o.name", [$email]));
   }
+  /* Devis de frais de livraison — CALCULÉ, et dans la forme que le front et
+     webshop-delivery-fees-api.jsx documentent (snake_case).
+
+     Cet endpoint renvoyait la règle BRUTE avec des alias camelCase
+     (freeDelivery, feeAmount, paymentType). Aucun consommateur ne lit ces
+     clés-là : toutes les lectures valaient donc undefined, avec des
+     conséquences en cascade —
+       • l'affichage retombait sur « Gratuite » quoi qu'il arrive, pendant que
+         la commande facturait le vrai forfait (vu en test : 29,90 € annoncés,
+         36,90 € enregistrés) ;
+       • « Encore X € pour la livraison gratuite » ne s'affichait jamais ;
+       • payment_type restant indéfini, un bureau en facturation différée ne se
+         voyait jamais proposer le paiement sur compte ;
+       • le site résolu étant absent, l'adresse et la tournée du payload
+         retombaient sur celles du bureau.
+
+     Le seuil est désormais évalué ICI, avec la formule utilisée à la création
+     de commande — c'est la seule façon que l'aperçu et la facture ne divergent
+     pas. Le sous-total transmis doit être celui APRÈS remises. */
   if ($m === 'POST' && $p === '/delivery-fees/quote') {
     $b = body();
-    $r = row("SELECT id, level, free_delivery AS freeDelivery, always_charge AS alwaysCharge,
-                     fee_amount AS feeAmount, free_delivery_minimum AS freeDeliveryMinimum, payment_type AS paymentType
+    $r = row("SELECT id, level, free_delivery, always_charge, fee_amount, free_delivery_minimum, payment_type
                 FROM ws_delivery_fee_rules WHERE active=1 AND (
                      (level='site'   AND site_id=?) OR (level='office' AND office_client_id=?) OR
                      (level='tour'   AND tour_id=?) OR (level='shop' AND shop_id=?) OR (level='global'))
                ORDER BY FIELD(level,'site','office','tour','shop','global') LIMIT 1",
-             [$b['siteId'] ?? null, $b['officeClientId'] ?? null, $b['tourId'] ?? null, $b['shopId'] ?? null]);
-    json_out($r ?: null);
+             [$b['siteId'] ?? null, $b['officeClientId'] ?? null,
+              // Le front envoie `tourneeId` ; on lisait `tourId` — la règle de
+              // niveau TOURNÉE ne pouvait donc jamais s'appliquer à l'aperçu,
+              // qui retombait silencieusement sur la règle boutique ou globale.
+              $b['tourId'] ?? ($b['tourneeId'] ?? null), $b['shopId'] ?? null]);
+    if (!$r) json_out(null);
+    $sub     = (float) ($b['subtotal'] ?? 0);
+    $freeMin = (float) $r['free_delivery_minimum'];
+    $isFree  = !$r['always_charge'] && ($r['free_delivery'] || ($freeMin > 0 && $sub >= $freeMin));
+    $fee     = $isFree ? 0.0 : (float) $r['fee_amount'];
+    $site    = ($r['level'] === 'site' && !empty($b['siteId']))
+               ? row("SELECT * FROM ws_office_delivery_sites WHERE id=? AND active=1", [(int) $b['siteId']])
+               : null;
+    json_out([
+      'fee_amount'                => round($fee, 2),
+      'free_delivery'             => $isFree,              // décision pour CETTE commande
+      'always_charge'             => (bool) $r['always_charge'],
+      'free_delivery_minimum'     => $freeMin,
+      'amount_remaining_for_free' => ($freeMin > 0 && $sub < $freeMin) ? round($freeMin - $sub, 2) : 0,
+      'payment_type'              => $r['payment_type'] ?: 'immediate',
+      'resolved_level'            => $r['level'],
+      'site'                      => $site ?: null,
+    ]);
   }
 
   /* ── Orders ── (tout est calculé serveur depuis la base : prix, promo 4+1,
