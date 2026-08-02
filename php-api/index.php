@@ -5734,8 +5734,39 @@ function dispatch($m, $p) {
       $pr = $findProduct($b);
       if (!$pr) $prodKo($b);
       $mode = (($b['mode'] ?? '') === 'delivery') ? 'delivery' : 'collect';
+
+      /* DISPONIBLE ABSOLU — {dispo:n}. Les champs de saisie du BO affichent un
+         DISPONIBLE (total − réservé − vendu) et envoyaient un ÉCART calculé
+         côté navigateur. Cet écart n'a de sens que si la valeur affichée
+         correspond à une ligne réelle : quand elle vient du minimum
+         hebdomadaire (aucune ligne du jour pour ce canal), la ligne était
+         créée à max(0, écart) — taper 8 sur un affichage à 10 posait 0, taper
+         12 posait 2. Aucune erreur, une quantité fausse.
+
+         Le disponible voulu est donc posé ICI, où réservé et vendu sont
+         connus : qty_total = voulu + réservé + vendu. L'écriture est absolue
+         donc idempotente — une valeur affichée périmée ne fabrique plus de
+         dérive, contrairement à un écart. Les boutons ± gardent {delta}. */
+      if (array_key_exists('dispo', $b) && $b['dispo'] !== '' && $b['dispo'] !== null) {
+        $want = max(0, (int) $b['dispo']);
+        $cur = row("SELECT qty_reserved, qty_sold FROM ws_product_stock
+                     WHERE product_id=? AND shop_id=? AND date=? AND mode=?",
+          [(int) $pr['id'], (int) $shopId, $today, $mode]);
+        $tot = $want + (int) ($cur['qty_reserved'] ?? 0) + (int) ($cur['qty_sold'] ?? 0);
+        q("INSERT INTO ws_product_stock (product_id, shop_id, date, mode, qty_total, qty_reserved, qty_sold, active)
+             VALUES (?,?,?,?,?,0,0,1)
+             ON DUPLICATE KEY UPDATE qty_total = VALUES(qty_total), active = 1",
+          [(int) $pr['id'], (int) $shopId, $today, $mode, $tot]);
+        $st0 = row("SELECT qty_total, qty_reserved, qty_sold FROM ws_product_stock
+                     WHERE product_id=? AND shop_id=? AND date=? AND mode=?",
+          [(int) $pr['id'], (int) $shopId, $today, $mode]);
+        json_out(['ok' => true, 'mode' => $mode,
+          'total' => (int) ($st0['qty_total'] ?? 0),
+          'dispo' => max(0, (int) ($st0['qty_total'] ?? 0) - (int) ($st0['qty_reserved'] ?? 0) - (int) ($st0['qty_sold'] ?? 0))]);
+      }
+
       $delta = (int) ($b['delta'] ?? 0);
-      if (!$delta) json_out(['ok' => false, 'error' => 'delta requis (±n)'], 400);
+      if (!$delta) json_out(['ok' => false, 'error' => 'delta requis (±n) ou dispo (n)'], 400);
       q("INSERT INTO ws_product_stock (product_id, shop_id, date, mode, qty_total, qty_reserved, qty_sold, active)
            VALUES (?,?,?,?,?,0,0,1)
            ON DUPLICATE KEY UPDATE qty_total = GREATEST(0, qty_total + ?), active=1",
