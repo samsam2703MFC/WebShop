@@ -5371,7 +5371,12 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/franchisee/order-status') {
       $b = body(); $ref = ltrim(trim((string) ($b['ref'] ?? '')), '#');
       $st = (string) ($b['status'] ?? '');
-      $OK = ['pending', 'confirmed', 'preparing', 'ready', 'delivered', 'completed', 'cancelled'];
+      // « in_delivery » : la marchandise est PARTIE avec le livreur mais n'est
+      // pas encore remise. Sans cet état, une commande sautait de « Prête » à
+      // « Livrée » — impossible de savoir ce qui est en tournée à un instant
+      // donné, ni de distinguer une commande oubliée en boutique d'une commande
+      // en route. La validation finale viendra de la PWA livreur.
+      $OK = ['pending', 'confirmed', 'preparing', 'ready', 'in_delivery', 'delivered', 'completed', 'cancelled'];
       if ($ref === '' || !in_array($st, $OK, true)) json_out(['ok' => false, 'error' => 'ref + statut valides requis'], 400);
       if (!$hasOrders) json_out(['ok' => false, 'error' => 'ws_orders absente'], 501);
       // Horodatage de la remise : la colonne delivered_at existait depuis
