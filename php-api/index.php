@@ -2638,7 +2638,10 @@ function dispatch($m, $p) {
     $sess = stripe_checkout($o, $lines);
     if ($sess === null) json_out(['error' => 'Paiement indisponible (Stripe non configuré)', 'orderId' => (int) $o['id'], 'status' => $o['status']], 503);
     if ($sess === false) json_out(['error' => 'Échec Stripe'], 502);
-    q("UPDATE ws_orders SET payment_method='card', payment_status='pending' WHERE id=?", [$o['id']]);
+    // 'stripe' et non 'card' : c'est l'identifiant utilisé partout ailleurs
+    // (/payment-methods, payment_label, ws_shop_payment_options). 'card' restait
+    // compris par payment_family() mais n'avait pas de libellé.
+    q("UPDATE ws_orders SET payment_method='stripe', payment_status='pending' WHERE id=?", [$o['id']]);
     json_out(['ok' => true, 'orderId' => (int) $o['id'], 'checkoutUrl' => $sess['url']]);
   }
 
@@ -7293,13 +7296,36 @@ function norm_phone($prefix, $raw) {
 }
 
 /* Crée une session Stripe Checkout via l'API REST (cURL). null si non configuré. */
+/* Session de paiement Stripe.
+   ⚠️ Le montant débité DOIT être ws_orders.total, pas la somme des lignes
+   produit. La version précédente n'envoyait que les lignes : la REMISE (code
+   promo, bon) et les FRAIS DE LIVRAISON étaient ignorés — un client avec un code
+   −10 % était débité du prix plein, et les frais de livraison n'étaient jamais
+   encaissés.
+   On garde le détail des lignes quand il tombe juste (meilleur reçu Stripe) ;
+   dès qu'il diffère du total, on envoie UNE ligne au montant exact de la
+   commande. Le total fait foi dans tous les cas. */
 function stripe_checkout($order, $lines) {
   $secret = cfg()['stripe_secret'];
   if (!$secret) return null;
+  $total = round((float) ($order['total'] ?? 0), 2);
+  if ($total <= 0) return false;                    // rien à encaisser : anomalie
   $f = ['mode' => 'payment',
         'success_url' => cfg()['checkout_success'],
         'cancel_url' => cfg()['checkout_cancel'],
         'metadata[order_id]' => $order['id'], 'metadata[order_ref]' => $order['order_ref'] ?? ''];
+  $somme = 0.0;
+  foreach ($lines as $l) $somme += ((float) $l['unit_price']) * ((int) $l['qty']);
+  $somme = round($somme, 2);
+  if (abs($somme - $total) > 0.01) {
+    // Remise et/ou frais : une seule ligne, au montant réellement dû.
+    $f['line_items[0][quantity]'] = 1;
+    $f['line_items[0][price_data][currency]'] = 'eur';
+    $f['line_items[0][price_data][unit_amount]'] = (int) round($total * 100);
+    $f['line_items[0][price_data][product_data][name]'] =
+      'Commande ' . ($order['order_ref'] ?? ('#' . $order['id']));
+    return stripe_post($f, $secret);
+  }
   $i = 0;
   foreach ($lines as $l) {
     $f["line_items[$i][quantity]"] = (int) $l['qty'];
@@ -7308,6 +7334,10 @@ function stripe_checkout($order, $lines) {
     $f["line_items[$i][price_data][product_data][name]"] = $l['product_name'];
     $i++;
   }
+  return stripe_post($f, $secret);
+}
+
+function stripe_post($f, $secret) {
   $ch = curl_init('https://api.stripe.com/v1/checkout/sessions');
   curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_USERPWD => $secret . ':',
     CURLOPT_POSTFIELDS => http_build_query($f), CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20]);
