@@ -6124,11 +6124,55 @@ function dispatch($m, $p) {
           [(string) ($r['name'] ?? '—'), (string) ($r['cp'] ?? ''), !empty($r['exclusif']) ? 1 : 0]);
         json_out(['ok' => true, 'mode' => 'typed', 'n' => count($rows2)]);
       }
+      /* Départements B2B — table ERP, dont le schéma varie (id_client vs
+         client_id, colonnes annexes présentes ou non). L'écriture était un
+         DELETE INTÉGRAL non scopé suivi d'INSERT en colonnes codées en dur, le
+         tout hors transaction : sur un schéma qui ne correspondait pas, le
+         DELETE passait, l'INSERT échouait en 500 — et la table ERP se
+         retrouvait VIDE. Un écran de back-office ne doit jamais pouvoir
+         détruire une table du réseau parce qu'une colonne manque.
+
+         Trois garde-fous : les colonnes écrites sont celles qui existent
+         RÉELLEMENT, l'incompatibilité est refusée AVANT le moindre DELETE, et
+         l'ensemble tient dans une transaction — un INSERT qui échoue restitue
+         l'état d'origine. */
       if ($tbl === 'b2b_client_company_department' && $tblExists('b2b_client_company_department')) {
-        q("DELETE FROM b2b_client_company_department");
-        foreach ($rows2 as $r) q("INSERT INTO b2b_client_company_department (client_id, company, site, office, name, effectif, contact) VALUES (?,?,?,?,?,?,?)",
-          [(string) ($r['client_id'] ?? ($r['id_client'] ?? '—')), $r['company'] ?? null, $r['site'] ?? null,
-           $r['office'] ?? null, (string) ($r['dept'] ?? ($r['name'] ?? '—')), (int) ($r['effectif'] ?? 1), $r['contact'] ?? null]);
+        $T = 'b2b_client_company_department';
+        $keyCol  = col_exists($T, 'client_id') ? 'client_id' : (col_exists($T, 'id_client') ? 'id_client' : null);
+        $nameCol = col_exists($T, 'name') ? 'name' : (col_exists($T, 'dept') ? 'dept' : null);
+        if (!$keyCol || !$nameCol)
+          json_out(['ok' => false, 'mode' => 'typed', 'error' =>
+            "Schéma de $T incompatible (client_id/id_client et name/dept introuvables) — écriture refusée, aucune donnée touchée."], 501);
+
+        // Colonnes facultatives : seules celles présentes sont écrites.
+        $opt = [];
+        foreach (['company' => 'company', 'site' => 'site', 'office' => 'office',
+                  'effectif' => 'effectif', 'contact' => 'contact'] as $c => $src)
+          if (col_exists($T, $c)) $opt[$c] = $src;
+
+        $cols = array_merge([$keyCol, $nameCol], array_keys($opt));
+        $sql  = "INSERT INTO $T (" . implode(', ', $cols) . ") VALUES ("
+              . implode(', ', array_fill(0, count($cols), '?')) . ")";
+        $pdo2 = db();
+        $own  = !$pdo2->inTransaction();
+        if ($own) $pdo2->beginTransaction();
+        try {
+          q("DELETE FROM $T");
+          foreach ($rows2 as $r) {
+            $vals = [(string) ($r['client_id'] ?? ($r['id_client'] ?? '—')),
+                     (string) ($r['dept'] ?? ($r['name'] ?? '—'))];
+            foreach ($opt as $c => $src) {
+              if ($c === 'effectif') { $vals[] = (int) ($r['effectif'] ?? 1); continue; }
+              $vals[] = $r[$src] ?? null;
+            }
+            q($sql, $vals);
+          }
+          if ($own) $pdo2->commit();
+        } catch (Throwable $e) {
+          if ($own && $pdo2->inTransaction()) $pdo2->rollBack();
+          json_out(['ok' => false, 'mode' => 'typed', 'error' =>
+            "Écriture de $T annulée (aucune donnée perdue) : " . $e->getMessage()], 500);
+        }
         json_out(['ok' => true, 'mode' => 'typed', 'n' => count($rows2)]);
       }
       if ($tbl === 'ws_tour_closures' && $tblExists('ws_tour_closures')) {
