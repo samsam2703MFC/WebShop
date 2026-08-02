@@ -1074,6 +1074,11 @@ function dispatch($m, $p) {
       $o = row("SELECT deferred_billing_enabled AS d FROM ws_offices WHERE id=?", [$cid]);
       if (!$o || !$o['d']) $methods = array_values(array_filter($methods, fn ($x) => $x !== 'deferred'));
     }
+    // Livraison au bureau : « Paiement en boutique » n'a pas de sens — le client
+    // ne s'y rend jamais. Il était pourtant proposé, le mode n'étant pas pris en
+    // compte ici : la marchandise partait au bureau et l'encaissement n'avait
+    // jamais lieu. Même famille que la commande acceptée sans moyen de paiement.
+    if (qp('mode') === 'delivery') $methods = array_values(array_filter($methods, fn ($x) => $x !== 'shop'));
     json_out(array_map(fn ($x) => ['method' => $x, 'label' => payment_label($x)], $methods));
   }
 
@@ -1836,6 +1841,13 @@ function dispatch($m, $p) {
     if ($family === '') {
       json_out(['error' => 'Moyen de paiement requis',
                 'profile' => $profile, 'allowed' => $allowed], 400);
+    }
+    // Livraison : le paiement en boutique est refusé côté SERVEUR, pas seulement
+    // masqué dans la liste — une liste filtrée n'empêche personne de poster le
+    // moyen écarté.
+    if ($mode === 'delivery' && $family === 'shop') {
+      json_out(['error' => "Le paiement en boutique n'est pas disponible pour une livraison",
+                'profile' => $profile, 'allowed' => array_values(array_diff($allowed, ['shop']))], 400);
     }
     if (!in_array($family, $allowed, true)) {
       json_out(['error' => 'Moyen de paiement non autorisé pour ce profil',

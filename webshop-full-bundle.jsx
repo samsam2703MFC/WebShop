@@ -3106,7 +3106,10 @@ function usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId) 
   React.useEffect(() => {
     let alive = true;
     if (!(window.WSPayments && window.WSPayments.endpoint)) { setMethods([]); return () => { alive = false; }; }
-    window.WSPayments.list({ shopId, profile: profile || 'guest', companyId })
+    // `mode` était reçu par le hook et listé dans ses dépendances, mais jamais
+    // transmis : la liste ne dépendait donc pas du mode, et « paiement en
+    // boutique » apparaissait sur une livraison.
+    window.WSPayments.list({ shopId, profile: profile || 'guest', companyId, mode })
       .then((m) => {
         if (!alive) return;
         setMethods(Array.isArray(m) ? m.map((x) => ({ id: x.method, label: x.label || x.method, sub: '' })) : []);
