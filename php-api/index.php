@@ -6719,11 +6719,21 @@ function dispatch($m, $p) {
       // id_shop : déduit du code postal (chalandise) ; sinon saisi manuellement
       // ($b['shop']) ; sinon la boutique courante (portée franchisé).
       $obShop = (isset($b['shop']) && $b['shop'] !== '') ? (int) $b['shop'] : (zip_shop($obZip) ?? $shopId);
+      /* Tournée OBLIGATOIRE, et RÉSOLUE. Le nom arrivait du formulaire ; s'il ne
+         correspondait à aucune tournée, $tourId restait null et le bureau était
+         créé quand même — non livrable, sans que rien ne le signale. Le client
+         voyait « En attente de validation » sans cause visible. On refuse
+         désormais avant toute écriture. */
       $tourId = null;
-      if (!empty($b['tour']) && $tblExists('ws_tours')) {
-        $tr = row("SELECT id FROM ws_tours WHERE name=? LIMIT 1", [(string) $b['tour']]);
+      $tourWanted = trim((string) ($b['tour'] ?? ''));
+      if ($tourWanted === '')
+        json_out(['error' => 'Tournée rattachée requise — un bureau sans tournée n\'est pas livrable.'], 400);
+      if ($tblExists('ws_tours')) {
+        $tr = row("SELECT id FROM ws_tours WHERE name=? LIMIT 1", [$tourWanted]);
         if ($tr) $tourId = (int) $tr['id'];
       }
+      if (!$tourId)
+        json_out(['error' => 'Tournée « ' . $tourWanted . ' » introuvable — choisissez une tournée existante.'], 409);
       /* Le bureau naît NON VALIDÉ. Il était créé d'office en status='validated'
          et active=1 : un bureau ouvert à la livraison dès l'enregistrement,
          quels que soient les champs restés vides — et notamment quand il est
