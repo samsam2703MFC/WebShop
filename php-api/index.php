@@ -4911,6 +4911,19 @@ function dispatch($m, $p) {
     }
 
     // Arbre TDB : tournée › zone › sites (+ commandes du jour par site).
+    //
+    // HORIZON du tableau de bord : le jour même ET le lendemain. La requête
+    // n'avait AUCUNE borne supérieure (« >= aujourd'hui »), si bien qu'une
+    // commande du 31 décembre apparaissait dans un écran intitulé « Tournées du
+    // jour », et gonflait le compteur « Commandes à préparer ». Le franchisé
+    // lisait « 3 à préparer » sans en avoir une seule pour aujourd'hui.
+    //
+    // Pourquoi J+1 et pas le jour seul : à 15 h on prépare déjà pour le
+    // lendemain — le cut-off de saisie à 17 h est fait pour ça. Limiter au jour
+    // même viderait le tableau au moment précis où la préparation a lieu.
+    // Réglable par ?horizon=N (0 = jour même), plafonné à 7 jours : au-delà,
+    // ce n'est plus un écran d'exploitation.
+    $tdbHorizon = max(0, min(7, (int) qp('horizon', 1)));
     if ($m === 'GET' && $p === '/franchisee/fr-tdb-tree') {
       if (!$tblExists('ws_tours') || !$tblExists('ws_office_delivery_sites') || !$hasOrders) json_out([]);
       $hasTk = $tblExists('ws_tour_tracking');
@@ -4943,11 +4956,11 @@ function dispatch($m, $p) {
                FROM ws_orders o" .
             ($hasCliT ? " LEFT JOIN client cl ON cl.id = o.customer_id" : "") . "
               WHERE " . $scope('o.shop_id') . " AND o.status <> 'cancelled'
-                AND COALESCE(o.delivery_date, DATE(o.created_at)) >= ?
+                AND COALESCE(o.delivery_date, DATE(o.created_at)) BETWEEN ? AND DATE_ADD(?, INTERVAL " . $tdbHorizon . " DAY)
                 AND (o.office_delivery_site_id = ?
                      OR (o.office_delivery_site_id IS NULL AND ? IS NOT NULL AND o.office_client_id = ?))
               ORDER BY jour, o.created_at LIMIT 40",
-            [$today, (int) $s2['sid'], $s2['ocid'], $s2['ocid']]);
+            [$today, $today, (int) $s2['sid'], $s2['ocid'], $s2['ocid']]);
           if (!$ords) continue;
           $J2 = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
           $siteOut[] = ['libelle' => $s2['libelle'] ?: $s2['ville'], 'ville' => $s2['ville'], 'cutoff' => '—',
