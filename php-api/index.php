@@ -436,6 +436,11 @@ function dispatch($m, $p) {
     $mode = strtolower((string) (qp('mode') ?: ''));
     $deliveryWhere = in_array($mode, ['delivery', 'office', 'apricot'], true)
       ? ' AND COALESCE(p.office_delivery,1) = 1' : '';
+    // Gammes saisonnières (product_availability_period) : filtrées sur la DATE
+    // DE RETRAIT/LIVRAISON, pas sur aujourd'hui. Un client qui commande le
+    // 28 novembre pour le 2 décembre doit voir la gamme de Noël ; c'est la date
+    // de remise de la marchandise qui fait foi, pas celle de la commande.
+    [$seasonWhere, $seasonArgs] = availability_where('p', qp('date'));
     // `badge` (texte) a été migré en FK tag_id -> ws_tags ; on expose le libellé
     // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
     $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id,
@@ -460,8 +465,8 @@ function dispatch($m, $p) {
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
                  LEFT JOIN ws_tags t ON t.id = p.tag_id
                  LEFT JOIN ws_season se ON se.id = p.season_id
-                WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)$deliveryWhere
-                ORDER BY c.sort_order, p.name", [$s, $s]);
+                WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)$deliveryWhere$seasonWhere
+                ORDER BY c.sort_order, p.name", array_merge([$s, $s], $seasonArgs));
     $photos = product_photo_files();
     foreach ($r as &$x) {
       // Image produit : la photo déposée (assets/product_pictures/{id}.png|jpg) FAIT
@@ -1686,6 +1691,13 @@ function dispatch($m, $p) {
                    FROM ws_products p
                   WHERE p.id=? AND p.active=1", [$it['productId'] ?? 0]);
       if (!$p2) continue;
+      // Gamme saisonnière : refus à la DATE de retrait/livraison. Masquer au
+      // catalogue ne suffit pas — un panier gardé en cache, un onglet resté
+      // ouvert ou un appel direct passeraient sans ce contrôle.
+      if (!product_available_on($p2['id'], $b['deliveryDate'] ?? null)) {
+        json_out(['error' => '« ' . trim((string) $p2['name']) . ' » n\'est pas disponible à la date choisie'
+          . ' — retirez-le du panier ou changez de date.'], 409);
+      }
       if (!isset($storePrices[(int) $p2['id']])) {
         json_out(['error' => 'Prix indisponible pour « ' . trim((string) $p2['name'])
           . ' » dans cette boutique — retirez-le du panier ou réessayez plus tard.'], 409);
@@ -6852,6 +6864,64 @@ function basket_pa($shop, $mode, $productIds) {
 }
 
 /* Normalise un moyen de paiement vers sa famille canonique. */
+/* Disponibilité saisonnière d'un produit (product_availability_period).
+   Ces gammes sont définies dans l'ERP — « 🎄 Noël & Nouvel An », etc. — et
+   n'étaient PAS connues du webshop : un cougnou de Noël restait en vente le
+   2 août, et rien ne l'activait en décembre non plus.
+
+   Règles :
+     • aucune période rattachée      → produit disponible en permanence
+       (c'est le cas de l'immense majorité du catalogue : ne rien casser) ;
+     • au moins une période ACTIVE couvrant la date → disponible ;
+     • périodes récurrentes : comparaison en mois-jour (MMJJ), avec passage
+       d'année quand from_md > to_md (1101 → 115 = novembre à janvier) ;
+     • tables absentes → aucun filtre. Fermer le catalogue serait pire que de
+       laisser passer : on préfère vendre hors saison qu'afficher une boutique
+       vide, et c'est de toute façon le comportement d'avant.
+
+   Renvoie [fragment SQL, arguments] à concaténer dans un WHERE. $alias est
+   l'alias de la table produit. */
+function availability_where($alias, $date = null) {
+  static $ok = null;
+  if ($ok === null) {
+    try {
+      $ok = (bool) row("SELECT 1 x FROM information_schema.tables
+                         WHERE table_schema=DATABASE()
+                           AND table_name='product_availability_period' LIMIT 1")
+         && (bool) row("SELECT 1 x FROM information_schema.tables
+                         WHERE table_schema=DATABASE()
+                           AND table_name='product_availability_period_connection' LIMIT 1");
+    } catch (Throwable $e) { $ok = false; }
+  }
+  if (!$ok) return ['', []];
+  $d = (is_string($date) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) ? $date : date('Y-m-d');
+  $md = (int) (substr($d, 5, 2) . substr($d, 8, 2));   // MMJJ
+  $sql = " AND (NOT EXISTS (SELECT 1 FROM product_availability_period_connection pac
+                              JOIN product_availability_period pap
+                                ON pap.id = pac.id_period AND pap.is_active = 1
+                             WHERE pac.id_product = $alias.id)
+            OR EXISTS (SELECT 1 FROM product_availability_period_connection pac
+                         JOIN product_availability_period pap
+                           ON pap.id = pac.id_period AND pap.is_active = 1
+                        WHERE pac.id_product = $alias.id
+                          AND ((pap.is_recurring = 0 AND ? BETWEEN pap.start_date AND pap.end_date)
+                            OR (pap.is_recurring = 1 AND (
+                                  (pap.from_md <= pap.to_md AND ? BETWEEN pap.from_md AND pap.to_md)
+                               OR (pap.from_md >  pap.to_md AND (? >= pap.from_md OR ? <= pap.to_md)))))))";
+  return [$sql, [$d, $md, $md, $md]];
+}
+
+/* Le produit $pid est-il vendable à la date $date ? Même règle que
+   availability_where, appliquée à un seul produit — utilisée à la création de
+   commande : masquer au catalogue ne suffit pas, un panier gardé en cache ou
+   un appel direct doit être refusé côté serveur. */
+function product_available_on($pid, $date) {
+  [$sql, $args] = availability_where('p', $date);
+  if ($sql === '') return true;
+  return (bool) row("SELECT 1 AS x FROM ws_products p WHERE p.id = ?$sql LIMIT 1",
+                    array_merge([(int) $pid], $args));
+}
+
 function payment_family($m) {
   $m = strtolower(trim((string) $m));
   if (in_array($m, ['stripe', 'card', 'carte', 'bancontact', 'visa', 'mastercard', 'maestro'], true)) return 'stripe';

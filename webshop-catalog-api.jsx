@@ -43,13 +43,17 @@
       return await getJson(`${base}/categories?shopId=${encodeURIComponent(shopId || '')}`, 'Catégories');
     },
 
-    async listProducts({ shopId, cat, mode } = {}) {
+    async listProducts({ shopId, cat, mode, date } = {}) {
       const base = requireEndpoint();
       // `mode=delivery` → l'API exclut serveur-side les produits non éligibles
       // à la livraison bureau (source unique du filtre, cf. /catalog/products).
       const modeQs = mode ? `&mode=${encodeURIComponent(mode)}` : '';
+      // `date` → gammes saisonnières évaluées à la date de RETRAIT/LIVRAISON,
+      // pas à celle de la commande : on commande le 28 novembre pour le
+      // 2 décembre, et la gamme de Noël doit alors être visible.
+      const dateQs = date ? `&date=${encodeURIComponent(date)}` : '';
       return await getJson(
-        `${base}/products?shopId=${encodeURIComponent(shopId || '')}&cat=${encodeURIComponent(cat || '')}${modeQs}`,
+        `${base}/products?shopId=${encodeURIComponent(shopId || '')}&cat=${encodeURIComponent(cat || '')}${modeQs}${dateQs}`,
         'Catalogue'
       );
     },

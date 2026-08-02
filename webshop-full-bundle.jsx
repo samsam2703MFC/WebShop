@@ -4399,11 +4399,21 @@ function ShopFrame({ variant }) {
       // filtrée (produits éligibles) — filtre partagé, identique online et après
       // handoff PWA, sans dépendre de l'état client. Le filtre client résiduel
       // (slotFiltered) reste comme repli (seed/démo ou API sans le paramètre).
-      const list = await window.WSCatalog.listProducts({ shopId, mode });
-      if (alive && list && list.length) setAllProducts(list);
+      // `date` : les gammes saisonnières sont évaluées à la date de retrait /
+      // livraison. Formatage LOCAL — toISOString() décalerait d'un jour en
+      // soirée (heure belge d'été), et on interrogerait la mauvaise saison.
+      const dIso = date instanceof Date
+        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+        : (date || '');
+      const list = await window.WSCatalog.listProducts({ shopId, mode, date: dIso });
+      // Une liste VIDE est une réponse valable — c'est le catalogue de cette
+      // date. L'ancien test `list.length` conservait la liste précédente, donc
+      // des produits d'une autre date/saison restaient affichés. Un échec HTTP
+      // lève déjà une exception : ici, vide veut bien dire vide.
+      if (alive && Array.isArray(list)) setAllProducts(list);
     })();
     return () => { alive = false; };
-  }, [shopId, mode]);
+  }, [shopId, mode, date]);
   // Source commune GRILLE + LIGNE DE NAV : le catalogue restreint au créneau
   // et à la date en cours. La règle d'affichage de la nav (« n'afficher que ce
   // qui contient au moins un produit disponible ») est ainsi exactement celle
