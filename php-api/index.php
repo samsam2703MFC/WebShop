@@ -4011,7 +4011,9 @@ function dispatch($m, $p) {
       $rs = rows("SELECT t.id, t.name, t.max_items" . ($hasZ ? ", z.name AS zone" : ", NULL AS zone") .
                  ($hasFV ? ", t.delivery_fee, t.vehicle" : ", NULL AS delivery_fee, NULL AS vehicle") .
                  ($hasTk ? ", tk.driver_name" : ", NULL AS driver_name") . ",
-                         (SELECT COUNT(*) FROM ws_orders o WHERE o.tour_id=t.id AND o.delivery_date=?) AS used
+                         (SELECT COUNT(*) FROM ws_orders o
+                            LEFT JOIN ws_office_delivery_sites stt ON stt.id = o.office_delivery_site_id
+                           WHERE COALESCE(o.tour_id, stt.tournee_id) = t.id AND o.delivery_date=?) AS used
                     FROM ws_tours t" . ($hasZ ? " LEFT JOIN ws_delivery_zones z ON z.id = t.zone_id" : "") .
                  ($hasTk ? " LEFT JOIN ws_tour_tracking tk ON tk.tour_id = t.id" : "") . "
                    WHERE " . $scope('t.shop_id') . " AND t.active=1 ORDER BY t.name", [$today]);
@@ -4903,13 +4905,24 @@ function dispatch($m, $p) {
        (ex-littéraux JSX dé-hardcodés — servis depuis les vraies tables). */
 
     // Tournées du jour (TDB) — ws_tours + commandes du jour + tracking.
+    // Rattachement commande -> tournée : ws_orders.tour_id est une
+    // DÉNORMALISATION jamais alimentée par le webshop (toujours NULL). Compter
+    // dessus renvoyait zéro colis pour toutes les tournées, qui disparaissaient
+    // alors du tableau de bord — « 0 prête · 0 en préparation » avec des
+    // commandes bien rattachées à une tournée par leur site.
+    // La tournée est donc dérivée du SITE quand la colonne est vide, ce que
+    // l'arbre faisait déjà. Une seule source de vérité, aucune donnée à migrer.
     if ($m === 'GET' && $p === '/franchisee/fr-tdb-tournees') {
       if (!$tblExists('ws_tours') || !$hasOrders) json_out([]);
       $hasTk = $tblExists('ws_tour_tracking');
       $hasAv = $tblExists('ws_tour_availability');
       $rs = rows("SELECT t.id, t.name" . ($hasTk ? ", tk.driver_name, tk.vehicle, tk.stops_done" : ", NULL AS driver_name, NULL AS vehicle, 0 AS stops_done") . ",
-                         (SELECT COUNT(DISTINCT o.office_client_id) FROM ws_orders o WHERE o.tour_id=t.id AND o.delivery_date=?) AS pts,
-                         (SELECT COUNT(*) FROM ws_orders o WHERE o.tour_id=t.id AND o.delivery_date=?) AS colis
+                         (SELECT COUNT(DISTINCT o.office_client_id) FROM ws_orders o
+                            LEFT JOIN ws_office_delivery_sites stt ON stt.id = o.office_delivery_site_id
+                           WHERE COALESCE(o.tour_id, stt.tournee_id) = t.id AND o.delivery_date=?) AS pts,
+                         (SELECT COUNT(*) FROM ws_orders o
+                            LEFT JOIN ws_office_delivery_sites stt ON stt.id = o.office_delivery_site_id
+                           WHERE COALESCE(o.tour_id, stt.tournee_id) = t.id AND o.delivery_date=?) AS colis
                     FROM ws_tours t" . ($hasTk ? " LEFT JOIN ws_tour_tracking tk ON tk.tour_id=t.id" : "") . "
                    WHERE " . $scope('t.shop_id') . " AND t.active=1 ORDER BY t.name", [$today, $today]);
       $out = [];
