@@ -38,9 +38,12 @@
   const api = {
     endpoint: null,
 
-    async listCategories({ shopId } = {}) {
+    async listCategories({ shopId, date } = {}) {
       const base = requireEndpoint();
-      return await getJson(`${base}/categories?shopId=${encodeURIComponent(shopId || '')}`, 'Catégories');
+      // `date` : même filtre saisonnier que listProducts — une catégorie
+      // entièrement hors saison ne doit pas rester dans la barre de navigation.
+      const dateQs = date ? `&date=${encodeURIComponent(date)}` : '';
+      return await getJson(`${base}/categories?shopId=${encodeURIComponent(shopId || '')}${dateQs}`, 'Catégories');
     },
 
     async listProducts({ shopId, cat, mode, date } = {}) {

@@ -4254,12 +4254,18 @@ function ShopFrame({ variant }) {
   React.useEffect(() => {
     let alive = true;
     if (window.WSCatalog && typeof window.WSCatalog.listCategories === 'function') {
-      window.WSCatalog.listCategories({ shopId })
-        .then((c) => { if (alive && c && c.length) setCategories(c); })
+      // Date LOCALE, comme pour les produits : la barre de nav doit refléter la
+      // même saison que la grille, sinon on garde des onglets qui ne mènent
+      // nulle part.
+      const dIso = date instanceof Date
+        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+        : (date || '');
+      window.WSCatalog.listCategories({ shopId, date: dIso })
+        .then((c) => { if (alive && Array.isArray(c)) setCategories(c); })
         .catch((e) => console.error('[catalogue] catégories indisponibles', e));
     }
     return () => { alive = false; };
-  }, [shopId]);
+  }, [shopId, date]);
 
   // Assortiments (saisons) — serveur uniquement.
   const [assortments, setAssortments] = React.useState([]);

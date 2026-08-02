@@ -399,14 +399,18 @@ function dispatch($m, $p) {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
     // N'expose une catégorie que si elle a >=1 produit actif du catalogue non
     // explicitement exclu de cette boutique.
+    // Même filtre saisonnier que /catalog/products : sans lui, une catégorie
+    // entièrement hors saison (« Pâques » en août) restait dans la barre de nav
+    // et menait à une grille vide.
+    [$catSeason, $catSeasonArgs] = availability_where('p', qp('date'));
     $cats = rows("SELECT c.id, c.slug, c.label, c.img, c.sort_order
                     FROM ws_categories c
                    WHERE c.active = 1 AND (c.shop_id = ? OR c.shop_id IS NULL)
                      AND EXISTS (SELECT 1 FROM ws_products p
                                    LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
                                   WHERE p.cat_id = c.id AND p.active = 1
-                                    AND (ps.product_id IS NULL OR ps.active = 1))
-                   ORDER BY c.sort_order, c.label", [$s, $s]);
+                                    AND (ps.product_id IS NULL OR ps.active = 1)$catSeason)
+                   ORDER BY c.sort_order, c.label", array_merge([$s, $s], $catSeasonArgs));
     // Rattache les sous-catégories (ws_category_subs) à chaque catégorie -> c.subs[]
     // (le front lit activeCat.subs pour la ligne de nav). Même règle : on
     // n'expose qu'une sous-catégorie qui a >=1 produit du catalogue ici.
@@ -417,8 +421,8 @@ function dispatch($m, $p) {
                      AND EXISTS (SELECT 1 FROM ws_products p
                                    LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
                                   WHERE p.sub_cat_id = sub.id AND p.active = 1
-                                    AND (ps.product_id IS NULL OR ps.active = 1))
-                   ORDER BY sub.sort_order, sub.label", [$s, $s]);
+                                    AND (ps.product_id IS NULL OR ps.active = 1)$catSeason)
+                   ORDER BY sub.sort_order, sub.label", array_merge([$s, $s], $catSeasonArgs));
     $byCat = [];
     foreach ($subs as $x) { $byCat[$x['category_id']][] = $x; }
     foreach ($cats as &$c) { $c['subs'] = $byCat[$c['id']] ?? []; }
