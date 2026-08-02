@@ -5377,6 +5377,15 @@ function dispatch($m, $p) {
             ? ($r['proche'] . ($r['address_raw'] ? ' (' . $r['address_raw'] . ')' : ''))
             : 'aucun bureau validé ne correspond — créez le bureau (Clients B2B › Bureaux) avant de lier',
           'dup'      => (bool) $r['office_id'],
+          // Champs BRUTS de la demande. Ils n'existaient que fondus dans les
+          // phrases ci-dessus : pour créer le bureau manquant, le franchisé
+          // devait retaper à la main ce que le client avait déjà saisi. Ils
+          // pré-remplissent désormais le formulaire Bureau.
+          'officeName' => $r['office_name_raw'],
+          'address'    => $r['address_raw'] ?: '',
+          'email'      => $r['contact_email'] ?: ($r['cli_mail'] ?: ''),
+          'phone'      => $r['contact_phone'] ?: '',
+          'clientName' => $r['cli_name'] ?: '',
         ];
       }, $rs));
     }
