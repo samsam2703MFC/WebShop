@@ -622,8 +622,15 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   // (office_delivery === false). Absent/undefined = disponible (rétro-compat).
   const deliveryBlocked = mode === 'delivery' && (!!product?.no_delivery || product?.office_delivery === false);
   // qty_available from ws_product_stock API; falls back to delivery_stock on product seed
-  const qtyAvailable = stock ? stock.qty_available : (typeof product?.delivery_stock === 'number' ? product.delivery_stock : null);
-  const deliveryStockLeft = mode === 'delivery' && qtyAvailable !== null ? Math.max(0, qtyAvailable) : null;
+  // Le stock du jour vaut pour LES DEUX modes : le serveur refuse une commande
+  // au-delà du disponible en collecte comme en livraison. Le limiter ici au seul
+  // mode livraison laissait le client remplir son panier avec un produit épuisé
+  // et ne l'apprendre qu'à l'étape paiement, après avoir tout saisi.
+  // Le repli `delivery_stock` reste propre à la livraison : en collecte, une
+  // absence de ligne de stock veut dire « pas de plafond », pas « zéro ».
+  const qtyAvailable = stock ? stock.qty_available
+    : (mode === 'delivery' && typeof product?.delivery_stock === 'number' ? product.delivery_stock : null);
+  const deliveryStockLeft = qtyAvailable !== null ? Math.max(0, qtyAvailable) : null;
 
   let unit = product?.price || 0;
   // Portion RÉSOLUE : la portion choisie si elle existe dans la liste, sinon
@@ -1050,7 +1057,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
             )}
             {!deliveryBlocked && deliveryStockLeft !== null && (
               <div className="pdm-delivery-notice">
-                Livraison · {deliveryStockLeft > 0 ? `${deliveryStockLeft} unité${deliveryStockLeft > 1 ? 's' : ''} disponible${deliveryStockLeft > 1 ? 's' : ''}` : 'Stock épuisé'}
+                {deliveryStockLeft > 0 ? `${deliveryStockLeft} unité${deliveryStockLeft > 1 ? 's' : ''} disponible${deliveryStockLeft > 1 ? 's' : ''}` : 'Stock épuisé'}
               </div>
             )}
             <div className="pdm-qty">
@@ -1085,8 +1092,11 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
   // (no_delivery) ou désactivé marque pour ce canal (office_delivery === false).
   const deliveryBlocked = isDelivery && (!!p.no_delivery || p.office_delivery === false);
   // qty_available from ws_product_stock API; falls back to delivery_stock on product seed
-  const qtyAvailable = stock ? stock.qty_available : (typeof p.delivery_stock === 'number' ? p.delivery_stock : null);
-  const deliveryStockLeft = isDelivery && qtyAvailable !== null
+  // Même règle que dans le détail : le stock s'applique aux deux modes, le
+  // repli `delivery_stock` seulement à la livraison.
+  const qtyAvailable = stock ? stock.qty_available
+    : (isDelivery && typeof p.delivery_stock === 'number' ? p.delivery_stock : null);
+  const deliveryStockLeft = qtyAvailable !== null
     ? Math.max(0, qtyAvailable - (basketQty || 0))
     : null;
   const stockExhausted = deliveryStockLeft !== null && deliveryStockLeft === 0;
@@ -1149,7 +1159,7 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
         <div className="ws-card__name">{p.name}</div>
         <div className="ws-card__meta">
           <span className="ws-card__price">€{price.toFixed(2)}{hasOptions && <span className="ws-card__from"> · à partir de</span>}</span>
-          {isDelivery && deliveryStockLeft !== null && !stockExhausted && (
+          {deliveryStockLeft !== null && !stockExhausted && (
             <span className="ws-card__stock">{deliveryStockLeft} dispo</span>
           )}
           {stockExhausted && <span className="ws-card__stock ws-card__stock--out">Épuisé livraison</span>}
