@@ -2447,17 +2447,30 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       setSiteErr(r.error || 'Échec de la liaison.');
     }
   }
-  async function unlinkSite() {
-    setSiteBusy(true);
+  /* Déliement — opération UNIQUE. Les deux boutons « Délier ce bureau » de cet
+     écran appelaient deux choses différentes : celui-ci supprimait la liaison
+     PWA, l'autre vidait client.office_id. Or le serveur résout le bureau par
+     une chaîne de replis : effacer une source laissait l'autre en fournir un
+     AUTRE aussitôt, et le client croyait à une résurrection. POST /auth/office
+     avec un site vide coupe désormais les deux d'un coup.
+     L'échec était muet — pas de branche else : on cliquait, l'écran avançait,
+     et le bureau restait rattaché en base sans un mot. */
+  async function doUnlink() {
+    setSiteBusy(true); setOfficeErr('');
     const r = await window.WSAuth.setOfficeSite(null);
     setSiteBusy(false);
-    if (r.ok && r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
+    if (!r || !r.ok) {
+      setOfficeErr((r && r.error) || 'Déliement impossible — le bureau est toujours rattaché.');
+      return false;
+    }
+    if (r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
+    return true;
   }
+  async function unlinkSite() { await doUnlink(); }
 
   function startUnplug() { setOfficeStep('confirm'); setOfficeErr(''); }
-  function confirmUnplug() {
-    persistPartial({ officeId: null });
-    setOfficeStep('ask');
+  async function confirmUnplug() {
+    if (await doUnlink()) setOfficeStep('ask');
   }
   function chooseLinkAnother() {
     setPickedOfficeId(''); setOfficeErr('');

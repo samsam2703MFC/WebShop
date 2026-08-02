@@ -2497,8 +2497,21 @@ function dispatch($m, $p) {
   if ($m === 'POST' && $p === '/auth/office') {
     $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
     $ref = body()['siteId'] ?? null;
+    /* DÉLIER = couper TOUTES les sources que le client possède, en une fois.
+       user_payload() résout le bureau par une chaîne de replis : client.office_id,
+       puis pwa_client_office, puis l'e-mail inscrit dans une entreprise. Cet
+       endpoint ne supprimait que le deuxième et PATCH /auth/me que le premier :
+       quel que soit le bouton utilisé, l'autre source resservait aussitôt un
+       bureau, et le client voyait « un autre bureau » apparaître après avoir
+       délié le sien.
+
+       Le rattachement par e-mail (ws_office_emails) n'est PAS touché : c'est une
+       appartenance B2B gérée par le franchisé, qu'un client ne doit pas pouvoir
+       détruire depuis son profil. S'il la reste, elle rerattache légitimement —
+       et le profil doit alors l'expliquer plutôt que de laisser croire à un bug. */
     if ($ref === null || $ref === '') {
       q("DELETE FROM pwa_client_office WHERE client_id = ?", [$id]);
+      if (col_exists('client', 'office_id')) q("UPDATE client SET office_id = NULL WHERE id = ?", [$id]);
       json_out(['user' => user_payload($id)]);
     }
     $po = row("SELECT id FROM pwa_offices WHERE office_ref = ? LIMIT 1", [(string) $ref]);
@@ -7323,6 +7336,11 @@ function user_payload($id) {
   // livraison → ws_office_delivery_sites.office_client_id = l'entreprise). Un
   // bureau associé dans la PWA apparaît ainsi aussi dans le profil du webshop.
   $officeId = $u['office_id'] ?? null;
+  // Quelle source a fourni le bureau. Sans elle, un bureau « revenu » après un
+  // déliement est indiscernable d'un bug : il a fallu trois requêtes SQL pour
+  // établir que c'était la liaison PWA qui reprenait la main. L'information
+  // coûte une variable et se lit dans /auth/me.
+  $officeSource = $officeId ? 'client' : null;
   if (!$officeId) {
     try {
       // Jointure NUMÉRIQUE (office_ref = id du site en texte) : une comparaison
@@ -7333,7 +7351,7 @@ function user_payload($id) {
                    JOIN pwa_offices po ON po.id = co.office_id
                    JOIN ws_office_delivery_sites s ON s.id = CAST(po.office_ref AS UNSIGNED) AND s.id > 0
                   WHERE co.client_id = ? LIMIT 1", [$u['id']]);
-      if ($r2 && !empty($r2['oid'])) $officeId = $r2['oid'];
+      if ($r2 && !empty($r2['oid'])) { $officeId = $r2['oid']; $officeSource = 'pwa'; }
     } catch (Throwable $e) { /* tables legacy PWA absentes — repli ignoré */ }
   }
   if (!$officeId && !empty($u['email'])) {
@@ -7345,7 +7363,7 @@ function user_payload($id) {
                   WHERE e.email = ? AND e.active = 1 AND o.active = 1
                   ORDER BY (o.status = 'validated') DESC LIMIT 1",
                 [strtolower(trim($u['email']))]);
-      if ($r3 && !empty($r3['oid'])) $officeId = $r3['oid'];
+      if ($r3 && !empty($r3['oid'])) { $officeId = $r3['oid']; $officeSource = 'email'; }
     } catch (Throwable $e) { /* table absente — repli ignoré */ }
   }
   // Site de livraison lié côté PWA : le « bureau » de la PWA est un site
@@ -7390,6 +7408,9 @@ function user_payload($id) {
     'webshopUser' => (bool) ($u['webshop_user'] ?? 0),
     'pwaUser' => (bool) ($u['pwa_user'] ?? 0),
     'officeId' => $officeId,
+    // 'client' = client.office_id · 'pwa' = liaison PWA · 'email' = adresse
+    // inscrite dans une entreprise (seule source que « Délier » ne coupe pas).
+    'officeSource' => $officeSource,
     'officeSite' => $officeSite,
     'preferredShopId' => $u['preferred_shop_id'] ?? null,
     'lang' => $u['locale'] ?? ($u['preferred_lang'] ?? 'fr'),
