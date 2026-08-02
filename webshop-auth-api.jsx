@@ -27,6 +27,14 @@
   const api = {
     endpoint: null,
 
+    /* En-têtes d'authentification, PARTAGÉS. L'authentification est par jeton
+       Bearer, jamais par cookie : un module qui appelle un endpoint protégé
+       sans cet en-tête reçoit 401 quoi qu'il arrive, même client connecté.
+       C'était le cas de WSOffices.contactFranchise, d'où « Connectez-vous pour
+       demander un rattachement » sur une session parfaitement valide. La clé
+       du jeton reste privée ; seul son en-tête sort d'ici. */
+    authHeaders,
+
     /* ── Login (identifiant = email OU téléphone) ──────────────────── */
     // Go-live : SERVEUR UNIQUEMENT. Aucun repli sur un store local — un échec
     // réseau doit dire « réseau », jamais « identifiants incorrects » (le repli

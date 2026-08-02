@@ -11,6 +11,13 @@
     throw new Error('API bureaux non configurée — please debug.');
   }
 
+  /* L'API n'authentifie QUE par `Authorization: Bearer` (auth_uid() ne lit pas
+     de cookie) : `credentials: 'include'` ne transporte aucune session. Un
+     appel protégé sans cet en-tête renvoie donc 401 même pour un client
+     connecté — c'est ce qui rendait la demande de rattachement impossible. */
+  const authHeaders = () =>
+    (window.WSAuth && typeof window.WSAuth.authHeaders === 'function') ? window.WSAuth.authHeaders() : {};
+
   const api = {
     endpoint: null,
 
@@ -33,7 +40,7 @@
       try {
         const r = await fetch(api.endpoint + '/contact', {
           method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify(payload),
         });
         const j = await r.json().catch(() => ({}));
