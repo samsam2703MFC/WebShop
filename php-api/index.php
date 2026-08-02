@@ -6788,14 +6788,24 @@ function payment_label($m) {
    ws_shop_payment_options n'est créée par aucune migration : si la table est
    absente (cas du serveur live), on retombe sur les défauts au lieu de jeter
    une exception qui faisait échouer TOUTES les commandes en 500. */
+/* Moyens de paiement autorisés pour une boutique × un profil.
+   Le défaut ne s'applique QUE si la boutique n'a AUCUNE ligne pour ce profil —
+   c'est-à-dire si elle n'a jamais été configurée. Auparavant, le défaut
+   s'appliquait dès que la liste des lignes ACTIVES était vide : une boutique qui
+   désactivait tous ses moyens se les voyait donc rendre par le repli, et il était
+   impossible de fermer le paiement en ligne. Une configuration explicite doit
+   toujours l'emporter, y compris quand elle ne laisse rien. */
 function allowed_methods($shop, $profile) {
-  $rows = [];
   try {
-    if (row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_shop_payment_options'"))
-      $rows = rows("SELECT method FROM ws_shop_payment_options WHERE shop_id=? AND profile_type=? AND active=1 ORDER BY method", [$shop, $profile]);
-  } catch (Throwable $e) { $rows = []; }
-  if ($rows) return array_column($rows, 'method');
-  return $profile === 'company' ? ['stripe', 'deferred'] : ['stripe', 'shop']; // défaut
+    if (!row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_shop_payment_options'"))
+      return $profile === 'company' ? ['stripe', 'deferred'] : ['stripe', 'shop'];
+    $configuree = row("SELECT 1 x FROM ws_shop_payment_options WHERE shop_id=? AND profile_type=? LIMIT 1", [$shop, $profile]);
+    if (!$configuree) return $profile === 'company' ? ['stripe', 'deferred'] : ['stripe', 'shop'];
+    $rows = rows("SELECT method FROM ws_shop_payment_options WHERE shop_id=? AND profile_type=? AND active=1 ORDER BY method", [$shop, $profile]);
+    return array_column($rows, 'method');   // peut être vide : c'est un CHOIX de la boutique
+  } catch (Throwable $e) {
+    return $profile === 'company' ? ['stripe', 'deferred'] : ['stripe', 'shop'];
+  }
 }
 
 /* Shape client d'un customer. */
