@@ -6,6 +6,12 @@ Ce document est le contrat d'intégration. Il est maintenu dans le dépôt
 `samsam2703MFC/WebShop`, à côté de l'API qu'il décrit : toute évolution des
 endpoints doit être répercutée ici.
 
+> **Révision du 2 août 2026.** Le mode tablette à code PIN a été **retiré** du
+> back-office franchisé. La tablette est partagée par toute l'équipe du magasin :
+> elle ne demande donc **aucune connexion personnelle**. Elle est configurée une
+> fois avec une URL et un **jeton d'appareil**. Les sections « Authentification »
+> et « Contrat d'API » ci-dessous ont été refaites en conséquence.
+
 ---
 
 ## 0. La pile en place (relevée dans le dépôt)
@@ -42,7 +48,7 @@ Le mode détermine les menus affichés dans `sidebar.twig`.
 | **Production** | les menus de production |
 | **WebShop** | l'ensemble des menus WebShop (back-office franchisé) |
 
-Le mode est un **réglage de l'appareil**, pas de l'utilisateur : la tablette de
+Le mode est un **réglage de l'appareil**, pas d'un utilisateur : la tablette de
 la cuisine reste en Production, celle du comptoir en WebShop. Il doit survivre au
 redémarrage et être modifiable sans réinstallation.
 
@@ -80,43 +86,63 @@ Trois façons, par ordre de préférence :
 2. **Redirection** vers l'URL.
 3. **Lien externe** — dernier recours, expérience dégradée sur tablette.
 
-Le back-office gère déjà **tout** ce qui suit, il n'y a rien à réécrire : pavé
-PIN, filtrage du menu par profil, cloisonnement à la boutique, révocation
-immédiate, anti-brute-force.
-
----
-
-## 3. Authentification — le point critique
-
-Le back-office franchisé n'accepte que deux identités :
-
-| Identité | En-tête HTTP | Portée |
-|---|---|---|
-| **Jeton admin ERP** | `X-Admin-Token: <jeton>` | tout, toutes les boutiques |
-| **Session tablette (PIN)** | `X-Pin-Token: <jeton de session>` | **une** boutique, **les sections de son profil** |
-
-**La tablette doit utiliser une session PIN, jamais le jeton admin.** Ce jeton
-donne accès aux marges, aux coûts et aux paramètres réseau : il n'a rien à faire
-sur une tablette de comptoir, sous aucune forme.
-
-### Deux cas selon l'hébergement
-
-**Cas A — Kitchen est servi depuis le même hôte que le webshop.**
-Rien à faire : le back-office ouvert en `iframe` gère lui-même sa session PIN et
-la stocke dans `localStorage` (`boPinSession`). Kitchen n'a pas à connaître le
-PIN.
-
-**Cas B — Kitchen est sur une autre origine.**
-`localStorage` n'est pas partagé :
-- **B1 (simple, recommandé)** : laisser le back-office demander le PIN dans
-  l'iframe. Une saisie par service (session de 12 h).
-- **B2 (intégré)** : Kitchen fait lui-même le `pin-login` et transmet le jeton.
-  Voir §5.
-
 ⚠️ En iframe, vérifier que le serveur n'envoie pas `X-Frame-Options: DENY` ni un
 `Content-Security-Policy: frame-ancestors` restrictif sur
 `/webshop/backoffice_franchisee/`. Si c'est le cas, l'ajustement se fait côté
 serveur web du webshop — le signaler, ne pas contourner côté client.
+
+---
+
+## 3. Authentification : l'appareil, pas la personne
+
+**Il n'y a aucune connexion personnelle.** La tablette est posée dans le magasin
+et sert à toute l'équipe ; lui demander un identifiant à chaque geste n'aurait
+pas de sens.
+
+L'identité, c'est **l'appareil**. Le franchisé configure la tablette une fois
+avec deux valeurs, disponibles dans son back-office sous
+**Réglages › Tablette Kitchen** :
+
+| Réglage | Exemple |
+|---|---|
+| **URL du back-office** | `https://<hôte>/webshop/backoffice_franchisee/?shop=2` |
+| **Jeton d'appareil** | 64 caractères hexadécimaux |
+
+Le jeton est transmis à chaque appel dans l'en-tête :
+
+```http
+X-Device-Token: <jeton>
+```
+
+### Ce que ce jeton est — et n'est pas
+
+- Il vaut pour **une seule boutique**. Le paramètre `?shop=` ne peut pas
+  l'élargir : le serveur impose la boutique du jeton.
+- Sa portée est une **liste blanche de six écrans de comptoir** (voir §5). Tout
+  le reste est refusé — y compris un endpoint ajouté plus tard, puisque ce qui
+  n'est pas listé est fermé par défaut.
+- **Ce n'est pas le jeton administrateur ERP.** Celui-ci donne accès aux marges,
+  aux coûts et aux paramètres réseau : il n'a rien à faire sur une tablette de
+  comptoir, sous aucune forme. Ne jamais le stocker dans Kitchen.
+- Il est **révocable immédiatement** depuis le back-office. C'est le seul moyen
+  de contrôle en cas de tablette perdue ou volée — d'où l'importance de ne pas
+  le recopier ailleurs.
+
+### Une conséquence à connaître
+
+Un appareil partagé sans identification personnelle signifie qu'**aucune action
+n'est attribuable à quelqu'un** : changer le statut d'une commande ou ajuster un
+stock est tracé comme venant de la tablette, pas d'une personne. C'est le choix
+assumé pour ce poste. Si un jour l'attribution devient nécessaire (litige,
+inventaire), il faudra ajouter une identification — pas contourner celle-ci.
+
+### Cas particulier de l'iframe
+
+Si Kitchen est servi **depuis le même hôte** que le webshop, le back-office
+ouvert en iframe fonctionne tel quel une fois le jeton configuré côté serveur.
+
+Si Kitchen est sur **une autre origine**, le jeton doit accompagner les appels :
+Kitchen fait alors les requêtes lui-même (§5) plutôt que de déléguer à l'iframe.
 
 ---
 
@@ -127,94 +153,55 @@ serveur web du webshop — le signaler, ne pas contourner côté client.
 - Trois valeurs exclusives : `gestion` · `production` · `webshop`.
 - Défaut : **`production`** — ne pas changer le comportement des tablettes déjà
   en service.
-- Changer de mode **ne doit pas** déconnecter l'utilisateur Kitchen.
-- Le mode `webshop` doit être **désactivable** : sans URL de back-office ou sans
-  id de boutique configuré, l'option est grisée **avec la raison affichée** —
-  pas d'écran blanc, pas de menu qui ne mène nulle part (le menu Production
-  désactivé de `sidebar.twig` est un bon modèle visuel : `opacity:.5` +
-  `pointer-events:none` + badge).
+- Changer de mode **ne doit pas** redémarrer l'application ni perdre l'état.
+- Le mode `webshop` doit être **désactivable** : sans URL ni jeton configurés,
+  l'option est grisée **avec la raison affichée** — pas d'écran blanc, pas de
+  menu qui ne mène nulle part (le menu Production désactivé de `sidebar.twig`
+  est un bon modèle visuel : `opacity:.5` + `pointer-events:none` + badge).
 
-Ajouter deux réglages d'appareil : **« URL du back-office WebShop »** et
-**« Boutique (id) »**. L'id de boutique est indispensable : il détermine ce que
-la tablette voit.
+Ajouter donc deux réglages d'appareil : **« URL du back-office WebShop »** et
+**« Jeton d'appareil »**. L'id de boutique est porté par l'URL et par le jeton ;
+il n'y a rien de plus à saisir.
 
 Ajouter les clés de traduction correspondantes (le menu est en polonais) :
 `mode_gestion`, `mode_production`, `mode_webshop`, `webshop`,
-`webshop_not_configured`.
+`webshop_not_configured`, `device_token`, `backoffice_url`.
+
+⚠️ Le jeton est un secret : ne jamais l'écrire dans un log, une URL, un
+paramètre de requête, ni l'afficher en clair ailleurs que dans son champ de
+réglage.
 
 ---
 
-## 5. Contrat d'API — seulement pour B2 ou des écrans natifs
+## 5. Contrat d'API — pour des écrans natifs Kitchen
 
 Base : `<origine du webshop>/webshop/api`
+En-tête sur **tous** les appels : `X-Device-Token: <jeton>`
 
-### Ouvrir une session PIN
+Six endpoints sont ouverts au jeton d'appareil. Les autres répondent **403**.
 
-```http
-POST /bo/pin-login
-Content-Type: application/json
+| Endpoint | Contenu |
+|---|---|
+| `GET /franchisee/me` | identité de la boutique — à appeler au démarrage pour valider le jeton |
+| `GET /franchisee/fr-orders` | commandes du jour et à venir |
+| `POST /franchisee/order-status` | préparation → prête → livrée |
+| `GET /franchisee/fr-stock-catalog` | stock du jour par catégorie |
+| `POST /franchisee/stock-adjust` | ajuster une quantité |
+| `GET /franchisee/kpis` | indicateurs du tableau de bord |
 
-{ "shopId": 2, "pin": "1234" }
-```
+**À appeler au démarrage** : `GET /franchisee/me`. Un **403** signifie que le
+jeton a été révoqué — la tablette doit alors afficher l'écran de configuration
+et **cesser d'afficher les données en cache**, qui ne sont plus les siennes.
 
-Réponse `200` :
-```json
-{ "ok": true, "token": "…64 caractères…", "nom": "Julie D.",
-  "shopId": 2, "sections": ["tdb","commandes","stockJour","creneaux"],
-  "expireDans": 43200 }
-```
+Deux règles appliquées **côté serveur**, à ne pas réimplémenter :
 
-Erreurs : `401 PIN incorrect` · `403 Aucun profil actif sur ce compte` ·
-`503 Comptes tablette non configurés` · **8 tentatives / 5 min par IP**.
+- le paramètre `?shop=` est **ignoré** — la boutique du jeton fait foi ;
+- un endpoint hors de la liste blanche renvoie **403** avec le nom de l'écran
+  refusé.
 
-### Vérifier la session
-
-```http
-GET /bo/pin-me
-X-Pin-Token: <token>
-```
-
-Renvoie `nom`, `shopId`, `profil`, `sections`. **À appeler au démarrage** :
-c'est ce qui ferme la tablette quand un compte est désactivé côté marque, sans
-attendre les 12 h. Un `401` ⇒ retour au pavé PIN.
-
-### Fermer la session
-
-```http
-POST /bo/pin-logout
-X-Pin-Token: <token>
-```
-
-### Lire les données métier
-
-Toutes les routes `/franchisee/*` acceptent `X-Pin-Token`. Deux règles
-appliquées **côté serveur**, à ne pas réimplémenter :
-
-- le paramètre `?shop=` est **ignoré** pour une session PIN — la boutique de la
-  session fait foi ; inutile de le forger ;
-- un endpoint hors des sections du profil renvoie **403** avec le nom de la
-  section manquante.
-
-Endpoints utiles pour un écran comptoir :
-
-| Endpoint | Section requise | Contenu |
-|---|---|---|
-| `GET /franchisee/fr-orders` | `commandes` | commandes du jour et à venir |
-| `POST /franchisee/order-status` | `commandes` | préparation → prête → livrée |
-| `GET /franchisee/fr-stock-catalog` | `stockJour` | stock du jour par catégorie |
-| `POST /franchisee/stock-adjust` | `stockJour` | ajuster une quantité |
-| `GET /franchisee/kpis` | `tdb` | indicateurs du tableau de bord |
-| `GET /franchisee/me` | libre | identité de la boutique |
-
-### Profils et sections
-
-Les **profils** (`bo_role`) sont définis par la marque dans sa console ; le
-**franchisé** les attribue à ses comptes tablette. Les 37 sections sont
-groupées en : Pilotage · Vente · Logistique · Clients B2B · Disponibilité ·
-Réglages.
-
-**Kitchen ne doit ni créer ni modifier de profil ou de compte** : ces routes sont
-réservées au jeton admin ERP.
+**Kitchen ne doit ni créer ni révoquer de jeton** : `/franchisee/device-token`
+est réservé au jeton admin ERP. La tablette reçoit son jeton, elle ne se le
+délivre pas.
 
 ---
 
@@ -226,27 +213,34 @@ réservées au jeton admin ERP.
 Concrètement ici :
 - pas de liste de commandes de démonstration si l'API ne répond pas — un message
   d'erreur explicite ;
-- pas de « mode dégradé » affichant un menu WebShop vide : sans session PIN, on
-  montre le pavé PIN ou la raison du refus ;
-- un échec réseau dit « réseau », jamais « aucune donnée ».
+- pas de « mode dégradé » affichant un menu WebShop vide : sans jeton valide, on
+  montre l'écran de configuration ou la raison du refus ;
+- un échec réseau dit « réseau », jamais « aucune donnée » ;
+- un appel qui échoue doit **le dire** : ne jamais avaler une erreur HTTP. Un
+  statut ≠ 2xx n'est pas une exception en JavaScript ni en PHP — il faut le
+  tester explicitement. Plusieurs défauts sérieux du webshop venaient exactement
+  de là.
 
 ---
 
 ## 7. Critères d'acceptation
 
 - [ ] Les paramètres proposent les trois modes ; le choix survit au redémarrage.
+- [ ] Les paramètres acceptent l'**URL** et le **jeton d'appareil**, et les
+      conservent après redémarrage.
 - [ ] Mode **Production** : comportement actuel **inchangé** (c'est le défaut).
 - [ ] Mode **Gestion** : dashboard, KPI, checklists, connaissances, réclamations,
       contrôle qualité.
-- [ ] Mode **WebShop** : ouvre le back-office franchisé de **la boutique
-      configurée**.
-- [ ] Sans URL ou sans id de boutique, l'option WebShop est grisée **avec la
-      raison affichée**.
-- [ ] Un compte au profil **Vendeur** ne voit que ses 4 sections.
-- [ ] Désactiver ce compte côté back-office ferme la tablette au rechargement.
+- [ ] Mode **WebShop** : ouvre le back-office franchisé de la boutique du jeton,
+      **sans demander la moindre connexion**.
+- [ ] Sans URL ou sans jeton, l'option WebShop est grisée **avec la raison
+      affichée**.
+- [ ] Un jeton **révoqué** renvoie la tablette à l'écran de configuration au
+      démarrage suivant, et les données en cache ne sont plus affichées.
 - [ ] Le **jeton admin ERP n'apparaît nulle part** dans Kitchen (ni code, ni
       config, ni log, ni stockage).
-- [ ] Changer de mode ne déconnecte pas l'utilisateur Kitchen.
+- [ ] Le **jeton d'appareil** n'apparaît ni dans une URL, ni dans un log.
+- [ ] Changer de mode ne perd pas l'état de l'application.
 - [ ] `sidebar.twig` n'affiche aucune entrée morte dans un mode donné.
 
 ---
@@ -255,8 +249,10 @@ Concrètement ici :
 
 - Reconstruire les écrans du back-office — sauf demande explicite après
   chiffrage des 37 sections.
+- Ajouter une connexion personnelle (PIN, mot de passe) : la tablette est
+  partagée, c'est un choix assumé. Si l'attribution des actions devient
+  nécessaire, c'est une décision produit, pas un ajout discret.
 - Stocker le jeton admin ERP dans la tablette, sous quelque forme que ce soit.
-- Réimplémenter le filtrage par sections côté Kitchen : il est appliqué par le
+- Réimplémenter la liste blanche côté Kitchen : elle est appliquée par le
   serveur ; un filtrage client seul serait contournable.
-- Écrire le PIN dans un log, une URL ou un stockage local.
 - Toucher aux menus Production existants : ils sont hors périmètre.
