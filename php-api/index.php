@@ -6136,44 +6136,12 @@ function dispatch($m, $p) {
          RÉELLEMENT, l'incompatibilité est refusée AVANT le moindre DELETE, et
          l'ensemble tient dans une transaction — un INSERT qui échoue restitue
          l'état d'origine. */
-      if ($tbl === 'b2b_client_company_department' && $tblExists('b2b_client_company_department')) {
-        $T = 'b2b_client_company_department';
-        $keyCol  = col_exists($T, 'client_id') ? 'client_id' : (col_exists($T, 'id_client') ? 'id_client' : null);
-        $nameCol = col_exists($T, 'name') ? 'name' : (col_exists($T, 'dept') ? 'dept' : null);
-        if (!$keyCol || !$nameCol)
-          json_out(['ok' => false, 'mode' => 'typed', 'error' =>
-            "Schéma de $T incompatible (client_id/id_client et name/dept introuvables) — écriture refusée, aucune donnée touchée."], 501);
-
-        // Colonnes facultatives : seules celles présentes sont écrites.
-        $opt = [];
-        foreach (['company' => 'company', 'site' => 'site', 'office' => 'office',
-                  'effectif' => 'effectif', 'contact' => 'contact'] as $c => $src)
-          if (col_exists($T, $c)) $opt[$c] = $src;
-
-        $cols = array_merge([$keyCol, $nameCol], array_keys($opt));
-        $sql  = "INSERT INTO $T (" . implode(', ', $cols) . ") VALUES ("
-              . implode(', ', array_fill(0, count($cols), '?')) . ")";
-        $pdo2 = db();
-        $own  = !$pdo2->inTransaction();
-        if ($own) $pdo2->beginTransaction();
-        try {
-          q("DELETE FROM $T");
-          foreach ($rows2 as $r) {
-            $vals = [(string) ($r['client_id'] ?? ($r['id_client'] ?? '—')),
-                     (string) ($r['dept'] ?? ($r['name'] ?? '—'))];
-            foreach ($opt as $c => $src) {
-              if ($c === 'effectif') { $vals[] = (int) ($r['effectif'] ?? 1); continue; }
-              $vals[] = $r[$src] ?? null;
-            }
-            q($sql, $vals);
-          }
-          if ($own) $pdo2->commit();
-        } catch (Throwable $e) {
-          if ($own && $pdo2->inTransaction()) $pdo2->rollBack();
-          json_out(['ok' => false, 'mode' => 'typed', 'error' =>
-            "Écriture de $T annulée (aucune donnée perdue) : " . $e->getMessage()], 500);
-        }
-        json_out(['ok' => true, 'mode' => 'typed', 'n' => count($rows2)]);
+      if ($tbl === 'b2b_client_company_department') {
+        json_out(['ok' => false, 'mode' => 'refused', 'error' =>
+          'Les départements B2B ne s’écrivent pas depuis l’overlay du back-office : '
+          . 'la table ERP est rattachée à un client par id_client (entier), alors que le BO '
+          . 'ne dispose que d’un code local inventé. Ils sont écrits par /franchisee/onboard-office, '
+          . 'rattachés au client réellement créé.'], 409);
       }
       if ($tbl === 'ws_tour_closures' && $tblExists('ws_tour_closures')) {
         // DELETE scopé BOUTIQUE : ne jamais effacer les fermetures des autres
@@ -6805,11 +6773,35 @@ function dispatch($m, $p) {
           [$officeId, $raison . ' — ' . ((string) ($b['office'] ?? 'Site')), (string) ($b['adr'] ?? ''),
            (string) ($b['etage'] ?? ''), $tourId, (float) ($b['acc'] ?? 6)]);
       }
-      if (!empty($b['departements']) && is_array($b['departements']) && $tblExists('b2b_client_company_department')) {
-        foreach ($b['departements'] as $d) {
-          q("INSERT INTO b2b_client_company_department (client_id, company, site, office, name, effectif, contact) VALUES (?,?,?,?,?,?,?)",
-            ['OF-' . $officeId, $raison, (string) ($b['adr'] ?? ''), (string) ($b['office'] ?? ''),
-             (string) ($d['dept'] ?? '—'), (int) ($d['effectif'] ?? 1), (string) ($b['contactEmail'] ?? '')]);
+      /* Départements B2B. L'INSERT écrivait SEPT colonnes (client_id, company,
+         site, office, name, effectif, contact) dans une table ERP qui n'en a
+         que trois — id, id_client, name — et posait « OF-<id> » dans id_client,
+         qui est un ENTIER. Il ne pouvait donc jamais aboutir. Les colonnes
+         écrites sont désormais celles qui existent, et le rattachement se fait
+         au client réellement créé, jamais à un code fabriqué.
+         Sans client réel, on n'écrit rien : une ligne rattachée à un id
+         approximatif est pire qu'une ligne absente. */
+      if (!empty($b['departements']) && is_array($b['departements'])
+          && $tblExists('b2b_client_company_department') && !empty($newClientId)) {
+        $DT   = 'b2b_client_company_department';
+        $dKey = col_exists($DT, 'id_client') ? 'id_client' : (col_exists($DT, 'client_id') ? 'client_id' : null);
+        $dNam = col_exists($DT, 'name') ? 'name' : (col_exists($DT, 'dept') ? 'dept' : null);
+        if ($dKey && $dNam) {
+          $dOpt = [];
+          foreach (['company' => $raison, 'site' => (string) ($b['adr'] ?? ''),
+                    'office' => (string) ($b['office'] ?? ''),
+                    'contact' => (string) ($b['contactEmail'] ?? '')] as $c => $v)
+            if (col_exists($DT, $c)) $dOpt[$c] = $v;
+          $hasEff = col_exists($DT, 'effectif');
+          $dCols  = array_merge([$dKey, $dNam], array_keys($dOpt), $hasEff ? ['effectif'] : []);
+          $dSql   = "INSERT INTO $DT (" . implode(', ', $dCols) . ") VALUES ("
+                  . implode(', ', array_fill(0, count($dCols), '?')) . ")";
+          foreach ($b['departements'] as $d) {
+            $dVals = array_merge([(int) $newClientId, (string) ($d['dept'] ?? '—')], array_values($dOpt));
+            if ($hasEff) $dVals[] = (int) ($d['effectif'] ?? 1);
+            try { q($dSql, $dVals); }
+            catch (Throwable $e) { /* un département refusé ne doit pas annuler le bureau */ }
+          }
         }
       }
       $voucherCreated = false;
