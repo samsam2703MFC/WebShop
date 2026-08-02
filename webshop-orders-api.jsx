@@ -42,7 +42,14 @@
         // L'API renvoie {error:"…", detail:"…"} — on AFFICHE la cause réelle
         // (avant : « Erreur 500 » générique alors que le motif était dans la réponse).
         const base = (typeof j.error === 'string' && j.error) ? j.error : (j.error?.message || `Erreur ${r.status}`);
-        throw new Error(base + (j.detail ? (' — ' + j.detail) : ''));
+        // « Stock insuffisant » sans nom de produit est inutilisable sur un
+        // panier de dix lignes : le client ne sait pas quoi retirer. Le serveur
+        // renvoie product et available — on les affiche.
+        const quoi = j.product ? ` : « ${j.product} »` : '';
+        const reste = (typeof j.available === 'number')
+          ? (j.available > 0 ? ` (il en reste ${j.available})` : ' (il n\'en reste aucune)')
+          : '';
+        throw new Error(base + quoi + reste + (j.detail ? (' — ' + j.detail) : ''));
       }
       // Go-live : plus de simulation de commande. Sans API configurée, on
       // refuse — une commande ne peut jamais « réussir » à blanc.

@@ -102,7 +102,17 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ productId, shopId, date: iso, mode, qty, customerId }),
       });
-      if (!r.ok) throw new Error('Réservation de stock impossible (HTTP ' + r.status + ').');
+      // Le serveur dit PRECISEMENT ce qui bloque — « Stock insuffisant », avec
+      // le disponible restant. Remplacer ce message par « HTTP 409 » privait le
+      // client de la seule information utile : combien il peut encore prendre.
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        const msg = (j && typeof j.error === 'string' && j.error) ? j.error : ('Réservation impossible (HTTP ' + r.status + ')');
+        const dispo = (j && typeof j.available === 'number')
+          ? (j.available > 0 ? ` — il reste ${j.available} pièce${j.available > 1 ? 's' : ''}` : ' — il n\'en reste aucune')
+          : '';
+        throw new Error(msg + dispo);
+      }
       return await r.json();
     },
 
