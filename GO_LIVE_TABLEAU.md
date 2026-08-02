@@ -26,6 +26,8 @@ compléter · ⚪ décision à prendre · ✅ validé
 | T12.4 | Test | Abandon et échec de paiement Stripe | 🔴 | **oui** | T5 | commande non confirmée, **stock libéré** |
 | T12.5 | Test | Paiement avec bon de réduction | 🔴 | oui | T3 | montant envoyé à Stripe = total après remise |
 | T12.6 | Test | Aucun moyen configuré | 🔴 | non | — | écran d'erreur explicite, commande impossible |
+| A4 | Dév | **Confirmation du paiement Stripe** — rien ne marque une commande « payée » | ⛔ | **oui** (si carte ouverte) | — | aucun webhook ni vérification au retour : `payment_status` reste `pending` à vie |
+| P8 | Process | `checkout_success` pointe vers GitHub Pages par défaut | ⚪ | oui (si carte) | A4 | vérifier `api/config.php` sur le serveur : après paiement, le client doit revenir sur la boutique |
 | A1 | Dév | Écran **Profils tablette** (console marque) | ⛔ | oui (T6) | — | API prête : `bo-roles`, `bo-role`, `bo-roles-init` |
 | A2 | Dév | Écran **Comptes tablette** (BO franchisé) | ⛔ | oui (T6) | — | API prête : `bo-users`, `bo-user`, `bo-roles` |
 | A3 | Dév | **Vue chauffeur** + endpoints de validation d'arrêt | ⛔ | non | — | tout est à faire : arrêts, QR/PIN/signature, positions |
@@ -59,6 +61,7 @@ compléter · ⚪ décision à prendre · ✅ validé
 | T1–T5 | Flows qui touchent à l'argent | rattachement, livraison, bon, paiement, stock |
 | T12 | Matrice des paiements | c'est l'encaissement : un moyen mal proposé ou mal libellé se voit en litige client |
 | T12.4 | Abandon / échec Stripe | cas le plus rarement testé : un abandon qui laisse du stock réservé bloque la vente pour tout le monde |
+| A4 | Paiement Stripe jamais confirmé | le stock est décrémenté à la commande ; sans confirmation, une carte abandonnée et une carte payée sont indiscernables |
 
 ---
 
