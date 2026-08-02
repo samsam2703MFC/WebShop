@@ -3122,6 +3122,13 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const [forceAuth, setForceAuth] = useState(false);
   const [paying, setPaying] = useState(false);
   const [payErr, setPayErr] = useState(null);
+  // Clé d'idempotence : STABLE tant que le tunnel reste ouvert, renouvelée à
+  // chaque réouverture. Deux clics — ou un renvoi après une erreur réseau —
+  // portent donc la même clé, et le serveur renvoie la commande déjà créée au
+  // lieu d'en enregistrer une seconde.
+  const newPayKey = () => 'ws-' + Date.now().toString(36) + '-' +
+    Math.random().toString(36).slice(2, 10);
+  const [payKey, setPayKey] = useState(newPayKey);
 
   // Guest contact (collect only)
   const [contact, setContact] = useState({ firstName: '', lastName: '', email: '', phone: '' });
@@ -3177,10 +3184,21 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   useEffect(() => {
     if (open) {
       setStep(1); setSlot(null); setInvoice(false); setVat(''); setForceAuth(false); setPaying(false); setPayErr(null);
+      setPayKey(newPayKey());
       setOrderNote(''); setPoNumber(''); setCompanyId(''); setOnAccount(false);
       setPayment((deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : '');
     }
   }, [open]);
+
+  // Moyens de paiement : chargés ICI, AVANT tout return conditionnel — un hook
+  // placé après « if (!open) return null » change le nombre de hooks entre deux
+  // rendus, ce que React refuse (écran blanc à l'ouverture du tunnel).
+  // Le profil est recalculé en ligne : companyId/user suffisent, et les valeurs
+  // dérivées plus bas ne sont pas encore disponibles à ce point du composant.
+  const paymentMethods = usePaymentMethods(
+    shop && shop.id, mode, deliveryFeeResult,
+    companyId ? 'company' : (user ? 'registered' : 'guest'),
+    companyId || null);
 
   if (!open) return null;
 
@@ -3199,11 +3217,6 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const isB2B = companies.length > 0 || !!(user && user.companyClientId);
   // Profil de paiement : société (companyId) > enregistré (user) > visiteur (guest).
   const checkoutProfile = companyId ? 'company' : (user ? 'registered' : 'guest');
-  // La liste des moyens de paiement est chargée ICI (et non plus seulement dans
-  // l'étape 3) : le récapitulatif de commande a besoin du LIBELLÉ du moyen
-  // choisi. Une seule source, un seul appel — l'étape 3 la reçoit en prop.
-  const paymentMethods = usePaymentMethods(shop && shop.id, mode, deliveryFeeResult, checkoutProfile, companyId || null);
-
   // Step 1 validity
   function step1Valid() {
     if (isOffice) return true;             // all read-only, valid
@@ -3226,6 +3239,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       const deliveryDate = date instanceof Date ? isoFn(date) : (date || null);
       const payload = {
         shopId: shop && shop.id,
+        requestKey: payKey,
         mode,
         deliveryDate,
         slot: typeof slot === 'object' && slot

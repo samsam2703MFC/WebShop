@@ -1578,6 +1578,27 @@ function dispatch($m, $p) {
     $b = body();
     $shop = $b['shopId'] ?? null; $basket = $b['basket'] ?? [];
     if (!$shop || !is_array($basket) || !count($basket)) json_out(['error' => 'shopId et basket requis'], 400);
+
+    /* ── IDEMPOTENCE ──────────────────────────────────────────────────────────
+       Une clé stable par TENTATIVE de commande. Si elle est déjà connue, on
+       renvoie la commande existante au lieu d'en créer une seconde.
+       Constaté en test : trois commandes identiques pour un seul panier — la
+       commande était enregistrée, mais l'appelant recevait une erreur APRÈS
+       l'enregistrement, donc il recliquait. Le même scénario survient sans
+       aucun bug : coupure réseau sur la réponse, onglet rechargé, double-clic.
+       Sans cette garde, chaque tentative recompte le bon et redécrémente le
+       stock. ── */
+    $reqKey = preg_replace('/[^A-Za-z0-9_\-]/', '', (string) ($b['requestKey'] ?? ''));
+    $reqKey = $reqKey !== '' ? mb_substr($reqKey, 0, 64) : null;
+    if ($reqKey !== null && col_exists('ws_orders', 'request_key')) {
+      $dejaVu = row("SELECT id, order_ref, total FROM ws_orders WHERE request_key = ? LIMIT 1", [$reqKey]);
+      if ($dejaVu) {
+        json_out(['ok' => true, 'orderId' => (int) $dejaVu['id'], 'orderRef' => $dejaVu['order_ref'],
+                  'total' => (float) $dejaVu['total'], 'deduplique' => true]);
+      }
+    } else {
+      $reqKey = null;   // colonne non migrée : on n'écrit rien
+    }
     $mode = $b['mode'] ?? 'collect';
     $dl = is_array($b['delivery'] ?? null) ? $b['delivery'] : [];
     $note = isset($b['note']) ? mb_substr((string) $b['note'], 0, 500) : null;  // note commande
@@ -1979,6 +2000,8 @@ function dispatch($m, $p) {
         'free_delivery_minimum' => $freeMin, 'po_number' => $poNumber, 'invoice_requested' => $invRequested, 'invoice_vat' => $invVat,
         // Source AUTOMATIQUE : toute commande passée ici vient du webshop.
         'source' => 'webshop',
+        // Clé d'idempotence de la tentative (voir garde en tête du handler).
+        'request_key' => $reqKey,
       ];
       $ordIns = [];
       foreach ($ordVals as $c => $v) if (col_exists('ws_orders', $c)) $ordIns[$c] = $v;
