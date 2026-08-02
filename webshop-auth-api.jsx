@@ -252,7 +252,10 @@
           const r = await fetch(`${api.endpoint}/me`, { credentials: 'include', headers: authHeaders() });
           if (r.ok) { const j = await r.json(); return j.user || j || null; }
           if (r.status === 401) setToken(null); // stale/expired token
-        } catch (_) {}
+          // Toute autre réponse était avalée : une session perdue pour cause de
+          // panne serveur ressemblait trait pour trait à « pas de session ».
+          else console.error('[auth] session non restaurée — /me a répondu HTTP ' + r.status);
+        } catch (e) { console.error('[auth] session non restaurée — /me injoignable', e); }
         return null;
       }
       return null; // No session in demo mode

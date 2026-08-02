@@ -4079,6 +4079,22 @@ function ShopFrame({ variant }) {
     }).catch(() => {});
     return () => { alive = false; };
   }, []);
+  // Restauration de la session au chargement. Le jeton était bien écrit dans
+  // localStorage à la connexion et WSAuth.me() existait pour le revalider, mais
+  // RIEN ne l'appelait : après le moindre rechargement, le client redevenait
+  // invité — aucun maintien de stock, et un checkout traité en visiteur alors
+  // qu'il a un compte.
+  React.useEffect(() => {
+    let alive = true;
+    // Un ?handoff en cours ouvre lui-même la session : ne pas courir contre lui.
+    let hasHandoff = false;
+    try { hasHandoff = !!new URLSearchParams(window.location.search).get('handoff'); } catch (_) {}
+    if (hasHandoff || !window.WSAuth || typeof window.WSAuth.me !== 'function') return;
+    Promise.resolve(window.WSAuth.me())
+      .then((u) => { if (alive && u && u.id) setUser(u); })
+      .catch((e) => console.error('[auth] session non restaurée', e));
+    return () => { alive = false; };
+  }, []);
   const [officeSlots, setOfficeSlots] = React.useState([]);
   const [slotCta, setSlotCta] = React.useState(null);
   const [selectedSlot, setSelectedSlot] = React.useState(null);
