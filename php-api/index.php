@@ -6724,11 +6724,20 @@ function dispatch($m, $p) {
         $tr = row("SELECT id FROM ws_tours WHERE name=? LIMIT 1", [(string) $b['tour']]);
         if ($tr) $tourId = (int) $tr['id'];
       }
+      /* Le bureau naît NON VALIDÉ. Il était créé d'office en status='validated'
+         et active=1 : un bureau ouvert à la livraison dès l'enregistrement,
+         quels que soient les champs restés vides — et notamment quand il est
+         créé à la volée depuis une demande de rattachement client, où l'on ne
+         connaît souvent que le nom et un téléphone.
+         La validation est la porte qui ouvre la livraison bureau : c'est
+         /delivery-fees/sites qui la contrôle. La franchir automatiquement à la
+         création la vide de son sens. Elle redevient un geste explicite du
+         franchisé, une fois la fiche complète. */
       q("INSERT INTO ws_offices (tour_id, name, address, postal_code, city, contact, email, phone, vat, status, deferred_billing_enabled, drop_minutes, active" . ($obShop ? ", shop_id" : "") . ")
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1" . ($obShop ? "," . (int) $obShop : "") . ")",
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0" . ($obShop ? "," . (int) $obShop : "") . ")",
         [$tourId, $raison, (string) ($b['adr'] ?? ''), $obZip, $obLoc, (string) ($b['contactNom'] ?? ''),
          (string) ($b['contactEmail'] ?? ''), (string) ($b['contactTel'] ?? ''), (string) ($b['tva'] ?? ''),
-         'validated', (stripos((string) ($b['paiement'] ?? ''), 'compt') === false) ? 1 : 0,
+         'pending', (stripos((string) ($b['paiement'] ?? ''), 'compt') === false) ? 1 : 0,
          (float) ($b['drop'] ?? 5)]);
       $officeId = (int) db()->lastInsertId();
       // Ligne CLIENT (table ERP) — sans elle le nouveau bureau n'apparaît
