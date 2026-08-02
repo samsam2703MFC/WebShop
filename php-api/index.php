@@ -2128,10 +2128,27 @@ function dispatch($m, $p) {
             WHERE product_id=? AND shop_id=? AND date=? AND (mode=? OR mode IS NULL)",
           [$l['qty'], $l['productId'], $shop, $stockDate, $mode]);
         if ($stq->rowCount() === 0 && !empty($l['productId'])) {
-          q("INSERT INTO ws_product_stock (product_id, shop_id, date, mode, qty_total, qty_reserved, qty_sold, active)
-               VALUES (?,?,?,?,?,0,?,1)
-               ON DUPLICATE KEY UPDATE qty_sold = qty_sold + VALUES(qty_sold)",
-            [$l['productId'], $shop, $stockDate, $mode, (int) ($defQty($l['productId']) ?? 0), $l['qty']]);
+          // On ne crée la ligne QUE si un minimum hebdomadaire existe : elle
+          // porte alors un vrai plafond (« 10 par jour » = 10 vendables).
+          //
+          // Sans défaut, la créer avec qty_total = 0 rendait le produit
+          // INVENDABLE dès sa première vente : la ligne existait désormais, et
+          // le contrôle suivant lisait avail = GREATEST(0, 0 − 0 − 1) = 0 →
+          // « Stock insuffisant » pour tous les clients suivants, jusqu'au
+          // lendemain. Le produit comptait en plus comme une rupture dans
+          // l'alerte de seuil bas.
+          //
+          // « Aucun stock déclaré » veut dire SANS PLAFOND, pas « zéro ». Les
+          // deux ne doivent pas s'écrire de la même façon. La vente reste tracée
+          // là où elle l'a toujours été — ws_orders et ws_order_lines ; qty_sold
+          // ne compte que face à un stock déclaré, sinon il ne mesure rien.
+          $dqIns = $defQty($l['productId']);
+          if ($dqIns !== null) {
+            q("INSERT INTO ws_product_stock (product_id, shop_id, date, mode, qty_total, qty_reserved, qty_sold, active)
+                 VALUES (?,?,?,?,?,0,?,1)
+                 ON DUPLICATE KEY UPDATE qty_sold = qty_sold + VALUES(qty_sold)",
+              [$l['productId'], $shop, $stockDate, $mode, (int) $dqIns, $l['qty']]);
+          }
         }
       }
       if ($cap) q("UPDATE ws_slot_capacity SET current_orders = current_orders + 1, current_items = current_items + ? WHERE id=?", [$totalQty, $cap['id']]);
