@@ -845,9 +845,14 @@ function dispatch($m, $p) {
                 WHERE product_id=? AND shop_id=? AND date=? AND (mode=? OR mode IS NULL) LIMIT 1",
               [$pid, $shop, $day, $mode]);
     if ($st === null) {
-      // Aucune ligne de stock du jour : rien à tenir (le plafond hebdomadaire
-      // est appliqué au passage de commande). On ne fabrique pas de ligne ici.
-      json_out(['ok' => true, 'held' => 0, 'reason' => 'aucun stock du jour pour ce produit']);
+      // Aucune ligne de stock du jour : rien à tenir. Le plafond hebdomadaire
+      // (ws_product_stock_defaults) reste appliqué au passage de commande — on
+      // ne fabrique pas de ligne de stock ici, une réservation ne doit pas
+      // créer d'inventaire. La RAISON est renvoyée : côté client, une réponse
+      // « ok » sans réservation était indiscernable d'un échec silencieux.
+      json_out(['ok' => true, 'held' => 0,
+                'reason' => 'aucun stock du jour déclaré pour ce produit (produit ' . $pid
+                            . ', boutique ' . $shop . ', ' . $day . ', ' . $mode . ') — rien à tenir']);
     }
     $others = (int) (row("SELECT COALESCE(SUM(qty),0) AS q FROM ws_stock_reservation
                            WHERE product_id=? AND shop_id=? AND date=? AND mode=?

@@ -4515,6 +4515,13 @@ function ShopFrame({ variant }) {
     const iso = date instanceof Date ? isoLocal(date) : (date || '');
     window.WSCatalog.reserve({ productId, shopId, date: iso, mode, qty, customerId: user.id })
       .then((r) => {
+        // Trace systématique : le serveur peut répondre « ok » SANS avoir tenu
+        // quoi que ce soit (produit sans stock du jour → rien à tenir). Sans
+        // cette trace, une table de réservations vide restait inexplicable.
+        console.info('[stock] réponse réservation', r);
+        if (r && r.ok !== false && !r.reservationId) {
+          console.info('[stock] aucun maintien créé — raison :', (r && r.reason) || 'non précisée');
+        }
         setStockErr(r && r.ok === false ? (r.error || 'Stock non tenu — please debug.') : '');
         return refreshStock();
       })
