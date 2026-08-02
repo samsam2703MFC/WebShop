@@ -3603,8 +3603,19 @@ function dispatch($m, $p) {
          • à SES sections (bo_endpoint_section) — un endpoint non cartographié
            est refusé, jamais ouvert par défaut. */
     $pinSes = is_admin_request() ? null : bo_pin_session();
-    if (!$pinSes) {
+    // Troisième identité : le JETON D'APPAREIL de la tablette Kitchen. Il ne
+    // remplace pas le jeton admin — sa portée est une liste blanche explicite
+    // d'écrans de comptoir. Tout le reste (marges, coûts, réglages réseau,
+    // délivrance de jetons) lui est fermé, y compris si un endpoint est ajouté
+    // plus tard : ce qui n'est pas listé ici est refusé.
+    $devShop = ($pinSes || is_admin_request()) ? null : device_token_shop();
+    if (!$pinSes && !$devShop) {
       require_admin();
+    } elseif ($devShop) {
+      $DEVICE_ENDPOINTS = ['me', 'fr-orders', 'order-status', 'fr-stock-catalog', 'stock-adjust', 'kpis'];
+      $epName = substr($p, strlen('/franchisee/'));
+      if (!in_array($epName, $DEVICE_ENDPOINTS, true))
+        json_out(['error' => 'Écran non autorisé pour une tablette (' . $epName . ').'], 403);
     } else {
       $epName = substr($p, strlen('/franchisee/'));
       // /franchisee/save est l'écriture GÉNÉRIQUE de toutes les tables : la
@@ -3654,6 +3665,9 @@ function dispatch($m, $p) {
     // données d'une autre boutique avec un PIN local — et l'absence de ?shop=
     // donnait la vue réseau complète.
     if ($pinSes) $shopId = (int) $pinSes['shop_id'];
+    // Même règle pour la tablette Kitchen : le jeton vaut pour UNE boutique, le
+    // ?shop= de l'URL ne peut pas l'élargir.
+    if ($devShop) $shopId = (int) $devShop;
     // Fragment WHERE de portée pour une colonne shop (réseau → 1=1). $shopId est un int contrôlé.
     $scope = function ($col) use ($shopId) { return $shopId ? "$col = " . (int) $shopId : '1=1'; };
 
@@ -4170,6 +4184,45 @@ function dispatch($m, $p) {
     }
 
     // ── Liste clients : rattachement à un office (+ département facultatif). ──
+    /* ── Jeton d'appareil de la boutique (tablette Kitchen) ──────────────────
+       POST   génère un jeton et RÉVOQUE le précédent (un seul actif par
+              boutique) — il n'est renvoyé en clair QU'ICI, comme un mot de
+              passe : la base n'en garde que le SHA-256.
+       DELETE révoque le jeton actif — les tablettes qui l'utilisent sont
+              déconnectées à leur requête suivante.
+       GET    état du jeton actif (préfixe, dates), jamais le jeton lui-même.
+
+       Réservé au jeton admin ERP : une tablette ne se délivre pas ses propres
+       droits. Le bloc /franchisee/ est déjà sous require_admin(). ── */
+    if ($p === '/franchisee/device-token') {
+      if (!$tblExists('ws_shop_device_token'))
+        json_out(['ok' => false, 'error' => 'Table ws_shop_device_token absente — jeton impossible (migration 0052).'], 501);
+      $bd  = ($m === 'GET') ? [] : body();
+      $sid = (int) ($bd['shopId'] ?? ($shopId ?: 0));
+      if (!$sid) json_out(['ok' => false, 'error' => 'Boutique inconnue — ouvrez le back-office avec ?shop=<id>'], 400);
+
+      if ($m === 'GET') {
+        $cur = row("SELECT token_prefix, created_at, last_seen_at FROM ws_shop_device_token
+                     WHERE shop_id = ? AND revoked_at IS NULL ORDER BY id DESC LIMIT 1", [$sid]);
+        json_out(['ok' => true, 'active' => (bool) $cur, 'prefix' => $cur['token_prefix'] ?? null,
+                  'createdAt' => $cur['created_at'] ?? null, 'lastSeenAt' => $cur['last_seen_at'] ?? null]);
+      }
+      if ($m === 'DELETE') {
+        q("UPDATE ws_shop_device_token SET revoked_at = NOW() WHERE shop_id = ? AND revoked_at IS NULL", [$sid]);
+        json_out(['ok' => true, 'revoked' => true]);
+      }
+      if ($m === 'POST') {
+        // 32 octets d'aléa cryptographique : un jeton devinable ouvrirait le
+        // comptoir d'une boutique à n'importe qui.
+        $tok = bin2hex(random_bytes(32));
+        q("UPDATE ws_shop_device_token SET revoked_at = NOW() WHERE shop_id = ? AND revoked_at IS NULL", [$sid]);
+        q("INSERT INTO ws_shop_device_token (shop_id, token_hash, token_prefix, label)
+           VALUES (?,?,?,?)", [$sid, hash('sha256', $tok), substr($tok, 0, 8), 'Tablette Kitchen']);
+        json_out(['ok' => true, 'token' => $tok, 'prefix' => substr($tok, 0, 8)]);
+      }
+      json_out(['ok' => false, 'error' => 'Méthode non supportée'], 405);
+    }
+
     if ($m === 'POST' && $p === '/franchisee/client-attach') {
       $b = body();
       $id = (int) ($b['id'] ?? 0);
@@ -7216,6 +7269,35 @@ function bo_pin_session() {
     // profil côté marque change immédiatement les droits des tablettes.
     'sections' => bo_user_sections($s),
   ];
+}
+
+/* ── Jeton d'appareil (tablette Kitchen) ─────────────────────────────────────
+   Le mode tablette a quitté le back-office franchisé : la tablette de comptoir
+   tourne sous Kitchen, à qui l'on donne l'URL du back-office et CE jeton — pas
+   le jeton administrateur ERP, qui ouvre les marges, les coûts et les réglages
+   réseau et n'a rien à faire sur un comptoir.
+
+   Le jeton n'est jamais stocké en clair : seul son SHA-256 est en base. Il vaut
+   pour UNE boutique, et sa portée s'arrête là. Renvoie l'id de boutique, ou
+   null si le jeton est absent, inconnu ou révoqué. */
+function device_token_shop() {
+  static $cached = false;
+  if ($cached !== false) return $cached;
+  $tok = req_header('X-Device-Token');
+  if ($tok === '') return $cached = null;
+  try {
+    if (!row("SELECT 1 x FROM information_schema.tables
+               WHERE table_schema=DATABASE() AND table_name='ws_shop_device_token' LIMIT 1"))
+      return $cached = null;
+    $r = row("SELECT id, shop_id FROM ws_shop_device_token
+               WHERE token_hash = ? AND revoked_at IS NULL LIMIT 1", [hash('sha256', $tok)]);
+    if (!$r) return $cached = null;
+    // Trace de vie : permet au franchisé de voir qu'une tablette s'en sert
+    // encore avant de révoquer. Best effort, jamais bloquant.
+    try { q("UPDATE ws_shop_device_token SET last_seen_at = NOW() WHERE id = ?", [(int) $r['id']]); }
+    catch (Throwable $e) { /* trace seulement */ }
+    return $cached = (int) $r['shop_id'];
+  } catch (Throwable $e) { return $cached = null; }
 }
 
 /* Catalogue des SECTIONS du back-office franchisé, groupées comme au menu.
