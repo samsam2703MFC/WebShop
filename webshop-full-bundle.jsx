@@ -3781,7 +3781,16 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
       if (!window.WSVouchers) throw new Error('Service codes promo indisponible.');
       const r = await window.WSVouchers.redeem({ code, shopId, subtotal, basket, customerId });
       if (r.ok) { setVoucherApplied(r); setVoucherErr(null); setVoucherInput(code); }
-      else { setVoucherApplied(null); setVoucherErr(r.message || 'Code invalide'); }
+      else {
+        setVoucherErr(r.message || 'Code invalide');
+        // Un échec sur un AUTRE code ne doit PAS retirer celui qui fonctionne :
+        // essayer un bon refusé (périmètre produit, seuil non atteint…) faisait
+        // perdre la remise déjà acquise, sans le dire. On ne retire que si le
+        // code refusé est justement celui qui était appliqué.
+        const active = voucherApplied && voucherApplied.ok && voucherApplied.voucher
+                       ? String(voucherApplied.voucher.code) : null;
+        if (active !== null && active === code) setVoucherApplied(null);
+      }
     } catch (_) {
       setVoucherErr('Erreur réseau lors de la validation du code.');
     } finally {
