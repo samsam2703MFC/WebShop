@@ -4111,6 +4111,10 @@ function ShopFrame({ variant }) {
   }
   function confirmSlotChange() {
     if (!pendingSlot) return;
+    // Les lignes écartées par le changement de créneau tenaient du stock : sans
+    // libération, il restait gelé jusqu'à expiration alors que le produit
+    // n'était plus au panier de personne.
+    (pendingSlot.dropped || []).forEach((l) => stockRelease(l.productId, l.reservationId || null));
     setBasket((b) => b.filter((l) => !(Array.isArray(l.available_slots) && !l.available_slots.includes(pendingSlot.slot_type))));
     setSelectedSlot(pendingSlot.slot_type);
     setPendingSlot(null);
@@ -4509,7 +4513,7 @@ function ShopFrame({ variant }) {
   function refreshStock() {
     return window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {}));
   }
-  function stockReserve(productId, qty = 1) {
+  function stockReserve(productId, qty = 1, lineId = null) {
     // Visiteur non connecté : aucun maintien possible (pas d'identité à qui le
     // rattacher). On le TRACE — sans ça, l'absence de réservation était
     // indiscernable d'une panne, y compris en test.
@@ -4527,6 +4531,13 @@ function ShopFrame({ variant }) {
         if (r && r.ok !== false && !r.reservationId) {
           console.info('[stock] aucun maintien créé — raison :', (r && r.reason) || 'non précisée');
         }
+        // On rattache le maintien à SA ligne de panier : sans cet identifiant,
+        // le retrait d'une ligne libérait toutes les réservations du même
+        // produit (deux lignes de brownies, on en retire une, les deux
+        // maintiens sautaient et le stock repassait dispo à tort).
+        if (r && r.reservationId && lineId != null) {
+          setBasket((b) => b.map((l) => (l.line === lineId ? { ...l, reservationId: r.reservationId } : l)));
+        }
         setStockErr(r && r.ok === false ? (r.error || 'Stock non tenu — please debug.') : '');
         return refreshStock();
       })
@@ -4534,10 +4545,20 @@ function ShopFrame({ variant }) {
                       setStockErr('Stock non tenu : ' + (e && e.message ? e.message : 'erreur serveur') + ' — la disponibilité sera revérifiée au paiement.');
                       refreshStock().catch(() => {}); });
   }
-  function stockRelease(productId, qty = 1) {
+  // reservationId connu → on ne libère QUE ce maintien. Sinon (réservation non
+  // encore revenue du serveur), repli sur le produit : mieux vaut libérer un peu
+  // trop que geler du stock vendable.
+  function stockRelease(productId, reservationId = null) {
     if (!user || !window.WSCatalog || !window.WSCatalog.release) return;
-    window.WSCatalog.release({ customerId: user.id, productId })
-      .then(() => refreshStock())
+    window.WSCatalog.release(reservationId
+        ? { customerId: user.id, reservationIds: [reservationId] }
+        : { customerId: user.id, productId })
+      .then((r) => {
+        if (r && r.ok !== false && !r.released) {
+          console.info('[stock] aucun maintien libéré — rien ne correspondait côté serveur');
+        }
+        return refreshStock();
+      })
       .catch((e) => console.error('[stock] libération', e));
   }
   function stockReleaseAll() {
@@ -4546,22 +4567,23 @@ function ShopFrame({ variant }) {
   }
 
   function handleAdd(p, portion) {
+    const lineId = Date.now();
     setBasket((b) => [...b, {
-      line: Date.now(), productId: p.id,
+      line: lineId, productId: p.id,
       name: p.name + (portion === 'demi' ? ' — 1/2' : portion === 'quart' ? ' — 1/4' : ''),
       qty: 1, price: p.price, options: [],
       portion: portion || null, cat: p.cat, crossPortion: !!p.crossPortion,
       lead_time: p.lead_time || 0, no_delivery: !!p.no_delivery,
       available_slots: Array.isArray(p.available_slots) ? p.available_slots : null,
     }]);
-    stockReserve(p.id, 1);
+    stockReserve(p.id, 1, lineId);
   }
 
   // Configurable-product detail
   function handleRemove(lineId) {
     const line = basket.find((l) => l.line === lineId);
     setBasket((b) => b.filter((l) => l.line !== lineId));
-    if (line) stockRelease(line.productId, line.qty);
+    if (line) stockRelease(line.productId, line.reservationId || null);
   }
   function handleNote(lineId, note) {
     setBasket((b) => b.map((l) => (l.line === lineId ? { ...l, note } : l)));

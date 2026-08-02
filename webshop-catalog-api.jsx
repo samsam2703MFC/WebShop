@@ -105,16 +105,25 @@
     // productId : ne relâche que CE produit (retrait d'une ligne du panier).
     // Sans lui, tout le panier du client était libéré d'un coup.
     async release({ customerId, productId, reservationIds } = {}) {
-      if (!api.endpoint) return;
+      if (!api.endpoint) { console.error('[stock] libération impossible : endpoint absent'); return null; }
       try {
-        await fetch(`${api.endpoint}/stock/release`, {
+        const r = await fetch(`${api.endpoint}/stock/release`, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ customerId, productId: productId || null, reservationIds: reservationIds || null }),
         });
+        // Un statut != 2xx n'est PAS une exception : sans ce test, un 404 ou un
+        // 401 passait pour un succès et le stock restait gelé jusqu'à
+        // expiration, sans la moindre trace. C'est le défaut qui avait déjà été
+        // corrigé pour reserve() et oublié ici.
+        if (!r.ok) { console.error('[stock] libération refusée — HTTP ' + r.status); return { ok: false, status: r.status }; }
+        const j = await r.json().catch(() => null);
+        console.info('[stock] réponse libération', j);
+        return j;
       } catch (e) {
-        console.error('[ws] libération des réservations impossible', e);
+        console.error('[stock] libération des réservations impossible', e);
+        return null;
       }
     },
   };
