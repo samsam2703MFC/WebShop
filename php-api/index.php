@@ -1819,10 +1819,27 @@ function dispatch($m, $p) {
     // 4-ter. Profil de paiement + validation du moyen selon la config boutique.
     //   profil : company (société) > registered (compte) > guest (visiteur).
     $profile = $companyId ? 'company' : (!empty($b['customerId']) ? 'registered' : 'guest');
-    $family = payment_family($paymentMethod);
-    if ($family !== '' && !in_array($family, allowed_methods($shop, $profile), true)) {
+    $family  = payment_family($paymentMethod);
+    $allowed = allowed_methods($shop, $profile);
+    // Boutique qui n'offre RIEN à ce profil : la commande est refusée. Sans ce
+    // test, le front affichait bien « moyens indisponibles » mais la commande
+    // partait quand même — le contrôle ci-dessous était sauté dès que le moyen
+    // était vide (voir juste en dessous), et une commande sans moyen de paiement
+    // se retrouvait en base, encaissable par personne.
+    if (!$allowed) {
+      json_out(['error' => "Aucun moyen de paiement n'est disponible pour cette boutique",
+                'profile' => $profile], 409);
+    }
+    // Moyen absent ou vide : refus explicite. On ne retombe SURTOUT pas sur un
+    // défaut ('cash'), qui transformerait « le client n'a rien choisi » en
+    // « paiement en boutique » — une créance inventée par le serveur.
+    if ($family === '') {
+      json_out(['error' => 'Moyen de paiement requis',
+                'profile' => $profile, 'allowed' => $allowed], 400);
+    }
+    if (!in_array($family, $allowed, true)) {
       json_out(['error' => 'Moyen de paiement non autorisé pour ce profil',
-                'profile' => $profile, 'allowed' => allowed_methods($shop, $profile)], 400);
+                'profile' => $profile, 'allowed' => $allowed], 400);
     }
     // Contact visiteur (guest) — enregistré seulement si pas de compte.
     $guestEmail = empty($b['customerId']) ? ($b['email'] ?? null) : null;

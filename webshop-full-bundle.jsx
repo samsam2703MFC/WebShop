@@ -3224,6 +3224,10 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
     return contact.firstName && contact.lastName && contact.email && contact.phone;
   }
   function step2Valid() { return Boolean(slot); }
+  // Étape 3 : un moyen de paiement doit être proposé ET choisi. Sans ce test, le
+  // bouton « Payer » restait actif alors que l'écran affichait « moyens
+  // indisponibles », et la commande partait avec un moyen vide.
+  function step3Valid() { return paymentMethods.length > 0 && Boolean(payment); }
 
   async function handlePay() {
     // Livraison bureau sans frais résolus : on REFUSE au lieu de facturer 0 €
@@ -3301,6 +3305,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       if (!step2Valid()) return;
       setStep(3);
     } else {
+      if (!step3Valid()) { setPayErr('Choisissez un moyen de paiement.'); return; }
       handlePay();
     }
   }
@@ -3456,7 +3461,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           {step > 1 && <button className="ws-btn-ghost" onClick={() => setStep((s) => s - 1)} disabled={paying}>Précédent</button>}
           <button
             className="ws-cta ws-cta--block"
-            disabled={paying || (step === 1 && !step1Valid()) || (step === 2 && !step2Valid())}
+            disabled={paying || (step === 1 && !step1Valid()) || (step === 2 && !step2Valid()) || (step === 3 && !step3Valid())}
             onClick={next}
           >
             {paying ? 'Traitement…' : step === 3 ? `Payer · €${total.toFixed(2)}` : 'Continuer'}
