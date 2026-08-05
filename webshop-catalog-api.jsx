@@ -24,6 +24,14 @@
    ===================================================================== */
 (function () {
 
+  /* Réservation et libération portent l'identité du client. L'API l'établit
+     désormais à partir du SEUL en-tête Authorization : le repli sur un
+     `customerId` transmis dans le corps laissait réserver — ou libérer — du
+     stock au nom de n'importe quel client. Sans cet en-tête, ces deux appels
+     répondent 401. */
+  const authHeaders = () =>
+    (window.WSAuth && typeof window.WSAuth.authHeaders === 'function') ? window.WSAuth.authHeaders() : {};
+
   function requireEndpoint() {
     if (!api.endpoint) throw new Error('API catalogue non configurée.');
     return api.endpoint;
@@ -99,7 +107,7 @@
       const r = await fetch(`${base}/stock/reserve`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ productId, shopId, date: iso, mode, qty, customerId }),
       });
       // Le serveur dit PRECISEMENT ce qui bloque — « Stock insuffisant », avec
@@ -127,7 +135,7 @@
         const r = await fetch(`${api.endpoint}/stock/release`, {
           method: 'POST',
           credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ customerId, productId: productId || null, reservationIds: reservationIds || null }),
         });
         // Un statut != 2xx n'est PAS une exception : sans ce test, un 404 ou un

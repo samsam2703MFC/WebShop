@@ -22,19 +22,26 @@
    }
    ===================================================================== */
 (function () {
+  /* Jeton porteur, source unique du module. Seul `place` le transmettait ; get,
+     listMine et cancel appelaient des routes qui exigent d'être le PROPRIÉTAIRE
+     connecté (GET /orders/:id le vérifie explicitement). Sans en-tête, elles
+     répondent 401 — silencieusement converti en `null` ou `[]`, c'est-à-dire en
+     « vous n'avez aucune commande ». */
+  const authHeaders = () => {
+    if (window.WSAuth && typeof window.WSAuth.authHeaders === 'function') return window.WSAuth.authHeaders();
+    try { const t = localStorage.getItem('ws_auth_token'); return t ? { 'Authorization': 'Bearer ' + t } : {}; }
+    catch (_) { return {}; }
+  };
+
   const api = {
     endpoint: null,
 
     /* Place an order. Throws on network / server error. */
     async place(payload) {
       if (api.endpoint) {
-        // Forward the bearer token (if logged in) so the backend links the
-        // order to the customer's account.
-        let authHeader = {};
-        try { const t = localStorage.getItem('ws_auth_token'); if (t) authHeader = { 'Authorization': 'Bearer ' + t }; } catch (_) {}
         const r = await fetch(api.endpoint, {
           method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json', ...authHeader },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify(payload),
         });
         const j = await r.json().catch(() => ({}));
@@ -61,9 +68,10 @@
       if (!id) return null;
       if (api.endpoint) {
         try {
-          const r = await fetch(`${api.endpoint}/${encodeURIComponent(id)}`, { credentials: 'include' });
+          const r = await fetch(`${api.endpoint}/${encodeURIComponent(id)}`, { credentials: 'include', headers: authHeaders() });
           if (r.ok) return await r.json();
-        } catch (_) {}
+          console.error('[commandes] lecture refusée — HTTP ' + r.status);
+        } catch (e) { console.error('[commandes] lecture injoignable', e); }
       }
       return null;
     },
@@ -72,9 +80,12 @@
     async listMine() {
       if (api.endpoint) {
         try {
-          const r = await fetch(`${api.endpoint}/me`, { credentials: 'include' });
+          const r = await fetch(`${api.endpoint}/me`, { credentials: 'include', headers: authHeaders() });
           if (r.ok) return await r.json();
-        } catch (_) {}
+          // « Aucune commande » et « le serveur a refusé » ne doivent pas se
+          // ressembler : les deux affichent une liste vide.
+          console.error('[commandes] liste indisponible — HTTP ' + r.status);
+        } catch (e) { console.error('[commandes] liste injoignable', e); }
       }
       return [];
     },
@@ -85,7 +96,7 @@
       if (api.endpoint) {
         try {
           const r = await fetch(`${api.endpoint}/${encodeURIComponent(id)}/cancel`, {
-            method: 'POST', credentials: 'include',
+            method: 'POST', credentials: 'include', headers: authHeaders(),
           });
           const j = await r.json().catch(() => ({}));
           return { ok: r.ok, ...j };

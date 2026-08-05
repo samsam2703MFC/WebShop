@@ -28,7 +28,12 @@
           const u = `${api.endpoint}/days?shopId=${encodeURIComponent(shopId||'')}&mode=${encodeURIComponent(mode||'')}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
           const r = await fetch(u, { credentials: 'include' });
           if (r.ok) return await r.json();
-        } catch (_) {}
+          // Ne JAMAIS confondre « aucun jour ouvrable » et « le serveur n'a pas
+          // répondu » : les deux donnent un calendrier vide à l'écran. Sans
+          // cette trace, une panne ressemble trait pour trait à une boutique
+          // fermée toute la semaine, et personne ne va chercher plus loin.
+          console.error('[calendrier] jours indisponibles — HTTP ' + r.status);
+        } catch (e) { console.error('[calendrier] jours injoignables', e); }
       }
       return []; // pas d'API -> aucun jour annonce
     },
@@ -38,7 +43,8 @@
           const u = `${api.endpoint}/slots?shopId=${encodeURIComponent(shopId||'')}&mode=${encodeURIComponent(mode||'')}&date=${encodeURIComponent(date)}`;
           const r = await fetch(u, { credentials: 'include' });
           if (r.ok) return await r.json();
-        } catch (_) {}
+          console.error('[calendrier] créneaux indisponibles — HTTP ' + r.status);
+        } catch (e) { console.error('[calendrier] créneaux injoignables', e); }
       }
       return []; // pas d'API -> aucun creneau propose
     },
@@ -48,7 +54,8 @@
           const u = `${api.endpoint}/cutoff?shopId=${encodeURIComponent(shopId||'')}&mode=${encodeURIComponent(mode||'')}`;
           const r = await fetch(u, { credentials: 'include' });
           if (r.ok) return await r.json();
-        } catch (_) {}
+          console.error('[calendrier] cut-off indisponible — HTTP ' + r.status);
+        } catch (e) { console.error('[calendrier] cut-off injoignable', e); }
       }
       noApi();
     },

@@ -813,8 +813,15 @@ function dispatch($m, $p) {
     if (!row("SELECT 1 AS x FROM information_schema.tables
                WHERE table_schema = DATABASE() AND table_name = 'ws_stock_reservation' LIMIT 1"))
       json_out(['ok' => false, 'error' => 'Table ws_stock_reservation absente — réservation impossible (migration 0049).'], 501);
-    $b   = body();
-    $cid = auth_uid() ?: (isset($b['customerId']) ? (int) $b['customerId'] : 0);
+    $b = body();
+    /* Le client est celui de la SESSION, jamais celui annoncé par le corps de
+       la requête. Le repli sur $b['customerId'] laissait n'importe qui réserver
+       — ou libérer — du stock au nom d'un autre client, en envoyant simplement
+       son identifiant : de quoi geler la disponibilité d'un produit, ou vider
+       les réservations d'un panier en cours, sans aucune authentification.
+       L'identité vient de l'en-tête Authorization, seule chose que l'appelant
+       ne peut pas forger. */
+    $cid = auth_uid();
     if (!$cid) json_out(['ok' => false, 'error' => 'Réservation réservée aux clients connectés.'], 401);
 
     // Purge paresseuse des réservations expirées, puis recalcul de qty_reserved
@@ -6123,11 +6130,32 @@ function dispatch($m, $p) {
       if ($tbl === '' || !is_array($rows2)) json_out(['error' => 'table + rows requis'], 400);
       if (strlen(json_encode($rows2)) > 500000) json_out(['error' => 'payload trop grand'], 413);
 
+      /* Remplacement intégral d'une table de config, EN TRANSACTION.
+         q() est en autocommit : un DELETE suivi d'INSERT qui échouent laissait
+         la table vide. C'est ainsi que b2b_client_company_department a été
+         perdue. Le motif est le même ici, donc le garde-fou l'est aussi :
+         soit le remplacement aboutit entièrement, soit rien ne bouge. */
+      $replaceAll = function (string $table, array $rows3, callable $insert) {
+        $pdoR = db();
+        $own  = !$pdoR->inTransaction();
+        if ($own) $pdoR->beginTransaction();
+        try {
+          q("DELETE FROM $table");
+          foreach ($rows3 as $r3) $insert($r3);
+          if ($own) $pdoR->commit();
+        } catch (Throwable $e) {
+          if ($own && $pdoR->inTransaction()) $pdoR->rollBack();
+          json_out(['ok' => false, 'mode' => 'typed', 'error' =>
+            "Écriture de $table annulée (aucune donnée perdue) : " . $e->getMessage()], 500);
+        }
+      };
+
       // Tables de config à remplacement intégral (petites, non référencées).
       if ($tbl === 'ws_franchisor_catchment' && $tblExists('ws_franchisor_catchment')) {
-        q("DELETE FROM ws_franchisor_catchment");
-        foreach ($rows2 as $r) q("INSERT INTO ws_franchisor_catchment (name, postcodes, exclusive, active) VALUES (?,?,?,1)",
-          [(string) ($r['name'] ?? '—'), (string) ($r['cp'] ?? ''), !empty($r['exclusif']) ? 1 : 0]);
+        $replaceAll('ws_franchisor_catchment', $rows2, function ($r) {
+          q("INSERT INTO ws_franchisor_catchment (name, postcodes, exclusive, active) VALUES (?,?,?,1)",
+            [(string) ($r['name'] ?? '—'), (string) ($r['cp'] ?? ''), !empty($r['exclusif']) ? 1 : 0]);
+        });
         json_out(['ok' => true, 'mode' => 'typed', 'n' => count($rows2)]);
       }
       /* Départements B2B — table ERP, dont le schéma varie (id_client vs
@@ -6153,26 +6181,39 @@ function dispatch($m, $p) {
         // DELETE scopé BOUTIQUE : ne jamais effacer les fermetures des autres
         // franchisés (les lignes « toutes tournées », tour_id NULL, restent
         // gérées par la boutique courante).
-        if ($shopId && $tblExists('ws_tours'))
-          q("DELETE cl FROM ws_tour_closures cl LEFT JOIN ws_tours t ON t.id = cl.tour_id
-              WHERE t.shop_id = " . (int) $shopId . " OR cl.tour_id IS NULL");
-        else q("DELETE FROM ws_tour_closures");
+        // Et EN TRANSACTION : un INSERT qui échoue après le DELETE effaçait
+        // silencieusement toutes les fermetures de la boutique — un jour de
+        // fermeture perdu, c'est une tournée qui roule un jour férié.
         $hasCType = col_exists('ws_tour_closures', 'closure_type');
-        foreach ($rows2 as $r) {
-          $d = null;
-          if (preg_match('#^(\d{2})/(\d{2})/(\d{4})$#', (string) ($r['date'] ?? ''), $mm)) $d = "$mm[3]-$mm[2]-$mm[1]";
-          if (!$d) continue;
-          $tourId = null;
-          if (!empty($r['tour']) && !preg_match('/^toutes/i', (string) $r['tour']) && $tblExists('ws_tours')) {
-            $tr = row("SELECT id FROM ws_tours WHERE name=? LIMIT 1", [(string) $r['tour']]);
-            if ($tr) $tourId = (int) $tr['id'];
+        $pdoC = db();
+        $ownC = !$pdoC->inTransaction();
+        if ($ownC) $pdoC->beginTransaction();
+        try {
+          if ($shopId && $tblExists('ws_tours'))
+            q("DELETE cl FROM ws_tour_closures cl LEFT JOIN ws_tours t ON t.id = cl.tour_id
+                WHERE t.shop_id = " . (int) $shopId . " OR cl.tour_id IS NULL");
+          else q("DELETE FROM ws_tour_closures");
+          foreach ($rows2 as $r) {
+            $d = null;
+            if (preg_match('#^(\d{2})/(\d{2})/(\d{4})$#', (string) ($r['date'] ?? ''), $mm)) $d = "$mm[3]-$mm[2]-$mm[1]";
+            if (!$d) continue;
+            $tourId = null;
+            if (!empty($r['tour']) && !preg_match('/^toutes/i', (string) $r['tour']) && $tblExists('ws_tours')) {
+              $tr = row("SELECT id FROM ws_tours WHERE name=? LIMIT 1", [(string) $r['tour']]);
+              if ($tr) $tourId = (int) $tr['id'];
+            }
+            if ($hasCType)
+              q("INSERT INTO ws_tour_closures (tour_id, closure_date, reason, closure_type) VALUES (?,?,?,?)",
+                [$tourId, $d, (string) ($r['motif'] ?? ''), (string) ($r['type'] ?? 'Fermeture')]);
+            else
+              q("INSERT INTO ws_tour_closures (tour_id, closure_date, reason) VALUES (?,?,?)",
+                [$tourId, $d, (string) ($r['motif'] ?? '')]);
           }
-          if ($hasCType)
-            q("INSERT INTO ws_tour_closures (tour_id, closure_date, reason, closure_type) VALUES (?,?,?,?)",
-              [$tourId, $d, (string) ($r['motif'] ?? ''), (string) ($r['type'] ?? 'Fermeture')]);
-          else
-            q("INSERT INTO ws_tour_closures (tour_id, closure_date, reason) VALUES (?,?,?)",
-              [$tourId, $d, (string) ($r['motif'] ?? '')]);
+          if ($ownC) $pdoC->commit();
+        } catch (Throwable $e) {
+          if ($ownC && $pdoC->inTransaction()) $pdoC->rollBack();
+          json_out(['ok' => false, 'mode' => 'typed', 'error' =>
+            'Écriture de ws_tour_closures annulée (aucune fermeture perdue) : ' . $e->getMessage()], 500);
         }
         json_out(['ok' => true, 'mode' => 'typed', 'n' => count($rows2)]);
       }
