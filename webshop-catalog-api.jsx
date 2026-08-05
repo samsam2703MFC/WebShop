@@ -32,6 +32,15 @@
   const authHeaders = () =>
     (window.WSAuth && typeof window.WSAuth.authHeaders === 'function') ? window.WSAuth.authHeaders() : {};
 
+  /* Date -> 'AAAA-MM-JJ' en heure LOCALE. toISOString() convertit en UTC : une
+     Date construite à minuit local devient 22:00 la VEILLE en été (UTC+2), et
+     la journée demandée au serveur était systématiquement la mauvaise — stock
+     du jour précédent affiché en permanence. Même défaut que celui qui rendait
+     le dernier jour du mois invisible au franchisé. */
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const isoLocal = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const toIso = (d) => (d instanceof Date ? isoLocal(d) : (d || ''));
+
   function requireEndpoint() {
     if (!api.endpoint) throw new Error('API catalogue non configurée.');
     return api.endpoint;
@@ -88,7 +97,7 @@
     // Map productId -> { qty_total, qty_reserved, qty_sold, qty_available }.
     async getStock({ shopId, date, mode } = {}) {
       const base = requireEndpoint();
-      const iso = date instanceof Date ? date.toISOString().slice(0, 10) : (date || '');
+      const iso = toIso(date);
       const rows = await getJson(
         `${base}/stock?shopId=${encodeURIComponent(shopId || '')}&date=${encodeURIComponent(iso)}&mode=${encodeURIComponent(mode || '')}`,
         'Stock'
@@ -103,7 +112,7 @@
     // tenu et la boutique pourrait survendre.
     async reserve({ productId, shopId, date, mode, qty, customerId } = {}) {
       const base = requireEndpoint();
-      const iso = date instanceof Date ? date.toISOString().slice(0, 10) : (date || '');
+      const iso = toIso(date);
       const r = await fetch(`${base}/stock/reserve`, {
         method: 'POST',
         credentials: 'include',

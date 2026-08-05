@@ -3710,7 +3710,10 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
       // Use the parent-selected date, not hardcoded today
       const d = date instanceof Date ? date : new Date();
       setDateLabel(d.toLocaleDateString('fr-BE', { weekday: 'long', day: 'numeric', month: 'long' }));
-      const isoFn = (window.WSAvailability || window.WSCalendar)?.isoOf || ((x) => x.toISOString().slice(0,10));
+      // Repli LOCAL, jamais UTC : toISOString() renvoie la veille pour une Date
+      // à minuit en UTC+2.
+      const isoFn = (window.WSAvailability || window.WSCalendar)?.isoOf
+        || ((x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`);
       const isoDate = isoFn(d);
       const api = window.WSAvailability || window.WSCalendar;
       if (!api) { setSlots([]); return; }
@@ -4188,7 +4191,10 @@ function ShopFrame({ variant }) {
     const api = window.WSSlots || window.WSAvailability;
     if (mode !== 'delivery' || !api || !(api.listSlots || api.nextSlot)) { setOfficeSlots([]); setSlotCta(null); return; }
     const officeId = (user && user.officeId) || null;
-    const iso = date instanceof Date ? date.toISOString().slice(0, 10) : '';
+    // Formatage LOCAL : toISOString() rend la veille pour une Date à minuit en
+    // UTC+2, et les créneaux demandés étaient ceux du mauvais jour.
+    const p2 = (n) => String(n).padStart(2, '0');
+    const iso = date instanceof Date ? `${date.getFullYear()}-${p2(date.getMonth() + 1)}-${p2(date.getDate())}` : '';
     Promise.all([
       api.listSlots ? api.listSlots({ officeId, date: iso }) : Promise.resolve([]),
       api.nextSlot  ? api.nextSlot({ officeId, date: iso })  : Promise.resolve(null),
