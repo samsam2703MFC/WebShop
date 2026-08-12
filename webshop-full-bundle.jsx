@@ -2017,6 +2017,12 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
   const [pwStep, setPwStep] = useState(false);   // panneau « compte existant -> mot de passe »
   const [newPw, setNewPw] = useState('');
   const [cpOpts, setCpOpts] = useState([]);      // localités du CP saisi (validation « localité choisie »)
+  // Code cadeau « achat cumulé » appliqué (ajoute une ligne 0 € côté serveur).
+  // DOIT rester AVANT le `return null` ci-dessous : place plus bas, ce hook
+  // n'était appelé que le tunnel ouvert. React comptait donc un hook de plus
+  // au moment de l'ouverture — erreur #310, et le paiement inaccessible.
+  const [giftCode, setGiftCode] = useState(null);
+
   if (!open) return null;
   function set(k, v) { setForm((f) => ({ ...f, [k]: v })); setErr(''); }
   async function submit(e) {
@@ -3442,8 +3448,6 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   // indisponibles », et la commande partait avec un moyen vide.
   function step3Valid() { return paymentMethods.length > 0 && Boolean(payment); }
 
-  // Code cadeau « achat cumulé » appliqué (ajoute une ligne 0 € côté serveur).
-  const [giftCode, setGiftCode] = useState(null);
 
   async function handlePay() {
     // Livraison bureau sans frais résolus : on REFUSE au lieu de facturer 0 €
