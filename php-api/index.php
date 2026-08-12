@@ -1751,9 +1751,14 @@ function dispatch($m, $p) {
       // suppléments). La ligne était reconstruite depuis le produit ERP et
       // perdait cette composition en chemin : c'est ICI qu'elle disparaissait,
       // avant même l'écriture. Le prix, lui, reste celui résolu serveur.
+      // `bundleSlots` = les choix du menu, par IDENTIFIANT (emplacement → choix)
+      // et non par libellé : c'est le serveur qui résoudra les produits. La
+      // ligne était reconstruite depuis le produit ERP et perdait ces choix en
+      // chemin — c'est ICI que la composition du menu disparaissait, avant même
+      // l'écriture. Le prix, lui, reste celui résolu serveur.
       $lines[] = ['productId' => $p2['id'], 'name' => $p2['name'], 'qty' => $qty,
                   'unit' => $unit, 'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion'],
-                  'options' => is_array($it['options'] ?? null) ? $it['options'] : [],
+                  'bundleSlots' => is_array($it['bundleSlots'] ?? null) ? $it['bundleSlots'] : [],
                   'note' => isset($it['note']) ? mb_substr((string) $it['note'], 0, 255) : null];
     }
     if (!count($lines)) json_out(['error' => 'aucun produit valide'], 400);
@@ -2128,24 +2133,38 @@ function dispatch($m, $p) {
       q("INSERT INTO ws_orders (" . implode(',', array_keys($ordIns)) . ")
            VALUES (" . implode(',', array_fill(0, count($ordIns), '?')) . ")", array_values($ordIns));
       $oid = $pdo->lastInsertId();
+      // Composants de menu : écrits seulement si la migration 0055 est passée.
+      // Sans la colonne, on ne saurait pas les distinguer d'une ligne vendue et
+      // ils fausseraient les compteurs de pièces — mieux vaut ne rien écrire.
+      $hasParentCol = col_exists('ws_order_lines', 'parent_line_id');
       foreach ($lines as $l) {
         $pidL = is_numeric($l['productId'] ?? null) ? (int) $l['productId'] : null;
-        /* COMPOSITION DU MENU. Le panier transporte `options` — « Formule ·
-           Menu Midi », « Boisson · Coca », « + Supplément fromage » — et le
-           serveur les JETAIT : ws_order_lines ne recevait que le produit
-           déclencheur. La boutique voyait « Menu » sans savoir ce qu'il fallait
-           préparer, et le client ne pouvait pas vérifier sa commande.
-           Les libellés sont donc joints à la note de la ligne, à la suite du
-           commentaire du client s'il y en a un. */
-        $noteL = trim((string) ($l['note'] ?? ''));
-        $opts  = [];
-        foreach ((array) ($l['options'] ?? []) as $o) {
-          $lab = is_array($o) ? trim((string) ($o['label'] ?? '')) : trim((string) $o);
-          if ($lab !== '') $opts[] = $lab;
-        }
-        if ($opts) $noteL = trim($noteL === '' ? implode(' · ', $opts) : $noteL . ' — ' . implode(' · ', $opts));
         q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note) VALUES (?,?,?,?,?,?,?)",
-          [$oid, $pidL, $l['name'], $l['qty'], $l['unit'], $l['portion'], ($noteL !== '' ? $noteL : null)]);
+          [$oid, $pidL, $l['name'], $l['qty'], $l['unit'], $l['portion'], $l['note']]);
+        /* COMPOSANTS DU MENU — UNE LIGNE PAR PRODUIT. Les choix du menu étaient
+           jetés : la commande n'enregistrait que le produit déclencheur, et la
+           boutique ne savait pas quoi préparer.
+           Chaque choix devient une ligne rattachée à sa mère (parent_line_id,
+           migration 0055). Le produit est résolu par le NOM du choix, comme le
+           fait déjà le catalogue pour les vignettes — ws_bundle_slot_choices ne
+           porte pas d'identifiant produit.
+           Prix à 0 : le composant est déjà compris dans le prix du menu ; l'y
+           reporter compterait le chiffre d'affaires deux fois. La quantité suit
+           celle du menu — deux menus, deux boissons. */
+        $parentId = (int) $pdo->lastInsertId();
+        $slotsSel = (array) ($l['bundleSlots'] ?? []);
+        if ($slotsSel && $hasParentCol) {
+          foreach ($slotsSel as $chId) {
+            $cid2 = (int) $chId; if (!$cid2) continue;
+            $ch = row("SELECT label FROM ws_bundle_slot_choices WHERE id=? LIMIT 1", [$cid2]);
+            $lab2 = trim((string) ($ch['label'] ?? ''));
+            if ($lab2 === '') continue;
+            $cp = row("SELECT id FROM ws_products WHERE name = ? AND active = 1 ORDER BY id LIMIT 1", [$lab2]);
+            q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note, parent_line_id)
+                 VALUES (?,?,?,?,?,?,?,?)",
+              [$oid, ($cp ? (int) $cp['id'] : null), $lab2, $l['qty'], 0, null, 'Inclus dans « ' . $l['name'] . ' »', $parentId]);
+          }
+        }
         // Décrément du stock du jour : si aucune ligne de stock n'existe encore
         // pour ce produit/jour/mode, on la CRÉE en partant du MINIMUM
         // hebdomadaire (qty_total = défaut du jour, sinon 0) pour que la
@@ -2589,7 +2608,7 @@ function dispatch($m, $p) {
     try {                                                              // commandes webshop
       $items = array_merge($items, rows(
         "SELECT o.order_ref AS ref, s.name AS shop, o.created_at AS at,
-                (SELECT COUNT(*) FROM ws_order_lines l WHERE l.order_id = o.id) AS items,
+                (SELECT COUNT(*) FROM ws_order_lines l WHERE l.order_id = o.id" . oline_own() . ") AS items,
                 o.total AS total, 0 AS toInvoice, NULL AS billingEntityId, NULL AS frozenAt,
                 NULL AS invoiceNo, NULL AS invoiceTotal, NULL AS pdfPath, 'order' AS source
            FROM ws_orders o LEFT JOIN shops s ON s.id = o.shop_id AND s.webshop_enabled = 1
@@ -5034,7 +5053,7 @@ function dispatch($m, $p) {
                     COALESCE(NULLIF(o.guest_name,'')" .
                     ($hasCliT ? ", NULLIF(TRIM(CONCAT(COALESCE(cl.name,''),' ',COALESCE(cl.surname,''))),'')" : "") . ",
                              'Client webshop') AS client,
-                    (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id) AS pieces
+                    (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id" . oline_own() . ") AS pieces
                FROM ws_orders o" .
             ($hasCliT ? " LEFT JOIN client cl ON cl.id = o.customer_id" : "") . "
               WHERE " . $scope('o.shop_id') . " AND o.status <> 'cancelled'
@@ -5070,7 +5089,7 @@ function dispatch($m, $p) {
                 ($hasCliT ? ", NULLIF(TRIM(CONCAT(COALESCE(cl.name,''),' ',COALESCE(cl.surname,''))),'')" : "") . ",
                          'Client webshop') AS client,
                 COALESCE(NULLIF(o.office_delivery_site_name,''), f3.name, '— site et bureau non renseignés') AS libelle,
-                (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id) AS pieces
+                (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id" . oline_own() . ") AS pieces
            FROM ws_orders o" .
         ($hasCliT ? " LEFT JOIN client cl ON cl.id = o.customer_id" : "") . "
            LEFT JOIN ws_offices f3 ON f3.id = o.office_client_id
@@ -5233,7 +5252,7 @@ function dispatch($m, $p) {
       // Bonne colonne (office_delivery_site_id) + repli par bureau : le bon de
       // chargement était vide car delivery_site_id n'existe pas.
       $rs = rows("SELECT COALESCE(NULLIF(TRIM(s.name),''), s.address, f2.name) AS libelle,
-                         COALESCE(SUM((SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id)), COUNT(*)) AS colis
+                         COALESCE(SUM((SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id" . oline_own() . ")), COUNT(*)) AS colis
                     FROM ws_orders o
                     LEFT JOIN ws_office_delivery_sites s ON s.id = o.office_delivery_site_id
                     LEFT JOIN ws_offices f2 ON f2.id = o.office_client_id
@@ -5448,7 +5467,7 @@ function dispatch($m, $p) {
                  ($hasSrc ? ", o.source" : ", NULL AS source") . ",
                          DATE_FORMAT(COALESCE(o.delivery_date, DATE(o.created_at)),'%Y-%m-%d') AS jour,
                          DATE_FORMAT(o.created_at,'%H:%i') AS heure,
-                         (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id) AS pieces
+                         (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id" . oline_own() . ") AS pieces
                     FROM ws_orders o" .
                  ($hasCli2 ? " LEFT JOIN client cl ON cl.id = o.customer_id" : "") . "
                    WHERE " . $scope('o.shop_id') . "
@@ -7467,6 +7486,20 @@ function allowed_methods($shop, $profile) {
 }
 
 /* Shape client d'un customer. */
+/* Fragment SQL excluant les COMPOSANTS de menu d'un compteur commercial.
+   Ces lignes filles (parent_line_id non nul) sont comprises dans le prix du
+   menu : les compter en pieces vendues gonflerait la charge, la capacite des
+   creneaux et le panier moyen. Les ecrans de PRODUCTION, eux, les comptent —
+   il faut bien les fabriquer.
+   Renvoie une chaine vide tant que la migration 0055 n'est pas passee : l'API
+   est deployee avant les migrations, la requete doit rester valide entre les
+   deux. */
+function oline_own() {
+  static $c = null;
+  if ($c === null) $c = col_exists('ws_order_lines', 'parent_line_id') ? ' AND l.parent_line_id IS NULL' : '';
+  return $c;
+}
+
 function user_payload($id) {
   // Table `client` unifiée. SELECT * + accès défensif : tolère les variantes de
   // noms de colonnes (name/first_name, locale/preferred_lang, is_b2b/is_business)
