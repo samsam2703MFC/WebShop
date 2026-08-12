@@ -7665,7 +7665,10 @@ function dispatch($m, $p) {
         );
       }
       unset($rv);
-      json_out(['totals' => $totals, 'byProduct' => $byProduct, 'recentNegative' => $recent]);
+      // Liste des boutiques (table unifiée `shops`) pour le sélecteur franchiseur
+      // + le nom de la boutique en mode franchisée. Fiable (n'utilise pas /shops).
+      $shops = rows("SELECT id, name, city FROM shops WHERE active = 1 ORDER BY name");
+      json_out(['totals' => $totals, 'byProduct' => $byProduct, 'recentNegative' => $recent, 'shops' => $shops]);
     }
   }
 }
