@@ -3292,6 +3292,22 @@ function dispatch($m, $p) {
       $totalShops = (int) (row("SELECT COUNT(*) n FROM $SHOPS WHERE active=1")['n'] ?? 0);
       $hasPS = $tblExists('ws_product_shops');
       $cats = rows("SELECT id, label, img, COALESCE(menu_default,0) AS menu_default FROM ws_categories WHERE active=1 ORDER BY sort_order, label");
+      /* Sous-catégories : ws_category_subs fait foi. Les déduire des produits
+         (ce que faisait le constructeur de menus) ne montrait que celles déjà
+         pourvues et masquait les autres — or une étape de formule doit pouvoir
+         viser une sous-catégorie encore vide. Seules les ACTIVES remontent :
+         proposer une sous-catégorie retirée du webshop reviendrait à composer
+         un menu avec ce qui ne se vend plus. Une seule requête, pas une par
+         catégorie. */
+      $subsByCat = [];
+      if ($tblExists('ws_category_subs')) {
+        foreach (rows("SELECT sub.id, sub.category_id, sub.label
+                         FROM ws_category_subs sub
+                         JOIN ws_categories c ON c.id = sub.category_id AND c.active = 1
+                        WHERE sub.active = 1
+                        ORDER BY sub.sort_order, sub.label") as $sb)
+          $subsByCat[(int) $sb['category_id']][] = ['id' => (int) $sb['id'], 'label' => $sb['label']];
+      }
       $out = [];
       foreach ($cats as $c) {
         // Le franchisor gère l'assortiment : on renvoie AUSSI les produits inactifs
@@ -3323,7 +3339,8 @@ function dispatch($m, $p) {
             'ad' => $ad, 'saison' => $p2['saison'] ?: null,
           ];
         }
-        if ($rows2) $out[] = ['id' => (int) $c['id'], 'cat' => $c['label'], 'img' => $c['img'] ?: null, 'prods' => $rows2];
+        if ($rows2) $out[] = ['id' => (int) $c['id'], 'cat' => $c['label'], 'img' => $c['img'] ?: null,
+                              'subs' => ($subsByCat[(int) $c['id']] ?? []), 'prods' => $rows2];
       }
       json_out($out);
     }
