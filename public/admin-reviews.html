@@ -78,21 +78,22 @@
   function rateClass(v){ return v<2.5?'r-bad':(v<3.5?'r-warn':'r-ok'); }
   function kpi(v,l){ return '<div class="kpi"><b>'+v+'</b><span>'+l+'</span></div>'; }
 
-  // Liste des boutiques (pour le sélecteur franchiseur) + nom pour le badge franchisée.
-  function loadShops(){
-    return fetch(API + '/shops').then(function(r){ return r.ok ? r.json() : []; }).then(function(list){
-      list = list || [];
-      if (isFranchisee) {
-        var s = list.filter(function(x){ return String(x.id) === String(lockedShop); })[0];
-        $('scope').textContent = 'Franchisée · ' + (s ? s.name : ('boutique ' + lockedShop));
-        $('shopSel').style.display = 'none';
-      } else {
-        $('scope').textContent = 'Franchiseur · réseau';
-        var sel = $('shopSel'), cur = sel.value;
-        list.forEach(function(x){ var o=document.createElement('option'); o.value=x.id; o.textContent=x.name+(x.city?(' — '+x.city):''); sel.appendChild(o); });
-        sel.value = cur;
-      }
-    }).catch(function(){ $('scope').textContent = isFranchisee ? ('Franchisée · boutique '+lockedShop) : 'Franchiseur · réseau'; });
+  var shopsFilled = false;
+  // Remplit le sélecteur (franchiseur) ou le badge (franchisée) depuis la liste
+  // renvoyée par /admin/reviews (table unifiée shops) — pas de dépendance à /shops.
+  function fillShops(list){
+    list = list || [];
+    if (isFranchisee) {
+      var s = list.filter(function(x){ return String(x.id) === String(lockedShop); })[0];
+      $('scope').textContent = 'Franchisée · ' + (s ? s.name : ('boutique ' + lockedShop));
+      $('shopSel').style.display = 'none';
+      return;
+    }
+    $('scope').textContent = 'Franchiseur · réseau';
+    if (shopsFilled) return;
+    var sel = $('shopSel'), cur = sel.value;
+    list.forEach(function(x){ var o=document.createElement('option'); o.value=x.id; o.textContent=x.name+(x.city?(' — '+x.city):''); sel.appendChild(o); });
+    sel.value = cur; shopsFilled = true;
   }
 
   function load(){
@@ -103,7 +104,7 @@
     var url = API + '/admin/reviews' + (sid ? ('?shopId=' + encodeURIComponent(sid)) : '');
     fetch(url, { headers: { 'X-Admin-Token': token } })
       .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status+(r.status===401||r.status===403?' — jeton admin invalide':'')); return r.json(); })
-      .then(render)
+      .then(function(d){ fillShops(d.shops); render(d); })
       .catch(function(e){ $('err').hidden=false; $('err').textContent='Erreur : '+e.message; });
   }
 
@@ -126,7 +127,8 @@
 
   $('go').onclick = load;
   $('shopSel').onchange = function(){ if ($('token').value) load(); };
-  loadShops().then(function(){ if ($('token').value) load(); });
+  $('scope').textContent = isFranchisee ? ('Franchisée · boutique '+lockedShop) : 'Franchiseur · réseau';
+  if ($('token').value) load();  // le 1er /admin/reviews renvoie aussi la liste des boutiques
 })();
 </script>
 </body>
