@@ -13,8 +13,10 @@
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink)}
   header{background:var(--surface);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;position:sticky;top:0;z-index:10}
-  header h1{font-size:18px;margin:0;color:var(--primary);font-weight:800;letter-spacing:.3px;flex:1;min-width:200px}
-  header input{height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit}
+  header h1{font-size:18px;margin:0;color:var(--primary);font-weight:800;letter-spacing:.3px}
+  .scope{font-size:12px;font-weight:700;padding:4px 10px;border-radius:20px;background:var(--tint);color:var(--copper);border:1px solid var(--line)}
+  .spacer{flex:1;min-width:8px}
+  header select,header input{height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit;background:#fff}
   header button{height:36px;border:0;border-radius:8px;background:var(--primary);color:#fff;font-weight:700;padding:0 14px;cursor:pointer}
   .wrap{max-width:960px;margin:0 auto;padding:20px}
   .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
@@ -43,8 +45,10 @@
 <body>
 <header>
   <h1>Avis clients</h1>
-  <input id="shop" type="number" placeholder="shopId (vide = réseau)" style="width:170px">
-  <input id="token" type="password" placeholder="X-Admin-Token" style="width:200px">
+  <span id="scope" class="scope">…</span>
+  <div class="spacer"></div>
+  <select id="shopSel" title="Boutique"><option value="">Toutes les boutiques</option></select>
+  <input id="token" type="password" placeholder="X-Admin-Token" style="width:190px">
   <button id="go">Charger</button>
 </header>
 <div class="wrap">
@@ -59,61 +63,70 @@
 (function(){
   var $ = function(id){ return document.getElementById(id); };
   var API = (location.pathname.replace(/\/[^/]*$/, '') || '') + '/api';  // même origine que la page
-  // Persistance légère du token/shop
-  try {
-    $('token').value = localStorage.getItem('rv_admin_token') || '';
-    $('shop').value  = localStorage.getItem('rv_admin_shop')  || '';
-  } catch(e){}
+  var params = new URLSearchParams(location.search);
+  // Portée : ?shop=<id> => FRANCHISÉE (verrouillée sur une boutique) ; sinon FRANCHISEUR (réseau).
+  var lockedShop = params.get('shop');
+  var isFranchisee = lockedShop !== null && lockedShop !== '';
 
-  function stars(n){
-    n = n == null ? 0 : Math.round(n);
-    var s = '';
-    for (var i=1;i<=5;i++) s += i<=n ? '★' : '<span class="off">★</span>';
-    return '<span class="stars">'+s+'</span>';
-  }
-  function rateClass(v){ return v < 2.5 ? 'r-bad' : (v < 3.5 ? 'r-warn' : 'r-ok'); }
+  try { $('token').value = localStorage.getItem('rv_admin_token') || ''; } catch(e){}
+  if (!isFranchisee) { try { $('shopSel').value = localStorage.getItem('rv_admin_shop') || ''; } catch(e){} }
+
+  function currentShopId(){ return isFranchisee ? lockedShop : $('shopSel').value.trim(); }
+
   function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+  function stars(n){ n=n==null?0:Math.round(n); var s=''; for(var i=1;i<=5;i++) s+= i<=n?'★':'<span class="off">★</span>'; return '<span class="stars">'+s+'</span>'; }
+  function rateClass(v){ return v<2.5?'r-bad':(v<3.5?'r-warn':'r-ok'); }
+  function kpi(v,l){ return '<div class="kpi"><b>'+v+'</b><span>'+l+'</span></div>'; }
+
+  // Liste des boutiques (pour le sélecteur franchiseur) + nom pour le badge franchisée.
+  function loadShops(){
+    return fetch(API + '/shops').then(function(r){ return r.ok ? r.json() : []; }).then(function(list){
+      list = list || [];
+      if (isFranchisee) {
+        var s = list.filter(function(x){ return String(x.id) === String(lockedShop); })[0];
+        $('scope').textContent = 'Franchisée · ' + (s ? s.name : ('boutique ' + lockedShop));
+        $('shopSel').style.display = 'none';
+      } else {
+        $('scope').textContent = 'Franchiseur · réseau';
+        var sel = $('shopSel'), cur = sel.value;
+        list.forEach(function(x){ var o=document.createElement('option'); o.value=x.id; o.textContent=x.name+(x.city?(' — '+x.city):''); sel.appendChild(o); });
+        sel.value = cur;
+      }
+    }).catch(function(){ $('scope').textContent = isFranchisee ? ('Franchisée · boutique '+lockedShop) : 'Franchiseur · réseau'; });
+  }
 
   function load(){
     var token = $('token').value.trim();
-    var shop  = $('shop').value.trim();
-    try { localStorage.setItem('rv_admin_token', token); localStorage.setItem('rv_admin_shop', shop); } catch(e){}
+    try { localStorage.setItem('rv_admin_token', token); if(!isFranchisee) localStorage.setItem('rv_admin_shop', $('shopSel').value.trim()); } catch(e){}
     $('err').hidden = true;
-    var url = API + '/admin/reviews' + (shop ? ('?shopId=' + encodeURIComponent(shop)) : '');
+    var sid = currentShopId();
+    var url = API + '/admin/reviews' + (sid ? ('?shopId=' + encodeURIComponent(sid)) : '');
     fetch(url, { headers: { 'X-Admin-Token': token } })
       .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status+(r.status===401||r.status===403?' — jeton admin invalide':'')); return r.json(); })
       .then(render)
-      .catch(function(e){ $('err').hidden = false; $('err').textContent = 'Erreur : ' + e.message; });
+      .catch(function(e){ $('err').hidden=false; $('err').textContent='Erreur : '+e.message; });
   }
 
   function render(d){
     var t = d.totals || {};
-    $('kpis').innerHTML =
-      kpi(t.total||0,'Avis') + kpi(t.liked||0,'Aimé') + kpi(t.disliked||0,'Pas aimé') + kpi(t.pending||0,'En attente');
-
-    var tb = $('byprod').querySelector('tbody');
-    var bp = d.byProduct || [];
+    $('kpis').innerHTML = kpi(t.total||0,'Avis')+kpi(t.liked||0,'Aimé')+kpi(t.disliked||0,'Pas aimé')+kpi(t.pending||0,'En attente');
+    var tb = $('byprod').querySelector('tbody'), bp = d.byProduct || [];
     tb.innerHTML = bp.length ? bp.map(function(p){
       var v = parseFloat(p.avg_rating);
-      return '<tr><td>'+esc(p.product_name)+'</td>'+
-             '<td><span class="rate '+rateClass(v)+'">'+v.toFixed(2)+'</span> '+stars(v)+'</td>'+
-             '<td>'+p.n+'</td></tr>';
+      return '<tr><td>'+esc(p.product_name)+'</td><td><span class="rate '+rateClass(v)+'">'+v.toFixed(2)+'</span> '+stars(v)+'</td><td>'+p.n+'</td></tr>';
     }).join('') : '<tr><td colspan="3" class="empty">Aucune note produit pour l\'instant.</td></tr>';
-
     var neg = d.recentNegative || [];
     $('neg').innerHTML = neg.length ? neg.map(function(rv){
       var items = (rv.items||[]).map(function(it){
-        return '<div class="neg__item"><div class="neg__name">'+esc(it.product_name)+'</div>'+
-               '<div>'+stars(it.rating)+ (it.note ? ' <span class="neg__note">— '+esc(it.note)+'</span>' : '') +'</div></div>';
+        return '<div class="neg__item"><div class="neg__name">'+esc(it.product_name)+'</div><div>'+stars(it.rating)+(it.note?(' <span class="neg__note">— '+esc(it.note)+'</span>'):'')+'</div></div>';
       }).join('');
-      return '<div class="neg"><div class="neg__head"><span>'+esc(rv.store||'—')+'</span><span>'+esc((rv.created_at||'').replace('T',' ').slice(0,16))+'</span></div>'+
-             (items || '<div class="empty">Avis négatif sans détail produit.</div>')+'</div>';
+      return '<div class="neg"><div class="neg__head"><span>'+esc(rv.store||'—')+'</span><span>'+esc((rv.created_at||'').replace('T',' ').slice(0,16))+'</span></div>'+(items||'<div class="empty">Avis négatif sans détail produit.</div>')+'</div>';
     }).join('') : '<div class="empty">Aucun avis négatif. 🎉</div>';
   }
-  function kpi(v,l){ return '<div class="kpi"><b>'+v+'</b><span>'+l+'</span></div>'; }
 
   $('go').onclick = load;
-  if ($('token').value) load();
+  $('shopSel').onchange = function(){ if ($('token').value) load(); };
+  loadShops().then(function(){ if ($('token').value) load(); });
 })();
 </script>
 </body>
