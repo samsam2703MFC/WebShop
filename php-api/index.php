@@ -3356,9 +3356,11 @@ function dispatch($m, $p) {
           $b['active'] = (bool) $b['active'];
           // cat_id : categorie du catalogue dont proviennent les choix (0058).
           $hasSlotCat = col_exists('ws_bundle_slots', 'cat_id');
+          $hasSlotSub = col_exists('ws_bundle_slots', 'sub_cat_id');
           $slots = rows("SELECT id, label, required, COALESCE(kind,'single') AS kind,
                                 COALESCE(min_select,1) AS min_select, COALESCE(max_select,1) AS max_select,
-                                sort_order, active" . ($hasSlotCat ? ", cat_id" : ", NULL AS cat_id") . "
+                                sort_order, active" . ($hasSlotCat ? ", cat_id" : ", NULL AS cat_id")
+                             . ($hasSlotSub ? ", sub_cat_id" : ", NULL AS sub_cat_id") . "
                            FROM ws_bundle_slots WHERE bundle_id = ? ORDER BY sort_order, id", [$b['id']]);
           foreach ($slots as &$sl) {
             $sl['id'] = (string) $sl['id'];
@@ -4165,6 +4167,12 @@ function dispatch($m, $p) {
             if (col_exists('ws_bundle_slots', 'cat_id')) {
               $slCols[] = 'cat_id';
               $slVals[] = is_numeric($sl['cat_id'] ?? null) ? (int) $sl['cat_id'] : null;
+            }
+            // sub_cat_id AFFINE cat_id (0059) : une etape « Dessert » peut ne
+            // vouloir que les parts individuelles, pas toute la patisserie.
+            if (col_exists('ws_bundle_slots', 'sub_cat_id')) {
+              $slCols[] = 'sub_cat_id';
+              $slVals[] = is_numeric($sl['sub_cat_id'] ?? null) ? (int) $sl['sub_cat_id'] : null;
             }
             q("INSERT INTO ws_bundle_slots (" . implode(',', $slCols) . ") VALUES ("
               . implode(',', array_fill(0, count($slCols), '?')) . ")", $slVals);
