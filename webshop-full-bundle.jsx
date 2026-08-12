@@ -786,6 +786,14 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
       qty,
       price: qty > 0 ? total / qty : (unit + bundleDelta + upsellDelta),
       options: optionLabels.map((label) => ({ label })),
+      /* Composition du menu par IDENTIFIANTS, en plus des libelles d'affichage.
+         Elle restait dans le composeur : le panier ne portait que des libelles,
+         et la commande ne pouvait donc ecrire aucune ligne pour les choix du
+         menu — la boutique voyait « Menu » sans savoir quoi preparer.
+         C'est le serveur qui resout ces identifiants en produits ; le navigateur
+         ne decide pas de ce qui est vendu. */
+      bundleId: activeBundle ? activeBundle.id : null,
+      bundleSlots: { ...bundleSlots },
       portion: portOpt ? portOpt.v : null,
       cat: product.cat,
       crossPortion: !!product.crossPortion,
