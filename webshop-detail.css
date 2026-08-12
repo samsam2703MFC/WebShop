@@ -173,6 +173,10 @@
   text-wrap: pretty;
 }
 .pdm-allergens { margin-top: 2px; }
+/* États explicites (jamais d'« aucun » implicite) : recette évaluée sans
+   allergène vs allergènes non renseignés (donnée absente à la source). */
+.pdm-allergens--none    { font-size: 12px; color: #6b625c; font-style: italic; }
+.pdm-allergens--unknown { font-size: 12px; color: #8d1d2c; font-style: italic; }
 
 /* SPECIAL OFFER STRIP --------------------------------------------- */
 .pdm-offer {

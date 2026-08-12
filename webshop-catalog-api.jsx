@@ -1,167 +1,164 @@
 /* =====================================================================
-   WSCatalog — products / bundles / assortments API stub
+   WSCatalog — catalogue / assortiments / stock
    ---------------------------------------------------------------------
-   The UI must NEVER hardcode catalog data. It calls these helpers,
-   which default to in-memory seeds (window._CATALOG_SEED). To wire a
-   real backend:
-     window.WSCatalog.endpoint = 'https://your-host/catalog';
-   Endpoints expected:
-     GET  {endpoint}/products?shopId=&cat=     -> [Product]  (price already shop-specific)
-     GET  {endpoint}/products/:id?shopId=      -> Product
-     GET  {endpoint}/bundles?productId=        -> [Bundle]
-     GET  {endpoint}/assortments?shopId=       -> [Assortment]
-     GET  {endpoint}/categories?shopId=        -> [Category]
-     GET  {endpoint}/stock?shopId=&date=&mode= -> [StockEntry]
-          StockEntry: { productId, qty_total, qty_reserved, qty_sold, qty_available }
-     POST {endpoint}/stock/reserve             -> { ok, reservationId, expiresAt }
-     POST {endpoint}/stock/release             -> { ok }
+   GO-LIVE — SOURCE UNIQUE : l'API (tables ws_products, ws_categories,
+   ws_product_shops, ws_product_prices, prix magasin ERP…). Toute la
+   machinerie de seeds mémoire (window._CATALOG_SEED : produits, prix par
+   boutique, assortiments, delivery_stock) a été SUPPRIMÉE, ainsi que les
+   `catch` qui avalaient une panne serveur pour retomber dessus.
 
-   Per-shop pricing + availability (seed):
-     window._CATALOG_SEED.prices  = { shopId: { productId: price } }
-     window._CATALOG_SEED.shopProducts = { shopId: [productId, ...] }
-       absent shopId key = all products available at that shop
+   Règle : soit la donnée réelle arrive, soit on lève une erreur que
+   l'écran affiche. Jamais un catalogue inventé, jamais un catalogue vide
+   silencieux qui ferait croire à une boutique sans produits.
+
+   Endpoints attendus :
+     GET  {endpoint}/products?shopId=&cat=&mode= -> [Product] (prix déjà résolu boutique)
+     GET  {endpoint}/products/:id?shopId=        -> Product
+     GET  {endpoint}/bundles?productId=          -> [Bundle]
+     GET  {endpoint}/assortments?shopId=         -> [Assortment]
+     GET  {endpoint}/categories?shopId=          -> [Category]
+     GET  {endpoint}/stock?shopId=&date=&mode=   -> [StockEntry]
+          StockEntry: { productId, qty_total, qty_reserved, qty_sold, qty_available }
+     POST {endpoint}/stock/reserve               -> { ok, reservationId, expiresAt }
+     POST {endpoint}/stock/release               -> { ok }
    ===================================================================== */
 (function () {
 
-  // Apply shop-specific price override and availability filter to a product list.
-  function applyShopOverrides(products, shopId) {
-    const seed = window._CATALOG_SEED || {};
-    // Availability: if shopProducts defined for this shop, filter to that list
-    const allowed = seed.shopProducts && seed.shopProducts[shopId];
-    let list = allowed
-      ? products.filter((p) => allowed.includes(p.id))
-      : products;
-    // Price: apply per-shop override if defined
-    const prices = seed.prices && seed.prices[shopId];
-    if (!prices) return list;
-    return list.map((p) => {
-      const override = prices[p.id];
-      return override !== undefined ? { ...p, price: override } : p;
-    });
+  /* Réservation et libération portent l'identité du client. L'API l'établit
+     désormais à partir du SEUL en-tête Authorization : le repli sur un
+     `customerId` transmis dans le corps laissait réserver — ou libérer — du
+     stock au nom de n'importe quel client. Sans cet en-tête, ces deux appels
+     répondent 401. */
+  const authHeaders = () =>
+    (window.WSAuth && typeof window.WSAuth.authHeaders === 'function') ? window.WSAuth.authHeaders() : {};
+
+  /* Date -> 'AAAA-MM-JJ' en heure LOCALE. toISOString() convertit en UTC : une
+     Date construite à minuit local devient 22:00 la VEILLE en été (UTC+2), et
+     la journée demandée au serveur était systématiquement la mauvaise — stock
+     du jour précédent affiché en permanence. Même défaut que celui qui rendait
+     le dernier jour du mois invisible au franchisé. */
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const isoLocal = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const toIso = (d) => (d instanceof Date ? isoLocal(d) : (d || ''));
+
+  function requireEndpoint() {
+    if (!api.endpoint) throw new Error('API catalogue non configurée.');
+    return api.endpoint;
+  }
+
+  async function getJson(url, label) {
+    const r = await fetch(url, { credentials: 'include' });
+    if (!r.ok) throw new Error(label + ' indisponible (HTTP ' + r.status + ').');
+    return await r.json();
   }
 
   const api = {
     endpoint: null,
-    async listCategories({ shopId } = {}) {
-      if (api.endpoint) {
-        try {
-          const r = await fetch(`${api.endpoint}/categories?shopId=${encodeURIComponent(shopId||'')}`, { credentials: 'include' });
-          if (r.ok) return await r.json();
-        } catch (_) {}
-      }
-      return (window._CATALOG_SEED && window._CATALOG_SEED.categories) || [];
+
+    async listCategories({ shopId, date } = {}) {
+      const base = requireEndpoint();
+      // `date` : même filtre saisonnier que listProducts — une catégorie
+      // entièrement hors saison ne doit pas rester dans la barre de navigation.
+      const dateQs = date ? `&date=${encodeURIComponent(date)}` : '';
+      return await getJson(`${base}/categories?shopId=${encodeURIComponent(shopId || '')}${dateQs}`, 'Catégories');
     },
-    async listProducts({ shopId, cat, mode } = {}) {
-      if (api.endpoint) {
-        try {
-          // `mode=delivery` → l'API exclut serveur-side les produits non éligibles
-          // à la livraison bureau (source unique du filtre, cf. /catalog/products).
-          const modeQs = mode ? `&mode=${encodeURIComponent(mode)}` : '';
-          const r = await fetch(`${api.endpoint}/products?shopId=${encodeURIComponent(shopId||'')}&cat=${encodeURIComponent(cat||'')}${modeQs}`, { credentials: 'include' });
-          if (r.ok) return await r.json();
-        } catch (_) {}
-      }
-      const seed = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
-      const filtered = !cat || cat === 'all' ? seed : seed.filter((p) => p.cat === cat);
-      return applyShopOverrides(filtered, shopId);
+
+    async listProducts({ shopId, cat, mode, date } = {}) {
+      const base = requireEndpoint();
+      // `mode=delivery` → l'API exclut serveur-side les produits non éligibles
+      // à la livraison bureau (source unique du filtre, cf. /catalog/products).
+      const modeQs = mode ? `&mode=${encodeURIComponent(mode)}` : '';
+      // `date` → gammes saisonnières évaluées à la date de RETRAIT/LIVRAISON,
+      // pas à celle de la commande : on commande le 28 novembre pour le
+      // 2 décembre, et la gamme de Noël doit alors être visible.
+      const dateQs = date ? `&date=${encodeURIComponent(date)}` : '';
+      return await getJson(
+        `${base}/products?shopId=${encodeURIComponent(shopId || '')}&cat=${encodeURIComponent(cat || '')}${modeQs}${dateQs}`,
+        'Catalogue'
+      );
     },
+
     async getProduct(id, shopId) {
-      if (api.endpoint) {
-        try {
-          const qs = shopId ? `?shopId=${encodeURIComponent(shopId)}` : '';
-          const r = await fetch(`${api.endpoint}/products/${encodeURIComponent(id)}${qs}`, { credentials: 'include' });
-          if (r.ok) return await r.json();
-        } catch (_) {}
-      }
-      const seed = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
-      const p = seed.find((p) => String(p.id) === String(id)) || null;
-      if (!p || !shopId) return p;
-      return applyShopOverrides([p], shopId)[0] || null;
+      const base = requireEndpoint();
+      const qs = shopId ? `?shopId=${encodeURIComponent(shopId)}` : '';
+      return await getJson(`${base}/products/${encodeURIComponent(id)}${qs}`, 'Produit');
     },
+
     async listBundles({ productId } = {}) {
-      if (api.endpoint) {
-        try {
-          const r = await fetch(`${api.endpoint}/bundles?productId=${encodeURIComponent(productId||'')}`, { credentials: 'include' });
-          if (r.ok) return await r.json();
-        } catch (_) {}
-      }
-      const p = await api.getProduct(productId);
-      return (p && p.bundles) || [];
+      const base = requireEndpoint();
+      return await getJson(`${base}/bundles?productId=${encodeURIComponent(productId || '')}`, 'Formules');
     },
+
     async listAssortments({ shopId } = {}) {
-      if (api.endpoint) {
-        try {
-          const r = await fetch(`${api.endpoint}/assortments?shopId=${encodeURIComponent(shopId||'')}`, { credentials: 'include' });
-          if (r.ok) return await r.json();
-        } catch (_) {}
-      }
-      return (window._CATALOG_SEED && window._CATALOG_SEED.assortments) || [];
+      const base = requireEndpoint();
+      return await getJson(`${base}/assortments?shopId=${encodeURIComponent(shopId || '')}`, 'Assortiments');
     },
-    // Returns a map of productId -> { qty_total, qty_reserved, qty_sold, qty_available }
-    // Falls back to delivery_stock on the product seed when no endpoint is configured.
+
+    // Map productId -> { qty_total, qty_reserved, qty_sold, qty_available }.
     async getStock({ shopId, date, mode } = {}) {
-      if (api.endpoint) {
-        try {
-          const iso = date instanceof Date ? date.toISOString().slice(0, 10) : (date || '');
-          const r = await fetch(
-            `${api.endpoint}/stock?shopId=${encodeURIComponent(shopId||'')}&date=${encodeURIComponent(iso)}&mode=${encodeURIComponent(mode||'')}`,
-            { credentials: 'include' }
-          );
-          if (r.ok) {
-            const rows = await r.json();
-            const map = {};
-            for (const row of rows) map[row.productId] = row;
-            return map;
-          }
-        } catch (_) {}
-      }
-      // Seed fallback: build map from delivery_stock on each product
-      const seed = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
+      const base = requireEndpoint();
+      const iso = toIso(date);
+      const rows = await getJson(
+        `${base}/stock?shopId=${encodeURIComponent(shopId || '')}&date=${encodeURIComponent(iso)}&mode=${encodeURIComponent(mode || '')}`,
+        'Stock'
+      );
       const map = {};
-      for (const p of seed) {
-        if (typeof p.delivery_stock === 'number') {
-          map[p.id] = {
-            productId: p.id,
-            qty_total: p.delivery_stock,
-            qty_reserved: 0,
-            qty_sold: 0,
-            qty_available: p.delivery_stock,
-          };
-        }
-      }
+      for (const row of (rows || [])) map[row.productId] = row;
       return map;
     },
-    // Reserve qty for a logged-in user's basket (15-min hold).
-    // Only called when user is authenticated. No-op when no endpoint is set.
-    // POST {endpoint}/stock/reserve { productId, shopId, date, mode, qty, customerId }
-    // -> { ok, reservationId, expiresAt }
+
+    // Réservation de stock (maintien 15 min) pour un client authentifié.
+    // Un échec DOIT remonter : sans réservation confirmée, le stock n'est pas
+    // tenu et la boutique pourrait survendre.
     async reserve({ productId, shopId, date, mode, qty, customerId } = {}) {
-      if (!api.endpoint) return null;
-      try {
-        const iso = date instanceof Date ? date.toISOString().slice(0, 10) : (date || '');
-        const r = await fetch(`${api.endpoint}/stock/reserve`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ productId, shopId, date: iso, mode, qty, customerId }),
-        });
-        if (r.ok) return await r.json();
-      } catch (_) {}
-      return null;
+      const base = requireEndpoint();
+      const iso = toIso(date);
+      const r = await fetch(`${base}/stock/reserve`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ productId, shopId, date: iso, mode, qty, customerId }),
+      });
+      // Le serveur dit PRECISEMENT ce qui bloque — « Stock insuffisant », avec
+      // le disponible restant. Remplacer ce message par « HTTP 409 » privait le
+      // client de la seule information utile : combien il peut encore prendre.
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        const msg = (j && typeof j.error === 'string' && j.error) ? j.error : ('Réservation impossible (HTTP ' + r.status + ')');
+        const dispo = (j && typeof j.available === 'number')
+          ? (j.available > 0 ? ` — il reste ${j.available} pièce${j.available > 1 ? 's' : ''}` : ' — il n\'en reste aucune')
+          : '';
+        throw new Error(msg + dispo);
+      }
+      return await r.json();
     },
-    // Release one or all reservations for a customer.
-    // POST {endpoint}/stock/release { customerId, reservationIds? }
-    // reservationIds absent = release all for that customer.
-    async release({ customerId, reservationIds } = {}) {
-      if (!api.endpoint) return;
+
+    // Libération de réservations. Nettoyage non bloquant : un échec est tracé
+    // en console (la réservation expire d'elle-même côté serveur) mais ne
+    // fabrique aucune donnée.
+    // productId : ne relâche que CE produit (retrait d'une ligne du panier).
+    // Sans lui, tout le panier du client était libéré d'un coup.
+    async release({ customerId, productId, reservationIds } = {}) {
+      if (!api.endpoint) { console.error('[stock] libération impossible : endpoint absent'); return null; }
       try {
-        await fetch(`${api.endpoint}/stock/release`, {
+        const r = await fetch(`${api.endpoint}/stock/release`, {
           method: 'POST',
           credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ customerId, reservationIds: reservationIds || null }),
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ customerId, productId: productId || null, reservationIds: reservationIds || null }),
         });
-      } catch (_) {}
+        // Un statut != 2xx n'est PAS une exception : sans ce test, un 404 ou un
+        // 401 passait pour un succès et le stock restait gelé jusqu'à
+        // expiration, sans la moindre trace. C'est le défaut qui avait déjà été
+        // corrigé pour reserve() et oublié ici.
+        if (!r.ok) { console.error('[stock] libération refusée — HTTP ' + r.status); return { ok: false, status: r.status }; }
+        const j = await r.json().catch(() => null);
+        console.info('[stock] réponse libération', j);
+        return j;
+      } catch (e) {
+        console.error('[stock] libération des réservations impossible', e);
+        return null;
+      }
     },
   };
   window.WSCatalog = api;

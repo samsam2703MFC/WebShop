@@ -1,68 +1,33 @@
-// links.jsx — Direct link generator
-// Produces pre-parameterized storefront URLs (shop, date, mode, product, category, voucher)
-// Renders branded QR (ruby modules + brand corners), copy URL, download PNG/SVG,
-// live storefront preview, and a saved-link history.
+// links.jsx — Générateur de liens directs
+// Produit des URLs storefront pré-paramétrées (boutique, date, mode, produit, catégorie, voucher)
+// Rend un QR brandé, copie l'URL, télécharge PNG/SVG, prévisualise et historise les liens.
+// Go-live : aucune donnée de démonstration — tout vient de la source réelle.
 
-const LINK_PRODUCTS = [
-  { id: 'tarte-citron',      name: 'Tarte au citron meringuée', cat: 'patisseries', price: 6.5 },
-  { id: 'tarte-praline',     name: 'Tarte praliné noisette',     cat: 'patisseries', price: 7.0 },
-  { id: 'salade-bressane',   name: 'Salade bressane',            cat: 'salades',     price: 12.5 },
-  { id: 'parfait-vanille',   name: 'Parfait vanille bourbon',    cat: 'douceurs',    price: 5.0 },
-  { id: 'plat-saumon',       name: 'Saumon, riz, légumes verts', cat: 'plats',       price: 14.5 },
-  { id: 'plat-volaille',     name: 'Volaille fermière',          cat: 'plats',       price: 13.0 },
-  { id: 'cookie-chocolat',   name: 'Cookie double chocolat',     cat: 'douceurs',    price: 3.5 },
-  { id: 'pain-cereales',     name: 'Pain aux céréales',          cat: 'boulangerie', price: 4.2 },
-];
+// Go-live : aucun catalogue de démonstration — produits, catégories et
+// collections proviennent de l'API. Structures vides tant que la source
+// réelle n'est pas branchée.
+const LINK_PRODUCTS = [];
+const LINK_CATS = [];
+const LINK_COLLECTIONS = [];
 
-const LINK_CATS = [
-  { id: 'patisseries', name: 'Pâtisseries' },
-  { id: 'salades',     name: 'Salades' },
-  { id: 'plats',       name: 'Plats du jour' },
-  { id: 'douceurs',    name: 'Douceurs' },
-  { id: 'boulangerie', name: 'Boulangerie' },
-];
+// Go-live : aucune boutique de démonstration — la liste vient de la source réelle.
+const LINK_SHOPS = [];
 
-const LINK_COLLECTIONS = [
-  { id: 'menu-midi', name: 'Menu de midi' },
-  { id: 'brunch',    name: 'Le Brunch' },
-  { id: 'goute',     name: 'Le Goûter' },
-  { id: 'apero',     name: 'Apéro Box' },
-];
-
-const LINK_SHOPS = ['chatelain', 'sablon', 'carre', 'zuid', 'grognon', 'brugge'];
-
-// History persisted to localStorage
+// Historique persisté en localStorage (liens réellement créés depuis l'admin)
 const LINKS_KEY = 'latelier-admin:saved-links';
 
+// Go-live : plus aucun seed de secours — si le stockage est vide, l'historique est vide.
 function loadLinks() {
   try {
     const raw = localStorage.getItem(LINKS_KEY);
-    if (!raw) return SEED_LINKS;
+    if (!raw) return [];
     const p = JSON.parse(raw);
-    return Array.isArray(p) ? p : SEED_LINKS;
-  } catch { return SEED_LINKS; }
+    return Array.isArray(p) ? p : [];
+  } catch { return []; }
 }
 function saveLinks(list) {
   try { localStorage.setItem(LINKS_KEY, JSON.stringify(list)); } catch {}
 }
-
-const SEED_LINKS = [
-  {
-    id: 'l1', name: 'Newsletter rentrée — Tartes',
-    config: { shop: 'chatelain', mode: 'collect', date: '2026-09-01', product: 'tarte-citron', voucher: 'RENTREE2026' },
-    createdAt: '2026-04-28', clicks: 1240,
-  },
-  {
-    id: 'l2', name: 'Affiche QR Sablon — Brunch dimanche',
-    config: { shop: 'sablon', mode: 'collect', date: '', collection: 'brunch', voucher: 'BRUNCH-SABLON' },
-    createdAt: '2026-04-22', clicks: 312,
-  },
-  {
-    id: 'l3', name: 'Bureau Européen — Onboarding livraison',
-    config: { shop: 'chatelain', mode: 'delivery', date: '', voucher: 'OFFICE-LAUNCH' },
-    createdAt: '2026-05-01', clicks: 87,
-  },
-];
 
 // ─────────────────────────────────────────────────────────────
 // Build the storefront URL from the config
@@ -86,8 +51,9 @@ function buildLinkUrl(cfg) {
 // LinksPage
 // ─────────────────────────────────────────────────────────────
 function LinksPage() {
+  // Go-live : aucune boutique de démonstration pré-sélectionnée — le client choisit.
   const [cfg, setCfg] = useState({
-    shop: 'chatelain',
+    shop: '',
     mode: 'collect',
     date: '',
     product: '',
@@ -172,7 +138,7 @@ function LinksPage() {
                 </div>
               </button>
               {LINK_SHOPS.map((id) => {
-                const shop = SHOPS[id];
+                const shop = getShop(id);
                 const active = cfg.shop === id;
                 return (
                   <button
@@ -189,6 +155,10 @@ function LinksPage() {
                   </button>
                 );
               })}
+              {/* Go-live : aucune boutique de démonstration — état vide si la source ne renvoie rien. */}
+              {LINK_SHOPS.length === 0 && (
+                <div className="shop-multi__empty">Aucune donnée — connectez la source.</div>
+              )}
             </div>
           </Section>
 
@@ -220,7 +190,7 @@ function LinksPage() {
           <Section title="Mise en avant produit">
             <Field label="Produit">
               <select className="input" value={cfg.product} onChange={(e) => set('product', e.target.value)}>
-                <option value="">— Aucun —</option>
+                <option value="">{LINK_PRODUCTS.length === 0 ? 'Aucune donnée — connectez la source' : '— Aucun —'}</option>
                 {LINK_PRODUCTS.map((p) => (
                   <option key={p.id} value={p.id}>{p.name} · {p.price.toFixed(2)}€</option>
                 ))}
@@ -245,13 +215,13 @@ function LinksPage() {
           <Section title="Catégorie ou collection (filtre)">
             <Field label="Catégorie">
               <select className="input" value={cfg.category} onChange={(e) => { set('category', e.target.value); if (e.target.value) set('collection', ''); }}>
-                <option value="">— Aucune —</option>
+                <option value="">{LINK_CATS.length === 0 ? 'Aucune donnée — connectez la source' : '— Aucune —'}</option>
                 {LINK_CATS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </Field>
             <Field label="Collection">
               <select className="input" value={cfg.collection} onChange={(e) => { set('collection', e.target.value); if (e.target.value) set('category', ''); }}>
-                <option value="">— Aucune —</option>
+                <option value="">{LINK_COLLECTIONS.length === 0 ? 'Aucune donnée — connectez la source' : '— Aucune —'}</option>
                 {LINK_COLLECTIONS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </Field>
@@ -260,7 +230,7 @@ function LinksPage() {
           <Section title="Voucher pré-appliqué">
             <Field label="Code">
               <select className="input input--mono" value={cfg.voucher} onChange={(e) => set('voucher', e.target.value)}>
-                <option value="">— Aucun —</option>
+                <option value="">{validVouchers.length === 0 ? 'Aucune donnée — connectez la source' : '— Aucun —'}</option>
                 {validVouchers.map((v) => (
                   <option key={v.id} value={v.code}>{v.code} · {formatValue(v)}</option>
                 ))}
@@ -272,7 +242,8 @@ function LinksPage() {
           </Section>
 
           <div className="link-form__foot">
-            <button className="btn" onClick={() => setCfg({ shop: 'chatelain', mode: 'collect', date: '', product: '', openModal: false, category: '', collection: '', voucher: '' })}>Réinitialiser</button>
+            {/* Go-live : réinitialisation sans boutique de démonstration. */}
+            <button className="btn" onClick={() => setCfg({ shop: '', mode: 'collect', date: '', product: '', openModal: false, category: '', collection: '', voucher: '' })}>Réinitialiser</button>
             <button className="btn btn--primary" onClick={onSave}>Enregistrer ce lien</button>
           </div>
         </div>
@@ -296,7 +267,7 @@ function LinksPage() {
             <LinkHistoryRow key={link.id} link={link} onLoad={() => onLoad(link)} onDelete={() => setHistory((h) => h.filter((x) => x.id !== link.id))}/>
           ))}
           {history.length === 0 && (
-            <div className="link-history__empty">Aucun lien enregistré pour l'instant.</div>
+            <div className="link-history__empty">Aucune donnée — connectez la source.</div>
           )}
         </div>
       </div>
@@ -420,7 +391,8 @@ function sanitize(s) {
 // Preview — miniature storefront state
 // ─────────────────────────────────────────────────────────────
 function PreviewPanel({ cfg }) {
-  const shop = cfg.shop ? SHOPS[cfg.shop] : null;
+  // Go-live : la boutique vient de la source réelle — null si inconnue, jamais un seed.
+  const shop = cfg.shop ? (SHOPS[cfg.shop] || null) : null;
   const product = LINK_PRODUCTS.find((p) => p.id === cfg.product);
 
   return (
@@ -457,6 +429,10 @@ function PreviewPanel({ cfg }) {
           {!cfg.category && !cfg.collection && <span className="ppreview__chip ppreview__chip--ghost">Tous les produits</span>}
         </div>
         <div className="ppreview__grid">
+          {/* Go-live : aucun produit de démonstration — état vide tant que la source n'est pas branchée. */}
+          {LINK_PRODUCTS.length === 0 && (
+            <div className="ppreview__empty">Aucune donnée — connectez la source.</div>
+          )}
           {LINK_PRODUCTS.slice(0, 6).map((p) => {
             const highlighted = p.id === cfg.product && !cfg.openModal;
             const opened = p.id === cfg.product && cfg.openModal;
@@ -492,7 +468,8 @@ function PreviewPanel({ cfg }) {
 function LinkHistoryRow({ link, onLoad, onDelete }) {
   const cfg = link.config;
   const url = buildLinkUrl(cfg);
-  const shop = cfg.shop ? SHOPS[cfg.shop] : null;
+  // Go-live : accès sûr — aucune boutique de démonstration en repli.
+  const shop = cfg.shop ? (SHOPS[cfg.shop] || null) : null;
   const [copied, setCopied] = useState(false);
 
   const onCopy = async (e) => {

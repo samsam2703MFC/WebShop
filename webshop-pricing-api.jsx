@@ -17,55 +17,8 @@
    It is NOT canonical. Production must use the API.
    ===================================================================== */
 (function () {
-  // TODO[BACKEND]: replace this constant with `GET /promos/cross-portion`.
-  // Cross-portion 4+1 promo — frontend reads it through getCrossPortionRule().
-  // Every (x+y) eligible portions = x paid + y free. With x:4, y:1 →
-  // 4 paid portions earns 1 free. Basket of 5 → 1 free, 10 → 2, 15 → 3.
-  const FALLBACK_CROSS_PORTION = {
-    x: 4, y: 1, threshold: 4,
-    label: '4 quarts achetés, 1 offert (le moins cher)',
-    quarterValueFactor: 0.27, // freebie = basePrice × this
-  };
-
-  // TODO[BACKEND]: replace with `GET /payment-methods`.
-  const FALLBACK_PAYMENT_METHODS = [
-    { id: 'bancontact', label: 'Bancontact',   sub: 'Paiement instantané' },
-    { id: 'visa',       label: 'Carte bancaire', sub: 'Visa · Mastercard · Amex' },
-    { id: 'paypal',     label: 'PayPal',         sub: 'Compte PayPal' },
-    { id: 'invoice',    label: 'Facture office', sub: 'Réservé Office validés' },
-  ];
-
-  // TODO[BACKEND]: replace with `POST /quote`. The frontend should send
-  // basket lines + context, and render whatever the server returns.
-  // The fallback below recomputes locally for demo continuity only.
-  const FALLBACK_PORTION_UNITS = { quart: 1, demi: 2, entier: 4 };
-
-  function fallbackCrossPortion(basket) {
-    if (!Array.isArray(basket) || !basket.length) return null;
-    const items = [];
-    for (const l of basket) {
-      if (!l.crossPortion || !l.portion) continue;
-      const u = FALLBACK_PORTION_UNITS[l.portion] || 0;
-      if (u <= 0) continue;
-      const qv = (l.basePrice || 0) * FALLBACK_CROSS_PORTION.quarterValueFactor;
-      const total = u * (l.qty || 0);
-      for (let i = 0; i < total; i++) items.push({ price: qv, name: l.name });
-    }
-    if (!items.length) return null;
-    const groupSize = FALLBACK_CROSS_PORTION.x + FALLBACK_CROSS_PORTION.y;
-    items.sort((a, b) => a.price - b.price);
-    const cycles = Math.floor(items.length / groupSize);
-    const freeCount = cycles * FALLBACK_CROSS_PORTION.y;
-    let savings = 0; const freeNames = [];
-    for (let i = 0; i < freeCount; i++) { savings += items[i].price; freeNames.push(items[i].name); }
-    const remainder = items.length % groupSize;
-    return {
-      eligibleCount: items.length, groupSize, cycles, freeCount, savings, freeNames,
-      toNext: cycles >= 1 && remainder === 0 ? 0 : groupSize - remainder,
-      status: cycles >= 1 ? (cycles >= 2 ? 'boosted' : 'active') : 'dormant',
-      threshold: FALLBACK_CROSS_PORTION.x,
-    };
-  }
+  // Go-live : plus aucune regle de prix/promo/paiement seed cote client.
+  // Sans reponse API : null / listes vides / erreur explicite.
 
   const api = {
     endpoint: null,
@@ -77,7 +30,7 @@
           if (r.ok) return await r.json();
         } catch (_) {}
       }
-      return FALLBACK_CROSS_PORTION;
+      return null; // pas de regle serveur -> pas d'offre
     },
 
     async listPaymentMethods({ shopId, mode } = {}) {
@@ -87,7 +40,7 @@
           if (r.ok) return await r.json();
         } catch (_) {}
       }
-      return FALLBACK_PAYMENT_METHODS;
+      return []; // pas d'API -> aucun moyen de paiement propose
     },
 
     /* Quote a basket. Backend returns final totals + every applied
@@ -104,31 +57,7 @@
           if (r.ok) return await r.json();
         } catch (_) {}
       }
-      // FALLBACK — demo only. Mirrors the in-page logic.
-      const subtotal = (basket || []).reduce((t, l) => t + (l.price || 0) * (l.qty || 0), 0);
-      const cross = fallbackCrossPortion(basket);
-      const discounts = [];
-      if (cross && cross.savings) {
-        discounts.push({ code: 'cross-portion', label: cross.cycles >= 1 ? `${cross.freeCount} quart(s) offert(s)` : null, amount: cross.savings, meta: cross });
-      }
-      // TODO[BACKEND]: collect mode promos must come from `/quote`,
-      // not be inferred client-side. This 5% pickup discount is demo seed.
-      if (mode === 'collect') {
-        discounts.push({ code: 'pickup-5', label: 'Retrait −5%', amount: subtotal * 0.05 });
-      }
-      // Voucher resolution lives in webshop-vouchers.jsx (also a stub).
-      let voucherDiscount = 0; let voucherInfo = null;
-      if (voucher && typeof window.validateVoucher === 'function') {
-        const v = window.validateVoucher(voucher, { subtotal, shopId });
-        if (v && v.ok) { voucherDiscount = v.discount || 0; voucherInfo = { code: voucher, ...v }; }
-      }
-      if (voucherDiscount) discounts.push({ code: 'voucher', label: voucherInfo?.message, amount: voucherDiscount });
-      const totalDiscount = discounts.reduce((t, d) => t + (d.amount || 0), 0);
-      const total = Math.max(0, subtotal - totalDiscount);
-      return {
-        subtotal, discounts, total, voucher: voucherInfo,
-        cross, // demo extra so the UI strip can render directly
-      };
+      throw new Error('API tarification indisponible.');
     },
   };
 

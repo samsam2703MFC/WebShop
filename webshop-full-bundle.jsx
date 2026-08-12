@@ -8,75 +8,15 @@ const { useState, useMemo, useEffect } = React;
 // =========================================================================
 // DATA
 // =========================================================================
-const W_SHOPS = {
-  chatelain: { id: 'chatelain', name: 'Maison Châtelain',  city: 'Bruxelles', accent: '#8D1D2C', address: 'Rue du Bailli 42, 1050 Ixelles' },
-  sablon:    { id: 'sablon',    name: 'Atelier Sablon',     city: 'Bruxelles', accent: '#1F4F6B', address: 'Place du Grand Sablon 18, 1000 Bruxelles' },
-  carre:     { id: 'carre',     name: 'Le Carré',           city: 'Liège',     accent: '#6B3D0A', address: 'Rue Pont d\u2019Avroy 11, 4000 Liège' },
-  zuid:      { id: 'zuid',      name: 'Zuid Bakery',        city: 'Antwerpen', accent: '#2D5A3D', address: 'Volkstraat 37, 2000 Antwerpen' },
-  grognon:   { id: 'grognon',   name: 'Le Grognon',         city: 'Namur',     accent: '#C17A2A', address: 'Rue des Brasseurs 108, 5000 Namur' },
-  brugge:    { id: 'brugge',    name: 'Brugge Studio',      city: 'Brugge',    accent: '#5C4A8A', address: 'Steenstraat 74, 8000 Brugge' },
-};
-// Expose so webshop-shops-api.jsx can resolve from in-memory fixture
-// when no remote endpoint is configured.
-window.W_SHOPS = W_SHOPS;
+// Go-live : AUCUNE boutique en dur. Les boutiques viennent exclusivement de
+// l'API /shops (table `shops`) ; si elle est injoignable, l'UI affiche une
+// erreur — jamais de données de démo (« Maison Châtelain » et consorts).
+// L'objet global window.W_SHOPS a été supprimé : tant qu'il existait, un
+// repli pouvait y puiser une liste de boutiques fictive.
 
-const W_CATEGORIES = [
-  { id: 'tarts',     label: 'Tartes',        img: 'img/cat-tarts.png',
-    subs: [
-      { id: 'tarts-fruit',     label: 'Fruits',           img: 'img/sweet-tart-small.png' },
-      { id: 'tarts-chocolate', label: 'Chocolat',         img: 'img/cake-slice.png' },
-      { id: 'tarts-savoury',   label: 'Salées',           img: 'img/savoury-tart.png' },
-      { id: 'tarts-classics',  label: 'Classiques',       img: 'img/sweet-tart-big.png' },
-      { id: 'tarts-individual',label: 'Individuelles',    img: 'img/cupcake.png' },
-      { id: 'tarts-seasonal',  label: 'Saison',           img: 'img/pumpkin.png' },
-    ] },
-  { id: 'plats',     label: 'Plats',         img: 'img/cat-cakes.png',
-    subs: [
-      { id: 'plats-traiteur',  label: 'Traiteur',         img: 'img/sandwiches-platter.png' },
-      { id: 'plats-soup',      label: 'Soupes',           img: 'img/tomato.png' },
-      { id: 'plats-veggie',    label: 'Végétarien',       img: 'img/carrot.png' },
-      { id: 'plats-saison',    label: 'De saison',        img: 'img/pumpkin.png' },
-      { id: 'plats-sharing',   label: 'À partager',       img: 'img/cheese-fine-cuts.png' },
-    ] },
-  { id: 'sandwiches',label: 'Sandwiches',    img: 'img/cat-sandw.png',
-    subs: [
-      { id: 'sand-classic',    label: 'Classiques',       img: 'img/sandwiches.png' },
-      { id: 'sand-veggie',     label: 'Végétariens',      img: 'img/salads.png' },
-      { id: 'sand-deluxe',     label: 'Deluxe',           img: 'img/sandwiches-platter.png' },
-      { id: 'sand-club',       label: 'Clubs',            img: 'img/cheese-fine-cuts.png' },
-      { id: 'sand-petit',      label: 'Petits formats',   img: 'img/roll.png' },
-    ] },
-  { id: 'breads',    label: 'Pains',         img: 'img/cat-breads.png',
-    subs: [
-      { id: 'breads-trad',     label: 'Tradition',        img: 'img/bread-1.png' },
-      { id: 'breads-special',  label: 'Spéciaux',         img: 'img/bread-2.png' },
-      { id: 'breads-gluten',   label: 'Sans gluten',      img: 'img/bread-3.png' },
-      { id: 'breads-petit',    label: 'Petits pains',     img: 'img/rolls.png' },
-      { id: 'breads-jour',     label: 'Du jour',          img: 'img/bread-4.png' },
-      { id: 'breads-cereales', label: 'Céréales',         img: 'img/bread-5.png' },
-    ] },
-  { id: 'viennoiseries', label: 'Viennoiseries', img: 'img/cat-vienn.png',
-    subs: [
-      { id: 'vien-croissant',  label: 'Croissants',       img: 'img/croissant.png' },
-      { id: 'vien-chocolat',   label: 'Chocolatines',     img: 'img/croissant.png' },
-      { id: 'vien-brioche',    label: 'Brioches',         img: 'img/cake.png' },
-      { id: 'vien-feuillete',  label: 'Feuilletés',       img: 'img/croissant.png' },
-      { id: 'vien-saison',     label: 'Saison',           img: 'img/cupcake.png' },
-    ] },
-  { id: 'sweet',     label: 'Sucré',         img: 'img/cat-sweet.png',
-    subs: [
-      { id: 'sweet-cookies',   label: 'Biscuits',         img: 'img/cookies.png' },
-      { id: 'sweet-cake',      label: 'Gâteaux',          img: 'img/cake.png' },
-      { id: 'sweet-cupcake',   label: 'Cupcakes',         img: 'img/cupcake.png' },
-      { id: 'sweet-chocolat',  label: 'Chocolats',        img: 'img/cake-slice.png' },
-      { id: 'sweet-saison',    label: 'Saison',           img: 'img/pumpkin.png' },
-    ] },
-];
+const W_CATEGORIES = [];
 
-const W_ASSORTMENTS = [
-  { id: 'paques', label: 'Pâques',       img: 'img/season-paques.png',       tagline: 'Sélection chocolatée — disponible jusqu\u2019au 7 avril' },
-  { id: 'ete',    label: 'Été',          img: 'img/season-fete-meres.png',   tagline: 'Pâtisseries fraîches & glaces — saison estivale' },
-];
+const W_ASSORTMENTS = [];
 
 // --- Line-art product placeholders (design-system illustrations) ---
 const PLACEHOLDER_BY_SUBCAT = {
@@ -102,173 +42,14 @@ function getPlaceholder(p) {
       || 'img/placeholders/cake.png';
 }
 
-const W_PRODUCTS = [
-  { id: 1,  cat: 'tarts',   name: 'Tarte aux fraises',                   price: 24.0, allergens: ['gluten','milk','egg'],            portions: true,  badge: '4+1', img: 'img/p-tarte-fraises.png',
-    crossPortion: true,
-    offer: { type: 'buy_x_get_y_free', x: 4, y: 1, unit: 'portion' } },
-  { id: 2,  cat: 'tarts',   name: 'Tarte aux fruits frais',              price: 28.0, allergens: ['gluten','milk','egg'],            portions: true,  badge: '4+1', img: 'img/p-tarte-fruits.png',
-    crossPortion: true,
-    offer: { type: 'buy_x_get_y_free', x: 4, y: 1, unit: 'portion' } },
-  { id: 3,  cat: 'plats',   name: 'Chou farci, crème & champignons',     price: 14.5, allergens: ['milk','egg'],                     portions: false, badge: 'Du jour', img: 'img/p-chou-farci.png',
-    no_delivery: true },
-  { id: 4,  cat: 'salades', name: 'Bowl chèvre, figues & légumes rôtis', price: 13.5, allergens: ['milk'],                           portions: false, badge: null,      img: 'img/p-bowl-veggie.png',
-    delivery_stock: 3 },
-  { id: 5,  cat: 'salades', name: 'Salade fêta, fruits rouges & olives', price: 12.5, allergens: ['milk','almond'],                  portions: false, badge: null,      img: 'img/p-salade-feta.png' },
-  { id: 6,  cat: 'salades', name: 'Salade de bœuf, bleu & pignons',      price: 15.5, allergens: ['milk'],                           portions: false, badge: null,      img: 'img/p-salade-boeuf.png' },
-  { id: 36, cat: 'salades', name: 'Salade chef saumon fumé & pommes grenailles',
-    description: 'Saumon fumé, poulet effiloché, pommes grenailles rôties, olives noires, oignon rouge, roquette et cresson.',
-    price: 14.50, allergens: ['fish','egg'],                               portions: false, badge: 'Nouveau', img: 'img/p-salade-chef-saumon.png' },
-  { id: 7,  cat: 'sweet',   name: 'Yaourt, granola & fruits rouges',     price: 5.80, allergens: ['gluten','milk'],                  portions: false, badge: null,      img: 'img/p-parfait.png' },
-  { id: 8,  cat: 'breads',  name: 'Pain de campagne au levain',          price: 4.80, allergens: ['gluten'],                         portions: false, badge: null,      img: null, lead_time: 1 },
-  { id: 9,  cat: 'breads',  name: 'Baguette tradition',                  price: 2.40, allergens: ['gluten'],                         portions: false, badge: null,      img: null },
-  { id: 10, cat: 'breads',  name: 'Pain aux céréales',                   price: 5.20, allergens: ['gluten','sesame'],                portions: false, badge: null,      img: null, lead_time: 1 },
-  { id: 11, cat: 'vienn',   name: 'Croissant au beurre AOP',             price: 1.90, allergens: ['gluten','milk','egg'],            portions: false, badge: 'Du jour', img: null },
-  { id: 12, cat: 'vienn',   name: 'Pain au chocolat',                    price: 2.20, allergens: ['gluten','milk','egg'],            portions: false, badge: null,      img: null },
-  { id: 13, cat: 'vienn',   name: 'Brioche feuilletée',                  price: 3.40, allergens: ['gluten','milk','egg'],            portions: false, badge: null,      img: null },
-  { id: 14, cat: 'sweet',   name: 'Cookies trio',                        price: 6.80, allergens: ['gluten','milk','egg'],            portions: false, badge: '2e -50%', img: null,
-    offer: { type: 'second_at_pct', pct: 50, unit: 'piece' } },
-  { id: 15, cat: 'sweet',   name: 'Madeleines (×6)',                     price: 7.20, allergens: ['gluten','milk','egg'],            portions: false, badge: null,      img: null },
-  { id: 16, cat: 'sweet',   name: 'Cannelés (×6)',                       price: 9.00, allergens: ['gluten','milk','egg'],            portions: false, badge: null,      img: null },
-  { id: 17, cat: 'sweet',   name: 'Macarons (×8)',                       price: 14.5, allergens: ['gluten','milk','egg','almond'],   portions: false, badge: null,      img: null, lead_time: 2 },
+// Go-live : plus aucun produit de démo (Tarte aux fraises & co purgés).
+const W_PRODUCTS = [];
 
-  // -------- Configurable products (test fixtures) --------
-  // Sandwich Club — options (bread, sauce) + multiple bundle plans
-  { id: 20, cat: 'sandwiches', subCat: 'sand-classic',
-    name: 'Sandwich Club',                       price: 9.50,
-    allergens: ['gluten','milk','egg'],          portions: false, badge: null,
-    img: 'img/p-sandwich-club.png',
-    options: [
-      { id: 'bread', label: 'Choix de pain', required: true, kind: 'single',
-        choices: [
-          { id: 'white', label: 'Pain blanc',  delta: 0 },
-          { id: 'brown', label: 'Pain complet', delta: 0 },
-        ]},
-      { id: 'sauce', label: 'Sauce', required: true, kind: 'single',
-        choices: [
-          { id: 'oil',  label: 'Huile d\u2019olive', delta: 0 },
-          { id: 'mayo', label: 'Mayonnaise',         delta: 1.0 },
-          { id: 'andalouse', label: 'Andalouse',     delta: 1.0 },
-        ]},
-    ],
-    has_menu_options: true,
-    available_bundles: [
-      { id: 'b-menu', name: 'Menu', description: '1 Sandwich Club + 1 boisson au choix',
-        included: [{ label: 'Sandwich Club' }],
-        slots: [
-          { id: 'drink', label: 'Boisson', required: true,
-            choices: [
-              { id: 'd1', label: 'Eau plate 33cl',   img: 'img/cold-drink.png',    delta: 0 },
-              { id: 'd2', label: 'Limonade maison',  img: 'img/lemonade-soda.png', delta: 0.5 },
-              { id: 'd3', label: 'Café',             img: 'img/hot-drink.png',     delta: 0 },
-            ],
-          },
-        ],
-        price_modifier: 3.5,
-        advantages: ['Économisez 1,00 €', 'Idéal pour le déjeuner'],
-      },
-      { id: 'b-full', name: 'Full Menu', description: '1 Sandwich Club + 1 boisson + 1 dessert',
-        included: [{ label: 'Sandwich Club' }],
-        slots: [
-          { id: 'drink', label: 'Boisson', required: true,
-            choices: [
-              { id: 'd1', label: 'Eau plate 33cl',   img: 'img/cold-drink.png',    delta: 0 },
-              { id: 'd2', label: 'Limonade maison',  img: 'img/lemonade-soda.png', delta: 0.5 },
-              { id: 'd3', label: 'Café',             img: 'img/hot-drink.png',     delta: 0 },
-            ],
-          },
-          { id: 'dessert', label: 'Dessert', required: true,
-            choices: [
-              { id: 's1', label: 'Cookie',     img: 'img/cookies.png' },
-              { id: 's2', label: 'Cupcake',    img: 'img/cupcake.png' },
-              { id: 's3', label: 'Madeleine',  img: 'img/cake-slice.png' },
-            ],
-          },
-        ],
-        price_modifier: 5.5,
-        advantages: ['Économisez 2,50 €', 'Boisson + dessert inclus', 'Le plus complet'],
-        recommended: true,
-      },
-    ],
-  },
-  // -------- Simple sandwiches (no options) --------
-  { id: 30, cat: 'sandwiches', subCat: 'sand-classic',
-    name: 'Sandwich mousse de jambon & cornichons',
-    description: 'Mousse de jambon maison fouettée, cornichons croquants, salade fraîche, sur pain de campagne.',
-    price: 7.50, allergens: ['gluten','milk','egg'], portions: false, badge: '2e -30%',
-    img: 'img/p-sand-mousse-jambon.png',
-    offer: { type: 'second_at_pct', pct: 30, unit: 'piece' } },
-  { id: 31, cat: 'sandwiches', subCat: 'sand-deluxe',
-    name: 'Sandwich jambon de Parme & burrata',
-    description: 'Jambon de Parme 18 mois, burrata crémeuse, pignons torréfiés, jeunes pousses, confit de figues.',
-    price: 11.50, allergens: ['gluten','milk','nuts'], portions: false, badge: 'Signature',
-    img: 'img/p-sand-jambon-burrata.png' },
-  { id: 32, cat: 'sandwiches', subCat: 'sand-classic',
-    name: 'Sandwich œufs brouillés & bacon',
-    description: 'Œufs brouillés moelleux, bacon croustillant, ciboulette fraîche, sur pain brioché.',
-    price: 8.20, allergens: ['gluten','milk','egg'], portions: false, badge: null,
-    img: 'img/p-sand-oeufs-bacon.png' },
-  { id: 33, cat: 'sandwiches', subCat: 'sand-veggie',
-    name: 'Sandwich féta & roquette',
-    description: 'Féta marinée aux herbes, roquette, tomates confites, huile d\u2019olive vierge extra.',
-    price: 8.90, allergens: ['gluten','milk'], portions: false, badge: null,
-    img: 'img/p-sand-feta-roquette.png' },
-  { id: 34, cat: 'sandwiches', subCat: 'sand-deluxe',
-    name: 'Sandwich crabe & roquette',
-    description: 'Chair de crabe, mayonnaise citronnée, roquette, tomates fraîches, cornichons.',
-    price: 12.50, allergens: ['gluten','milk','egg','crustacean','fish'], portions: false, badge: null,
-    img: 'img/p-sand-crabe.png' },
-  { id: 35, cat: 'sandwiches', subCat: 'sand-classic',
-    name: 'Sandwich rillettes de thon',
-    description: 'Rillettes de thon préparées maison, salade verte croquante, citron.',
-    price: 7.80, allergens: ['gluten','milk','egg','fish'], portions: false, badge: null,
-    img: 'img/p-sand-thon.png' },
+const W_PRODUCT_PRICES = {};
+const W_SHOP_PRODUCTS = {};
 
-  // Quiche du jour — sauce option + salad upsell
-  { id: 21, cat: 'plats', subCat: 'plats-traiteur',
-    name: 'Quiche du jour',                      price: 7.80,
-    allergens: ['gluten','milk','egg'],          portions: true, badge: 'Du jour',
-    crossPortion: true,
-    img: 'img/savoury-tart.png',
-    options: [
-      { id: 'sauce', label: 'Accompagnement', required: false, kind: 'single',
-        choices: [
-          { id: 'none',   label: 'Sans',          delta: 0 },
-          { id: 'pesto',  label: 'Pesto maison',  delta: 0.5 },
-          { id: 'tomato', label: 'Coulis tomate', delta: 0.5 },
-        ]},
-    ],
-    upsells: [
-      { id: 'salad', label: 'Petite salade', img: 'img/salads.png',         delta: 4.5 },
-      { id: 'soup',  label: 'Soupe du jour', img: 'img/tomato.png',         delta: 4.0 },
-      { id: 'drink', label: 'Boisson',       img: 'img/cold-drink.png',     delta: 2.5 },
-    ],
-  },
-];
-
-// Per-shop price overrides (ws_product_prices table).
-// Format: { shopId: { productId: price } }
-// Absent = use default price from ws_products.price
-const W_PRODUCT_PRICES = {
-  'chatelain': {},            // default prices at Châtelain
-  'ixelles':   { 4: 14.00 }, // bowl chèvre is €14.00 at Ixelles (vs €13.50 default)
-};
-
-// Per-shop product availability (ws_product_shops table).
-// Format: { shopId: [productId, ...] }
-// Absent shopId key = all products available at that shop
-const W_SHOP_PRODUCTS = {
-  // 'ixelles': [1,2,4,5,6,7,8,9,10,11,12], // example: no plats at Ixelles
-};
-
-if (typeof window !== 'undefined') {
-  window._CATALOG_SEED = {
-    products: W_PRODUCTS,
-    assortments: W_ASSORTMENTS,
-    categories: W_CATEGORIES,
-    prices: W_PRODUCT_PRICES,
-    shopProducts: W_SHOP_PRODUCTS,
-  };
-}
+// Go-live : window._CATALOG_SEED n’est plus exposé — le catalogue vient
+// exclusivement de l'API /catalog ; en cas d'échec, l'UI reste vide/erreur.
 
 
 // =========================================================================
@@ -276,61 +57,9 @@ if (typeof window !== 'undefined') {
 // A client may be linked to one office; an office may be linked to one tour.
 // Delivery is enabled only if both links exist (office validated + tour set).
 // =========================================================================
-// TODO[BACKEND]: tours must come from a Tours API (e.g. `GET /tours?shopId=`).
-// This in-memory fixture exists only so the demo storefront keeps running
-// before the endpoint is wired. Frontend code MUST go through window.WSTours
-// (to be added) — never read W_TOURS directly outside the demo seam below.
-const W_TOURS = {
-  'tour-bxl-mid': { id: 'tour-bxl-mid', name: 'Bruxelles Midi',  shopId: 'chatelain', window: '11:30–13:30', days: 'lun-ven' },
-  'tour-bxl-am':  { id: 'tour-bxl-am',  name: 'Bruxelles Matin', shopId: 'sablon',    window: '08:30–10:30', days: 'lun-ven' },
-  'tour-lg':      { id: 'tour-lg',      name: 'Liège Centre',    shopId: 'carre',     window: '11:00–13:00', days: 'mar-ven' },
-};
-// TODO[BACKEND]: offices come from WSOffices (webshop-offices-api.jsx).
-// This seed only feeds window._AUTH_STORE so the API stub has data to return
-// when no remote endpoint is configured. Remove once /offices is live.
-const W_OFFICES_SEED = {
-  'off-acme':     { id: 'off-acme',     name: 'ACME Avocats',     contact: 'Marie Dubois',  phone: '+32 472 11 22 33', email: 'marie@acme.be',     address: 'Rue de la Loi 120, 1040 Bxl',  tourId: 'tour-bxl-mid', status: 'validated',
-                    /* default site shown pre-selection — user picks in checkout */
-                    defaultSiteId: 'site-acme-loi' },
-  'off-pendingA': { id: 'off-pendingA', name: 'Borderline & Co.', contact: 'Lou Mercier',   phone: '+32 470 12 34 56', email: 'lou@borderline.be', address: 'Place Stéphanie 4, 1050 Bxl',  tourId: null,           status: 'pending',
-                    defaultSiteId: null },
-};
-// TODO[BACKEND]: users / auth must move behind a real Auth API
-// (`POST /auth/login`, `GET /me`, `PATCH /me`). This seed is demo-only and
-// stores a plaintext password — NEVER ship to production.
-const W_USERS_SEED = {
-  'marie@acme.be':     { id: 'u1', email: 'marie@acme.be', phone: '0470111222', password: 'demo', firstName: 'Marie', lastName: 'Dubois',  officeId: 'off-acme',     preferredShopId: 'chatelain', fidelityApp: { active: false, linkedAt: null } },
-  'lou@borderline.be': { id: 'u2', email: 'lou@borderline.be', phone: '0470222333', password: 'demo', firstName: 'Lou',   lastName: 'Mercier', officeId: 'off-pendingA', preferredShopId: 'sablon',    fidelityApp: { active: true,  linkedAt: '2026-01-12T09:30:00Z' } },
-  'jules@indep.be':    { id: 'u3', email: 'jules@indep.be', phone: '0470333444', password: 'demo', firstName: 'Jules', lastName: 'Vermeer', officeId: null,           preferredShopId: null,         fidelityApp: { active: false, linkedAt: null } },
-};
-const _AUTH_STORE = { users: { ...W_USERS_SEED }, offices: { ...W_OFFICES_SEED } };
-if (typeof window !== 'undefined') window._AUTH_STORE = _AUTH_STORE;
-
-function authLogin(email, password) {
-  const u = _AUTH_STORE.users[email.trim().toLowerCase()];
-  if (!u || u.password !== password) return { ok: false, error: 'Identifiants incorrects.' };
-  return { ok: true, user: u };
-}
-function authRegister({ email, password, firstName, lastName }) {
-  const k = email.trim().toLowerCase();
-  if (_AUTH_STORE.users[k]) return { ok: false, error: 'Un compte existe déjà avec cet email.' };
-  const u = { id: 'u' + Date.now(), email: k, password, firstName, lastName, officeId: null };
-  _AUTH_STORE.users[k] = u;
-  return { ok: true, user: u };
-}
-function getOffice(id) { return id ? _AUTH_STORE.offices[id] : null; }
-function getTour(id)   { return id ? W_TOURS[id] : null; }
-function submitOfficeRequest({ user, companyName, contactName, phone, email }) {
-  const id = 'off-req-' + Date.now();
-  const office = {
-    id, name: companyName, contact: contactName, phone,
-    email: (email || user?.email || '').trim().toLowerCase(),
-    address: null, tourId: null, status: 'pending',
-  };
-  _AUTH_STORE.offices[id] = office;
-  if (user) { user.officeId = id; _AUTH_STORE.users[user.email] = { ...user }; }
-  return office;
-}
+// Go-live : AUCUN store local. Utilisateurs (WSAuth), bureaux (WSOffices) et
+// tournées (WSTours) viennent du serveur ; sans lui, l'écran affiche une erreur.
+const SRV_REQUIRED = (what) => ({ ok: false, error: 'Service ' + what + ' indisponible — please debug.' });
 
 // =========================================================================
 // SHARED PRIMITIVES
@@ -516,6 +245,7 @@ function DatePill({ mode, value, onChange, shopId,
 
 // Mode pill — Ruby (collect) / Abricot (delivery)
 function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel }) {
+  const [hover, setHover] = React.useState(false);
   const delivTitle = deliveryCutoffPassed
     ? `Livraison non disponible après ${deliveryCutoffLabel || '11h00'}`
     : undefined;
@@ -541,6 +271,28 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
         <span className="ws-mode__lbl-full">Livraison au bureau</span>
         {deliveryCutoffPassed && <span className="ws-mode__cutoff"> · Fermé</span>}
       </button>
+      {/* « i » apricot : pas encore de bureau ? → ouvre le formulaire zone (landing) */}
+      <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flex: 'none', marginLeft: 4 }}
+        onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+        <button type="button" aria-label="Pas encore de bureau ?"
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); window.open('/landing/livraison-bureau.html', '_blank', 'noopener'); }}
+          style={{ width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer', flex: 'none',
+                   background: '#c17a2a', color: '#fff', font: '700 11px/1 system-ui',
+                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                   animation: 'wsBureauPulse 2.2s infinite' }}>i</button>
+        {hover && (
+          <span role="tooltip" style={{ position: 'absolute', top: '160%', right: 0, width: 216, maxWidth: '78vw',
+            boxSizing: 'border-box', whiteSpace: 'normal', wordBreak: 'break-word',
+            background: '#e8a15c', color: '#241a16', borderRadius: 14, padding: '11px 13px',
+            font: '600 11.5px/1.45 system-ui', boxShadow: '0 10px 28px rgba(36,26,22,.28)',
+            border: '1px solid rgba(36,26,22,.10)', zIndex: 70, textAlign: 'left' }}>
+            <span aria-hidden="true" style={{ position: 'absolute', top: -5, right: 15, width: 11, height: 11,
+              background: '#e8a15c', borderTop: '1px solid rgba(36,26,22,.10)', borderLeft: '1px solid rgba(36,26,22,.10)',
+              transform: 'rotate(45deg)', borderRadius: 3 }} />
+            Pas encore de bureau&nbsp;? Vérifiez si votre zone est desservie et faites votre demande.
+          </span>
+        )}
+      </span>
     </div>
   );
 }
@@ -708,12 +460,38 @@ function OfferStrip({ offer, qty, unit, calc, onAddOne }) {
   );
 }
 
-// Portion glyph shapes (1/4, 1/2, entier) — shared by card hint + modal options
+// Portion glyph shapes (1/8, 1/4, 1/2, entier) — shared by card hint + modal
+// options. Glyphes d'affichage uniquement : les PRIX de portion viennent
+// exclusivement de l'ERP (shop_product_portion_price via le catalogue).
 const PORTION_SHAPES = [
-  { v: 'quart',  d: <path d="M12 12L12 3 A9 9 0 0 1 21 12 Z" fill="currentColor"/>,        name: '1/4',     factor: 0.27 },
-  { v: 'demi',   d: <path d="M12 3 A9 9 0 0 1 12 21 Z" fill="currentColor"/>,              name: '1/2',     factor: 0.52 },
-  { v: 'entier', d: <circle cx="12" cy="12" r="9" fill="currentColor"/>,                   name: 'Entière', factor: 1 },
+  { v: 'huitieme', d: <path d="M12 12L12 3 A9 9 0 0 1 18.36 5.64 Z" fill="currentColor"/>, name: '1/8' },
+  { v: 'quart',  d: <path d="M12 12L12 3 A9 9 0 0 1 21 12 Z" fill="currentColor"/>,        name: '1/4' },
+  { v: 'demi',   d: <path d="M12 3 A9 9 0 0 1 12 21 Z" fill="currentColor"/>,              name: '1/2' },
+  { v: 'entier', d: <circle cx="12" cy="12" r="9" fill="currentColor"/>,                   name: 'Entière' },
 ];
+
+// Options de portion d'un produit : UNIQUEMENT les prix explicites de l'ERP
+// (product.portionOptions = [{v,label,price}] servis par le catalogue —
+// shop_product_portion_price). Go-live « vraies données ou bug » : le repli
+// « prix de base × facteur (0.27/0.52/0.15) » est SUPPRIMÉ — il affichait et
+// facturait des prix de portion que la boutique n'a jamais fixés. Sans prix
+// ERP de portion, seule la pièce ENTIÈRE (prix réel) est proposée.
+function portionOptionList(p) {
+  if (Array.isArray(p?.portionOptions) && p.portionOptions.length) {
+    return p.portionOptions.map((o) => {
+      const sh = PORTION_SHAPES.find((s) => s.v === o.v) || PORTION_SHAPES[PORTION_SHAPES.length - 1];
+      return { v: o.v, d: sh.d, name: o.label || sh.name, price: Number(o.price) || 0 };
+    });
+  }
+  const entier = PORTION_SHAPES.find((s) => s.v === 'entier');
+  return [{ v: 'entier', d: entier.d, name: entier.name, price: p?.price || 0 }];
+}
+
+// Libellé des portions d'une carte produit — types proposés avec le PRIX de
+// chaque portion : ex. « Entière €24.00 · 1/2 €14.90 · 1/4 €8.90 ».
+function portionPriceHint(p) {
+  return portionOptionList(p).map((o) => `${o.name} €${o.price.toFixed(2)}`).join(' · ');
+}
 
 // Single "portions available" glyph used on the product card — a quartered
 // disc that hints at the slicing without committing to a specific portion.
@@ -730,17 +508,19 @@ function PortionGlyph({ size = 14 }) {
 // Portion option list inside the product modal — same toggle/button UX as
 // other option groups (pdm-optrow + pdm-seg). Each button shows icon +
 // portion name + computed price.
-function PortionOptions({ value, onChange, basePrice }) {
+function PortionOptions({ value, onChange, product }) {
+  // Options du produit : prix EXPLICITES ERP quand fournis, sinon facteurs.
+  const shapes = portionOptionList(product);
   return (
     <div className="pdm-optrow">
       <div className="pdm-optrow__head">
         <span className="pdm-opt__label">Portion</span>
         <span className="pdm-opt__req">Requis</span>
       </div>
-      <div className="pdm-seg pdm-seg--portions" role="radiogroup" aria-label="Portion" style={{ '--pdm-seg-n': PORTION_SHAPES.length }}>
-        {PORTION_SHAPES.map((o) => {
+      <div className="pdm-seg pdm-seg--portions" role="radiogroup" aria-label="Portion" style={{ '--pdm-seg-n': shapes.length }}>
+        {shapes.map((o) => {
           const on = value === o.v;
-          const price = (basePrice || 0) * o.factor;
+          const price = o.price;
           return (
             <button key={o.v}
               type="button"
@@ -800,7 +580,9 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     setSel(initSelections);
     setUpsellIds({});
     setQty(1);
-    setPortion('entier');
+    // Portion par défaut = la PREMIÈRE option proposée (l'entière quand les
+    // options ERP sont fournies, sinon le comportement historique).
+    setPortion((portionOptionList(product).find((o) => o.v === 'entier') || portionOptionList(product)[0])?.v || 'entier');
     setBundleSlots({});
     setCarIdx(0);
     if (product?.options) {
@@ -840,15 +622,25 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   // (office_delivery === false). Absent/undefined = disponible (rétro-compat).
   const deliveryBlocked = mode === 'delivery' && (!!product?.no_delivery || product?.office_delivery === false);
   // qty_available from ws_product_stock API; falls back to delivery_stock on product seed
-  const qtyAvailable = stock ? stock.qty_available : (typeof product?.delivery_stock === 'number' ? product.delivery_stock : null);
-  const deliveryStockLeft = mode === 'delivery' && qtyAvailable !== null ? Math.max(0, qtyAvailable) : null;
+  // Le stock du jour vaut pour LES DEUX modes : le serveur refuse une commande
+  // au-delà du disponible en collecte comme en livraison. Le limiter ici au seul
+  // mode livraison laissait le client remplir son panier avec un produit épuisé
+  // et ne l'apprendre qu'à l'étape paiement, après avoir tout saisi.
+  // Le repli `delivery_stock` reste propre à la livraison : en collecte, une
+  // absence de ligne de stock veut dire « pas de plafond », pas « zéro ».
+  const qtyAvailable = stock ? stock.qty_available
+    : (mode === 'delivery' && typeof product?.delivery_stock === 'number' ? product.delivery_stock : null);
+  const deliveryStockLeft = qtyAvailable !== null ? Math.max(0, qtyAvailable) : null;
 
   let unit = product?.price || 0;
-  // Apply portion factor for portionable products (1/4 ≈ 0.27, 1/2 ≈ 0.52)
-  if (product?.portions) {
-    const factor = portion === 'quart' ? 0.27 : portion === 'demi' ? 0.52 : 1;
-    unit = unit * factor;
-  }
+  // Portion RÉSOLUE : la portion choisie si elle existe dans la liste, sinon
+  // on retombe sur l'Entière (jamais sur une portion fantôme). Prix ET libellé
+  // dérivent de CETTE option -> impossible d'afficher « 1/4 » à prix d'entière.
+  const _plist = product?.portions ? portionOptionList(product) : [];
+  const portOpt = product?.portions
+    ? (_plist.find((o) => o.v === portion) || _plist.find((o) => o.v === 'entier') || _plist[0] || null)
+    : null;
+  if (portOpt) unit = portOpt.price;
   if (product?.options) {
     for (const o of product.options) {
       const choiceId = sel[o.id];
@@ -988,11 +780,13 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     });
     onAdd({
       productId: product.id,
-      name: product.name + (portion === 'demi' ? ' — 1/2' : portion === 'quart' ? ' — 1/4' : ''),
+      // Libellé dérivé de la portion RÉSOLUE (portOpt) : cohérent avec le prix.
+      // Pas de suffixe pour l'Entière.
+      name: product.name + (portOpt && portOpt.v !== 'entier' ? ' — ' + portOpt.name : ''),
       qty,
       price: qty > 0 ? total / qty : (unit + bundleDelta + upsellDelta),
       options: optionLabels.map((label) => ({ label })),
-      portion: product.portions ? portion : null,
+      portion: portOpt ? portOpt.v : null,
       cat: product.cat,
       crossPortion: !!product.crossPortion,
       basePrice: product.price,
@@ -1059,14 +853,23 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
               <p className="pdm-eyebrow">{product.cat === 'sandwiches' ? 'Sandwich' : product.cat === 'plats' ? 'Plat du jour' : 'Notre sélection'}</p>
               <h2 className="pdm-title">{product.name}</h2>
               <p className="pdm-desc">{product.description || 'Préparé chaque matin par nos artisans, avec des ingrédients sélectionnés au plus près de leur saison.'}</p>
-              {product.allergens?.length > 0 && (
+              {/* Allergènes — 3 états distincts (sécurité alimentaire) :
+                  liste = connus · [] = recette évaluée, aucun · null = NON
+                  RENSEIGNÉ (on le dit, on ne laisse jamais croire « aucun »). */}
+              {Array.isArray(product.allergens) && product.allergens.length > 0 && (
                 <div className="pdm-allergens"><Allergens list={product.allergens}/></div>
+              )}
+              {Array.isArray(product.allergens) && product.allergens.length === 0 && (
+                <p className="pdm-allergens pdm-allergens--none">Sans allergène déclaré (recette évaluée).</p>
+              )}
+              {!Array.isArray(product.allergens) && (
+                <p className="pdm-allergens pdm-allergens--unknown">Allergènes non renseignés — renseignez-vous en boutique.</p>
               )}
               {product.portions && (
                 <PortionOptions
                   value={portion}
                   onChange={setPortion}
-                  basePrice={product.price}
+                  product={product}
                 />
               )}
             </div>
@@ -1254,7 +1057,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
             )}
             {!deliveryBlocked && deliveryStockLeft !== null && (
               <div className="pdm-delivery-notice">
-                Livraison · {deliveryStockLeft > 0 ? `${deliveryStockLeft} unité${deliveryStockLeft > 1 ? 's' : ''} disponible${deliveryStockLeft > 1 ? 's' : ''}` : 'Stock épuisé'}
+                {deliveryStockLeft > 0 ? `${deliveryStockLeft} unité${deliveryStockLeft > 1 ? 's' : ''} disponible${deliveryStockLeft > 1 ? 's' : ''}` : 'Stock épuisé'}
               </div>
             )}
             <div className="pdm-qty">
@@ -1289,8 +1092,11 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
   // (no_delivery) ou désactivé marque pour ce canal (office_delivery === false).
   const deliveryBlocked = isDelivery && (!!p.no_delivery || p.office_delivery === false);
   // qty_available from ws_product_stock API; falls back to delivery_stock on product seed
-  const qtyAvailable = stock ? stock.qty_available : (typeof p.delivery_stock === 'number' ? p.delivery_stock : null);
-  const deliveryStockLeft = isDelivery && qtyAvailable !== null
+  // Même règle que dans le détail : le stock s'applique aux deux modes, le
+  // repli `delivery_stock` seulement à la livraison.
+  const qtyAvailable = stock ? stock.qty_available
+    : (isDelivery && typeof p.delivery_stock === 'number' ? p.delivery_stock : null);
+  const deliveryStockLeft = qtyAvailable !== null
     ? Math.max(0, qtyAvailable - (basketQty || 0))
     : null;
   const stockExhausted = deliveryStockLeft !== null && deliveryStockLeft === 0;
@@ -1313,6 +1119,17 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
           className={p.img ? 'ws-card__photo-img' : 'ws-card__photo-img ws-card__photo-img--lineart'}
           src={p.img || getPlaceholder(p)}
           alt=""
+          // Filet de sécurité : si la photo casse quand même (fichier retiré du
+          // serveur entre deux déploiements, URL externe morte), on bascule sur
+          // l'illustration de repli au lieu de laisser une image cassée. Le
+          // drapeau coupe la boucle si le repli échoue à son tour.
+          onError={(e) => {
+            const el = e.currentTarget;
+            if (el.dataset.imgFallback === '1') return;
+            el.dataset.imgFallback = '1';
+            el.classList.add('ws-card__photo-img--lineart');
+            el.src = getPlaceholder(p);
+          }}
         />
       </div>
       {/* Meta strip BELOW the (1:1) photo — allergens, info, add */}
@@ -1328,9 +1145,10 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
       </div>
       <div className="ws-card__body" onClick={(e) => e.stopPropagation()}>
         {p.portions && (
-          <div className="ws-card__portions" aria-label="Portions disponibles">
+          <div className="ws-card__portions" aria-label="Disponible en portions"
+               title={'Portions : ' + portionOptionList(p).map((o) => o.name).join(' · ')}>
             <PortionGlyph size={12}/>
-            <span>Portions disponibles</span>
+            <span>Disponible en portions</span>
           </div>
         )}
         {p.lead_time > 0 && (
@@ -1341,7 +1159,7 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
         <div className="ws-card__name">{p.name}</div>
         <div className="ws-card__meta">
           <span className="ws-card__price">€{price.toFixed(2)}{hasOptions && <span className="ws-card__from"> · à partir de</span>}</span>
-          {isDelivery && deliveryStockLeft !== null && !stockExhausted && (
+          {deliveryStockLeft !== null && !stockExhausted && (
             <span className="ws-card__stock">{deliveryStockLeft} dispo</span>
           )}
           {stockExhausted && <span className="ws-card__stock ws-card__stock--out">Épuisé livraison</span>}
@@ -1362,10 +1180,11 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
 // free quarter-equivalents, valued at the cheapest line's basePrice × 0.27.
 // Fallback rule used only when WSPricing.getCrossPortionRule() is unavailable.
 // x paid + y free per group; threshold = portions needed before first freebie.
-const _CROSS_PORTION_FALLBACK = { x: 4, y: 1, threshold: 4, label: '4 quarts achetés, 1 offert' };
+// Go-live : plus de regle 4+1 de secours cote client (promotion hors course).
 
 function computeCrossPortionOffer(basket, rule) {
-  const r = rule || _CROSS_PORTION_FALLBACK;
+  const r = rule;
+  if (!r) return null; // pas de regle serveur -> pas d'offre affichee
   if (!Array.isArray(basket) || basket.length === 0) return null;
   const items = [];
   for (const l of basket) {
@@ -1472,7 +1291,72 @@ function CrossPortionStrip({ calc }) {
   );
 }
 
-function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, notesEnabled, deliveryFeeResult }) {
+/* Suggestions « Panier Croisé ». Le serveur reçoit le panier et rend les
+   produits à proposer, DÉJÀ filtrés sur l'assortiment de la boutique, la gamme
+   saisonnière à la date de retrait et le stock du jour : le navigateur ne
+   décide de rien. L'heure comparée est celle du CRÉNEAU DE RETRAIT, pas de la
+   commande — on commande le soir pour le lendemain midi.
+   Aucune suggestion → aucun bloc : pas de rubrique vide. */
+function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
+  const [items, setItems] = React.useState([]);
+  const ids = basket.map((l) => l.productId).filter(Boolean);
+  const key = ids.slice().sort().join(',') + '|' + (date || '') + '|' + (time || '') + '|' + mode;
+  React.useEffect(() => {
+    let alive = true;
+    const base = window.WSCatalog && window.WSCatalog.endpoint;
+    if (!base || !shopId || ids.length === 0) { setItems([]); return; }
+    fetch(base + '/cross-sell', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId, mode, date: date || null, time: time || null, placement, productIds: ids }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((list) => { if (alive) setItems(Array.isArray(list) ? list : []); })
+      // Une panne de suggestions ne doit RIEN casser du panier — mais elle se
+      // trace, sinon « aucune suggestion » et « serveur muet » se ressemblent.
+      .catch((e) => { if (alive) { setItems([]); console.error('[cross-sell] suggestions indisponibles', e); } });
+    return () => { alive = false; };
+  }, [key, shopId, placement]);
+
+  // Mesure : une impression comptée par produit réellement affiché.
+  React.useEffect(() => {
+    const base = window.WSCatalog && window.WSCatalog.endpoint;
+    if (!base || !items.length) return;
+    for (const it of items) {
+      fetch(base + '/cross-sell/stat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: 'impression', ruleId: it.ruleId, productId: it.productId, shopId }),
+      }).catch(() => {});
+    }
+  }, [items.map((i) => i.productId).join(','), shopId]);
+
+  if (!items.length) return null;
+  return (
+    <div className="ws-xsell">
+      <div className="ws-xsell__h">Pour accompagner</div>
+      {items.map((it) => (
+        <div className="ws-xsell__i" key={it.productId}>
+          {it.img ? <img className="ws-xsell__img" src={it.img} alt="" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}/>
+                  : <span className="ws-xsell__img"/>}
+          <span className="ws-xsell__n">{it.name}</span>
+          <span className="ws-xsell__p">€{Number(it.price).toFixed(2)}</span>
+          <button type="button" className="ws-xsell__add" aria-label={`Ajouter ${it.name}`} title="Ajouter au panier"
+            onClick={() => {
+              const base = window.WSCatalog && window.WSCatalog.endpoint;
+              if (base) fetch(base + '/cross-sell/stat', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ event: 'add', ruleId: it.ruleId, productId: it.productId, shopId }),
+              }).catch(() => {});
+              onAdd(it);
+            }}>+</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, notesEnabled, deliveryFeeResult,
+                  date, slotTime, onCrossAdd }) {
   // TODO[BACKEND]: replace with `await WSPricing.quote({ shopId, mode, basket })`
   // and render the returned subtotal / discounts / total. The synchronous
   // computation below is a fallback so the demo basket still totals correctly
@@ -1489,7 +1373,9 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
   const subtotal = basket.reduce((t, l) => t + l.price * l.qty, 0);
   const crossOffer = computeCrossPortionOffer(basket, crossPortionRule);
   const crossSavings = crossOffer?.savings || 0;
-  const promo = mode === 'collect' ? subtotal * 0.05 : 0;
+  // Go-live : aucune remise calculee cote client. Les remises reelles
+  // viennent du serveur (quote/commande) - promo locale forcee a 0.
+  const promo = 0;
   const deliveryFee = (mode === 'delivery' && deliveryFeeResult) ? (deliveryFeeResult.fee_amount || 0) : 0;
   const total = Math.max(0, subtotal - promo - crossSavings + deliveryFee);
   return (
@@ -1551,6 +1437,10 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
             )}
           </div>
         ))}
+        {typeof onCrossAdd === 'function' && (
+          <CrossSell shopId={shop && shop.id} mode={mode} date={date} time={slotTime}
+                     basket={basket} placement="cart" onAdd={onCrossAdd}/>
+        )}
       </div>
 
       {crossOffer && <CrossPortionStrip calc={crossOffer}/>}
@@ -1679,7 +1569,10 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
               const isOn = String(active) === String(c.id);
               return (
                 <button key={c.id} className={`ws-cat${isOn ? ' is-active' : ''}`} onClick={() => onSelect(c.id)} style={isOn ? activeStyle : {}}>
-                  <span className="ws-cat__tile"><img src={c.img} alt=""/></span>
+                  {/* Garde identique aux tuiles voisines (icons.all / icons.back) :
+                      une src vide fait recharger la PAGE comme image, échoue au
+                      décodage et log une erreur console par tuile et par rendu. */}
+                  <span className="ws-cat__tile">{c.img ? <img src={c.img} alt=""/> : null}</span>
                   <span className="ws-cat__lbl">{tCategory(c.id, c.label)}</span>
                 </button>
               );
@@ -1691,7 +1584,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
               return (
                 <button key={a.id} className={`ws-cat ws-cat--season${isOn ? ' is-active' : ''}`} onClick={() => onSelect(`season:${a.id}`)} style={isOn ? activeStyle : {}}>
                   <span className="ws-cat__tile">
-                    <img src={a.img} alt=""/>
+                    {a.img ? <img src={a.img} alt=""/> : null}
                   </span>
                   <span className="ws-cat__lbl">{a.label}</span>
                 </button>
@@ -1714,7 +1607,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
                 <button key={s.id} className={`ws-subcat${isOn ? ' is-active' : ''}`}
                         aria-pressed={isOn}
                         onClick={() => onSelectSub(isOn ? null : s.id)} style={isOn ? activeStyle : {}}>
-                  <span className="ws-subcat__tile"><img src={s.img} alt=""/></span>
+                  <span className="ws-subcat__tile">{s.img ? <img src={s.img} alt=""/> : null}</span>
                   <span className="ws-subcat__lbl">{s.label}</span>
                 </button>
               );
@@ -2134,7 +2027,7 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
         if (!form.identifier || !form.password) { setErr('Email/téléphone et mot de passe requis.'); return; }
         const r = window.WSAuth
           ? await window.WSAuth.login({ identifier: form.identifier, password: form.password, phonePrefix: form.phonePrefix, authMethod: form.authMethod })
-          : authLogin(form.identifier, form.password);
+          : SRV_REQUIRED('de connexion');
         if (!r.ok) {
           // Compte existant sans mot de passe -> panneau "définir votre mot de passe"
           // (on pré-remplit avec ce qui vient d'être tapé au login).
@@ -2151,7 +2044,7 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
         if (cpOpts.length > 1 && !form.locality) { setErr('Choisissez votre localité.'); return; }
         const r = window.WSAuth
           ? await window.WSAuth.register(form)
-          : authRegister(form);
+          : SRV_REQUIRED("d'inscription");
         if (!r.ok) {
           if (r.exists) { setPwStep(true); return; }   // compte déjà présent -> set-password
           setErr(r.error || "Erreur lors de l'inscription."); return;
@@ -2465,6 +2358,14 @@ function PostcodeCatchupModal({ user, onUpdateUser }) {
   );
 }
 
+// Pulse apricot du « i » « pas encore de bureau ? » (à côté de « Livraison au bureau »).
+if (typeof document !== 'undefined' && !document.getElementById('ws-bureau-style')) {
+  const _st = document.createElement('style');
+  _st.id = 'ws-bureau-style';
+  _st.textContent = '@keyframes wsBureauPulse{0%{box-shadow:0 0 0 0 rgba(193,122,42,.55)}70%{box-shadow:0 0 0 7px rgba(193,122,42,0)}100%{box-shadow:0 0 0 0 rgba(193,122,42,0)}}';
+  document.head.appendChild(_st);
+}
+
 function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdateUser, shops, currentShopId, onChangePreferredShop, office, tour }) {
   const [form, setForm] = useState({
     firstName: user?.firstName || '',
@@ -2514,7 +2415,10 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   const [siteBusy, setSiteBusy] = useState(false);
   const [siteErr, setSiteErr] = useState('');
   // Onglets (l'actif survit au rafraîchissement) + config serveur (flags).
-  const [cfg, setCfg] = useState({ fidelityTabEnabled: true });
+  // Vide au départ : aucun flag n'est supposé activé tant que le serveur ne
+  // l'a pas dit (l'ancien défaut fidelityTabEnabled:true affichait l'onglet
+  // même pour une boutique qui l'a désactivé).
+  const [cfg, setCfg] = useState({});
   const [tab, setTab] = useState(() => {
     try { return localStorage.getItem(ACCOUNT_TAB_LS) || 'profil'; } catch (_) { return 'profil'; }
   });
@@ -2664,9 +2568,14 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   }
 
   // ── Office: unplug / reconnect / add new ───────────────────────────
+  // Boutique de référence des bureaux : la préférée du profil, sinon celle que
+  // le client consulte. Sans ce repli, un client dont preferred_shop_id est vide
+  // (compte créé côté PWA, par exemple) restait bloqué sur « choisissez d'abord
+  // votre boutique préférée » et ne pouvait pas se rattacher.
+  const officeShopId = form.preferredShopId || currentShopId;
   async function loadApprovedOffices() {
-    if (!window.WSOffices) return;
-    const shopId = form.preferredShopId; // offices are scoped to the preferred shop
+    if (!window.WSOffices) { setOfficeErr('Service bureaux indisponible — please debug.'); return; }
+    const shopId = officeShopId; // boutique préférée, sinon celle consultée
     setOfficeBusy(true);
     try {
       const list = await window.WSOffices.listApproved(shopId);
@@ -2679,6 +2588,11 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         );
         setApprovedOfficeTours(Object.fromEntries(tourEntries));
       }
+    } catch (e) {
+      // L'échec est VISIBLE : sans lui, la liste restait vide sans explication
+      // et l'utilisateur croyait qu'aucun bureau n'existait.
+      setApprovedOffices([]);
+      setOfficeErr(e && e.message ? e.message : 'Bureaux indisponibles — please debug.');
     } finally { setOfficeBusy(false); }
   }
   // ── Bureau « site de livraison » (parité PWA) : lier / changer / délier ──
@@ -2706,22 +2620,35 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       setSiteErr(r.error || 'Échec de la liaison.');
     }
   }
-  async function unlinkSite() {
-    setSiteBusy(true);
+  /* Déliement — opération UNIQUE. Les deux boutons « Délier ce bureau » de cet
+     écran appelaient deux choses différentes : celui-ci supprimait la liaison
+     PWA, l'autre vidait client.office_id. Or le serveur résout le bureau par
+     une chaîne de replis : effacer une source laissait l'autre en fournir un
+     AUTRE aussitôt, et le client croyait à une résurrection. POST /auth/office
+     avec un site vide coupe désormais les deux d'un coup.
+     L'échec était muet — pas de branche else : on cliquait, l'écran avançait,
+     et le bureau restait rattaché en base sans un mot. */
+  async function doUnlink() {
+    setSiteBusy(true); setOfficeErr('');
     const r = await window.WSAuth.setOfficeSite(null);
     setSiteBusy(false);
-    if (r.ok && r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
+    if (!r || !r.ok) {
+      setOfficeErr((r && r.error) || 'Déliement impossible — le bureau est toujours rattaché.');
+      return false;
+    }
+    if (r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
+    return true;
   }
+  async function unlinkSite() { await doUnlink(); }
 
   function startUnplug() { setOfficeStep('confirm'); setOfficeErr(''); }
-  function confirmUnplug() {
-    persistPartial({ officeId: null });
-    setOfficeStep('ask');
+  async function confirmUnplug() {
+    if (await doUnlink()) setOfficeStep('ask');
   }
   function chooseLinkAnother() {
     setPickedOfficeId(''); setOfficeErr('');
     setOfficeStep('pick');
-    if (form.preferredShopId) loadApprovedOffices();
+    if (officeShopId) loadApprovedOffices();
   }
   function chooseDone() {
     setOfficeStep('idle');
@@ -2742,9 +2669,13 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     if (!window.WSOffices) { setOfficeErr('Service indisponible.'); return; }
     setOfficeBusy(true); setOfficeErr('');
     try {
+      // La demande va à la boutique où le client se trouve : sa boutique
+      // préférée si elle est renseignée, sinon celle qu'il consulte. Sans ce
+      // repli, un client sans boutique préférée voyait sa demande atterrir dans
+      // le back-office d'une AUTRE boutique (celle de sa fiche ERP).
       const r = await window.WSOffices.contactFranchise({
         officeName: newOffice.name, phone: newOffice.phone, email: newOffice.email, address: newOffice.address,
-        shopId: form.preferredShopId, requestedBy: user.email,
+        shopId: officeShopId, requestedBy: user.email,
       });
       if (r && r.ok === false) { setOfficeErr(r.error || 'Échec de l\'envoi.'); return; }
       setNewOffice({ name: '', vat: '', address: '', postalCode: '', city: '', contact: '', email: '', phone: '', preferredShopId: '' });
@@ -3127,8 +3058,14 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           <div className="ws-acc__card ws-acc__card--empty">
             <p className="ws-acc__note">Aucun bureau associé. Liez-vous à un bureau de livraison de votre boutique.</p>
             <button className="ws-cta ws-cta--block" onClick={openSitePicker}>Lier un bureau</button>
+            {/* Le rattachement à une ENTREPRISE (ws_offices) n'était atteignable
+                qu'après avoir délié un bureau existant : un client sans bureau ne
+                pouvait ni se rattacher, ni demander l'ajout du sien. */}
+            <button type="button" className="ws-acc__addlink" onClick={chooseLinkAnother}>Me rattacher à une entreprise / demander l'ajout de mon bureau</button>
+            <button type="button" className="ws-acc__unplug" onClick={() => window.open('/landing/livraison-bureau.html', '_blank', 'noopener')}>Ma zone est-elle desservie&nbsp;?</button>
           </div>
         )}
+
 
         {/* Sélecteur de bureau (sites de livraison du shop — même liste que la PWA) */}
         {siteStep === 'pick' && (
@@ -3180,7 +3117,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           </div>
         )}
 
-        {officeStep === 'pick' && !form.preferredShopId && (
+        {officeStep === 'pick' && !officeShopId && (
           <div className="ws-acc__card">
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Choisir un bureau</div>
             <p className="ws-acc__hint">Sélectionnez d'abord votre <strong>boutique préférée</strong> (ci-dessus) : la liste des bureaux en dépend.</p>
@@ -3190,10 +3127,10 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           </div>
         )}
 
-        {officeStep === 'pick' && form.preferredShopId && (
+        {officeStep === 'pick' && officeShopId && (
           <div className="ws-acc__card">
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>
-              Bureaux de {((shops || []).find((s) => s.id === form.preferredShopId) || {}).name || 'votre boutique'}
+              Bureaux de {((shops || []).find((s) => s.id === officeShopId) || {}).name || 'votre boutique'}
             </div>
             {officeBusy && <p className="ws-acc__hint">Chargement…</p>}
             {!officeBusy && approvedOffices.length === 0 && (
@@ -3219,7 +3156,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         {officeStep === 'add' && (
           <div className="ws-acc__card">
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Votre bureau n'est pas dans la liste ?</div>
-            <p className="ws-acc__hint">Envoyez une demande à la franchise : elle contactera votre bureau pour l'ajouter. Indiquez son nom et <strong>au moins un</strong> moyen de contact.</p>
+            <p className="ws-acc__hint">Envoyez une demande à votre Atelier : il contactera votre bureau pour l'ajouter. Indiquez son nom et <strong>au moins un</strong> moyen de contact.</p>
             <div className="ws-acc__grid">
               <label className="ws-acc__field ws-acc__field--full">
                 <span className="ws-acc__field-label">Nom du bureau ou de la société *</span>
@@ -3242,7 +3179,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             {officeErr && <p className="ws-form__err">{officeErr}</p>}
             <div className="ws-acc__row-foot">
               <button type="button" className="ws-fid__cancel" onClick={() => { setOfficeErr(''); setOfficeStep('pick'); }}>Retour</button>
-              <button type="button" className="ws-cta" onClick={submitContactRequest} disabled={officeBusy}>{officeBusy ? 'Envoi…' : 'Envoyer à la franchise'}</button>
+              <button type="button" className="ws-cta" onClick={submitContactRequest} disabled={officeBusy}>{officeBusy ? 'Envoi…' : 'Envoyer à votre Atelier'}</button>
             </div>
           </div>
         )}
@@ -3250,7 +3187,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         {officeStep === 'sent' && (
           <div className="ws-acc__card">
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Demande envoyée ✓</div>
-            <p className="ws-acc__hint">Merci ! La franchise a reçu votre demande et contactera votre bureau. Vous pourrez le sélectionner dès qu'il aura été validé.</p>
+            <p className="ws-acc__hint">Merci ! Votre Atelier a reçu votre demande et contactera votre bureau. Vous pourrez le sélectionner dès qu'il aura été validé.</p>
             <div className="ws-acc__row-foot">
               <button type="button" className="ws-cta" onClick={() => setOfficeStep('idle')}>Fermer</button>
             </div>
@@ -3364,42 +3301,27 @@ function FidelityLinkPanel({ open, user, onClose }) {
 // =========================================================================
 // Slots now come from WSCalendar.listSlots(). The deprecated stub was removed.
 //
-// Payment methods are loaded async from WSPricing.listPaymentMethods().
-// The FALLBACK array is used only during the first render before the
-// async call resolves, or when no endpoint is configured.
-const W_PAYMENTS_FALLBACK = [
-  { id: 'bancontact', label: 'Bancontact',   sub: 'Paiement instantané' },
-  { id: 'visa',       label: 'Carte bancaire', sub: 'Visa · Mastercard · Amex' },
-  { id: 'apple',      label: 'Apple Pay',    sub: 'Touch ID / Face ID' },
-];
-
-const W_PAYMENTS_DEFERRED = [
-  { id: 'deferred', label: 'Paiement différé', sub: 'Facturation mensuelle · paiement sur facture' },
-];
-
+// Moyens de paiement : SOURCE UNIQUE = le serveur (/payment-methods), qui
+// applique les règles réelles (boutique × profil guest/registered/company, et
+// paiement différé selon ws_offices.deferred_billing_enabled). Les listes
+// codées en dur (bancontact/visa/apple, « paiement différé ») ont été
+// SUPPRIMÉES : elles proposaient au client des moyens de paiement qui ne sont
+// pas forcément configurés pour sa boutique. Sans réponse du serveur la liste
+// reste VIDE et l'étape Paiement affiche une erreur — jamais d'option inventée.
 function usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId) {
-  const [methods, setMethods] = React.useState(W_PAYMENTS_FALLBACK);
+  const [methods, setMethods] = React.useState([]);
   React.useEffect(() => {
     let alive = true;
-    // Profile-aware list from the backend (shop × profil : guest/registered/company).
-    if (window.WSPayments && window.WSPayments.endpoint) {
-      window.WSPayments.list({ shopId, profile: profile || 'guest', companyId })
-        .then((m) => { if (alive && m && m.length) setMethods(m.map((x) => ({ id: x.method, label: x.label || x.method, sub: '' }))); })
-        .catch(() => {});
-      return () => { alive = false; };
-    }
-    // Repli (démo / ancien backend).
-    if (mode === 'delivery' && deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') {
-      setMethods(W_PAYMENTS_DEFERRED);
-      return () => { alive = false; };
-    }
-    if (window.WSPricing && typeof window.WSPricing.listPaymentMethods === 'function') {
-      window.WSPricing.listPaymentMethods({ shopId, mode })
-        .then((m) => { if (alive && m && m.length) setMethods(m); })
-        .catch(() => {});
-    } else {
-      setMethods(W_PAYMENTS_FALLBACK);
-    }
+    if (!(window.WSPayments && window.WSPayments.endpoint)) { setMethods([]); return () => { alive = false; }; }
+    // `mode` était reçu par le hook et listé dans ses dépendances, mais jamais
+    // transmis : la liste ne dépendait donc pas du mode, et « paiement en
+    // boutique » apparaissait sur une livraison.
+    window.WSPayments.list({ shopId, profile: profile || 'guest', companyId, mode })
+      .then((m) => {
+        if (!alive) return;
+        setMethods(Array.isArray(m) ? m.map((x) => ({ id: x.method, label: x.label || x.method, sub: '' })) : []);
+      })
+      .catch(() => { if (alive) setMethods([]); });
     return () => { alive = false; };
   }, [shopId, mode, deliveryFeeResult && deliveryFeeResult.payment_type, profile, companyId]);
   return methods;
@@ -3408,11 +3330,18 @@ function usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId) 
 function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPlaced,
                           voucherInput, setVoucherInput, voucherApplied, setVoucherApplied,
                           office, tour, date,
-                          deliveryFeeResult, officeSites, selectedSiteId, setSelectedSiteId }) {
+                          deliveryFeeResult, deliveryFeeErr, officeSites, selectedSiteId, setSelectedSiteId }) {
   const [step, setStep] = useState(1);
   const [forceAuth, setForceAuth] = useState(false);
   const [paying, setPaying] = useState(false);
   const [payErr, setPayErr] = useState(null);
+  // Clé d'idempotence : STABLE tant que le tunnel reste ouvert, renouvelée à
+  // chaque réouverture. Deux clics — ou un renvoi après une erreur réseau —
+  // portent donc la même clé, et le serveur renvoie la commande déjà créée au
+  // lieu d'en enregistrer une seconde.
+  const newPayKey = () => 'ws-' + Date.now().toString(36) + '-' +
+    Math.random().toString(36).slice(2, 10);
+  const [payKey, setPayKey] = useState(newPayKey);
 
   // Guest contact (collect only)
   const [contact, setContact] = useState({ firstName: '', lastName: '', email: '', phone: '' });
@@ -3425,7 +3354,10 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const [vat, setVat] = useState('');
 
   // Payment — reset to 'deferred' for deferred sites, 'bancontact' otherwise
-  const defaultPayment = (deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : 'bancontact';
+  // Aucun moyen par défaut inventé : « bancontact » n'existe pas côté serveur
+  // (les méthodes réelles sont stripe / shop / deferred). La sélection est
+  // posée par l'effet dès que /payment-methods a répondu.
+  const defaultPayment = (deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : '';
   const [payment, setPayment] = useState(defaultPayment);
 
   // B2B « commander pour une entreprise » + remarque + PO (facturation pro).
@@ -3465,16 +3397,29 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   useEffect(() => {
     if (open) {
       setStep(1); setSlot(null); setInvoice(false); setVat(''); setForceAuth(false); setPaying(false); setPayErr(null);
+      setPayKey(newPayKey());
       setOrderNote(''); setPoNumber(''); setCompanyId(''); setOnAccount(false);
-      setPayment((deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : 'bancontact');
+      setPayment((deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : '');
     }
   }, [open]);
+
+  // Moyens de paiement : chargés ICI, AVANT tout return conditionnel — un hook
+  // placé après « if (!open) return null » change le nombre de hooks entre deux
+  // rendus, ce que React refuse (écran blanc à l'ouverture du tunnel).
+  // Le profil est recalculé en ligne : companyId/user suffisent, et les valeurs
+  // dérivées plus bas ne sont pas encore disponibles à ce point du composant.
+  const paymentMethods = usePaymentMethods(
+    shop && shop.id, mode, deliveryFeeResult,
+    companyId ? 'company' : (user ? 'registered' : 'guest'),
+    companyId || null);
 
   if (!open) return null;
 
   // TODO[BACKEND]: same as above — checkout totals must come from WSPricing.quote().
   const subtotal = basket.reduce((t, l) => t + l.price * l.qty, 0);
-  const promo = mode === 'collect' ? subtotal * 0.05 : 0;
+  // Go-live : aucune remise calculee cote client. Les remises reelles
+  // viennent du serveur (quote/commande) - promo locale forcee a 0.
+  const promo = 0;
   const voucherDiscount = voucherApplied && voucherApplied.ok ? voucherApplied.discount : 0;
   const deliveryFee = (mode === 'delivery' && deliveryFeeResult) ? (deliveryFeeResult.fee_amount || 0) : 0;
   const total = Math.max(0, subtotal - promo - voucherDiscount + deliveryFee);
@@ -3485,7 +3430,6 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const isB2B = companies.length > 0 || !!(user && user.companyClientId);
   // Profil de paiement : société (companyId) > enregistré (user) > visiteur (guest).
   const checkoutProfile = companyId ? 'company' : (user ? 'registered' : 'guest');
-
   // Step 1 validity
   function step1Valid() {
     if (isOffice) return true;             // all read-only, valid
@@ -3493,19 +3437,34 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
     return contact.firstName && contact.lastName && contact.email && contact.phone;
   }
   function step2Valid() { return Boolean(slot); }
+  // Étape 3 : un moyen de paiement doit être proposé ET choisi. Sans ce test, le
+  // bouton « Payer » restait actif alors que l'écran affichait « moyens
+  // indisponibles », et la commande partait avec un moyen vide.
+  function step3Valid() { return paymentMethods.length > 0 && Boolean(payment); }
 
   // Code cadeau « achat cumulé » appliqué (ajoute une ligne 0 € côté serveur).
   const [giftCode, setGiftCode] = useState(null);
 
   async function handlePay() {
+    // Livraison bureau sans frais résolus : on REFUSE au lieu de facturer 0 €
+    // et de forcer un paiement immédiat à un bureau en facturation différée.
+    if (mode === 'delivery' && deliveryFeeErr) { setPayErr(deliveryFeeErr); return; }
     setPaying(true); setPayErr(null);
     try {
+      // Jour choisi au format YYYY-MM-DD LOCAL (isoOf évite le décalage UTC de
+      // toISOString à minuit) : sans lui, ws_orders.delivery_date restait NULL
+      // et une commande J+1 apparaissait sous « aujourd'hui » côté back-office.
+      const isoFn = (window.WSAvailability || window.WSCalendar)?.isoOf
+        || ((x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`);
+      const deliveryDate = date instanceof Date ? isoFn(date) : (date || null);
       const payload = {
         shopId: shop && shop.id,
+        requestKey: payKey,
         mode,
+        deliveryDate,
         slot: typeof slot === 'object' && slot
-          ? { slotId: slot.id, label: slot.label }
-          : { slotId: slot, label: slot },
+          ? { slotId: slot.id, label: slot.label, date: deliveryDate }
+          : { slotId: slot, label: slot, date: deliveryDate },
         basket: basket.map((l) => ({ productId: l.productId, qty: l.qty, portion: l.portion || null, note: l.note || null, options: l.options || [], bundleId: l.bundleId || null, bundleSlots: l.bundleSlots || {} })),
         voucher: voucherApplied && voucherApplied.ok ? voucherApplied.voucher.code : null,
         giftCode: giftCode || null,
@@ -3530,16 +3489,24 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         total,
         invoice: invoice ? { requested: true, vat, po: poNumber || null, note: orderNote || null } : null,
       };
-      const result = window.WSOrders
-        ? await window.WSOrders.place(payload)
-        : { ok: true, orderId: 'ord-demo', total, slot, payment };
+      // Une commande n'est « passée » que si le serveur l'a ENREGISTRÉE. L'ancien
+      // repli renvoyait un faux succès (orderId 'ord-demo') quand le module de
+      // commande était absent : le client voyait une confirmation pour une
+      // commande qui n'existait nulle part. Sans module → erreur, jamais de
+      // confirmation inventée.
+      if (!window.WSOrders) throw new Error('Service de commande indisponible — commande non enregistrée.');
+      const result = await window.WSOrders.place(payload);
       // Live backend + immediate payment → Stripe hosted Checkout
       // (cards + Bancontact). The webhook marks the order paid.
       if (result && result.checkoutUrl) {
         window.location.href = result.checkoutUrl;
         return;
       }
-      onPlaced({ ...result, slot, payment, total });
+      // Le LIBELLÉ vient de la liste serveur : la confirmation annonçait
+      // « Bancontact » pour toute méthode non reconnue — donc aussi pour un
+      // paiement en boutique ou sur compte, que le client n'a pas fait.
+      const payLabel = (paymentMethods.find((x) => x.id === payment) || {}).label || payment;
+      onPlaced({ ...result, slot, payment, paymentLabel: payLabel, total });
     } catch (ex) {
       setPayErr(ex.message || 'Erreur lors du paiement. Veuillez réessayer.');
     } finally {
@@ -3555,6 +3522,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       if (!step2Valid()) return;
       setStep(3);
     } else {
+      if (!step3Valid()) { setPayErr('Choisissez un moyen de paiement.'); return; }
       handlePay();
     }
   }
@@ -3598,8 +3566,8 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           <>
           <CheckoutStep3
             mode={mode} basket={basket} subtotal={subtotal} promo={promo} total={total}
-            deliveryFee={deliveryFee} deliveryFeeResult={deliveryFeeResult}
-            payment={payment} setPayment={setPayment}
+            deliveryFee={deliveryFee} deliveryFeeResult={deliveryFeeResult} deliveryFeeErr={deliveryFeeErr}
+            payment={payment} setPayment={setPayment} paymentMethods={paymentMethods}
             profile={checkoutProfile} companyId={companyId || null}
             isOffice={isOffice} isB2B={isB2B} invoice={invoice} setInvoice={setInvoice} vat={vat} setVat={setVat}
             shopId={shop && shop.id}
@@ -3608,6 +3576,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             voucherDiscount={voucherDiscount}
             giftCode={giftCode} onGift={setGiftCode}
             giftEmail={user ? (user.email || null) : ((contact && contact.email) || null)}
+            customerId={user ? user.id : null}
           />
           {invoice && (
           <div className="ws-b2b">
@@ -3711,7 +3680,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           {step > 1 && <button className="ws-btn-ghost" onClick={() => setStep((s) => s - 1)} disabled={paying}>Précédent</button>}
           <button
             className="ws-cta ws-cta--block"
-            disabled={paying || (step === 1 && !step1Valid()) || (step === 2 && !step2Valid())}
+            disabled={paying || (step === 1 && !step1Valid()) || (step === 2 && !step2Valid()) || (step === 3 && !step3Valid())}
             onClick={next}
           >
             {paying ? 'Traitement…' : step === 3 ? `Payer · €${total.toFixed(2)}` : 'Continuer'}
@@ -3729,6 +3698,13 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
   if (mode === 'delivery' && user && office) {
     const activeSite = (officeSites || []).find((s) => s.id === selectedSiteId) || null;
     const feeResult = deliveryFeeResult;
+    // Un complément d'adresse réduit à un tiret n'est pas un complément : c'est
+    // un placeholder saisi ou repris comme donnée. Il était concaténé tel quel
+    // et l'adresse s'affichait « … Louvain-la-Neuve · — ».
+    const complement = (v) => {
+      const s = String(v == null ? '' : v).trim();
+      return (s === '' || s === '—' || s === '-' || s === '–') ? '' : s;
+    };
     return (
       <div className="ws-co-step">
         <h3 className="ws-co-step__title">Adresse de livraison</h3>
@@ -3743,7 +3719,7 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
                 <span className="ws-co-site-opt__radio"/>
                 <span className="ws-co-site-opt__body">
                   <span className="ws-co-site-opt__name">{site.name}</span>
-                  <span className="ws-co-site-opt__addr">{site.address}{site.floor_room ? ' · ' + site.floor_room : ''}</span>
+                  <span className="ws-co-site-opt__addr">{site.address}{complement(site.floor_room) ? ' · ' + complement(site.floor_room) : ''}</span>
                 </span>
               </label>
             ))}
@@ -3752,10 +3728,15 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
 
         <div className="ws-co-readbox">
           <ReadRow k="Entreprise" v={office.name}/>
-          <ReadRow k="Contact"    v={activeSite ? activeSite.contact_name : (user.firstName + ' ' + user.lastName)}/>
+          {/* Repli sur le titulaire du compte, comme la ligne Téléphone juste en
+              dessous : un site sans contact nommé affichait une ligne VIDE. */}
+          <ReadRow k="Contact"    v={(activeSite ? activeSite.contact_name : null)
+                                     || ((user.firstName || '') + ' ' + (user.lastName || '')).trim() || '—'}/>
           <ReadRow k="Email"      v={user.email}/>
           <ReadRow k="Téléphone"  v={(activeSite ? activeSite.contact_phone : office.phone) || user.phone || '—'}/>
-          <ReadRow k="Adresse"    v={activeSite ? (activeSite.address + (activeSite.floor_room ? ' · ' + activeSite.floor_room : '')) : (office.address || '—')}/>
+          <ReadRow k="Adresse"    v={activeSite
+                                     ? (activeSite.address + (complement(activeSite.floor_room) ? ' · ' + complement(activeSite.floor_room) : ''))
+                                     : (office.address || '—')}/>
           <ReadRow k="Tournée"    v={tour ? tour.name + ' · ' + tour.window : '—'}/>
           {feeResult && (
             <ReadRow k="Livraison"
@@ -3908,7 +3889,10 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
       // Use the parent-selected date, not hardcoded today
       const d = date instanceof Date ? date : new Date();
       setDateLabel(d.toLocaleDateString('fr-BE', { weekday: 'long', day: 'numeric', month: 'long' }));
-      const isoFn = (window.WSAvailability || window.WSCalendar)?.isoOf || ((x) => x.toISOString().slice(0,10));
+      // Repli LOCAL, jamais UTC : toISOString() renvoie la veille pour une Date
+      // à minuit en UTC+2.
+      const isoFn = (window.WSAvailability || window.WSCalendar)?.isoOf
+        || ((x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`);
       const isoDate = isoFn(d);
       const api = window.WSAvailability || window.WSCalendar;
       if (!api) { setSlots([]); return; }
@@ -3960,7 +3944,8 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
 function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, isOffice, isB2B, invoice, setInvoice, vat, setVat,
                          shopId, mode, voucherInput, setVoucherInput, voucherApplied, setVoucherApplied, voucherDiscount,
                          giftCode, onGift, giftEmail,
-                         deliveryFee, deliveryFeeResult, profile, companyId }) {
+                         deliveryFee, deliveryFeeResult, deliveryFeeErr, profile, companyId, customerId,
+                         paymentMethods }) {
   const [voucherErr, setVoucherErr] = useState(null);
   // Cadeau « achat cumulé » : code saisi + produit cadeau validé (ligne 0 €).
   const [giftInput, setGiftInput] = useState('');
@@ -3995,7 +3980,7 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
     document.addEventListener('pointerdown', off, true);
     return () => document.removeEventListener('pointerdown', off, true);
   }, [infoOpen]);
-  const paymentMethods = usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId);
+  // paymentMethods vient du wizard (prop) : plus de second appel à /payment-methods.
   // Si le moyen sélectionné n'est plus proposé (profil/boutique), prendre le premier dispo.
   useEffect(() => {
     if (paymentMethods.length && !paymentMethods.some((p) => p.id === payment)) setPayment(paymentMethods[0].id);
@@ -4005,27 +3990,52 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
   useEffect(() => {
     if (voucherApplied && voucherApplied.ok) {
       const code = voucherApplied.voucher.code;
-      const validate = window.WSVouchers
-        ? () => window.WSVouchers.redeem({ code, shopId, subtotal, basket })
-        : () => Promise.resolve(validateVoucher(code, { subtotal, shopId }));
-      validate().then((r) => {
+      // Seul le serveur revalide un bon (compteurs, ciblage, périmètre, dates).
+      if (!window.WSVouchers) { setVoucherApplied(null); setVoucherErr('Service codes promo indisponible.'); return; }
+      window.WSVouchers.redeem({ code, shopId, subtotal, basket, customerId }).then((r) => {
         if (!r.ok) { setVoucherApplied(null); setVoucherErr(r.message); }
         else setVoucherApplied(r);
-      }).catch(() => {});
+      }).catch(() => { setVoucherApplied(null); setVoucherErr('Service codes promo indisponible.'); });
     }
   }, [subtotal, shopId]);
 
-  async function applyVoucher() {
+  // Bons DISPONIBLES (marketing) : chargés pour ce client + boutique, appliqués
+  // en un clic (le client ne retape pas le code).
+  const [availVouchers, setAvailVouchers] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    if (window.WSVouchers && typeof window.WSVouchers.available === 'function') {
+      window.WSVouchers.available({ shopId, customerId, subtotal })
+        .then((list) => { if (alive) setAvailVouchers(Array.isArray(list) ? list : []); })
+        .catch(() => {});
+    }
+    return () => { alive = false; };
+  }, [shopId, customerId, subtotal]);
+
+  async function applyVoucher(forcedCode) {
     setVoucherErr(null);
-    const code = (voucherInput || '').trim();
+    // Un « code forcé » ne peut être qu'une chaîne (ou un nombre). Tout autre
+    // type est un appel mal câblé — typiquement un événement de clic passé par
+    // React — et doit retomber sur la saisie, pas être converti en
+    // « [object Object] » puis envoyé au serveur comme un vrai code.
+    const forced = (typeof forcedCode === 'string' || typeof forcedCode === 'number') ? String(forcedCode) : null;
+    const code = (forced != null ? forced : (voucherInput || '')).trim();
     if (!code) return;
     setVoucherLoading(true);
     try {
-      const r = window.WSVouchers
-        ? await window.WSVouchers.redeem({ code, shopId, subtotal, basket })
-        : validateVoucher(code, { subtotal, shopId });
-      if (r.ok) { setVoucherApplied(r); setVoucherErr(null); }
-      else { setVoucherApplied(null); setVoucherErr(r.message || 'Code invalide'); }
+      if (!window.WSVouchers) throw new Error('Service codes promo indisponible.');
+      const r = await window.WSVouchers.redeem({ code, shopId, subtotal, basket, customerId });
+      if (r.ok) { setVoucherApplied(r); setVoucherErr(null); setVoucherInput(code); }
+      else {
+        setVoucherErr(r.message || 'Code invalide');
+        // Un échec sur un AUTRE code ne doit PAS retirer celui qui fonctionne :
+        // essayer un bon refusé (périmètre produit, seuil non atteint…) faisait
+        // perdre la remise déjà acquise, sans le dire. On ne retire que si le
+        // code refusé est justement celui qui était appliqué.
+        const active = voucherApplied && voucherApplied.ok && voucherApplied.voucher
+                       ? String(voucherApplied.voucher.code) : null;
+        if (active !== null && active === code) setVoucherApplied(null);
+      }
     } catch (_) {
       setVoucherErr('Erreur réseau lors de la validation du code.');
     } finally {
@@ -4070,10 +4080,54 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
               autoComplete="off"
               spellCheck={false}
             />
-            <button type="button" className="ws-co-voucher__apply" onClick={applyVoucher} disabled={!voucherInput.trim() || voucherLoading}>{voucherLoading ? '…' : 'Appliquer'}</button>
+            {/* onClick={applyVoucher} passait l'ÉVÉNEMENT de clic en premier
+                argument, donc en « code forcé » : String(event) valait
+                « [object Object] » et le code saisi n'était jamais lu. Aucun
+                code tapé à la main ne pouvait aboutir — seuls les bons cliqués
+                dans la liste fonctionnaient, eux qui passent leur code. */}
+            <button type="button" className="ws-co-voucher__apply" onClick={() => applyVoucher()} disabled={!voucherInput.trim() || voucherLoading}>{voucherLoading ? '…' : 'Appliquer'}</button>
           </div>
         )}
         {voucherErr && <div className="ws-co-voucher__err">{voucherErr}</div>}
+
+        {/* Bons DISPONIBLES — marketing : le client applique en un clic sans retaper. */}
+        {/* La liste reste VISIBLE une fois un code appliqué. Auparavant elle
+            disparaissait entièrement : impossible de voir les autres bons ni
+            d'en choisir un autre sans passer par « Retirer », ce qui donnait
+            l'impression que le choix était définitif. Un seul code par commande
+            (le serveur n'en accepte qu'un) — c'est désormais écrit, et cliquer
+            un autre bon le remplace directement. */}
+        {availVouchers.length > 0 && (
+          <div className="ws-co-avail">
+            <div className="ws-co-avail__head">
+              <PortionGlyph size={13}/>
+              <span>{availVouchers.length > 1 ? 'Vos codes promo disponibles' : 'Vous avez un code promo'}</span>
+              {availVouchers.length > 1 && (
+                <span className="ws-co-avail__rule"> · un seul par commande</span>
+              )}
+            </div>
+            <ul className="ws-co-avail__list">
+              {availVouchers.map((v) => {
+                const isOn = !!(voucherApplied && voucherApplied.ok && voucherApplied.voucher
+                                && String(voucherApplied.voucher.code) === String(v.code));
+                return (
+                  <li key={v.code} className={'ws-co-avail__item' + (v.personal ? ' is-personal' : '')}>
+                    <div className="ws-co-avail__info">
+                      <span className="ws-co-avail__label">{v.label}{v.personal && <span className="ws-co-avail__perso"> · rien qu’à vous</span>}</span>
+                      <span className="ws-co-avail__code">{v.code}{v.hint ? ' · ' + v.hint : ''}</span>
+                    </div>
+                    <button type="button" className="ws-co-avail__apply"
+                      disabled={isOn || !v.reachable || voucherLoading}
+                      title={isOn ? 'Déjà appliqué' : (v.reachable ? 'Remplace le code en cours' : ('Applicable ' + v.hint))}
+                      onClick={() => applyVoucher(v.code)}>
+                      {isOn ? 'Appliqué' : (v.reachable ? 'Appliquer' : v.hint)}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
       </div>
 
       <div className="ws-co-gift">
@@ -4135,11 +4189,21 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
             <span>{deliveryFee === 0 ? 'Offerts' : `€${deliveryFee.toFixed(2)}`}</span>
           </div>
         )}
+        {mode === 'delivery' && deliveryFeeErr && (
+          <p className="ws-co-error" role="alert">{deliveryFeeErr}</p>
+        )}
         <div className="ws-co-summary__row ws-co-summary__row--total"><span>Total TTC</span><span>€{total.toFixed(2)}</span></div>
       </div>
 
       <div className="ws-pay">
-        {paymentMethods.map((p) => (
+        {paymentMethods.length === 0 ? (
+          // Aucun moyen de paiement renvoyé par le serveur : on le DIT au lieu
+          // d'afficher des options inventées (règle go-live « vraies données »).
+          <p className="ws-co-error" role="alert">
+            Moyens de paiement indisponibles pour cette boutique. La commande ne peut pas être
+            finalisée — réessayez dans un instant ou contactez la boutique.
+          </p>
+        ) : paymentMethods.map((p) => (
           <label key={p.id} className={`ws-pay__opt${payment === p.id ? ' is-active' : ''}`}>
             <input type="radio" name="payment" value={p.id} checked={payment === p.id} onChange={() => setPayment(p.id)}/>
             <span className="ws-pay__radio"/>
@@ -4234,7 +4298,9 @@ function ShopFrame({ variant }) {
   const _deep = typeof parseDeepLink === 'function' ? parseDeepLink() : {};
   // Active shop: deep-link → last remembered (WSShopRouter) → default.
   const [shopId, setShopId] = useState(
-    _deep.shopId || (window.WSShopRouter && window.WSShopRouter.current()) || 'chatelain'
+    // Go-live : plus de boutique par defaut en dur - deep-link ou memoire,
+    // sinon la premiere boutique reelle renvoyee par /shops (effet ci-dessous).
+    _deep.shopId || (window.WSShopRouter && window.WSShopRouter.current()) || null
   );
   React.useEffect(() => {
     // Persist the active shop so cart/checkout/login stay scoped to it.
@@ -4333,6 +4399,22 @@ function ShopFrame({ variant }) {
     }).catch(() => {});
     return () => { alive = false; };
   }, []);
+  // Restauration de la session au chargement. Le jeton était bien écrit dans
+  // localStorage à la connexion et WSAuth.me() existait pour le revalider, mais
+  // RIEN ne l'appelait : après le moindre rechargement, le client redevenait
+  // invité — aucun maintien de stock, et un checkout traité en visiteur alors
+  // qu'il a un compte.
+  React.useEffect(() => {
+    let alive = true;
+    // Un ?handoff en cours ouvre lui-même la session : ne pas courir contre lui.
+    let hasHandoff = false;
+    try { hasHandoff = !!new URLSearchParams(window.location.search).get('handoff'); } catch (_) {}
+    if (hasHandoff || !window.WSAuth || typeof window.WSAuth.me !== 'function') return;
+    Promise.resolve(window.WSAuth.me())
+      .then((u) => { if (alive && u && u.id) setUser(u); })
+      .catch((e) => console.error('[auth] session non restaurée', e));
+    return () => { alive = false; };
+  }, []);
   const [officeSlots, setOfficeSlots] = React.useState([]);
   const [slotCta, setSlotCta] = React.useState(null);
   const [selectedSlot, setSelectedSlot] = React.useState(null);
@@ -4342,7 +4424,10 @@ function ShopFrame({ variant }) {
     const api = window.WSSlots || window.WSAvailability;
     if (mode !== 'delivery' || !api || !(api.listSlots || api.nextSlot)) { setOfficeSlots([]); setSlotCta(null); return; }
     const officeId = (user && user.officeId) || null;
-    const iso = date instanceof Date ? date.toISOString().slice(0, 10) : '';
+    // Formatage LOCAL : toISOString() rend la veille pour une Date à minuit en
+    // UTC+2, et les créneaux demandés étaient ceux du mauvais jour.
+    const p2 = (n) => String(n).padStart(2, '0');
+    const iso = date instanceof Date ? `${date.getFullYear()}-${p2(date.getMonth() + 1)}-${p2(date.getDate())}` : '';
     Promise.all([
       api.listSlots ? api.listSlots({ officeId, date: iso }) : Promise.resolve([]),
       api.nextSlot  ? api.nextSlot({ officeId, date: iso })  : Promise.resolve(null),
@@ -4365,6 +4450,10 @@ function ShopFrame({ variant }) {
   }
   function confirmSlotChange() {
     if (!pendingSlot) return;
+    // Les lignes écartées par le changement de créneau tenaient du stock : sans
+    // libération, il restait gelé jusqu'à expiration alors que le produit
+    // n'était plus au panier de personne.
+    (pendingSlot.dropped || []).forEach((l) => stockRelease(l.productId, l.reservationId || null));
     setBasket((b) => b.filter((l) => !(Array.isArray(l.available_slots) && !l.available_slots.includes(pendingSlot.slot_type))));
     setSelectedSlot(pendingSlot.slot_type);
     setPendingSlot(null);
@@ -4420,12 +4509,15 @@ function ShopFrame({ variant }) {
   const [orderToast, setOrderToast] = useState(null);
 
   // Shops directory — sourced from API stub (or remote endpoint when wired).
-  const [shops, setShops] = useState(() => (window.WSShops ? window.WSShops.getCacheSync() : Object.values(W_SHOPS || {})));
+  const [shops, setShops] = useState(() => (window.WSShops ? window.WSShops.getCacheSync() : []));
+  const [shopsFailed, setShopsFailed] = React.useState(false);
   React.useEffect(() => {
     let alive = true;
     if (window.WSShops) {
-      window.WSShops.list().then((s) => { if (alive) setShops(s); }).catch(() => {});
-    }
+      window.WSShops.list()
+        .then((s) => { if (!alive) return; setShops(s || []); setShopsFailed(!s || !s.length); })
+        .catch(() => { if (alive) setShopsFailed(true); });
+    } else { setShopsFailed(true); }
     return () => { alive = false; };
   }, []);
 
@@ -4435,29 +4527,37 @@ function ShopFrame({ variant }) {
   React.useEffect(() => {
     if (!shops || !shops.length) return;
     const m = shops.find((s) => String(s.id) === String(shopId) || s.slug === shopId);
-    if (m && m.id !== shopId) setShopId(m.id);
+    if (m) { if (m.id !== shopId) setShopId(m.id); }
+    else setShopId(shops[0].id); // ref inconnue (vieille memoire demo) -> premiere boutique reelle
   }, [shops]);
 
-  // Categories — loaded from API, seed used as instant fallback.
-  const [categories, setCategories] = React.useState((window._CATALOG_SEED && window._CATALOG_SEED.categories) || []);
+  // Catégories — serveur uniquement (window._CATALOG_SEED n'existe plus).
+  // L'échec est tracé : sans ça, la boutique s'affichait vide sans un mot.
+  const [categories, setCategories] = React.useState([]);
   React.useEffect(() => {
     let alive = true;
     if (window.WSCatalog && typeof window.WSCatalog.listCategories === 'function') {
-      window.WSCatalog.listCategories({ shopId })
-        .then((c) => { if (alive && c && c.length) setCategories(c); })
-        .catch(() => {});
+      // Date LOCALE, comme pour les produits : la barre de nav doit refléter la
+      // même saison que la grille, sinon on garde des onglets qui ne mènent
+      // nulle part.
+      const dIso = date instanceof Date
+        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+        : (date || '');
+      window.WSCatalog.listCategories({ shopId, date: dIso })
+        .then((c) => { if (alive && Array.isArray(c)) setCategories(c); })
+        .catch((e) => console.error('[catalogue] catégories indisponibles', e));
     }
     return () => { alive = false; };
-  }, [shopId]);
+  }, [shopId, date]);
 
-  // Assortments — loaded from API, seed used as instant fallback.
-  const [assortments, setAssortments] = React.useState((window._CATALOG_SEED && window._CATALOG_SEED.assortments) || []);
+  // Assortiments (saisons) — serveur uniquement.
+  const [assortments, setAssortments] = React.useState([]);
   React.useEffect(() => {
     let alive = true;
     if (window.WSCatalog) {
       window.WSCatalog.listAssortments({ shopId })
         .then((a) => { if (alive) setAssortments(a || []); })
-        .catch(() => {});
+        .catch((e) => console.error('[catalogue] assortiments indisponibles', e));
     }
     return () => { alive = false; };
   }, [shopId]);
@@ -4469,14 +4569,16 @@ function ShopFrame({ variant }) {
     let alive = true;
     async function load() {
       if (!user || !user.officeId) { setUserOffice(null); setUserTour(null); return; }
+      // Serveur uniquement : sans WSOffices/WSTours, pas de bureau — l'écran
+      // « Mon bureau » affichera l'absence, jamais un bureau fabriqué.
       const office = window.WSOffices
-        ? await window.WSOffices.get(user.officeId).catch(() => null)
-        : getOffice(user.officeId);
+        ? await window.WSOffices.get(user.officeId).catch((e) => { console.error('[bureau]', e); return null; })
+        : null;
       if (!alive || !office) { setUserOffice(null); setUserTour(null); return; }
       setUserOffice(office);
       const tour = window.WSTours
         ? await window.WSTours.get(office.tourId).catch(() => null)
-        : getTour(office.tourId);
+        : null;
       if (alive) setUserTour(tour || null);
     }
     load();
@@ -4513,17 +4615,25 @@ function ShopFrame({ variant }) {
   // Delivery fee — recomputed whenever basket subtotal or selected site changes.
   const subtotalForFee = basket.reduce((t, l) => t + l.price * l.qty, 0);
   const [deliveryFeeResult, setDeliveryFeeResult] = React.useState(null);
+  // L'échec du calcul des frais était AVALÉ (.catch(() => {})). Conséquences :
+  // frais de livraison facturés 0 €, ligne « Frais de livraison » masquée, et
+  // payment_type retombant sur 'immediate' — donc un bureau en facturation
+  // différée se voyait demander un paiement immédiat. On garde l'erreur et la
+  // commande est refusée en mode livraison tant qu'elle n'est pas résolue.
+  const [deliveryFeeErr, setDeliveryFeeErr] = React.useState('');
   React.useEffect(() => {
     let alive = true;
-    if (mode !== 'delivery' || !userOffice) { setDeliveryFeeResult(null); return; }
-    if (!window.WSDeliveryFees) { setDeliveryFeeResult(null); return; }
+    if (mode !== 'delivery' || !userOffice) { setDeliveryFeeResult(null); setDeliveryFeeErr(''); return; }
+    if (!window.WSDeliveryFees) { setDeliveryFeeResult(null); setDeliveryFeeErr('Frais de livraison indisponibles — please debug.'); return; }
     window.WSDeliveryFees.quote({
       siteId:          selectedSite ? selectedSite.id          : null,
       officeClientId:  userOffice.id,
       tourneeId:       selectedSite ? selectedSite.tournee_id  : (userOffice.tourId || null),
       shopId:          shop ? shop.id : shopId,
       subtotal:        subtotalForFee,
-    }).then((r) => { if (alive) setDeliveryFeeResult(r); }).catch(() => {});
+    }).then((r) => { if (!alive) return; setDeliveryFeeResult(r); setDeliveryFeeErr(r ? '' : 'Frais de livraison indisponibles — please debug.'); })
+      .catch((e) => { if (!alive) return; setDeliveryFeeResult(null); console.error('[frais livraison]', e);
+                      setDeliveryFeeErr('Frais de livraison indisponibles — commande impossible. ' + (e && e.message ? e.message : '')); });
     return () => { alive = false; };
   }, [mode, userOffice?.id, selectedSite?.id, subtotalForFee, shopId]);
 
@@ -4563,8 +4673,7 @@ function ShopFrame({ variant }) {
   const isAssortment = typeof cat === 'string' && cat.startsWith('season:');
   const assortmentId = isAssortment ? cat.slice('season:'.length) : null;
   const assortment = assortmentId ? assortments.find((a) => a.id === assortmentId) : null;
-  const seedProducts = (window._CATALOG_SEED && window._CATALOG_SEED.products) || [];
-  const [allProducts, setAllProducts] = React.useState(seedProducts);
+  const [allProducts, setAllProducts] = React.useState([]);
   // Mode livraison : marque <body> pour recolorer (CSS, mobile) les boutons
   // d'action principaux du parcours en Abricot Pastel. Retiré hors livraison.
   React.useEffect(() => {
@@ -4579,11 +4688,21 @@ function ShopFrame({ variant }) {
       // filtrée (produits éligibles) — filtre partagé, identique online et après
       // handoff PWA, sans dépendre de l'état client. Le filtre client résiduel
       // (slotFiltered) reste comme repli (seed/démo ou API sans le paramètre).
-      const list = await window.WSCatalog.listProducts({ shopId, mode });
-      if (alive && list && list.length) setAllProducts(list);
+      // `date` : les gammes saisonnières sont évaluées à la date de retrait /
+      // livraison. Formatage LOCAL — toISOString() décalerait d'un jour en
+      // soirée (heure belge d'été), et on interrogerait la mauvaise saison.
+      const dIso = date instanceof Date
+        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+        : (date || '');
+      const list = await window.WSCatalog.listProducts({ shopId, mode, date: dIso });
+      // Une liste VIDE est une réponse valable — c'est le catalogue de cette
+      // date. L'ancien test `list.length` conservait la liste précédente, donc
+      // des produits d'une autre date/saison restaient affichés. Un échec HTTP
+      // lève déjà une exception : ici, vide veut bien dire vide.
+      if (alive && Array.isArray(list)) setAllProducts(list);
     })();
     return () => { alive = false; };
-  }, [shopId, mode]);
+  }, [shopId, mode, date]);
   // Source commune GRILLE + LIGNE DE NAV : le catalogue restreint au créneau
   // et à la date en cours. La règle d'affichage de la nav (« n'afficher que ce
   // qui contient au moins un produit disponible ») est ainsi exactement celle
@@ -4737,43 +4856,97 @@ function ShopFrame({ variant }) {
   const cartCount = basket.reduce((t, l) => t + l.qty, 0);
   const userCanDeliver = !!(userOffice && userOffice.status === 'validated' && userTour);
 
-  // Stock reservation helpers — only called for logged-in users (15-min hold).
-  // No-op when WSCatalog has no endpoint configured (demo/seed mode).
-  function stockReserve(productId, qty = 1) {
-    if (!user || !window.WSCatalog || !window.WSCatalog.reserve) return;
-    const iso = date instanceof Date ? date.toISOString().slice(0, 10) : '';
-    window.WSCatalog.reserve({ productId, shopId, date: iso, mode, qty, customerId: user.id })
-      .then(() => window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {})))
-      .catch(() => {});
+  // Maintien de stock (15 min) — clients connectés. Trois corrections :
+  //  • l'échec n'est plus avalé : il est affiché (sinon le produit était au
+  //    panier SANS être tenu, et le client l'apprenait au paiement) ;
+  //  • la date était calculée en UTC (toISOString) : après 22 h en heure belge
+  //    d'été, la réservation partait sur le JOUR PRÉCÉDENT, donc sur une autre
+  //    ligne de stock que celle réellement vendue ;
+  //  • retirer UNE ligne relâchait TOUT le panier (release sans productId).
+  const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const [stockErr, setStockErr] = React.useState('');
+  function refreshStock() {
+    return window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {}));
   }
-  function stockRelease(productId, qty = 1) {
-    if (!user || !window.WSCatalog || !window.WSCatalog.release) return;
-    window.WSCatalog.release({ customerId: user.id })
-      .then(() => window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {})))
-      .catch(() => {});
+  function stockReserve(productId, qty = 1, lineId = null) {
+    // Visiteur non connecté : aucun maintien possible (pas d'identité à qui le
+    // rattacher). On le TRACE — sans ça, l'absence de réservation était
+    // indiscernable d'une panne, y compris en test.
+    if (!user) { console.info('[stock] pas de maintien : client non connecté (panier invité)'); return; }
+    if (!window.WSCatalog || !window.WSCatalog.reserve) {
+      setStockErr('Service stock indisponible — please debug.'); return;
+    }
+    const iso = date instanceof Date ? isoLocal(date) : (date || '');
+    window.WSCatalog.reserve({ productId, shopId, date: iso, mode, qty, customerId: user.id })
+      .then((r) => {
+        // Trace systématique : le serveur peut répondre « ok » SANS avoir tenu
+        // quoi que ce soit (produit sans stock du jour → rien à tenir). Sans
+        // cette trace, une table de réservations vide restait inexplicable.
+        console.info('[stock] réponse réservation', r);
+        if (r && r.ok !== false && !r.reservationId) {
+          console.info('[stock] aucun maintien créé — raison :', (r && r.reason) || 'non précisée');
+        }
+        // On rattache le maintien à SA ligne de panier : sans cet identifiant,
+        // le retrait d'une ligne libérait toutes les réservations du même
+        // produit (deux lignes de brownies, on en retire une, les deux
+        // maintiens sautaient et le stock repassait dispo à tort).
+        if (r && r.reservationId && lineId != null) {
+          setBasket((b) => b.map((l) => (l.line === lineId ? { ...l, reservationId: r.reservationId } : l)));
+        }
+        setStockErr(r && r.ok === false ? (r.error || 'Stock non tenu — please debug.') : '');
+        return refreshStock();
+      })
+      .catch((e) => { console.error('[stock] réservation refusée', e);
+                      setStockErr('Stock non tenu : ' + (e && e.message ? e.message : 'erreur serveur') + ' — la disponibilité sera revérifiée au paiement.');
+                      refreshStock().catch(() => {}); });
+  }
+  // reservationId connu → on ne libère QUE ce maintien. Sinon (réservation non
+  // encore revenue du serveur), repli sur le produit : mieux vaut libérer un peu
+  // trop que geler du stock vendable.
+  function stockRelease(productId, reservationId = null) {
+    // Sortie silencieuse = enquête impossible : la libération n'était jamais
+    // appelée (session perdue, module absent) et la table restait à
+    // released_at NULL sans le moindre message, alors que TOUT le reste de la
+    // chaîne était tracé.
+    if (!user) { console.info('[stock] pas de libération : client non connecté — le maintien expirera seul'); return; }
+    if (!window.WSCatalog || !window.WSCatalog.release) {
+      console.error('[stock] pas de libération : module catalogue absent'); return;
+    }
+    window.WSCatalog.release(reservationId
+        ? { customerId: user.id, reservationIds: [reservationId] }
+        : { customerId: user.id, productId })
+      .then((r) => {
+        if (r && r.ok !== false && !r.released) {
+          console.info('[stock] aucun maintien libéré — rien ne correspondait côté serveur');
+        }
+        return refreshStock();
+      })
+      .catch((e) => console.error('[stock] libération', e));
   }
   function stockReleaseAll() {
-    if (!user || !window.WSCatalog || !window.WSCatalog.release) return;
+    if (!user) { console.info('[stock] pas de libération globale : client non connecté'); return; }
+    if (!window.WSCatalog || !window.WSCatalog.release) return;
     window.WSCatalog.release({ customerId: user.id }).catch(() => {});
   }
 
   function handleAdd(p, portion) {
+    const lineId = Date.now();
     setBasket((b) => [...b, {
-      line: Date.now(), productId: p.id,
+      line: lineId, productId: p.id,
       name: p.name + (portion === 'demi' ? ' — 1/2' : portion === 'quart' ? ' — 1/4' : ''),
       qty: 1, price: p.price, options: [],
       portion: portion || null, cat: p.cat, crossPortion: !!p.crossPortion,
       lead_time: p.lead_time || 0, no_delivery: !!p.no_delivery,
       available_slots: Array.isArray(p.available_slots) ? p.available_slots : null,
     }]);
-    stockReserve(p.id, 1);
+    stockReserve(p.id, 1, lineId);
   }
 
   // Configurable-product detail
   function handleRemove(lineId) {
     const line = basket.find((l) => l.line === lineId);
     setBasket((b) => b.filter((l) => l.line !== lineId));
-    if (line) stockRelease(line.productId, line.qty);
+    if (line) stockRelease(line.productId, line.reservationId || null);
   }
   function handleNote(lineId, note) {
     setBasket((b) => b.map((l) => (l.line === lineId ? { ...l, note } : l)));
@@ -4806,12 +4979,47 @@ function ShopFrame({ variant }) {
   }, []);
   function handleAddConfigured(line) {
     const product = allProducts.find((p) => p.id === line.productId);
+    // Même rattachement ligne ↔ réservation que dans handleAdd : sans lui, les
+    // produits configurables (portions, options, formules) retombaient sur le
+    // repli « par produit » et leur retrait libérait TOUTES les réservations du
+    // même produit.
+    const lineId = line.line != null ? line.line : Date.now();
     setBasket((b) => [...b, {
-      line: Date.now(), ...line,
+      ...line,
+      line: lineId,
       lead_time: line.lead_time ?? product?.lead_time ?? 0,
       no_delivery: line.no_delivery ?? !!product?.no_delivery,
     }]);
-    stockReserve(line.productId, line.qty || 1);
+    stockReserve(line.productId, line.qty || 1, lineId);
+  }
+
+  /* Heure de RETRAIT du créneau choisi — décision validée : c'est elle que les
+     règles de ventes croisées comparent, jamais l'heure de la commande.
+     Les créneaux sont libellés « 12:00 – 12:30 » ; on en prend le début.
+     Tant qu'aucun créneau n'est choisi (cas du panier, avant le paiement),
+     l'heure reste inconnue et la contrainte horaire ne s'applique pas — à
+     l'étape de paiement, où le créneau est choisi, elle s'applique exactement. */
+  const crossSlotTime = React.useMemo(() => {
+    const hit = (officeSlots || []).find((s) => s.slot_type === selectedSlot || s.id === selectedSlot);
+    const m = String((hit && hit.label) || '').match(/([01]\d|2[0-3]):[0-5]\d/);
+    return m ? m[0] : null;
+  }, [officeSlots, selectedSlot]);
+
+  /* Ajout depuis une suggestion « Panier Croisé ». On passe par le MÊME chemin
+     qu'un ajout ordinaire — réservation de stock comprise — pour qu'un produit
+     suggéré ne soit pas un citoyen de seconde zone dans le panier. */
+  function handleCrossAdd(it) {
+    const p = allProducts.find((x) => String(x.id) === String(it.productId));
+    handleAddConfigured({
+      productId: it.productId,
+      name: p ? p.name : it.name,
+      qty: 1,
+      price: Number(it.price) || (p ? p.price : 0),
+      options: [],
+      portion: null,
+      cat: p ? p.cat : null,
+      basePrice: p ? p.price : Number(it.price) || 0,
+    });
   }
 
   const Nav = variant === 'A' ? NavbarA : variant === 'B' ? NavbarB : NavbarC;
@@ -4868,6 +5076,23 @@ function ShopFrame({ variant }) {
     stockReleaseAll(); // release before clearing user reference
     setUser(null);
     if (mode === 'delivery') { setMode('collect'); setBasket([]); }
+  }
+
+  // Go-live : sans boutique resolue (API /shops en echec ou vide), on affiche
+  // un etat explicite - jamais de boutique de demonstration.
+  if (!shop) {
+    return (
+      <div className={`ws ws--${variant}`} style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', textAlign: 'center' }}>
+        <div>
+          <h2 style={{ marginBottom: '.5rem' }}>{shopsFailed ? 'Boutiques indisponibles' : 'Chargement de la boutique…'}</h2>
+          <p style={{ opacity: .7 }}>
+            {shopsFailed
+              ? 'Impossible de charger la liste des boutiques (API injoignable). Veuillez réessayer plus tard.'
+              : 'Connexion en cours…'}
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -4943,7 +5168,7 @@ function ShopFrame({ variant }) {
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
         </button>
 
-        <Basket shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} deliveryFeeResult={deliveryFeeResult}/>
+        <Basket shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} deliveryFeeResult={deliveryFeeResult} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
       </div>
 
       {/* Mobile bottom tab bar — 2 buttons, 50/50 split */}
@@ -4977,7 +5202,7 @@ function ShopFrame({ variant }) {
           <div className="ws-drawer__panel">
             <button className="ws-drawer__close" onClick={() => setCartDrawerOpen(false)} aria-label="Fermer">×</button>
             <div className="ws-drawer__handle" aria-hidden="true"/>
-            <Basket shop={shop} mode={mode} basket={basket} onCheckout={() => { setCartDrawerOpen(false); handleCheckout(); }} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled}/>
+            <Basket shop={shop} mode={mode} basket={basket} onCheckout={() => { setCartDrawerOpen(false); handleCheckout(); }} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
           </div>
         </div>
       )}
@@ -5021,7 +5246,7 @@ function ShopFrame({ variant }) {
         voucherInput={voucherInput} setVoucherInput={setVoucherInput}
         voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
         office={userOffice} tour={userTour} date={date}
-        deliveryFeeResult={deliveryFeeResult}
+        deliveryFeeResult={deliveryFeeResult} deliveryFeeErr={deliveryFeeErr}
         officeSites={officeSites} selectedSiteId={selectedSiteId} setSelectedSiteId={setSelectedSiteId}
       />
       {prefNudge && (
@@ -5046,12 +5271,22 @@ function ShopFrame({ variant }) {
           </div>
         </div>
       )}
+      {stockErr && (
+        <div className="ws-toast ws-toast--err" role="alert" style={{ background: '#7a1f1f' }}>
+          <div>
+            <div className="ws-toast__title">Stock non tenu</div>
+            <div className="ws-toast__sub">{stockErr}</div>
+          </div>
+          <button type="button" onClick={() => setStockErr('')}
+            style={{ marginLeft: 'auto', background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', font: '600 13px var(--font-ui)' }}>Fermer</button>
+        </div>
+      )}
       {orderToast && (
         <div className="ws-toast" role="status">
           <span className="ws-toast__check"><Pict d={<path d="M5 12l4 4 10-10"/>} s={14}/></span>
           <div>
             <div className="ws-toast__title">Commande confirmée</div>
-            <div className="ws-toast__sub">Créneau {typeof orderToast.slot === 'object' ? orderToast.slot?.label : orderToast.slot} · {orderToast.payment === 'visa' ? 'Carte' : orderToast.payment === 'apple' ? 'Apple Pay' : 'Bancontact'} · €{orderToast.total.toFixed(2)}</div>
+            <div className="ws-toast__sub">Créneau {typeof orderToast.slot === 'object' ? orderToast.slot?.label : orderToast.slot} · {orderToast.paymentLabel || orderToast.payment} · €{orderToast.total.toFixed(2)}</div>
           </div>
         </div>
       )}

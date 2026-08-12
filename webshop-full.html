@@ -61,13 +61,9 @@
 <script type="text/babel" data-presets="react" src="webshop-allergens.jsx"></script>
 <script type="text/babel" data-presets="react" src="webshop-full-bundle.jsx"></script>
 
-<!-- PWA: register service worker (progressive enhancement; no effect on file://) -->
-<script>
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    window.addEventListener('load', function () {
-      navigator.serviceWorker.register('sw.js').catch(function () {});
-    });
-  }
-</script>
+<!-- PWA : l'enregistrement du service worker est assuré par vite-plugin-pwa
+     (registerType 'autoUpdate') dans le build de production. L'ancien appel
+     manuel à 'sw.js' visait un fichier absent du dépôt : il échouait en
+     silence et brouillait le diagnostic du cache périmé. Retiré. -->
 </body>
 </html>

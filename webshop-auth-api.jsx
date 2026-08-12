@@ -1,9 +1,9 @@
 /* =====================================================================
-   WSAuth — authentication / session API stub
+   WSAuth — authentification / session : SERVEUR UNIQUEMENT
    ---------------------------------------------------------------------
-   The UI must NEVER call _AUTH_STORE directly. It calls these helpers,
-   which default to the in-memory seed while no backend is wired.
-   To wire a real backend, set:
+   Go-live : aucun store local, aucun repli. Sans endpoint (ou en cas de
+   panne réseau), les helpers renvoient une erreur explicite — jamais une
+   session fabriquée. Câblage :
      window.WSAuth.endpoint = 'https://your-host/auth';
    Endpoints expected:
      POST {endpoint}/register            -> { user, token }
@@ -27,30 +27,34 @@
   const api = {
     endpoint: null,
 
+    /* En-têtes d'authentification, PARTAGÉS. L'authentification est par jeton
+       Bearer, jamais par cookie : un module qui appelle un endpoint protégé
+       sans cet en-tête reçoit 401 quoi qu'il arrive, même client connecté.
+       C'était le cas de WSOffices.contactFranchise, d'où « Connectez-vous pour
+       demander un rattachement » sur une session parfaitement valide. La clé
+       du jeton reste privée ; seul son en-tête sort d'ici. */
+    authHeaders,
+
     /* ── Login (identifiant = email OU téléphone) ──────────────────── */
+    // Go-live : SERVEUR UNIQUEMENT. Aucun repli sur un store local — un échec
+    // réseau doit dire « réseau », jamais « identifiants incorrects » (le repli
+    // faisait passer une panne pour un mauvais mot de passe).
     async login({ identifier, email, password, phonePrefix, authMethod }) {
       const ident = (identifier || email || '').trim();
-      if (api.endpoint) {
-        try {
-          const r = await fetch(`${api.endpoint}/login`, {
-            method: 'POST', credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ identifier: ident, password, phonePrefix: phonePrefix || '+32', authMethod }),
-          });
-          const j = await r.json();
-          if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
-          // Compte existant sans mot de passe -> le front bascule sur "définir un mot de passe".
-          return { ok: false, needsPassword: !!j.needsPassword, error: j.message || j.error?.message || 'Identifiants incorrects.' };
-        } catch (_) {}
+      if (!api.endpoint) return { ok: false, error: 'Service de connexion non configuré — please debug.' };
+      try {
+        const r = await fetch(`${api.endpoint}/login`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier: ident, password, phonePrefix: phonePrefix || '+32', authMethod }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
+        // Compte existant sans mot de passe -> le front bascule sur "définir un mot de passe".
+        return { ok: false, needsPassword: !!j.needsPassword, error: j.message || j.error?.message || 'Identifiants incorrects.' };
+      } catch (_) {
+        return { ok: false, error: 'Réseau indisponible — connexion impossible.' };
       }
-      // Fallback: in-memory _AUTH_STORE (email OU téléphone).
-      const store = window._AUTH_STORE;
-      if (!store || !store.users) return { ok: false, error: 'Store unavailable.' };
-      const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, '');
-      let u = store.users[ident.toLowerCase()];
-      if (!u) u = Object.values(store.users).find((x) => x.phone && norm(x.phone) === norm(ident));
-      if (!u || u.password !== password) return { ok: false, error: 'Identifiants incorrects.' };
-      return { ok: true, user: u };
     },
 
     /* ── Register ──────────────────────────────────────────────────── */
@@ -68,14 +72,8 @@
           return { ok: false, error: j.error || j.message || "Erreur lors de l'inscription.", exists: !!j.exists, status: r.status };
         } catch (_) {}
       }
-      // Fallback.
-      const store = window._AUTH_STORE;
-      if (!store) return { ok: false, error: 'Store unavailable.' };
-      const k = String(email).trim().toLowerCase();
-      if (store.users && store.users[k]) return { ok: false, error: 'Un compte existe déjà avec cet email.' };
-      const u = { id: 'u' + Date.now(), email: k, phone: phone || '', password, firstName, lastName, officeId: null, preferredShopId: null, fidelityApp: { active: false, linkedAt: null } };
-      if (store.users) store.users[k] = u;
-      return { ok: true, user: u };
+      // Go-live : plus de creation de compte local fictif.
+      return { ok: false, error: 'Service inscription indisponible — réessayez.' };
     },
 
     /* ── Set / update password (compte existant) ─────────────────────── */
@@ -162,21 +160,17 @@
 
     /* ── Config front (ws_param en liste blanche) : flag onglet Fidélité,
        icônes des deux touches de première position de la nav catégories…
-       Le repli reprend les mêmes références média que les défauts serveur
-       (des chemins vers la bibliothèque, pas des fichiers en dur). ── */
+       GO-LIVE : plus de repli codé en dur. L'ancien FALLBACK forçait
+       fidelityTabEnabled:true — un onglet pouvait donc s'afficher alors que
+       la boutique l'a désactivé en base. Sans config serveur on renvoie {} :
+       l'UI applique ses propres règles d'absence, aucune option n'est
+       inventée. ── */
     async config() {
-      const FALLBACK = {
-        fidelityTabEnabled: true,
-        categoryNavAllIcon: '/webshop/assets/all.png',
-        categoryNavBackIcon: '/webshop/assets/back.png',
-      };
-      if (!api.endpoint) return FALLBACK;
-      try {
-        const base = api.endpoint.replace(/\/auth\/?$/, '');
-        const r = await fetch(`${base}/config`, { credentials: 'include' });
-        if (r.ok) return { ...FALLBACK, ...(await r.json()) };
-      } catch (_) {}
-      return FALLBACK;
+      if (!api.endpoint) throw new Error('API configuration non disponible.');
+      const base = api.endpoint.replace(/\/auth\/?$/, '');
+      const r = await fetch(`${base}/config`, { credentials: 'include' });
+      if (!r.ok) throw new Error('Configuration indisponible (HTTP ' + r.status + ').');
+      return await r.json();
     },
 
     /* ── Mes achats : liste unifiée tickets + commandes (12 mois, paginée) ── */
@@ -266,7 +260,10 @@
           const r = await fetch(`${api.endpoint}/me`, { credentials: 'include', headers: authHeaders() });
           if (r.ok) { const j = await r.json(); return j.user || j || null; }
           if (r.status === 401) setToken(null); // stale/expired token
-        } catch (_) {}
+          // Toute autre réponse était avalée : une session perdue pour cause de
+          // panne serveur ressemblait trait pour trait à « pas de session ».
+          else console.error('[auth] session non restaurée — /me a répondu HTTP ' + r.status);
+        } catch (e) { console.error('[auth] session non restaurée — /me injoignable', e); }
         return null;
       }
       return null; // No session in demo mode
@@ -284,16 +281,8 @@
           if (r.ok) { const j = await r.json(); return { ok: true, user: j.user || j }; }
         } catch (_) {}
       }
-      // Fallback: mutate in-memory store.
-      const store = window._AUTH_STORE;
-      if (store && store.users && patch.email) {
-        const k = String(patch.email).trim().toLowerCase();
-        if (store.users[k]) {
-          store.users[k] = { ...store.users[k], ...patch };
-          return { ok: true, user: store.users[k] };
-        }
-      }
-      return { ok: false, error: 'Not found.' };
+      // Go-live : plus de mutation d'un store local fictif.
+      return { ok: false, error: 'Service profil indisponible — réessayez.' };
     },
 
     /* ── Password reset ─────────────────────────────────────────────── */
@@ -308,7 +297,7 @@
           return { ok: r.ok };
         } catch (_) {}
       }
-      return { ok: true }; // Demo: always succeeds silently
+      return { ok: false }; // Go-live : jamais de faux succès
     },
   };
 

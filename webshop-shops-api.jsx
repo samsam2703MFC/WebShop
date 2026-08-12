@@ -6,21 +6,15 @@
 //   window.WSShops.endpoint = 'https://your-host/shops';
 // Response must be an array (or {shops: [...]}) of {id,name,city,accent,address}.
 //
-// While endpoint is null we resolve from window.W_SHOPS (which the bundle
-// happens to expose as a fixture). The contract for the rest of the app is
-// the SAME either way: an async list, a get(id), and a memoised cache.
+// GO-LIVE : la liste vient UNIQUEMENT de l'API (/shops → table `shops`). Le
+// repli sur la fixture mémoire window.W_SHOPS a été SUPPRIMÉ — c'est lui qui a
+// re-servi en production des boutiques de démonstration qui n'existent plus ni
+// dans le code ni en base. Sans endpoint, list() lève une erreur : l'écran
+// affiche « Boutiques indisponibles », jamais une liste inventée.
 (function () {
   let endpoint = null;            // backend URL when wired
   let cache = null;               // last successful fetch
   let inflight = null;            // promise dedupe
-
-  function fromFixture() {
-    // Soft-fall to the in-memory fixture exposed by the bundle.
-    if (typeof window !== 'undefined' && window.W_SHOPS) {
-      return Object.values(window.W_SHOPS);
-    }
-    return [];
-  }
 
   async function fetchRemote(url) {
     const r = await fetch(url, { credentials: 'include' });
@@ -34,7 +28,8 @@
     if (inflight) return inflight;
     inflight = (async () => {
       try {
-        const shops = endpoint ? await fetchRemote(endpoint) : fromFixture();
+        if (!endpoint) throw new Error('API boutiques non configurée.');
+        const shops = await fetchRemote(endpoint);
         cache = shops.slice();
         return cache;
       } finally {
@@ -50,7 +45,9 @@
   }
 
   function setEndpoint(url) { endpoint = url || null; cache = null; }
-  function getCacheSync() { return cache ? cache.slice() : fromFixture(); }
+  // Vide tant que l'API n'a pas répondu (sert d'état initial React) — aucune
+  // boutique n'est affichée avant d'avoir la vraie liste.
+  function getCacheSync() { return cache ? cache.slice() : []; }
 
   window.WSShops = { list, get, setEndpoint, getCacheSync,
     get endpoint() { return endpoint; },

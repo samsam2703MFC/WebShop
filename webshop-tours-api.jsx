@@ -14,37 +14,26 @@
   const api = {
     endpoint: null,
 
-    /* List all tours, optionally filtered by shopId. */
+    /* Liste des tournées (table ws_tours), éventuellement filtrée par boutique.
+       GO-LIVE : plus aucun repli sur la constante W_TOURS — une tournée
+       inventée enverrait un client vers une livraison qui n'existe pas.
+       Erreur réseau/serveur => on lève, l'appelant affiche l'erreur. */
     async list({ shopId } = {}) {
-      if (api.endpoint) {
-        try {
-          const qs = shopId ? `?shopId=${encodeURIComponent(shopId)}` : '';
-          const r = await fetch(`${api.endpoint}${qs}`, { credentials: 'include' });
-          if (r.ok) {
-            const j = await r.json();
-            return Array.isArray(j) ? j : (j.tours || j.data || []);
-          }
-        } catch (_) {}
-      }
-      // Fallback: W_TOURS constant from webshop-full-bundle.jsx.
-      // TODO[BACKEND]: remove once GET /tours is live.
-      const seed = window.W_TOURS;
-      if (!seed) return [];
-      const all = Object.values(seed);
-      return shopId ? all.filter((t) => t.shopId === shopId) : all;
+      if (!api.endpoint) throw new Error('API tournées non configurée.');
+      const qs = shopId ? `?shopId=${encodeURIComponent(shopId)}` : '';
+      const r = await fetch(`${api.endpoint}${qs}`, { credentials: 'include' });
+      if (!r.ok) throw new Error('Tournées indisponibles (HTTP ' + r.status + ').');
+      const j = await r.json();
+      return Array.isArray(j) ? j : (j.tours || j.data || []);
     },
 
-    /* Get a single tour by id. */
+    /* Une tournée par id — même règle : vraie donnée ou erreur. */
     async get(id) {
       if (!id) return null;
-      if (api.endpoint) {
-        try {
-          const r = await fetch(`${api.endpoint}/${encodeURIComponent(id)}`, { credentials: 'include' });
-          if (r.ok) return await r.json();
-        } catch (_) {}
-      }
-      // Fallback.
-      return (window.W_TOURS && window.W_TOURS[id]) || null;
+      if (!api.endpoint) throw new Error('API tournées non configurée.');
+      const r = await fetch(`${api.endpoint}/${encodeURIComponent(id)}`, { credentials: 'include' });
+      if (!r.ok) throw new Error('Tournée indisponible (HTTP ' + r.status + ').');
+      return await r.json();
     },
   };
 

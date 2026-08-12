@@ -29,23 +29,8 @@
           if (r.ok) return await r.json();
         } catch (_) {}
       }
-      // DEMO fallback: an office whose tour runs midday AND evening.
-      // (Prod: one row per window in ws_tour_availability; `orderable` computed
-      //  server-side from cutoff_time vs now for the requested date.)
-      return [
-        {
-          slot_type: 'midi', route_id: 'midi',
-          delivery_time: '12:00', cutoff: '11:00', cutoff_label: '11h00',
-          orderable: true,
-          cta: { theme: 'lunch', icon: 'lunch', label: 'Midi' },
-        },
-        {
-          slot_type: 'soir', route_id: 'soir',
-          delivery_time: '17:00', cutoff: '15:00', cutoff_label: '15h00',
-          orderable: true,
-          cta: { theme: 'evening', icon: 'evening', label: 'Soirée' },
-        },
-      ];
+      // Go-live : plus de creneaux de demo - sans API, aucun creneau.
+      return [];
     },
 
     async nextSlot({ officeId, date } = {}) {
@@ -74,7 +59,7 @@
           if (r.ok) return await r.json();
         } catch (_) {}
       }
-      return { ok: true };
+      return { ok: false, error: 'API creneaux indisponible' };
     },
   };
 

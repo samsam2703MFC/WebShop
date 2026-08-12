@@ -22,36 +22,45 @@
    }
    ===================================================================== */
 (function () {
+  /* Jeton porteur, source unique du module. Seul `place` le transmettait ; get,
+     listMine et cancel appelaient des routes qui exigent d'être le PROPRIÉTAIRE
+     connecté (GET /orders/:id le vérifie explicitement). Sans en-tête, elles
+     répondent 401 — silencieusement converti en `null` ou `[]`, c'est-à-dire en
+     « vous n'avez aucune commande ». */
+  const authHeaders = () => {
+    if (window.WSAuth && typeof window.WSAuth.authHeaders === 'function') return window.WSAuth.authHeaders();
+    try { const t = localStorage.getItem('ws_auth_token'); return t ? { 'Authorization': 'Bearer ' + t } : {}; }
+    catch (_) { return {}; }
+  };
+
   const api = {
     endpoint: null,
 
     /* Place an order. Throws on network / server error. */
     async place(payload) {
       if (api.endpoint) {
-        // Forward the bearer token (if logged in) so the backend links the
-        // order to the customer's account.
-        let authHeader = {};
-        try { const t = localStorage.getItem('ws_auth_token'); if (t) authHeader = { 'Authorization': 'Bearer ' + t }; } catch (_) {}
         const r = await fetch(api.endpoint, {
           method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json', ...authHeader },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify(payload),
         });
-        const j = await r.json();
+        const j = await r.json().catch(() => ({}));
         if (r.ok) return { ok: true, ...j };
-        const msg = j.error?.message || `Erreur ${r.status}`;
-        throw new Error(msg);
+        // L'API renvoie {error:"…", detail:"…"} — on AFFICHE la cause réelle
+        // (avant : « Erreur 500 » générique alors que le motif était dans la réponse).
+        const base = (typeof j.error === 'string' && j.error) ? j.error : (j.error?.message || `Erreur ${r.status}`);
+        // « Stock insuffisant » sans nom de produit est inutilisable sur un
+        // panier de dix lignes : le client ne sait pas quoi retirer. Le serveur
+        // renvoie product et available — on les affiche.
+        const quoi = j.product ? ` : « ${j.product} »` : '';
+        const reste = (typeof j.available === 'number')
+          ? (j.available > 0 ? ` (il en reste ${j.available})` : ' (il n\'en reste aucune)')
+          : '';
+        throw new Error(base + quoi + reste + (j.detail ? (' — ' + j.detail) : ''));
       }
-      // Demo fallback — simulate a successful order placement.
-      // TODO[BACKEND]: remove once POST /orders is live.
-      return {
-        ok: true,
-        orderId: 'ord-' + Date.now().toString(36),
-        status: 'pending_payment',
-        total: payload.total || 0,
-        slot: payload.slot?.label || payload.slot?.slotId || '',
-        payment: payload.payment?.method || '',
-      };
+      // Go-live : plus de simulation de commande. Sans API configurée, on
+      // refuse — une commande ne peut jamais « réussir » à blanc.
+      throw new Error('API commandes indisponible — commande non enregistrée.');
     },
 
     /* Fetch a single order (e.g. for the confirmation page). */
@@ -59,9 +68,10 @@
       if (!id) return null;
       if (api.endpoint) {
         try {
-          const r = await fetch(`${api.endpoint}/${encodeURIComponent(id)}`, { credentials: 'include' });
+          const r = await fetch(`${api.endpoint}/${encodeURIComponent(id)}`, { credentials: 'include', headers: authHeaders() });
           if (r.ok) return await r.json();
-        } catch (_) {}
+          console.error('[commandes] lecture refusée — HTTP ' + r.status);
+        } catch (e) { console.error('[commandes] lecture injoignable', e); }
       }
       return null;
     },
@@ -70,9 +80,12 @@
     async listMine() {
       if (api.endpoint) {
         try {
-          const r = await fetch(`${api.endpoint}/me`, { credentials: 'include' });
+          const r = await fetch(`${api.endpoint}/me`, { credentials: 'include', headers: authHeaders() });
           if (r.ok) return await r.json();
-        } catch (_) {}
+          // « Aucune commande » et « le serveur a refusé » ne doivent pas se
+          // ressembler : les deux affichent une liste vide.
+          console.error('[commandes] liste indisponible — HTTP ' + r.status);
+        } catch (e) { console.error('[commandes] liste injoignable', e); }
       }
       return [];
     },
@@ -83,13 +96,13 @@
       if (api.endpoint) {
         try {
           const r = await fetch(`${api.endpoint}/${encodeURIComponent(id)}/cancel`, {
-            method: 'POST', credentials: 'include',
+            method: 'POST', credentials: 'include', headers: authHeaders(),
           });
           const j = await r.json().catch(() => ({}));
           return { ok: r.ok, ...j };
         } catch (_) {}
       }
-      return { ok: true }; // Demo: always succeeds
+      return { ok: false, error: 'API commandes indisponible' }; // Go-live : jamais de faux succès
     },
   };
 

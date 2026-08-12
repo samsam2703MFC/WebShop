@@ -1,7 +1,7 @@
 // tournee-card-C.jsx — VARIANT C: Stamped corner badge with colored top border
 
 function TileC({ t }) {
-  const shop = SHOPS[t.shop];
+  const shop = (typeof getShop === 'function' ? getShop(t.shop) : SHOPS[t.shop]);
   const pct = t.stops ? Math.round((t.done / t.stops) * 100) : 0;
   return (
     <div className="tile tile--C" style={{ '--shop-color': shop.color }}>

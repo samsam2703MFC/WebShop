@@ -26,7 +26,7 @@ function bo_resource_route($m, $bo, $rest) {
   }
   if ($rest === 'shops' && $bo !== 'franchisor') {   // liste simple (franchisé, scopée)
     [$w, $p] = bo_shop_where($sess, 'id');
-    json_out(rows("SELECT id, slug, name, city, active FROM ws_shops WHERE $w ORDER BY name", $p));
+    json_out(rows("SELECT id, slug, name, city, active FROM shops WHERE ($w) AND webshop_enabled = 1 ORDER BY name", $p));
   }
 
   /* ── FRANCHISÉ — exploitation, borné aux boutiques ──────────────────── */
@@ -122,7 +122,7 @@ function bo_resource_route($m, $bo, $rest) {
         "SELECT r.id, r.shop_id, r.office_name_raw AS office, r.address_raw AS address,
                 r.status, r.created_at, sh.name AS shop
            FROM ws_office_join_requests r
-           LEFT JOIN ws_shops sh ON sh.id = r.shop_id
+           LEFT JOIN shops sh ON sh.id = r.shop_id AND sh.webshop_enabled = 1
           WHERE $w AND r.status = 'pending' ORDER BY r.created_at DESC LIMIT 200", $p));
     }
 
@@ -183,7 +183,7 @@ function bo_resource_route($m, $bo, $rest) {
       json_out(rows(
         "SELECT i.id, i.shop_id, i.order_ref, i.type, i.severity, i.status, i.title,
                 i.description, i.created_at, i.resolved_at, sh.name AS shop
-           FROM ws_incidents i LEFT JOIN ws_shops sh ON sh.id = i.shop_id
+           FROM ws_incidents i LEFT JOIN shops sh ON sh.id = i.shop_id AND sh.webshop_enabled = 1
           WHERE $iw ORDER BY (i.status='open') DESC, i.created_at DESC LIMIT 300", $params));
     }
 
@@ -194,26 +194,34 @@ function bo_resource_route($m, $bo, $rest) {
                          COUNT(DISTINCT tour_id) tours
                     FROM ws_orders WHERE $w AND delivery_date BETWEEN ? AND ?",
                  array_merge($p, [$from, $to]));
-      // Paramètres de coût (ws_param) — repli sur des valeurs neutres si absents.
-      $costs = [
-        'prep'   => (float) ws_param('cost_prep_per_order',   '0'),
-        'emb'    => (float) ws_param('cost_packaging_unit',   '0'),
-        'carb'   => (float) ws_param('cost_fuel_per_km',      '0'),
-        'struct' => (float) ws_param('cost_struct_per_tour',  '0'),
-        'charg'  => (float) ws_param('cost_labor_per_tour',   '0'),
-      ];
+      // Paramètres de coût (ws_param). Un coût ABSENT valait 0 : le coût total
+      // était sous-estimé et la marge présentée comme si elle était réelle. On
+      // remonte désormais les paramètres manquants ; sans eux, coût et marge
+      // valent null (« non calculable ») plutôt qu'un chiffre trompeur.
+      $costKeys = ['prep' => 'cost_prep_per_order', 'emb' => 'cost_packaging_unit',
+                   'carb' => 'cost_fuel_per_km', 'struct' => 'cost_struct_per_tour',
+                   'charg' => 'cost_labor_per_tour'];
+      $costs = []; $missing = [];
+      foreach ($costKeys as $k => $param) {
+        $v = ws_param($param, null);
+        if ($v === null) { $missing[] = $param; $costs[$k] = null; }
+        else { $costs[$k] = (float) $v; }
+      }
       $orders = (int) $agg['n'];
       $revenue = (float) $agg['rev'];
-      $variable = $orders * ($costs['prep'] + $costs['emb']);
-      $fixed    = (int) $agg['tours'] * ($costs['struct'] + $costs['charg']);
+      $configured = !$missing;
+      $variable = $configured ? $orders * ($costs['prep'] + $costs['emb']) : null;
+      $fixed    = $configured ? (int) $agg['tours'] * ($costs['struct'] + $costs['charg']) : null;
       json_out([
         'from' => $from, 'to' => $to,
         'orders' => $orders, 'revenue' => $revenue,
         'avgBasket' => round((float) $agg['avg_basket'], 2),
         'tours' => (int) $agg['tours'],
         'costs' => $costs,
-        'estimatedCost' => round($variable + $fixed, 2),
-        'estimatedMargin' => round($revenue - $variable - $fixed, 2),
+        'costsConfigured' => $configured,
+        'costsMissing' => $missing,
+        'estimatedCost' => $configured ? round($variable + $fixed, 2) : null,
+        'estimatedMargin' => $configured ? round($revenue - $variable - $fixed, 2) : null,
       ]);
     }
 
@@ -252,7 +260,7 @@ function bo_resource_route($m, $bo, $rest) {
     if ($rest === 'dashboard') {
       $date  = qp('date', date('Y-m-d'));
       $from  = date('Y-m-01');
-      $shops = row("SELECT COUNT(*) n, SUM(active=1) act FROM ws_shops");
+      $shops = row("SELECT COUNT(*) n, SUM(active=1) act FROM shops WHERE webshop_enabled = 1");
       $ord   = row("SELECT COUNT(*) n, COALESCE(SUM(total),0) rev FROM ws_orders WHERE delivery_date = ?", [$date]);
       $mon   = row("SELECT COALESCE(SUM(total),0) ca,
                            COALESCE(SUM(CASE WHEN delivery_mode='collect'  THEN total END),0) ca_shop,
@@ -262,7 +270,7 @@ function bo_resource_route($m, $bo, $rest) {
           (SELECT COUNT(*) FROM ws_product_shops ps JOIN ws_products p ON p.id = ps.product_id
              WHERE ps.active=1 AND p.brand_mandatory=1 AND p.active=1) AS carried,
           (SELECT COUNT(*) FROM ws_products WHERE brand_mandatory=1 AND active=1)
-            * (SELECT COUNT(*) FROM ws_shops WHERE active=1) AS tot");
+            * (SELECT COUNT(*) FROM shops WHERE active=1 AND webshop_enabled=1) AS tot");
       $tot = (int) ($ad['tot'] ?? 0);
       json_out([
         'date'          => $date,
@@ -288,7 +296,7 @@ function bo_resource_route($m, $bo, $rest) {
                 (SELECT COUNT(*) FROM ws_product_shops ps
                    JOIN ws_products p ON p.id = ps.product_id
                   WHERE ps.shop_id = s.id AND ps.active = 1 AND p.brand_mandatory = 1 AND p.active = 1) AS mand_carried
-           FROM ws_shops s ORDER BY s.name", [$from, $from]));
+           FROM shops s WHERE s.webshop_enabled = 1 ORDER BY s.name", [$from, $from]));
     }
     if ($rest === 'catalog') {
       json_out([

@@ -949,47 +949,27 @@ Object.assign(window, { DesignCanvas, DCSection, DCArtboard, DCPostIt });
 
 
 // ===== tournee-data.jsx =====
-// tournee-data.jsx — sample data for the admin tournée list
-// Shop palette mirrors --shop-* CSS vars in admin.css
+// tournee-data.jsx — structures de données de la liste des tournées (admin)
+// La palette boutique reflète les variables CSS --shop-* de admin.css
 
-const SHOPS = {
-  chatelain: { id: 'chatelain', name: 'Maison Châtelain',  short: 'MC',  city: 'Bruxelles', color: 'var(--shop-chatelain)' },
-  sablon:    { id: 'sablon',    name: 'Atelier Sablon',     short: 'AS',  city: 'Bruxelles', color: 'var(--shop-sablon)' },
-  carre:     { id: 'carre',     name: 'Le Carré',           short: 'LC',  city: 'Liège',     color: 'var(--shop-carre)' },
-  zuid:      { id: 'zuid',      name: 'Zuid Bakery',        short: 'ZB',  city: 'Antwerpen', color: 'var(--shop-zuid)' },
-  grognon:   { id: 'grognon',   name: 'Le Grognon',         short: 'LG',  city: 'Namur',     color: 'var(--shop-grognon)' },
-  brugge:    { id: 'brugge',    name: 'Brugge Studio',      short: 'BS',  city: 'Brugge',    color: 'var(--shop-brugge)' },
-};
+// Go-live : aucune donnée de démonstration — la source réelle est l'API.
+// Les boutiques doivent être injectées par le backend ; tant qu'aucune source
+// n'est branchée, la structure reste vide et l'UI affiche un état vide.
+const SHOPS = {};
 
-const TOURNEES = [
-  { id: 'TR-2814', name: 'Quartier Européen — Matin',     window: '07:30 → 11:00', date: 'Mer. 6 mai',
-    driver: 'Émile Vandekeere',  driverInitials: 'EV', stops: 12, done: 12, kg: 38, status: 'done',     shop: 'chatelain' },
-  { id: 'TR-2815', name: 'Sablon → Louise — Express',     window: '08:00 → 10:30', date: 'Mer. 6 mai',
-    driver: 'Lina Boussaïd',     driverInitials: 'LB', stops: 9,  done: 7,  kg: 22, status: 'rolling',  shop: 'sablon' },
-  { id: 'TR-2816', name: 'Centre-ville — Bureaux',        window: '09:00 → 12:00', date: 'Mer. 6 mai',
-    driver: 'Pierre Lemmens',    driverInitials: 'PL', stops: 14, done: 5,  kg: 41, status: 'rolling',  shop: 'carre' },
-  { id: 'TR-2817', name: 'Zuid Office — Tour A & B',       window: '10:00 → 13:00', date: 'Mer. 6 mai',
-    driver: 'Jonas De Vos',      driverInitials: 'JD', stops: 8,  done: 0,  kg: 17, status: 'confirmed',shop: 'zuid' },
-  { id: 'TR-2818', name: 'Citadelle — Mid-day',           window: '11:00 → 14:00', date: 'Mer. 6 mai',
-    driver: 'Camille Henrard',   driverInitials: 'CH', stops: 6,  done: 0,  kg: 14, status: 'confirmed',shop: 'grognon' },
-  { id: 'TR-2819', name: 'Bailli + Châtelain — Office',   window: '11:30 → 14:30', date: 'Mer. 6 mai',
-    driver: 'Inès Marchal',      driverInitials: 'IM', stops: 11, done: 0,  kg: 28, status: 'planned',  shop: 'chatelain' },
-  { id: 'TR-2820', name: 'Markt → Stations — Brugge',     window: '13:00 → 16:00', date: 'Mer. 6 mai',
-    driver: 'Driver — à assigner', driverInitials: '?', stops: 7,  done: 0,  kg: 19, status: 'late',     shop: 'brugge' },
-  { id: 'TR-2821', name: 'Grand-Place — Apéro Run',       window: '15:30 → 18:30', date: 'Mer. 6 mai',
-    driver: 'Mathéo Ruelle',     driverInitials: 'MR', stops: 5,  done: 0,  kg: 11, status: 'planned',  shop: 'sablon' },
-];
+// Descripteur neutre renvoyé quand un identifiant boutique n'est pas connu de
+// SHOPS. Garde-fou de rendu uniquement — n'invente aucune donnée métier.
+function getShop(id) {
+  return SHOPS[id] || { id: id || '', name: id || '—', short: '—', city: '', color: 'var(--color-text-muted)' };
+}
 
-const SPLIT = [
-  { shop: 'chatelain', tournees: 2, stops: 23 },
-  { shop: 'sablon',    tournees: 2, stops: 14 },
-  { shop: 'carre',     tournees: 1, stops: 14 },
-  { shop: 'zuid',      tournees: 1, stops: 8 },
-  { shop: 'grognon',   tournees: 1, stops: 6 },
-  { shop: 'brugge',    tournees: 1, stops: 7 },
-];
+// Go-live : aucune tournée de démonstration — la source réelle est l'API.
+const TOURNEES = [];
 
-Object.assign(window, { SHOPS, TOURNEES, SPLIT });
+// Go-live : aucune répartition par boutique de démonstration — la source réelle est l'API.
+const SPLIT = [];
+
+Object.assign(window, { SHOPS, TOURNEES, SPLIT, getShop });
 
 
 // ===== tournee-shell.jsx =====
@@ -1085,10 +1065,21 @@ function PageHead() {
 }
 
 function SplitStrip() {
+  // Go-live : plus de répartition de démonstration — si SPLIT est vide, on
+  // affiche un état vide honnête plutôt qu'un bandeau fantôme.
+  if (!SPLIT.length) {
+    return (
+      <div className="split-strip split-strip--empty">
+        <div className="split-strip__cell">
+          <div className="split-strip__shop">Aucune donnée — connectez la source</div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="split-strip">
       {SPLIT.map((s) => {
-        const shop = SHOPS[s.shop];
+        const shop = getShop(s.shop);
         return (
           <div key={s.shop} className="split-strip__cell" style={{ '--shop-color': shop.color }}>
             <div className="split-strip__shop">{shop.name}</div>
@@ -1108,7 +1099,7 @@ function Toolbar({ shopFilter, setShopFilter }) {
       <span className="toolbar__date"><Icon d={I.cal}/> Mer. 6 mai 2026</span>
       <div className="toolbar__group">
         {shops.map((k) => {
-          const s = k === 'all' ? null : SHOPS[k];
+          const s = k === 'all' ? null : getShop(k);
           const active = shopFilter === k;
           return (
             <button
@@ -1156,7 +1147,8 @@ function StatusPill({ status }) {
 }
 
 function TileA({ t }) {
-  const shop = SHOPS[t.shop];
+  // Go-live : la boutique vient de la source réelle ; accès sûr si l'id est inconnu.
+  const shop = getShop(t.shop);
   const pct = t.stops ? Math.round((t.done / t.stops) * 100) : 0;
   return (
     <div className="tile tile--A">
@@ -1219,7 +1211,8 @@ Object.assign(window, { TileA, StatusPill });
 // tournee-card-B.jsx — VARIANT B: Inline shop chip (compact pill)
 
 function TileB({ t }) {
-  const shop = SHOPS[t.shop];
+  // Go-live : la boutique vient de la source réelle ; accès sûr si l'id est inconnu.
+  const shop = getShop(t.shop);
   const pct = t.stops ? Math.round((t.done / t.stops) * 100) : 0;
   return (
     <div className="tile tile--B">
@@ -1276,7 +1269,8 @@ window.TileB = TileB;
 // tournee-card-C.jsx — VARIANT C: Stamped corner badge with colored top border
 
 function TileC({ t }) {
-  const shop = SHOPS[t.shop];
+  // Go-live : la boutique vient de la source réelle ; accès sûr si l'id est inconnu.
+  const shop = getShop(t.shop);
   const pct = t.stops ? Math.round((t.done / t.stops) * 100) : 0;
   return (
     <div className="tile tile--C" style={{ '--shop-color': shop.color }}>
@@ -1373,8 +1367,12 @@ function VariantAFrame() {
       </ArtboardNote>
       <SplitStrip/>
       <Toolbar shopFilter={shopFilter} setShopFilter={setShopFilter}/>
+      {/* Go-live : aucune tournée de démonstration — état vide si la source ne renvoie rien. */}
       <div className="tournee-list">
         {list.map(t => <TileA key={t.id} t={t}/>)}
+        {list.length === 0 && (
+          <div className="tournee-list__empty">Aucune donnée — connectez la source.</div>
+        )}
       </div>
     </AdminWindow>
   );
@@ -1392,8 +1390,12 @@ function VariantBFrame() {
       </ArtboardNote>
       <SplitStrip/>
       <Toolbar shopFilter={shopFilter} setShopFilter={setShopFilter}/>
+      {/* Go-live : aucune tournée de démonstration — état vide si la source ne renvoie rien. */}
       <div className="tournee-list">
         {list.map(t => <TileB key={t.id} t={t}/>)}
+        {list.length === 0 && (
+          <div className="tournee-list__empty">Aucune donnée — connectez la source.</div>
+        )}
       </div>
     </AdminWindow>
   );
@@ -1411,8 +1413,12 @@ function VariantCFrame() {
       </ArtboardNote>
       <SplitStrip/>
       <Toolbar shopFilter={shopFilter} setShopFilter={setShopFilter}/>
+      {/* Go-live : aucune tournée de démonstration — état vide si la source ne renvoie rien. */}
       <div className="tournee-list">
         {list.map(t => <TileC key={t.id} t={t}/>)}
+        {list.length === 0 && (
+          <div className="tournee-list__empty">Aucune donnée — connectez la source.</div>
+        )}
       </div>
     </AdminWindow>
   );
@@ -1821,149 +1827,32 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
 
 
 // ===== vouchers.jsx =====
-// vouchers.jsx — Voucher management
-// Dense table (status, code, type, scope, usage bar, validity) + create/edit drawer
-// Realistic L'Atelier-flavored campaigns
+// vouchers.jsx — Gestion des vouchers
+// Table dense (statut, code, type, périmètre, barre d'usage, validité) + tiroir création/édition
+// Go-live : aucune campagne de démonstration — tout vient de la source réelle.
 
-const VOUCHER_PRODUCTS = [
-  { id: 'tarte-citron',      name: 'Tarte au citron meringuée' },
-  { id: 'tarte-praline',     name: 'Tarte praliné noisette' },
-  { id: 'salade-bressane',   name: 'Salade bressane' },
-  { id: 'parfait-vanille',   name: 'Parfait vanille bourbon' },
-  { id: 'plat-saumon',       name: 'Saumon, riz, légumes verts' },
-  { id: 'plat-volaille',     name: 'Volaille fermière' },
-  { id: 'cookie-chocolat',   name: 'Cookie double chocolat' },
-  { id: 'pain-cereales',     name: 'Pain aux céréales' },
-];
+// Go-live : aucun catalogue de démonstration — produits, catégories et
+// collections proviennent de l'API. Structures vides tant que la source
+// réelle n'est pas branchée.
+const VOUCHER_PRODUCTS = [];
+const VOUCHER_CATEGORIES = [];
+const VOUCHER_COLLECTIONS = [];
 
-const VOUCHER_CATEGORIES = [
-  { id: 'patisseries',  name: 'Pâtisseries' },
-  { id: 'salades',      name: 'Salades' },
-  { id: 'plats',        name: 'Plats du jour' },
-  { id: 'douceurs',     name: 'Douceurs' },
-  { id: 'boulangerie',  name: 'Boulangerie' },
-];
+// Go-live : aucune boutique de démonstration — la liste vient de la source réelle.
+const VOUCHER_SHOPS = [];
 
-const VOUCHER_COLLECTIONS = [
-  { id: 'menu-midi',    name: 'Menu de midi' },
-  { id: 'brunch',       name: 'Le Brunch' },
-  { id: 'goute',        name: 'Le Goûter' },
-  { id: 'apero',        name: 'Apéro Box' },
-];
-
-const VOUCHER_SHOPS = ['chatelain', 'sablon', 'carre', 'zuid', 'grognon', 'brugge'];
-
-// Sample vouchers — realistic L'Atelier campaigns
-const SEED_VOUCHERS = [
-  {
-    id: 'v1', code: 'RENTREE2026', type: 'percent', value: 15,
-    scope: 'cart', products: [], categories: [], collections: [],
-    shops: VOUCHER_SHOPS, channels: 'both',
-    minOrder: 25, usageLimit: 500, used: 187,
-    validFrom: '2026-04-15', validTo: '2026-05-31',
-    status: 'active',
-  },
-  {
-    id: 'v2', code: 'CHATELAIN-VIP', type: 'percent', value: 20,
-    scope: 'shops', products: [], categories: [], collections: [],
-    shops: ['chatelain'], channels: 'webshop',
-    minOrder: 0, usageLimit: 100, used: 42,
-    validFrom: '2026-05-01', validTo: '2026-06-30',
-    status: 'active',
-  },
-  {
-    id: 'v3', code: 'BRUNCH-SABLON', type: 'fixed', value: 5,
-    scope: 'collections', products: [], categories: [], collections: ['brunch'],
-    shops: ['sablon', 'chatelain'], channels: 'webshop',
-    minOrder: 35, usageLimit: 200, used: 89,
-    validFrom: '2026-04-01', validTo: '2026-12-31',
-    status: 'active',
-  },
-  {
-    id: 'v4', code: 'OFFICE-LAUNCH', type: 'percent', value: 10,
-    scope: 'cart', products: [], categories: [], collections: [],
-    shops: VOUCHER_SHOPS, channels: 'office',
-    minOrder: 100, usageLimit: 50, used: 12,
-    validFrom: '2026-05-01', validTo: '2026-07-31',
-    status: 'active',
-  },
-  {
-    id: 'v5', code: 'TARTES-SAMEDI', type: 'percent', value: 25,
-    scope: 'categories', products: [], categories: ['patisseries'], collections: [],
-    shops: VOUCHER_SHOPS, channels: 'webshop',
-    minOrder: 0, usageLimit: 1000, used: 736,
-    validFrom: '2026-03-01', validTo: '2026-05-15',
-    status: 'expiring',
-  },
-  {
-    id: 'v6', code: 'GOUTER10', type: 'fixed', value: 3,
-    scope: 'collections', products: [], categories: [], collections: ['goute'],
-    shops: VOUCHER_SHOPS, channels: 'both',
-    minOrder: 12, usageLimit: 300, used: 298,
-    validFrom: '2026-04-01', validTo: '2026-06-30',
-    status: 'expiring',
-  },
-  {
-    id: 'v7', code: 'BIENVENUE', type: 'fixed', value: 8,
-    scope: 'cart', products: [], categories: [], collections: [],
-    shops: VOUCHER_SHOPS, channels: 'webshop',
-    minOrder: 30, usageLimit: 0, used: 1240,
-    validFrom: '2026-01-01', validTo: '2026-12-31',
-    status: 'active',
-  },
-  {
-    id: 'v8', code: 'APERO-VENDREDI', type: 'percent', value: 12,
-    scope: 'collections', products: [], categories: [], collections: ['apero'],
-    shops: ['chatelain', 'sablon', 'carre'], channels: 'webshop',
-    minOrder: 25, usageLimit: 400, used: 156,
-    validFrom: '2026-05-01', validTo: '2026-09-30',
-    status: 'active',
-  },
-  {
-    id: 'v9', code: 'NOEL2025', type: 'percent', value: 30,
-    scope: 'cart', products: [], categories: [], collections: [],
-    shops: VOUCHER_SHOPS, channels: 'both',
-    minOrder: 50, usageLimit: 200, used: 200,
-    validFrom: '2025-12-01', validTo: '2025-12-31',
-    status: 'expired',
-  },
-  {
-    id: 'v10', code: 'BRUGGE-OPEN', type: 'fixed', value: 10,
-    scope: 'shops', products: [], categories: [], collections: [],
-    shops: ['brugge'], channels: 'webshop',
-    minOrder: 25, usageLimit: 150, used: 0,
-    validFrom: '2026-06-01', validTo: '2026-07-31',
-    status: 'scheduled',
-  },
-  {
-    id: 'v11', code: 'PARFAIT-DUO', type: 'percent', value: 20,
-    scope: 'products', products: ['parfait-vanille'], categories: [], collections: [],
-    shops: VOUCHER_SHOPS, channels: 'webshop',
-    minOrder: 0, usageLimit: 100, used: 23,
-    validFrom: '2026-05-01', validTo: '2026-06-30',
-    status: 'active',
-  },
-  {
-    id: 'v12', code: 'TEAM-NAMUR', type: 'percent', value: 15,
-    scope: 'shops', products: [], categories: [], collections: [],
-    shops: ['grognon'], channels: 'office',
-    minOrder: 75, usageLimit: 80, used: 8,
-    validFrom: '2026-05-01', validTo: '2026-08-31',
-    status: 'active',
-  },
-];
-
-// Persist vouchers to localStorage so admin <-> storefront stay in sync (and survive reload)
+// Persistance locale des vouchers créés depuis l'admin (survit au reload).
 const VOUCHERS_KEY = 'latelier-admin:vouchers';
 
+// Go-live : plus aucun seed de secours — si le stockage est vide, la liste est vide.
 function loadVouchers() {
   try {
     const raw = localStorage.getItem(VOUCHERS_KEY);
-    if (!raw) return SEED_VOUCHERS;
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length) return parsed;
+    if (Array.isArray(parsed)) return parsed;
   } catch {}
-  return SEED_VOUCHERS;
+  return [];
 }
 
 function saveVouchers(list) {
@@ -1998,11 +1887,13 @@ const CHANNEL_LABELS = {
 };
 
 function formatScope(v) {
+  // Go-live : la donnée réelle peut ne pas porter toutes les listes — accès sûrs.
+  const n = (a) => (a || []).length;
   if (v.scope === 'cart')        return 'Panier entier';
-  if (v.scope === 'products')    return `${v.products.length} produit${v.products.length > 1 ? 's' : ''}`;
-  if (v.scope === 'categories')  return `${v.categories.length} catégorie${v.categories.length > 1 ? 's' : ''}`;
-  if (v.scope === 'collections') return `${v.collections.length} collection${v.collections.length > 1 ? 's' : ''}`;
-  if (v.scope === 'shops')       return `${v.shops.length} boutique${v.shops.length > 1 ? 's' : ''}`;
+  if (v.scope === 'products')    return `${n(v.products)} produit${n(v.products) > 1 ? 's' : ''}`;
+  if (v.scope === 'categories')  return `${n(v.categories)} catégorie${n(v.categories) > 1 ? 's' : ''}`;
+  if (v.scope === 'collections') return `${n(v.collections)} collection${n(v.collections) > 1 ? 's' : ''}`;
+  if (v.scope === 'shops')       return `${n(v.shops)} boutique${n(v.shops) > 1 ? 's' : ''}`;
   return '—';
 }
 
@@ -2026,7 +1917,7 @@ function VouchersPage() {
 
   useEffect(() => { saveVouchers(vouchers); }, [vouchers]);
 
-  // Recompute status from dates so seeded data stays accurate over time
+  // Statut recalculé à partir des dates de validité de la donnée réelle
   const enriched = useMemo(
     () => vouchers.map((v) => ({ ...v, status: deriveStatus(v) })),
     [vouchers],
@@ -2083,8 +1974,9 @@ function VouchersPage() {
       <div className="vstats">
         <VStat label="Vouchers actifs" value={counts.active} accent="active"/>
         <VStat label="Utilisations ce mois" value={enriched.reduce((s, v) => s + (v.status !== 'expired' ? v.used : 0), 0).toLocaleString('fr-FR')}/>
-        <VStat label="Économie offerte" value="€4 287" sub="cumulé 30 j."/>
-        <VStat label="Taux d'utilisation" value="58%" sub="vouchers actifs"/>
+        {/* Go-live : plus de métriques inventées — la valeur reste vide tant que la source ne la fournit pas. */}
+        <VStat label="Économie offerte" value="—" sub="Données indisponibles"/>
+        <VStat label="Taux d'utilisation" value="—" sub="Données indisponibles"/>
       </div>
 
       <div className="toolbar">
@@ -2135,8 +2027,13 @@ function VouchersPage() {
             {filtered.map((v) => (
               <VoucherRow key={v.id} voucher={v} onClick={() => setEditing(v)}/>
             ))}
+            {/* Go-live : aucun voucher de démonstration — état vide explicite. */}
             {filtered.length === 0 && (
-              <tr><td colSpan={9} className="voucher-table__empty">Aucun voucher ne correspond aux filtres.</td></tr>
+              <tr><td colSpan={9} className="voucher-table__empty">
+                {vouchers.length === 0
+                  ? 'Aucune donnée — connectez la source.'
+                  : 'Aucun voucher ne correspond aux filtres.'}
+              </td></tr>
             )}
           </tbody>
         </table>
@@ -2168,9 +2065,13 @@ function VoucherRow({ voucher, onClick }) {
   const v = voucher;
   const s = STATUS_LABELS[v.status] || STATUS_LABELS.active;
   const pct = v.usageLimit > 0 ? Math.min(100, Math.round((v.used / v.usageLimit) * 100)) : null;
-  const shops = v.shops.length === VOUCHER_SHOPS.length
+  // Go-live : les boutiques viennent de la source réelle — accès sûr, aucun seed de repli.
+  const vShops = v.shops || [];
+  const shops = VOUCHER_SHOPS.length > 0 && vShops.length === VOUCHER_SHOPS.length
     ? 'Toutes'
-    : v.shops.slice(0, 3).map((id) => SHOPS[id].short).join(' · ') + (v.shops.length > 3 ? ` +${v.shops.length - 3}` : '');
+    : vShops.length === 0
+      ? '—'
+      : vShops.slice(0, 3).map((id) => getShop(id).short).join(' · ') + (vShops.length > 3 ? ` +${vShops.length - 3}` : '');
 
   return (
     <tr className="voucher-row" onClick={onClick}>
@@ -2195,8 +2096,8 @@ function VoucherRow({ voucher, onClick }) {
       <td>
         <div className="vshops">
           <div className="vshops__dots">
-            {v.shops.slice(0, 6).map((id) => (
-              <span key={id} className="vshops__dot" style={{ background: SHOPS[id].color }} title={SHOPS[id].name}/>
+            {vShops.slice(0, 6).map((id) => (
+              <span key={id} className="vshops__dot" style={{ background: getShop(id).color }} title={getShop(id).name}/>
             ))}
           </div>
           <span className="vshops__txt">{shops}</span>
@@ -2280,7 +2181,7 @@ function VoucherDrawer({ voucher, onClose, onSave, onDelete }) {
                 className="input input--mono"
                 value={draft.code}
                 onChange={(e) => set('code', e.target.value.toUpperCase().replace(/\s+/g, '-'))}
-                placeholder="RENTREE2026"
+                placeholder="Code du voucher"
               />
               <button className="ghost-btn" type="button" onClick={() => set('code', genCode())}>Générer</button>
             </Field>
@@ -2345,7 +2246,7 @@ function VoucherDrawer({ voucher, onClose, onSave, onDelete }) {
           <Section title="Boutiques">
             <div className="shop-multi">
               {VOUCHER_SHOPS.map((id) => {
-                const shop = SHOPS[id];
+                const shop = getShop(id);
                 const active = draft.shops.includes(id);
                 return (
                   <button
@@ -2363,6 +2264,10 @@ function VoucherDrawer({ voucher, onClose, onSave, onDelete }) {
                   </button>
                 );
               })}
+              {/* Go-live : aucune boutique de démonstration — état vide si la source ne renvoie rien. */}
+              {VOUCHER_SHOPS.length === 0 && (
+                <div className="shop-multi__empty">Aucune donnée — connectez la source.</div>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
               <button className="ghost-btn" type="button" onClick={() => set('shops', VOUCHER_SHOPS.slice())}>Tout sélectionner</button>
@@ -2498,6 +2403,10 @@ function ChipMultiSelect({ label, options, selected, toggle }) {
   return (
     <Field label={label}>
       <div className="chip-multi">
+        {/* Go-live : catalogue vide tant que la source réelle n'est pas branchée. */}
+        {options.length === 0 && (
+          <span className="chip-multi__empty">Aucune donnée — connectez la source.</span>
+        )}
         {options.map((o) => (
           <button
             key={o.id}
@@ -2525,71 +2434,36 @@ Object.assign(window, { VouchersPage, loadVouchers, saveVouchers, deriveStatus, 
 
 
 // ===== links.jsx =====
-// links.jsx — Direct link generator
-// Produces pre-parameterized storefront URLs (shop, date, mode, product, category, voucher)
-// Renders branded QR (ruby modules + brand corners), copy URL, download PNG/SVG,
-// live storefront preview, and a saved-link history.
+// links.jsx — Générateur de liens directs
+// Produit des URLs storefront pré-paramétrées (boutique, date, mode, produit, catégorie, voucher)
+// Rend un QR brandé, copie l'URL, télécharge PNG/SVG, prévisualise et historise les liens.
+// Go-live : aucune donnée de démonstration — tout vient de la source réelle.
 
-const LINK_PRODUCTS = [
-  { id: 'tarte-citron',      name: 'Tarte au citron meringuée', cat: 'patisseries', price: 6.5 },
-  { id: 'tarte-praline',     name: 'Tarte praliné noisette',     cat: 'patisseries', price: 7.0 },
-  { id: 'salade-bressane',   name: 'Salade bressane',            cat: 'salades',     price: 12.5 },
-  { id: 'parfait-vanille',   name: 'Parfait vanille bourbon',    cat: 'douceurs',    price: 5.0 },
-  { id: 'plat-saumon',       name: 'Saumon, riz, légumes verts', cat: 'plats',       price: 14.5 },
-  { id: 'plat-volaille',     name: 'Volaille fermière',          cat: 'plats',       price: 13.0 },
-  { id: 'cookie-chocolat',   name: 'Cookie double chocolat',     cat: 'douceurs',    price: 3.5 },
-  { id: 'pain-cereales',     name: 'Pain aux céréales',          cat: 'boulangerie', price: 4.2 },
-];
+// Go-live : aucun catalogue de démonstration — produits, catégories et
+// collections proviennent de l'API. Structures vides tant que la source
+// réelle n'est pas branchée.
+const LINK_PRODUCTS = [];
+const LINK_CATS = [];
+const LINK_COLLECTIONS = [];
 
-const LINK_CATS = [
-  { id: 'patisseries', name: 'Pâtisseries' },
-  { id: 'salades',     name: 'Salades' },
-  { id: 'plats',       name: 'Plats du jour' },
-  { id: 'douceurs',    name: 'Douceurs' },
-  { id: 'boulangerie', name: 'Boulangerie' },
-];
+// Go-live : aucune boutique de démonstration — la liste vient de la source réelle.
+const LINK_SHOPS = [];
 
-const LINK_COLLECTIONS = [
-  { id: 'menu-midi', name: 'Menu de midi' },
-  { id: 'brunch',    name: 'Le Brunch' },
-  { id: 'goute',     name: 'Le Goûter' },
-  { id: 'apero',     name: 'Apéro Box' },
-];
-
-const LINK_SHOPS = ['chatelain', 'sablon', 'carre', 'zuid', 'grognon', 'brugge'];
-
-// History persisted to localStorage
+// Historique persisté en localStorage (liens réellement créés depuis l'admin)
 const LINKS_KEY = 'latelier-admin:saved-links';
 
+// Go-live : plus aucun seed de secours — si le stockage est vide, l'historique est vide.
 function loadLinks() {
   try {
     const raw = localStorage.getItem(LINKS_KEY);
-    if (!raw) return SEED_LINKS;
+    if (!raw) return [];
     const p = JSON.parse(raw);
-    return Array.isArray(p) ? p : SEED_LINKS;
-  } catch { return SEED_LINKS; }
+    return Array.isArray(p) ? p : [];
+  } catch { return []; }
 }
 function saveLinks(list) {
   try { localStorage.setItem(LINKS_KEY, JSON.stringify(list)); } catch {}
 }
-
-const SEED_LINKS = [
-  {
-    id: 'l1', name: 'Newsletter rentrée — Tartes',
-    config: { shop: 'chatelain', mode: 'collect', date: '2026-09-01', product: 'tarte-citron', voucher: 'RENTREE2026' },
-    createdAt: '2026-04-28', clicks: 1240,
-  },
-  {
-    id: 'l2', name: 'Affiche QR Sablon — Brunch dimanche',
-    config: { shop: 'sablon', mode: 'collect', date: '', collection: 'brunch', voucher: 'BRUNCH-SABLON' },
-    createdAt: '2026-04-22', clicks: 312,
-  },
-  {
-    id: 'l3', name: 'Bureau Européen — Onboarding livraison',
-    config: { shop: 'chatelain', mode: 'delivery', date: '', voucher: 'OFFICE-LAUNCH' },
-    createdAt: '2026-05-01', clicks: 87,
-  },
-];
 
 // ─────────────────────────────────────────────────────────────
 // Build the storefront URL from the config
@@ -2613,8 +2487,9 @@ function buildLinkUrl(cfg) {
 // LinksPage
 // ─────────────────────────────────────────────────────────────
 function LinksPage() {
+  // Go-live : aucune boutique de démonstration pré-sélectionnée — le client choisit.
   const [cfg, setCfg] = useState({
-    shop: 'chatelain',
+    shop: '',
     mode: 'collect',
     date: '',
     product: '',
@@ -2699,7 +2574,7 @@ function LinksPage() {
                 </div>
               </button>
               {LINK_SHOPS.map((id) => {
-                const shop = SHOPS[id];
+                const shop = getShop(id);
                 const active = cfg.shop === id;
                 return (
                   <button
@@ -2716,6 +2591,10 @@ function LinksPage() {
                   </button>
                 );
               })}
+              {/* Go-live : aucune boutique de démonstration — état vide si la source ne renvoie rien. */}
+              {LINK_SHOPS.length === 0 && (
+                <div className="shop-multi__empty">Aucune donnée — connectez la source.</div>
+              )}
             </div>
           </Section>
 
@@ -2747,7 +2626,7 @@ function LinksPage() {
           <Section title="Mise en avant produit">
             <Field label="Produit">
               <select className="input" value={cfg.product} onChange={(e) => set('product', e.target.value)}>
-                <option value="">— Aucun —</option>
+                <option value="">{LINK_PRODUCTS.length === 0 ? 'Aucune donnée — connectez la source' : '— Aucun —'}</option>
                 {LINK_PRODUCTS.map((p) => (
                   <option key={p.id} value={p.id}>{p.name} · {p.price.toFixed(2)}€</option>
                 ))}
@@ -2772,13 +2651,13 @@ function LinksPage() {
           <Section title="Catégorie ou collection (filtre)">
             <Field label="Catégorie">
               <select className="input" value={cfg.category} onChange={(e) => { set('category', e.target.value); if (e.target.value) set('collection', ''); }}>
-                <option value="">— Aucune —</option>
+                <option value="">{LINK_CATS.length === 0 ? 'Aucune donnée — connectez la source' : '— Aucune —'}</option>
                 {LINK_CATS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </Field>
             <Field label="Collection">
               <select className="input" value={cfg.collection} onChange={(e) => { set('collection', e.target.value); if (e.target.value) set('category', ''); }}>
-                <option value="">— Aucune —</option>
+                <option value="">{LINK_COLLECTIONS.length === 0 ? 'Aucune donnée — connectez la source' : '— Aucune —'}</option>
                 {LINK_COLLECTIONS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </Field>
@@ -2787,7 +2666,7 @@ function LinksPage() {
           <Section title="Voucher pré-appliqué">
             <Field label="Code">
               <select className="input input--mono" value={cfg.voucher} onChange={(e) => set('voucher', e.target.value)}>
-                <option value="">— Aucun —</option>
+                <option value="">{validVouchers.length === 0 ? 'Aucune donnée — connectez la source' : '— Aucun —'}</option>
                 {validVouchers.map((v) => (
                   <option key={v.id} value={v.code}>{v.code} · {formatValue(v)}</option>
                 ))}
@@ -2799,7 +2678,8 @@ function LinksPage() {
           </Section>
 
           <div className="link-form__foot">
-            <button className="btn" onClick={() => setCfg({ shop: 'chatelain', mode: 'collect', date: '', product: '', openModal: false, category: '', collection: '', voucher: '' })}>Réinitialiser</button>
+            {/* Go-live : réinitialisation sans boutique de démonstration. */}
+            <button className="btn" onClick={() => setCfg({ shop: '', mode: 'collect', date: '', product: '', openModal: false, category: '', collection: '', voucher: '' })}>Réinitialiser</button>
             <button className="btn btn--primary" onClick={onSave}>Enregistrer ce lien</button>
           </div>
         </div>
@@ -2823,7 +2703,7 @@ function LinksPage() {
             <LinkHistoryRow key={link.id} link={link} onLoad={() => onLoad(link)} onDelete={() => setHistory((h) => h.filter((x) => x.id !== link.id))}/>
           ))}
           {history.length === 0 && (
-            <div className="link-history__empty">Aucun lien enregistré pour l'instant.</div>
+            <div className="link-history__empty">Aucune donnée — connectez la source.</div>
           )}
         </div>
       </div>
@@ -2947,7 +2827,8 @@ function sanitize(s) {
 // Preview — miniature storefront state
 // ─────────────────────────────────────────────────────────────
 function PreviewPanel({ cfg }) {
-  const shop = cfg.shop ? SHOPS[cfg.shop] : null;
+  // Go-live : la boutique vient de la source réelle — null si inconnue, jamais un seed.
+  const shop = cfg.shop ? (SHOPS[cfg.shop] || null) : null;
   const product = LINK_PRODUCTS.find((p) => p.id === cfg.product);
 
   return (
@@ -2984,6 +2865,10 @@ function PreviewPanel({ cfg }) {
           {!cfg.category && !cfg.collection && <span className="ppreview__chip ppreview__chip--ghost">Tous les produits</span>}
         </div>
         <div className="ppreview__grid">
+          {/* Go-live : aucun produit de démonstration — état vide tant que la source n'est pas branchée. */}
+          {LINK_PRODUCTS.length === 0 && (
+            <div className="ppreview__empty">Aucune donnée — connectez la source.</div>
+          )}
           {LINK_PRODUCTS.slice(0, 6).map((p) => {
             const highlighted = p.id === cfg.product && !cfg.openModal;
             const opened = p.id === cfg.product && cfg.openModal;
@@ -3019,7 +2904,8 @@ function PreviewPanel({ cfg }) {
 function LinkHistoryRow({ link, onLoad, onDelete }) {
   const cfg = link.config;
   const url = buildLinkUrl(cfg);
-  const shop = cfg.shop ? SHOPS[cfg.shop] : null;
+  // Go-live : accès sûr — aucune boutique de démonstration en repli.
+  const shop = cfg.shop ? (SHOPS[cfg.shop] || null) : null;
   const [copied, setCopied] = useState(false);
 
   const onCopy = async (e) => {

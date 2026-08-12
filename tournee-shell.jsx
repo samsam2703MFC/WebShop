@@ -93,7 +93,7 @@ function SplitStrip() {
   return (
     <div className="split-strip">
       {SPLIT.map((s) => {
-        const shop = SHOPS[s.shop];
+        const shop = (typeof getShop === 'function' ? getShop(s.shop) : SHOPS[s.shop]);
         return (
           <div key={s.shop} className="split-strip__cell" style={{ '--shop-color': shop.color }}>
             <div className="split-strip__shop">{shop.name}</div>
@@ -113,7 +113,7 @@ function Toolbar({ shopFilter, setShopFilter }) {
       <span className="toolbar__date"><Icon d={I.cal}/> Mer. 6 mai 2026</span>
       <div className="toolbar__group">
         {shops.map((k) => {
-          const s = k === 'all' ? null : SHOPS[k];
+          const s = k === 'all' ? null : (typeof getShop === 'function' ? getShop(k) : SHOPS[k]);
           const active = shopFilter === k;
           return (
             <button

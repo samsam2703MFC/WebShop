@@ -21,14 +21,15 @@
   //
   //   To force a specific URL (e.g. API on a different host), replace the
   //   line below with:  const BASE_URL = 'https://api.example.com';
-  const onGitHubPages = /\.github\.io$/i.test(location.hostname);
+  // Go-live : plus de « mode démo » (les fixtures mémoire ont été purgées).
+  // L'API est TOUJOURS câblée sur la même origine ; si elle est injoignable
+  // (ex. GitHub Pages), les écrans affichent des erreurs/états vides — jamais
+  // de données de démonstration.
   // Base path where the app is served: strip the file part of the pathname
   // ('/webshop/index.html' → '/webshop/', '/' → '/').
   const basePath = location.pathname.replace(/[^/]*$/, '');
-  const BASE_URL = onGitHubPages ? null : (location.origin + basePath + 'api');
+  const BASE_URL = location.origin + basePath + 'api';
   // ─────────────────────────────────────────────────────────────────────
-
-  if (!BASE_URL) return; // demo mode — all stubs use in-memory fixtures
 
   /* Endpoints served by the PHP API (php-api/index.php). */
   if (window.WSShops)        window.WSShops.endpoint        = BASE_URL + '/shops';

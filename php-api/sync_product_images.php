@@ -12,6 +12,20 @@
  */
 $cfg = require __DIR__ . '/config.php';
 $d = $cfg['db'];
+/* Le PHP en LIGNE DE COMMANDE du serveur n'a pas forcément les mêmes extensions
+ * que celui d'Apache : sans pdo_mysql côté CLI, ce script mourait sur une
+ * PDOException « could not find driver » et faisait échouer TOUT le déploiement
+ * — alors que l'API, les migrations et le front étaient déjà en place, et que la
+ * seule chose manquante était la synchronisation des photos.
+ * On sort proprement, avec un message actionnable. */
+if (!in_array('mysql', PDO::getAvailableDrivers(), true)) {
+  fwrite(STDERR, "⚠ sync_product_images : extension pdo_mysql absente du PHP CLI du serveur.\n"
+    . "   Les photos produits ne sont PAS synchronisées — le reste du déploiement est intact.\n"
+    . "   Correctif serveur : installer l'extension MySQL pour le PHP CLI (ex. apt-get install -y php-mysql),\n"
+    . "   puis relancer un déploiement.\n"
+    . "   PHP CLI : " . PHP_BINARY . " (" . PHP_VERSION . ")\n");
+  exit(0);   // non bloquant : le déploiement lui-même n'est pas en cause
+}
 $pdo = new PDO(
   "mysql:host={$d['host']};port={$d['port']};dbname={$d['name']};charset=utf8mb4",
   $d['user'], $d['pass'],
