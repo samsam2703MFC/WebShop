@@ -1747,8 +1747,13 @@ function dispatch($m, $p) {
       }
       $qty = max(1, (int) ($it['qty'] ?? 1));
       $subtotal += $unit * $qty;
+      // `options` = composition du menu (formule, choix de chaque emplacement,
+      // suppléments). La ligne était reconstruite depuis le produit ERP et
+      // perdait cette composition en chemin : c'est ICI qu'elle disparaissait,
+      // avant même l'écriture. Le prix, lui, reste celui résolu serveur.
       $lines[] = ['productId' => $p2['id'], 'name' => $p2['name'], 'qty' => $qty,
                   'unit' => $unit, 'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion'],
+                  'options' => is_array($it['options'] ?? null) ? $it['options'] : [],
                   'note' => isset($it['note']) ? mb_substr((string) $it['note'], 0, 255) : null];
     }
     if (!count($lines)) json_out(['error' => 'aucun produit valide'], 400);
@@ -2125,8 +2130,22 @@ function dispatch($m, $p) {
       $oid = $pdo->lastInsertId();
       foreach ($lines as $l) {
         $pidL = is_numeric($l['productId'] ?? null) ? (int) $l['productId'] : null;
+        /* COMPOSITION DU MENU. Le panier transporte `options` — « Formule ·
+           Menu Midi », « Boisson · Coca », « + Supplément fromage » — et le
+           serveur les JETAIT : ws_order_lines ne recevait que le produit
+           déclencheur. La boutique voyait « Menu » sans savoir ce qu'il fallait
+           préparer, et le client ne pouvait pas vérifier sa commande.
+           Les libellés sont donc joints à la note de la ligne, à la suite du
+           commentaire du client s'il y en a un. */
+        $noteL = trim((string) ($l['note'] ?? ''));
+        $opts  = [];
+        foreach ((array) ($l['options'] ?? []) as $o) {
+          $lab = is_array($o) ? trim((string) ($o['label'] ?? '')) : trim((string) $o);
+          if ($lab !== '') $opts[] = $lab;
+        }
+        if ($opts) $noteL = trim($noteL === '' ? implode(' · ', $opts) : $noteL . ' — ' . implode(' · ', $opts));
         q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note) VALUES (?,?,?,?,?,?,?)",
-          [$oid, $pidL, $l['name'], $l['qty'], $l['unit'], $l['portion'], $l['note']]);
+          [$oid, $pidL, $l['name'], $l['qty'], $l['unit'], $l['portion'], ($noteL !== '' ? $noteL : null)]);
         // Décrément du stock du jour : si aucune ligne de stock n'existe encore
         // pour ce produit/jour/mode, on la CRÉE en partant du MINIMUM
         // hebdomadaire (qty_total = défaut du jour, sinon 0) pour que la
@@ -4316,10 +4335,17 @@ function dispatch($m, $p) {
           $byCo = "(SELECT d.name FROM b2b_client_company_department d WHERE d.client_id = CAST(c.id AS CHAR) ORDER BY d.id LIMIT 1)";
         $dep = ", COALESCE($byId, $byCo) AS department";
       }
+      /* Portée BOUTIQUE de la liste clients : la boutique PRÉFÉRÉE du client,
+         celle qu'il a choisie. La règle précédente retombait sur id_main_shop
+         quand la préférence était nulle — elle faisait donc remonter tous les
+         clients que l'ERP rattache administrativement à la boutique, y compris
+         ceux qui ne l'ont jamais choisie ni jamais commandé chez elle.
+         id_main_shop ne sert plus que de repli de SCHÉMA, quand la colonne de
+         préférence n'existe pas. */
       $where = "1=1";
       if ($shopId) {
         $where = $cc('preferred_shop_id')
-          ? "COALESCE(c.preferred_shop_id, c.id_main_shop) = " . (int) $shopId
+          ? "c.preferred_shop_id = " . (int) $shopId
           : "c.id_main_shop = " . (int) $shopId;
       }
       // Soft delete : un client « supprimé » (active=0) n'apparaît plus.
