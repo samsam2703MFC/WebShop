@@ -1049,6 +1049,11 @@ function Sidebar() {
       <a className="admin__nav-item"><Icon d={I.shop}/> Boutiques</a>
       <a className="admin__nav-item"><Icon d={I.user}/> Clients Office</a>
       <a className="admin__nav-item"><Icon d={I.cog}/> Paramètres</a>
+
+      <div className="admin__nav-group">Fidélité</div>
+      {/* Avis clients — franchiseur : réseau (toutes boutiques). Un franchisé
+          ouvre la même vue bornée à sa boutique via admin-reviews.html?shop=<id>. */}
+      <a className="admin__nav-item" href="admin-reviews.html"><Icon d={I.star || I.campaign}/> Avis clients</a>
     </aside>
   );
 }
