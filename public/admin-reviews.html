@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Avis clients — Back-office L'Atelier By</title>
+<style>
+  :root{
+    --primary:#8D1D2C; --tint:#fdf6f0; --copper:#B87333; --apricot:#E8A13a;
+    --ink:#1a1a1a; --muted:#6b6b6b; --line:#ececec; --surface:#fff; --bg:#f4efe9;
+    --ok:#2e7d52; --warn:#e8a13a; --bad:#c0392b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+  header{background:var(--surface);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;position:sticky;top:0;z-index:10}
+  header h1{font-size:18px;margin:0;color:var(--primary);font-weight:800;letter-spacing:.3px;flex:1;min-width:200px}
+  header input{height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit}
+  header button{height:36px;border:0;border-radius:8px;background:var(--primary);color:#fff;font-weight:700;padding:0 14px;cursor:pointer}
+  .wrap{max-width:960px;margin:0 auto;padding:20px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .kpi b{display:block;font-size:26px;line-height:1.1}
+  .kpi span{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  h2{font-size:15px;margin:26px 0 10px;color:var(--copper);text-transform:uppercase;letter-spacing:.5px}
+  table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:14px}
+  th{background:var(--tint);font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
+  tr:last-child td{border-bottom:0}
+  .rate{font-weight:800;padding:2px 8px;border-radius:20px;color:#fff;font-size:13px}
+  .r-bad{background:var(--bad)} .r-warn{background:var(--warn)} .r-ok{background:var(--ok)}
+  .neg{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+  .neg__head{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-bottom:8px}
+  .neg__item{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-top:1px dashed var(--line)}
+  .neg__item:first-of-type{border-top:0}
+  .stars{color:var(--apricot);letter-spacing:2px;white-space:nowrap}
+  .stars .off{color:#d8d2cb}
+  .neg__note{color:var(--ink);font-size:14px}
+  .neg__name{font-weight:600;min-width:150px}
+  .empty{color:var(--muted);padding:16px;text-align:center}
+  .err{color:var(--bad);padding:12px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Avis clients</h1>
+  <input id="shop" type="number" placeholder="shopId (vide = réseau)" style="width:170px">
+  <input id="token" type="password" placeholder="X-Admin-Token" style="width:200px">
+  <button id="go">Charger</button>
+</header>
+<div class="wrap">
+  <div id="err" class="err" hidden></div>
+  <div class="kpis" id="kpis"></div>
+  <h2>Note moyenne par produit (les moins bien notés d'abord)</h2>
+  <table id="byprod"><thead><tr><th>Produit</th><th>Note moyenne</th><th>Nb d'avis</th></tr></thead><tbody></tbody></table>
+  <h2>Derniers avis négatifs</h2>
+  <div id="neg"></div>
+</div>
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var API = (location.pathname.replace(/\/[^/]*$/, '') || '') + '/api';  // même origine que la page
+  // Persistance légère du token/shop
+  try {
+    $('token').value = localStorage.getItem('rv_admin_token') || '';
+    $('shop').value  = localStorage.getItem('rv_admin_shop')  || '';
+  } catch(e){}
+
+  function stars(n){
+    n = n == null ? 0 : Math.round(n);
+    var s = '';
+    for (var i=1;i<=5;i++) s += i<=n ? '★' : '<span class="off">★</span>';
+    return '<span class="stars">'+s+'</span>';
+  }
+  function rateClass(v){ return v < 2.5 ? 'r-bad' : (v < 3.5 ? 'r-warn' : 'r-ok'); }
+  function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+
+  function load(){
+    var token = $('token').value.trim();
+    var shop  = $('shop').value.trim();
+    try { localStorage.setItem('rv_admin_token', token); localStorage.setItem('rv_admin_shop', shop); } catch(e){}
+    $('err').hidden = true;
+    var url = API + '/admin/reviews' + (shop ? ('?shopId=' + encodeURIComponent(shop)) : '');
+    fetch(url, { headers: { 'X-Admin-Token': token } })
+      .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status+(r.status===401||r.status===403?' — jeton admin invalide':'')); return r.json(); })
+      .then(render)
+      .catch(function(e){ $('err').hidden = false; $('err').textContent = 'Erreur : ' + e.message; });
+  }
+
+  function render(d){
+    var t = d.totals || {};
+    $('kpis').innerHTML =
+      kpi(t.total||0,'Avis') + kpi(t.liked||0,'Aimé') + kpi(t.disliked||0,'Pas aimé') + kpi(t.pending||0,'En attente');
+
+    var tb = $('byprod').querySelector('tbody');
+    var bp = d.byProduct || [];
+    tb.innerHTML = bp.length ? bp.map(function(p){
+      var v = parseFloat(p.avg_rating);
+      return '<tr><td>'+esc(p.product_name)+'</td>'+
+             '<td><span class="rate '+rateClass(v)+'">'+v.toFixed(2)+'</span> '+stars(v)+'</td>'+
+             '<td>'+p.n+'</td></tr>';
+    }).join('') : '<tr><td colspan="3" class="empty">Aucune note produit pour l\'instant.</td></tr>';
+
+    var neg = d.recentNegative || [];
+    $('neg').innerHTML = neg.length ? neg.map(function(rv){
+      var items = (rv.items||[]).map(function(it){
+        return '<div class="neg__item"><div class="neg__name">'+esc(it.product_name)+'</div>'+
+               '<div>'+stars(it.rating)+ (it.note ? ' <span class="neg__note">— '+esc(it.note)+'</span>' : '') +'</div></div>';
+      }).join('');
+      return '<div class="neg"><div class="neg__head"><span>'+esc(rv.store||'—')+'</span><span>'+esc((rv.created_at||'').replace('T',' ').slice(0,16))+'</span></div>'+
+             (items || '<div class="empty">Avis négatif sans détail produit.</div>')+'</div>';
+    }).join('') : '<div class="empty">Aucun avis négatif. 🎉</div>';
+  }
+  function kpi(v,l){ return '<div class="kpi"><b>'+v+'</b><span>'+l+'</span></div>'; }
+
+  $('go').onclick = load;
+  if ($('token').value) load();
+})();
+</script>
+</body>
+</html>

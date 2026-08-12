@@ -3453,6 +3453,42 @@ function dispatch($m, $p) {
         [$b['shopId'], $prof, $meth, !empty($b['active']) ? 1 : 0]);
       json_out(['ok' => true]);
     }
+    // ── Avis clients (PWA fidélité) : synthèse + derniers négatifs.
+    // Filtre optionnel ?shopId= (pwa_reviews.shop_id, réf logique shops.id).
+    if ($m === 'GET' && $p === '/admin/reviews') {
+      $s = qp('shopId');
+      $sid = $s !== '' ? (int) $s : null;
+      $totals = row(
+        "SELECT COUNT(*) total, COALESCE(SUM(liked=1),0) liked, COALESCE(SUM(liked=0),0) disliked,
+                COALESCE(SUM(liked IS NULL),0) pending
+           FROM pwa_reviews" . ($sid !== null ? " WHERE shop_id=?" : ""),
+        $sid !== null ? [$sid] : []
+      );
+      // Note moyenne par produit (les moins bien notés d'abord).
+      $byProduct = rows(
+        "SELECT ri.product_name, ROUND(AVG(ri.rating),2) avg_rating, COUNT(ri.rating) n
+           FROM pwa_review_items ri JOIN pwa_reviews r ON r.id = ri.review_id
+          WHERE ri.rating IS NOT NULL" . ($sid !== null ? " AND r.shop_id=?" : "") . "
+          GROUP BY ri.product_name ORDER BY avg_rating ASC, n DESC LIMIT 100",
+        $sid !== null ? [$sid] : []
+      );
+      // Derniers avis négatifs (liked=0) + leurs notes/commentaires produit.
+      $recent = rows(
+        "SELECT r.id, r.created_at, r.shop_id, p.store
+           FROM pwa_reviews r LEFT JOIN pwa_purchases p ON p.id = r.purchase_id
+          WHERE r.liked = 0" . ($sid !== null ? " AND r.shop_id=?" : "") . "
+          ORDER BY r.id DESC LIMIT 40",
+        $sid !== null ? [$sid] : []
+      );
+      foreach ($recent as &$rv) {
+        $rv['items'] = rows(
+          "SELECT product_name, rating, note FROM pwa_review_items WHERE review_id=? ORDER BY id",
+          [$rv['id']]
+        );
+      }
+      unset($rv);
+      json_out(['totals' => $totals, 'byProduct' => $byProduct, 'recentNegative' => $recent]);
+    }
   }
 }
 
