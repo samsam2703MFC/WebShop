@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS shops (
   accent         VARCHAR(20) DEFAULT '#8D1D2C',
   tint           VARCHAR(20) DEFAULT '#fdf6f0',
   logo_url       VARCHAR(255),
+  google_review_url VARCHAR(255),               -- lien Google review (avis positif PWA)
   image_path     VARCHAR(255),                  -- vitrine (lp)
   webshop_enabled TINYINT(1) NOT NULL DEFAULT 0,
   landing_enabled TINYINT(1) NOT NULL DEFAULT 0,
