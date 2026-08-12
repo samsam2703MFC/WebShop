@@ -3354,9 +3354,11 @@ function dispatch($m, $p) {
           $b['price_modifier'] = (float) $b['price_modifier'];
           $b['sort_order'] = (int) $b['sort_order'];
           $b['active'] = (bool) $b['active'];
+          // cat_id : categorie du catalogue dont proviennent les choix (0058).
+          $hasSlotCat = col_exists('ws_bundle_slots', 'cat_id');
           $slots = rows("SELECT id, label, required, COALESCE(kind,'single') AS kind,
                                 COALESCE(min_select,1) AS min_select, COALESCE(max_select,1) AS max_select,
-                                sort_order, active
+                                sort_order, active" . ($hasSlotCat ? ", cat_id" : ", NULL AS cat_id") . "
                            FROM ws_bundle_slots WHERE bundle_id = ? ORDER BY sort_order, id", [$b['id']]);
           foreach ($slots as &$sl) {
             $sl['id'] = (string) $sl['id'];
@@ -4157,9 +4159,15 @@ function dispatch($m, $p) {
           $bid = (int) $pdo->lastInsertId();
           foreach (is_array($bu['slots'] ?? null) ? $bu['slots'] : [] as $si => $sl) {
             $kind = in_array($sl['kind'] ?? 'single', ['single','multi'], true) ? $sl['kind'] : 'single';
-            q("INSERT INTO ws_bundle_slots (bundle_id, label, required, kind, min_select, max_select, sort_order, active) VALUES (?,?,?,?,?,?,?,?)",
-              [$bid, (string) ($sl['label'] ?? ''), !empty($sl['required']) ? 1 : 0, $kind,
-               (int) ($sl['min_select'] ?? ($kind === 'single' ? 1 : 0)), (int) ($sl['max_select'] ?? 1), $si, !empty($sl['active']) ? 1 : 0]);
+            $slCols = ['bundle_id','label','required','kind','min_select','max_select','sort_order','active'];
+            $slVals = [$bid, (string) ($sl['label'] ?? ''), !empty($sl['required']) ? 1 : 0, $kind,
+                       (int) ($sl['min_select'] ?? ($kind === 'single' ? 1 : 0)), (int) ($sl['max_select'] ?? 1), $si, !empty($sl['active']) ? 1 : 0];
+            if (col_exists('ws_bundle_slots', 'cat_id')) {
+              $slCols[] = 'cat_id';
+              $slVals[] = is_numeric($sl['cat_id'] ?? null) ? (int) $sl['cat_id'] : null;
+            }
+            q("INSERT INTO ws_bundle_slots (" . implode(',', $slCols) . ") VALUES ("
+              . implode(',', array_fill(0, count($slCols), '?')) . ")", $slVals);
             $sid = (int) $pdo->lastInsertId();
             foreach (is_array($sl['choices'] ?? null) ? $sl['choices'] : [] as $ci => $ch) {
               /* product_id est la DONNEE PORTEE par le choix (migration 0057) ;
