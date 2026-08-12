@@ -852,7 +852,8 @@ function dispatch($m, $p) {
         // NULL (anciennes lignes) : single obligatoire/facultatif d'après required.
         $sl['min_select'] = $sl['min_select'] !== null ? (int) $sl['min_select'] : ($sl['required'] ? 1 : 0);
         $sl['max_select'] = $sl['max_select'] !== null ? (int) $sl['max_select'] : 1;
-        $sl['choices'] = rows("SELECT id, label, img, delta, sort_order
+        $chPid = col_exists('ws_bundle_slot_choices', 'product_id') ? ', product_id' : ', NULL AS product_id';
+        $sl['choices'] = rows("SELECT id, label, img, delta, sort_order$chPid
                                  FROM ws_bundle_slot_choices WHERE slot_id = ? AND active = 1
                                 ORDER BY sort_order, id", [$sl['id']]);
         foreach ($sl['choices'] as &$ch) {
@@ -2380,10 +2381,21 @@ function dispatch($m, $p) {
         if ($slotsSel && $hasParentCol) {
           foreach ($slotsSel as $chId) {
             $cid2 = (int) $chId; if (!$cid2) continue;
-            $ch = row("SELECT label FROM ws_bundle_slot_choices WHERE id=? LIMIT 1", [$cid2]);
+            // Le choix PORTE son produit (migration 0057). La resolution par
+            // NOM ne subsiste qu'en repli, pour les choix pas encore rattaches :
+            // elle echouait des que le libelle etait generique (« Boisson »),
+            // et la ligne partait alors sans produit — donc sans stock, sans
+            // prix et sans allergenes.
+            $hasChPid = col_exists('ws_bundle_slot_choices', 'product_id');
+            $ch = row("SELECT label" . ($hasChPid ? ", product_id" : "")
+                      . " FROM ws_bundle_slot_choices WHERE id=? LIMIT 1", [$cid2]);
             $lab2 = trim((string) ($ch['label'] ?? ''));
+            $cp = null;
+            if ($hasChPid && !empty($ch['product_id']))
+              $cp = row("SELECT id, name FROM ws_products WHERE id=? LIMIT 1", [(int) $ch['product_id']]);
+            if ($cp && $lab2 === '') $lab2 = (string) $cp['name'];
             if ($lab2 === '') continue;
-            $cp = row("SELECT id FROM ws_products WHERE name = ? AND active = 1 ORDER BY id LIMIT 1", [$lab2]);
+            if (!$cp) $cp = row("SELECT id FROM ws_products WHERE name = ? AND active = 1 ORDER BY id LIMIT 1", [$lab2]);
             q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note, parent_line_id)
                  VALUES (?,?,?,?,?,?,?,?)",
               [$oid, ($cp ? (int) $cp['id'] : null), $lab2, $l['qty'], 0, null, 'Inclus dans « ' . $l['name'] . ' »', $parentId]);
@@ -3353,8 +3365,15 @@ function dispatch($m, $p) {
             $sl['max_select'] = (int) $sl['max_select'];
             $sl['sort_order'] = (int) $sl['sort_order'];
             $sl['active'] = (bool) $sl['active'];
-            $chs = rows("SELECT id, label, img, delta, COALESCE(cost,0) AS cost, sort_order, active
-                           FROM ws_bundle_slot_choices WHERE slot_id = ? ORDER BY sort_order, id", [$sl['id']]);
+            // product_id : donnee portee par le choix (0057). Le nom du produit
+            // remonte avec, pour que le constructeur affiche a quoi le choix est
+            // rattache sans avoir a recharger le catalogue.
+            $hasCP = col_exists('ws_bundle_slot_choices', 'product_id');
+            $chs = rows("SELECT c.id, c.label, c.img, c.delta, COALESCE(c.cost,0) AS cost, c.sort_order, c.active"
+                        . ($hasCP ? ", c.product_id, pp.name AS product_name" : ", NULL AS product_id, NULL AS product_name") . "
+                           FROM ws_bundle_slot_choices c"
+                        . ($hasCP ? " LEFT JOIN ws_products pp ON pp.id = c.product_id" : "") . "
+                          WHERE c.slot_id = ? ORDER BY c.sort_order, c.id", [$sl['id']]);
             foreach ($chs as &$ch) {
               $ch['id'] = (string) $ch['id'];
               $ch['img'] = $ch['img'] ?: '';
@@ -4143,8 +4162,18 @@ function dispatch($m, $p) {
                (int) ($sl['min_select'] ?? ($kind === 'single' ? 1 : 0)), (int) ($sl['max_select'] ?? 1), $si, !empty($sl['active']) ? 1 : 0]);
             $sid = (int) $pdo->lastInsertId();
             foreach (is_array($sl['choices'] ?? null) ? $sl['choices'] : [] as $ci => $ch) {
-              q("INSERT INTO ws_bundle_slot_choices (slot_id, label, img, delta, cost, sort_order, active) VALUES (?,?,?,?,?,?,?)",
-                [$sid, (string) ($ch['label'] ?? ''), (string) ($ch['img'] ?? ''), (float) ($ch['delta'] ?? 0), (float) ($ch['cost'] ?? 0), $ci, !empty($ch['active']) ? 1 : 0]);
+              /* product_id est la DONNEE PORTEE par le choix (migration 0057) ;
+                 le label n'est qu'un affichage. Ecrit seulement si la colonne
+                 existe, pour rester deployable avant la migration. */
+              $chCols = ['slot_id','label','img','delta','cost','sort_order','active'];
+              $chVals = [$sid, (string) ($ch['label'] ?? ''), (string) ($ch['img'] ?? ''),
+                         (float) ($ch['delta'] ?? 0), (float) ($ch['cost'] ?? 0), $ci, !empty($ch['active']) ? 1 : 0];
+              if (col_exists('ws_bundle_slot_choices', 'product_id')) {
+                $chCols[] = 'product_id';
+                $chVals[] = is_numeric($ch['product_id'] ?? null) ? (int) $ch['product_id'] : null;
+              }
+              q("INSERT INTO ws_bundle_slot_choices (" . implode(',', $chCols) . ") VALUES ("
+                . implode(',', array_fill(0, count($chCols), '?')) . ")", $chVals);
             }
           }
         }
