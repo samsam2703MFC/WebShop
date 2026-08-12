@@ -128,7 +128,14 @@
   $('go').onclick = load;
   $('shopSel').onchange = function(){ if ($('token').value) load(); };
   $('scope').textContent = isFranchisee ? ('Franchisée · boutique '+lockedShop) : 'Franchiseur · réseau';
-  if ($('token').value) load();  // le 1er /admin/reviews renvoie aussi la liste des boutiques
+  if ($('token').value) {
+    load();  // le 1er /admin/reviews renvoie aussi la liste des boutiques
+  } else {
+    // Pas de jeton saisi : on guide au lieu de laisser la page blanche.
+    $('kpis').innerHTML = kpi(0,'Avis')+kpi(0,'Aimé')+kpi(0,'Pas aimé')+kpi(0,'En attente');
+    $('byprod').querySelector('tbody').innerHTML = '<tr><td colspan="3" class="empty">Saisissez le jeton admin (X-Admin-Token) puis « Charger ».</td></tr>';
+    $('neg').innerHTML = '<div class="empty">Saisissez le jeton admin puis « Charger ». Les avis apparaissent quand des clients répondent (à leur 5ᵉ commande).</div>';
+  }
 })();
 </script>
 </body>
