@@ -814,30 +814,7 @@ function dispatch($m, $p) {
     //    = la formule du produit de cette catégorie qui la porte. Ainsi TOUS
     //    les produits d'une catégorie déclencheur partagent LE MÊME menu ;
     //    l'étape 1 étant le produit choisi par le client (implicite).
-    $srcPid = $pid;
-    $own = row("SELECT 1 AS x FROM ws_bundles WHERE product_id = ? AND active = 1 LIMIT 1", [$pid]);
-    if (!$own) {
-      $meta = row("SELECT p.cat_id, p.menu_override, COALESCE(c.menu_default, 0) AS menu_default
-                     FROM ws_products p
-                     LEFT JOIN ws_categories c ON c.id = p.cat_id
-                    WHERE p.id = ? LIMIT 1", [$pid]);
-      $armed = $meta && $meta['cat_id'] !== null && (
-        $meta['menu_override'] === 'on' ||
-        ($meta['menu_override'] === null && (int) $meta['menu_default'] === 1)
-      );
-      if ($armed) {
-        // Produit « modèle » de la catégorie : celui qui porte une formule.
-        // On privilégie un produit explicitement menu ('on'), puis le plus
-        // petit id — déterministe.
-        $tpl = row("SELECT b.product_id
-                      FROM ws_bundles b
-                      JOIN ws_products tp ON tp.id = b.product_id AND tp.active = 1
-                     WHERE b.active = 1 AND tp.cat_id = ?
-                     ORDER BY (tp.menu_override = 'on') DESC, b.product_id
-                     LIMIT 1", [$meta['cat_id']]);
-        if ($tpl) $srcPid = $tpl['product_id'];
-      }
-    }
+    $srcPid = bundle_source_pid($pid);
     $bundles = rows("SELECT id, name, description, price_modifier, sort_order
                        FROM ws_bundles WHERE product_id = ? AND active = 1
                       ORDER BY sort_order, id", [$srcPid]);
@@ -1992,6 +1969,13 @@ function dispatch($m, $p) {
       $suppl = $comp['modifier'];
       foreach ($comp['choices'] as $c3) $suppl += $c3['delta'];
       $suppl = round($suppl, 2);
+      // Le panier a composé un menu mais RIEN n'a survécu à la validation : la
+      // commande partirait sans ses composants, sans bruit. On trace — seule
+      // façon de voir un écart catalogue/commande sans attendre une réclamation.
+      if (!$comp['choices'] && !empty($it['bundleSlots']))
+        error_log('[ws] menu non validé — produit ' . (int) $p2['id']
+                  . ' formule ' . (int) ($it['bundleId'] ?? 0)
+                  . ' choix ' . implode(',', array_map('intval', (array) $it['bundleSlots'])));
       $subtotal += ($unit + $suppl) * $qty;
       // `options` = composition du menu (formule, choix de chaque emplacement,
       // suppléments). La ligne était reconstruite depuis le produit ERP et
@@ -8094,10 +8078,43 @@ function oline_own() {
   return $c;
 }
 
+/* Produit PORTEUR de la formule d'un produit donné.
+     • le produit a sa propre formule active -> lui-même ;
+     • sinon, si son menu est armé par la CATÉGORIE (menu_default, non surchargé
+       'off'), le produit « modèle » de cette catégorie : tous les produits
+       déclencheurs partagent alors LE MÊME menu, l'étape 1 étant le produit
+       choisi par le client.
+   Une seule définition, parce que deux endroits en dépendent : le catalogue qui
+   SERT la formule et la commande qui la VALIDE. Quand ils divergeaient, la
+   commande refusait la composition que le catalogue venait d'afficher. */
+function bundle_source_pid($pid) {
+  $pid = (int) $pid;
+  if ($pid <= 0) return 0;
+  if (row("SELECT 1 x FROM ws_bundles WHERE product_id = ? AND active = 1 LIMIT 1", [$pid])) return $pid;
+  $meta = row("SELECT p.cat_id, p.menu_override, COALESCE(c.menu_default, 0) AS menu_default
+                 FROM ws_products p
+                 LEFT JOIN ws_categories c ON c.id = p.cat_id
+                WHERE p.id = ? LIMIT 1", [$pid]);
+  $armed = $meta && $meta['cat_id'] !== null && (
+    $meta['menu_override'] === 'on' ||
+    ($meta['menu_override'] === null && (int) $meta['menu_default'] === 1));
+  if (!$armed) return $pid;
+  // On privilégie un produit explicitement menu ('on'), puis le plus petit id
+  // — déterministe.
+  $tpl = row("SELECT b.product_id
+                FROM ws_bundles b
+                JOIN ws_products tp ON tp.id = b.product_id AND tp.active = 1
+               WHERE b.active = 1 AND tp.cat_id = ?
+               ORDER BY (tp.menu_override = 'on') DESC, b.product_id
+               LIMIT 1", [$meta['cat_id']]);
+  return $tpl ? (int) $tpl['product_id'] : $pid;
+}
+
 /* Composition d'une formule, RÉSOLUE ET VALIDÉE CÔTÉ SERVEUR.
    Le panier envoie des identifiants ; il ne décide ni du prix ni de ce qui
    est composable. On repart donc de la base :
-     • la formule doit appartenir AU produit commandé et être active ;
+     • la formule doit appartenir au produit PORTEUR (le produit commandé, ou le
+       modèle de sa catégorie — exactement ce que le catalogue a servi) ;
      • chaque choix doit appartenir à une étape ACTIVE de CETTE formule —
        sans quoi n'importe quel identifiant de choix ajouterait n'importe quel
        produit à la commande ;
@@ -8112,6 +8129,11 @@ function bundle_compose($productId, $bundleId, $rawSlots) {
   $bundleId = is_numeric($bundleId) ? (int) $bundleId : 0;
   if (!$ids && !$bundleId) return $empty;
 
+  // Le porteur de la formule n'est pas toujours le produit commandé : un menu
+  // de catégorie (« la quiche choisie devient l'étape 1 ») est porté par le
+  // produit modèle. Valider contre le produit commandé rejetait alors TOUTE la
+  // composition — celle-là même que le catalogue venait de servir au client.
+  $srcPid = bundle_source_pid($productId);
   $hasPid = col_exists('ws_bundle_slot_choices', 'product_id');
   $chosen = [];
   if ($ids) {
@@ -8124,7 +8146,7 @@ function bundle_compose($productId, $bundleId, $rawSlots) {
          JOIN ws_bundles      bu ON bu.id = s.bundle_id AND bu.active = 1
         WHERE c.active = 1 AND bu.product_id = ? AND c.id IN ($ph)
         ORDER BY s.sort_order, c.sort_order, c.id",
-      array_merge([(int) $productId], $ids));
+      array_merge([$srcPid], $ids));
   }
   // Une commande porte UNE formule. Celle annoncée par le panier si elle est
   // valable, sinon celle des choix retenus — les choix d'une autre formule
@@ -8133,7 +8155,7 @@ function bundle_compose($productId, $bundleId, $rawSlots) {
   if ($bundleId) {
     foreach ($chosen as $c) if ((int) $c['bundle_id'] === $bundleId) { $bid = $bundleId; break; }
     if (!$bid && !$chosen
-        && row("SELECT 1 x FROM ws_bundles WHERE id=? AND product_id=? AND active=1", [$bundleId, (int) $productId]))
+        && row("SELECT 1 x FROM ws_bundles WHERE id=? AND product_id=? AND active=1", [$bundleId, $srcPid]))
       $bid = $bundleId;
   }
   if (!$bid && $chosen) $bid = (int) $chosen[0]['bundle_id'];
