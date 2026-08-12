@@ -862,7 +862,16 @@ function dispatch($m, $p) {
           // correspondant (ws_categories.img) — jamais une image produit ni le
           // repère de couleur du builder ('a'..'d'). Aucune correspondance /
           // catégorie sans image -> null (le front affiche le line-art).
-          $cat = row("SELECT c.img FROM ws_products p
+          // Le choix PORTE son produit (0057) : on part de l'identifiant, et le
+          // nom ne sert plus qu'en repli. Un choix au libellé générique
+          // (« Dessert au choix ») n'avait sinon jamais de vignette.
+          $cat = !empty($ch['product_id'])
+            ? row("SELECT c.img FROM ws_products p
+                     JOIN ws_categories c ON c.id = p.cat_id
+                    WHERE p.id = ? AND c.img IS NOT NULL AND c.img <> ''
+                    LIMIT 1", [(int) $ch['product_id']])
+            : null;
+          if (!$cat) $cat = row("SELECT c.img FROM ws_products p
                         JOIN ws_categories c ON c.id = p.cat_id
                        WHERE p.name = ? AND c.img IS NOT NULL AND c.img <> ''
                        LIMIT 1", [$ch['label']]);
@@ -1971,7 +1980,19 @@ function dispatch($m, $p) {
         $unit = $unitP;
       }
       $qty = max(1, (int) ($it['qty'] ?? 1));
-      $subtotal += $unit * $qty;
+      /* SUPPLÉMENTS DE FORMULE. Le panier affiche « + 5,00 € » pour un choix
+         majoré, mais la commande ne facturait que le prix du produit
+         déclencheur : ni le supplément du choix (ws_bundle_slot_choices.delta),
+         ni le modificateur de la formule (ws_bundles.price_modifier) n'entraient
+         dans le sous-total. Le client voyait un montant et en payait un autre —
+         plus bas — et la boutique préparait un produit majoré sans l'encaisser.
+         Les deux sont désormais relus EN BASE, jamais reçus du panier. */
+      $comp = bundle_compose($p2['id'], $it['bundleId'] ?? null,
+                             is_array($it['bundleSlots'] ?? null) ? $it['bundleSlots'] : []);
+      $suppl = $comp['modifier'];
+      foreach ($comp['choices'] as $c3) $suppl += $c3['delta'];
+      $suppl = round($suppl, 2);
+      $subtotal += ($unit + $suppl) * $qty;
       // `options` = composition du menu (formule, choix de chaque emplacement,
       // suppléments). La ligne était reconstruite depuis le produit ERP et
       // perdait cette composition en chemin : c'est ICI qu'elle disparaissait,
@@ -1981,9 +2002,13 @@ function dispatch($m, $p) {
       // ligne était reconstruite depuis le produit ERP et perdait ces choix en
       // chemin — c'est ICI que la composition du menu disparaissait, avant même
       // l'écriture. Le prix, lui, reste celui résolu serveur.
+      // `unit` = prix de la ligne mère : le produit + le modificateur de la
+      // formule. Les suppléments par choix, eux, restent PORTÉS PAR LEUR LIGNE
+      // (voir l'écriture des composants) — c'est là qu'ils sont lisibles.
       $lines[] = ['productId' => $p2['id'], 'name' => $p2['name'], 'qty' => $qty,
-                  'unit' => $unit, 'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion'],
-                  'bundleSlots' => is_array($it['bundleSlots'] ?? null) ? $it['bundleSlots'] : [],
+                  'unit' => round($unit + $comp['modifier'], 2),
+                  'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion'],
+                  'bundleChoices' => $comp['choices'],
                   'note' => isset($it['note']) ? mb_substr((string) $it['note'], 0, 255) : null];
     }
     if (!count($lines)) json_out(['error' => 'aucun produit valide'], 400);
@@ -2370,35 +2395,30 @@ function dispatch($m, $p) {
            jetés : la commande n'enregistrait que le produit déclencheur, et la
            boutique ne savait pas quoi préparer.
            Chaque choix devient une ligne rattachée à sa mère (parent_line_id,
-           migration 0055). Le produit est résolu par le NOM du choix, comme le
-           fait déjà le catalogue pour les vignettes — ws_bundle_slot_choices ne
-           porte pas d'identifiant produit.
-           Prix à 0 : le composant est déjà compris dans le prix du menu ; l'y
-           reporter compterait le chiffre d'affaires deux fois. La quantité suit
-           celle du menu — deux menus, deux boissons. */
+           migration 0055) ; il porte son produit depuis la migration 0057, avec
+           repli par le NOM pour les choix pas encore rattachés.
+           PRIX DE LA LIGNE = LE SUPPLÉMENT DU CHOIX, ET LUI SEUL. Un composant
+           compris dans la formule reste à 0 — l'y reporter compterait le chiffre
+           d'affaires deux fois. Mais un choix majoré (« Cake Nature + 5,00 € »)
+           doit porter ses 5 € SUR SA LIGNE : c'est ce produit-là qui les génère,
+           et c'est là qu'on les lit, en boutique comme en compta. La somme des
+           lignes reste égale au total : le supplément a quitté la ligne mère. */
         $parentId = (int) $pdo->lastInsertId();
-        $slotsSel = (array) ($l['bundleSlots'] ?? []);
-        if ($slotsSel && $hasParentCol) {
-          foreach ($slotsSel as $chId) {
-            $cid2 = (int) $chId; if (!$cid2) continue;
-            // Le choix PORTE son produit (migration 0057). La resolution par
-            // NOM ne subsiste qu'en repli, pour les choix pas encore rattaches :
-            // elle echouait des que le libelle etait generique (« Boisson »),
-            // et la ligne partait alors sans produit — donc sans stock, sans
-            // prix et sans allergenes.
-            $hasChPid = col_exists('ws_bundle_slot_choices', 'product_id');
-            $ch = row("SELECT label" . ($hasChPid ? ", product_id" : "")
-                      . " FROM ws_bundle_slot_choices WHERE id=? LIMIT 1", [$cid2]);
-            $lab2 = trim((string) ($ch['label'] ?? ''));
-            $cp = null;
-            if ($hasChPid && !empty($ch['product_id']))
-              $cp = row("SELECT id, name FROM ws_products WHERE id=? LIMIT 1", [(int) $ch['product_id']]);
+        $choices = (array) ($l['bundleChoices'] ?? []);
+        if ($choices && $hasParentCol) {
+          foreach ($choices as $c4) {
+            $lab2 = (string) ($c4['label'] ?? '');
+            $cp = !empty($c4['product_id'])
+              ? row("SELECT id, name FROM ws_products WHERE id=? LIMIT 1", [(int) $c4['product_id']]) : null;
             if ($cp && $lab2 === '') $lab2 = (string) $cp['name'];
             if ($lab2 === '') continue;
             if (!$cp) $cp = row("SELECT id FROM ws_products WHERE name = ? AND active = 1 ORDER BY id LIMIT 1", [$lab2]);
+            $dlt = round((float) ($c4['delta'] ?? 0), 2);
             q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note, parent_line_id)
                  VALUES (?,?,?,?,?,?,?,?)",
-              [$oid, ($cp ? (int) $cp['id'] : null), $lab2, $l['qty'], 0, null, 'Inclus dans « ' . $l['name'] . ' »', $parentId]);
+              [$oid, ($cp ? (int) $cp['id'] : null), $lab2, $l['qty'], $dlt, null,
+               ($dlt > 0 ? 'Supplément de « ' . $l['name'] . ' »' : 'Inclus dans « ' . $l['name'] . ' »'),
+               $parentId]);
           }
         }
         // Décrément du stock du jour : si aucune ligne de stock n'existe encore
@@ -8072,6 +8092,62 @@ function oline_own() {
   static $c = null;
   if ($c === null) $c = col_exists('ws_order_lines', 'parent_line_id') ? ' AND l.parent_line_id IS NULL' : '';
   return $c;
+}
+
+/* Composition d'une formule, RÉSOLUE ET VALIDÉE CÔTÉ SERVEUR.
+   Le panier envoie des identifiants ; il ne décide ni du prix ni de ce qui
+   est composable. On repart donc de la base :
+     • la formule doit appartenir AU produit commandé et être active ;
+     • chaque choix doit appartenir à une étape ACTIVE de CETTE formule —
+       sans quoi n'importe quel identifiant de choix ajouterait n'importe quel
+       produit à la commande ;
+     • le supplément (delta) et le modificateur de formule (price_modifier)
+       sont lus en base, jamais reçus du client.
+   Renvoie ['modifier' => float, 'choices' => [ [id,label,product_id,delta] ]]. */
+function bundle_compose($productId, $bundleId, $rawSlots) {
+  $empty = ['modifier' => 0.0, 'choices' => []];
+  $ids = [];
+  foreach ((array) $rawSlots as $v) { $n = (int) $v; if ($n > 0) $ids[$n] = $n; }
+  $ids = array_values($ids);
+  $bundleId = is_numeric($bundleId) ? (int) $bundleId : 0;
+  if (!$ids && !$bundleId) return $empty;
+
+  $hasPid = col_exists('ws_bundle_slot_choices', 'product_id');
+  $chosen = [];
+  if ($ids) {
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    $chosen = rows(
+      "SELECT c.id, c.label, c.delta, s.bundle_id, s.sort_order AS s_ord, c.sort_order AS c_ord"
+      . ($hasPid ? ", c.product_id" : ", NULL AS product_id") . "
+         FROM ws_bundle_slot_choices c
+         JOIN ws_bundle_slots s  ON s.id  = c.slot_id   AND s.active = 1
+         JOIN ws_bundles      bu ON bu.id = s.bundle_id AND bu.active = 1
+        WHERE c.active = 1 AND bu.product_id = ? AND c.id IN ($ph)
+        ORDER BY s.sort_order, c.sort_order, c.id",
+      array_merge([(int) $productId], $ids));
+  }
+  // Une commande porte UNE formule. Celle annoncée par le panier si elle est
+  // valable, sinon celle des choix retenus — les choix d'une autre formule
+  // sont écartés plutôt que mélangés.
+  $bid = 0;
+  if ($bundleId) {
+    foreach ($chosen as $c) if ((int) $c['bundle_id'] === $bundleId) { $bid = $bundleId; break; }
+    if (!$bid && !$chosen
+        && row("SELECT 1 x FROM ws_bundles WHERE id=? AND product_id=? AND active=1", [$bundleId, (int) $productId]))
+      $bid = $bundleId;
+  }
+  if (!$bid && $chosen) $bid = (int) $chosen[0]['bundle_id'];
+  if (!$bid) return $empty;
+
+  $mod = (float) (row("SELECT price_modifier FROM ws_bundles WHERE id=?", [$bid])['price_modifier'] ?? 0);
+  $out = [];
+  foreach ($chosen as $c) {
+    if ((int) $c['bundle_id'] !== $bid) continue;
+    $out[] = ['id' => (int) $c['id'], 'label' => trim((string) $c['label']),
+              'product_id' => $c['product_id'] !== null ? (int) $c['product_id'] : null,
+              'delta' => round((float) $c['delta'], 2)];
+  }
+  return ['modifier' => round($mod, 2), 'choices' => $out];
 }
 
 function user_payload($id) {
