@@ -621,6 +621,116 @@ function dispatch($m, $p) {
     $r = array_values(array_filter($r, static fn($x) => (float) $x['price'] > 0));
     json_out($r);
   }
+  /* ── VENTES CROISÉES — évaluation côté panier (migration 0056). ───────────
+     Le navigateur envoie ce qu'il a (panier, boutique, date et heure de
+     RETRAIT, canal, emplacement) ; le serveur rend les produits à proposer,
+     DÉJÀ filtrés. Le filtrage n'est pas laissé au front : suggérer un produit
+     hors assortiment, hors saison ou en rupture est pire que ne rien suggérer
+     — on ferait cliquer le client sur ce qu'on ne peut pas lui vendre.
+
+     L'heure comparée est celle du CRÉNEAU DE RETRAIT : commander à 22:00 pour
+     le lendemain midi doit montrer les suggestions du midi. ── */
+  if ($m === 'POST' && $p === '/catalog/cross-sell') {
+    if (!xsell_tbl('ws_cross_sell_rule')) json_out([]);
+    $b     = body();
+    $shopX = (int) ($b['shopId'] ?? 0);
+    if (!$shopX) json_out(['error' => 'shopId requis'], 400);
+    $inCart = array_values(array_unique(array_filter(array_map('intval', (array) ($b['productIds'] ?? [])))));
+    if (!$inCart) json_out([]);
+    $dateX = (is_string($b['date'] ?? null) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $b['date'])) ? $b['date'] : date('Y-m-d');
+    $timeX = (is_string($b['time'] ?? null) && preg_match('/^([01]\d|2[0-3]):[0-5]\d/', (string) $b['time']))
+             ? substr((string) $b['time'], 0, 5) : null;
+    $modeX  = (($b['mode'] ?? '') === 'delivery') ? 'delivery' : 'collect';
+    $placeX = preg_replace('/[^a-z]/', '', strtolower((string) ($b['placement'] ?? 'cart'))) ?: 'cart';
+    $dowX   = (int) date('N', strtotime($dateX));
+
+    // Règles candidates : actives, dans la fenêtre, le bon jour, le bon canal,
+    // le bon emplacement, la bonne boutique, et non suspendues par la boutique.
+    $rules = rows(
+      "SELECT r.* FROM ws_cross_sell_rule r
+        WHERE r.active = 1
+          AND (r.date_from IS NULL OR r.date_from <= ?)
+          AND (r.date_to   IS NULL OR r.date_to   >= ?)
+          AND (r.channel = 'both' OR r.channel = ?)
+          AND (r.weekdays IS NULL OR r.weekdays = '' OR FIND_IN_SET(?, r.weekdays))
+          AND FIND_IN_SET(?, REPLACE(r.placement, ' ', ''))
+          AND (NOT EXISTS (SELECT 1 FROM ws_cross_sell_shop cs WHERE cs.rule_id = r.id)
+               OR EXISTS (SELECT 1 FROM ws_cross_sell_shop cs WHERE cs.rule_id = r.id AND cs.shop_id = ?))
+          AND NOT EXISTS (SELECT 1 FROM ws_cross_sell_pause cp WHERE cp.rule_id = r.id AND cp.shop_id = ?)
+        ORDER BY r.id",
+      [$dateX, $dateX, $modeX, $dowX, $placeX, $shopX, $shopX]);
+    if (!$rules) json_out([]);
+
+    // Catégories des produits du panier — un déclencheur peut viser une
+    // catégorie entière (« tout sandwich ») plutôt qu'une liste à maintenir.
+    $ph   = implode(',', array_fill(0, count($inCart), '?'));
+    $cats = array_map(fn ($x) => (int) $x['cat_id'],
+                      rows("SELECT DISTINCT cat_id FROM ws_products WHERE id IN ($ph)", $inCart));
+    $out = []; $seen = [];
+    foreach ($rules as $rl) {
+      $trig = rows("SELECT product_id, cat_id FROM ws_cross_sell_trigger WHERE rule_id = ?", [(int) $rl['id']]);
+      if (!$trig) continue;
+      $hit = 0;
+      foreach ($trig as $t) {
+        if (($t['product_id'] !== null && in_array((int) $t['product_id'], $inCart, true))
+         || ($t['cat_id']     !== null && in_array((int) $t['cat_id'],     $cats,   true))) $hit++;
+      }
+      // « au moins un » ou « tous », selon la règle.
+      if ($rl['match_mode'] === 'all' ? ($hit < count($trig)) : ($hit === 0)) continue;
+
+      // Plage horaire — sur l'heure de RETRAIT. Sans créneau connu on ne devine
+      // pas : la contrainte horaire ne s'applique simplement pas.
+      if ($timeX !== null && $rl['hour_from'] && $rl['hour_to']) {
+        $hf = substr((string) $rl['hour_from'], 0, 5); $ht = substr((string) $rl['hour_to'], 0, 5);
+        $inRange = ($hf <= $ht) ? ($timeX >= $hf && $timeX <= $ht) : ($timeX >= $hf || $timeX <= $ht);
+        if (!$inRange) continue;
+      }
+
+      $kept = 0; $max = max(1, (int) $rl['max_suggestions']);
+      foreach (rows("SELECT product_id FROM ws_cross_sell_target WHERE rule_id = ? ORDER BY sort_order, id",
+                    [(int) $rl['id']]) as $tg) {
+        if ($kept >= $max) break;
+        $tp = (int) $tg['product_id'];
+        // Jamais suggérer ce qui est déjà au panier, ni deux fois le même
+        // produit quand plusieurs règles se déclenchent.
+        if (in_array($tp, $inCart, true) || isset($seen[$tp])) continue;
+        $prod = row("SELECT p.id, p.name, p.img, p.price, COALESCE(p.office_delivery,1) AS od
+                       FROM ws_products p
+                       LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
+                      WHERE p.id = ? AND p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1) LIMIT 1",
+                    [$shopX, $tp]);
+        if (!$prod) continue;
+        if ($modeX === 'delivery' && !(int) $prod['od']) continue;
+        if (!product_available_on($tp, $dateX)) continue;        // gamme saisonnière
+        if (!xsell_in_stock($tp, $shopX, $dateX, $modeX)) continue;
+        $px    = erp_shop_prices($shopX, [$tp]);
+        $price = $px[$tp] ?? (float) $prod['price'];
+        if ($price <= 0) continue;                                // sans prix magasin : non vendable
+        $seen[$tp] = true; $kept++;
+        $out[] = ['ruleId' => (int) $rl['id'], 'ruleName' => $rl['name'],
+                  'productId' => $tp, 'name' => $prod['name'],
+                  'img' => product_img_or_null($prod['img'] ?? null), 'price' => round($price, 2)];
+      }
+    }
+    json_out($out);
+  }
+
+  /* Mesure : combien de fois proposé, combien de fois ajouté. Agrégat
+     JOURNALIER (règle × produit × boutique) — on veut savoir quelle règle
+     rapporte, pas rejouer le parcours de chaque client. */
+  if ($m === 'POST' && $p === '/catalog/cross-sell/stat') {
+    if (!xsell_tbl('ws_cross_sell_stat')) json_out(['ok' => true, 'skipped' => 'table absente']);
+    $b   = body();
+    $ev  = (($b['event'] ?? '') === 'add') ? 'adds' : 'impressions';
+    $rid = (int) ($b['ruleId'] ?? 0); $pid5 = (int) ($b['productId'] ?? 0); $sid5 = (int) ($b['shopId'] ?? 0);
+    if (!$rid || !$pid5 || !$sid5) json_out(['ok' => false, 'error' => 'ruleId + productId + shopId requis'], 400);
+    q("INSERT INTO ws_cross_sell_stat (rule_id, product_id, shop_id, stat_date, impressions, adds)
+         VALUES (?,?,?,CURDATE(),?,?)
+         ON DUPLICATE KEY UPDATE impressions = impressions + VALUES(impressions), adds = adds + VALUES(adds)",
+      [$rid, $pid5, $sid5, $ev === 'impressions' ? 1 : 0, $ev === 'adds' ? 1 : 0]);
+    json_out(['ok' => true]);
+  }
+
   // ── DIAGNOSTIC DE VISIBILITÉ (lecture seule, public comme le catalogue) :
   //    /catalog/why?shopId=2&product=Brownies  (ou &productId=1150004)
   //    Évalue CHAQUE maillon de la chaîne pour le(s) produit(s) trouvé(s) et
@@ -3325,6 +3435,121 @@ function dispatch($m, $p) {
         json_out(array_values(array_map(fn ($v) => ['produit' => $v['produit'], 'cat' => $v['cat'],
           'portions' => $v['portions'], 'prix' => implode(' · ', $v['prixParts'])], $byProd)));
       } catch (Throwable $e) { json_out([]); }
+    }
+
+    /* ── VENTES CROISÉES — paramétrage marque (migration 0056). ─────────────
+       Lecture, écriture et suppression par l'API : aucune manipulation directe
+       en base depuis un back-office. Une règle est écrite d'un bloc — la règle
+       et ses listes (déclencheurs, suggestions, boutiques) forment un tout, et
+       une écriture partielle produirait une règle qui déclenche sans rien
+       proposer, ou l'inverse. D'où la transaction. ── */
+    if ($m === 'GET' && $p === '/franchisor/cross-sell') {
+      if (!xsell_tbl('ws_cross_sell_rule')) json_out([]);
+      $out = [];
+      foreach (rows("SELECT * FROM ws_cross_sell_rule ORDER BY active DESC, id DESC") as $r) {
+        $rid = (int) $r['id'];
+        $nm  = fn ($ids) => $ids ? rows("SELECT id, name FROM ws_products WHERE id IN ("
+                 . implode(',', array_fill(0, count($ids), '?')) . ") ORDER BY name", $ids) : [];
+        $tp  = []; $tc = [];
+        foreach (rows("SELECT product_id, cat_id FROM ws_cross_sell_trigger WHERE rule_id=?", [$rid]) as $t) {
+          if ($t['product_id'] !== null) $tp[] = (int) $t['product_id'];
+          if ($t['cat_id']     !== null) $tc[] = (int) $t['cat_id'];
+        }
+        $tg = rows("SELECT t.product_id, t.sort_order, p.name
+                      FROM ws_cross_sell_target t LEFT JOIN ws_products p ON p.id = t.product_id
+                     WHERE t.rule_id=? ORDER BY t.sort_order, t.id", [$rid]);
+        // Mesure agrégée : ce que la règle a rapporté depuis sa création.
+        $st = xsell_tbl('ws_cross_sell_stat')
+          ? row("SELECT COALESCE(SUM(impressions),0) i, COALESCE(SUM(adds),0) a
+                   FROM ws_cross_sell_stat WHERE rule_id=?", [$rid]) : null;
+        $imp = (int) ($st['i'] ?? 0); $add = (int) ($st['a'] ?? 0);
+        $out[] = $r + [
+          'triggerProducts'   => $nm($tp),
+          'triggerCategories' => $tc ? rows("SELECT id, label AS name FROM ws_categories WHERE id IN ("
+                                     . implode(',', array_fill(0, count($tc), '?')) . ")", $tc) : [],
+          'targets' => array_map(fn ($x) => ['id' => (int) $x['product_id'], 'name' => $x['name']], $tg),
+          'shops'   => array_map(fn ($x) => (int) $x['shop_id'],
+                                 rows("SELECT shop_id FROM ws_cross_sell_shop WHERE rule_id=?", [$rid])),
+          'stats'   => ['impressions' => $imp, 'adds' => $add,
+                        'rate' => $imp > 0 ? round($add * 100 / $imp, 1) : null],
+        ];
+      }
+      json_out($out);
+    }
+
+    if ($m === 'POST' && $p === '/franchisor/cross-sell') {
+      if (!xsell_tbl('ws_cross_sell_rule'))
+        json_out(['ok' => false, 'error' => 'Tables des ventes croisées absentes — migration 0056 non passée.'], 501);
+      $b    = body();
+      $name = trim((string) ($b['name'] ?? ''));
+      if ($name === '') json_out(['ok' => false, 'error' => 'Nom de la règle requis.'], 400);
+      $trigP = array_values(array_filter(array_map('intval', (array) ($b['triggerProducts']   ?? []))));
+      $trigC = array_values(array_filter(array_map('intval', (array) ($b['triggerCategories'] ?? []))));
+      $targs = array_values(array_filter(array_map('intval', (array) ($b['targets']           ?? []))));
+      // Une règle sans déclencheur ne se déclenche jamais ; sans suggestion elle
+      // ne propose rien. Les deux cas sont des règles mortes : on refuse plutôt
+      // que d'enregistrer quelque chose qui ne fera rien sans le dire.
+      if (!$trigP && !$trigC) json_out(['ok' => false, 'error' => 'Au moins un produit ou une catégorie déclencheur.'], 400);
+      if (!$targs)            json_out(['ok' => false, 'error' => 'Au moins un produit à suggérer.'], 400);
+      $dOk = fn ($v) => (is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v)) ? $v : null;
+      $hOk = fn ($v) => (is_string($v) && preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $v)) ? $v . ':00' : null;
+      $wd  = implode(',', array_values(array_filter(array_map('intval', (array) ($b['weekdays'] ?? [])),
+                                                    fn ($d) => $d >= 1 && $d <= 7)));
+      $vals = [
+        'name'            => mb_substr($name, 0, 120),
+        'date_from'       => $dOk($b['dateFrom'] ?? null),
+        'date_to'         => $dOk($b['dateTo'] ?? null),
+        'hour_from'       => $hOk($b['hourFrom'] ?? null),
+        'hour_to'         => $hOk($b['hourTo'] ?? null),
+        'weekdays'        => $wd !== '' ? $wd : null,
+        'match_mode'      => (($b['matchMode'] ?? '') === 'all') ? 'all' : 'any',
+        'channel'         => in_array($b['channel'] ?? '', ['collect', 'delivery'], true) ? $b['channel'] : 'both',
+        'placement'       => implode(',', array_values(array_intersect(
+                               array_map('strval', (array) ($b['placement'] ?? ['cart'])),
+                               ['cart', 'checkout', 'product']))) ?: 'cart',
+        'max_suggestions' => max(1, min(6, (int) ($b['maxSuggestions'] ?? 2))),
+        'active'          => !empty($b['active']) ? 1 : 0,
+      ];
+      $rid  = (int) ($b['id'] ?? 0);
+      $pdoX = db(); $ownX = !$pdoX->inTransaction();
+      if ($ownX) $pdoX->beginTransaction();
+      try {
+        if ($rid) {
+          q("UPDATE ws_cross_sell_rule SET " . implode(',', array_map(fn ($c) => "$c=?", array_keys($vals)))
+            . " WHERE id=?", array_merge(array_values($vals), [$rid]));
+          q("DELETE FROM ws_cross_sell_trigger WHERE rule_id=?", [$rid]);
+          q("DELETE FROM ws_cross_sell_target  WHERE rule_id=?", [$rid]);
+          q("DELETE FROM ws_cross_sell_shop    WHERE rule_id=?", [$rid]);
+        } else {
+          q("INSERT INTO ws_cross_sell_rule (" . implode(',', array_keys($vals)) . ") VALUES ("
+            . implode(',', array_fill(0, count($vals), '?')) . ")", array_values($vals));
+          $rid = (int) $pdoX->lastInsertId();
+        }
+        foreach ($trigP as $pid6) q("INSERT INTO ws_cross_sell_trigger (rule_id, product_id) VALUES (?,?)", [$rid, $pid6]);
+        foreach ($trigC as $cid6) q("INSERT INTO ws_cross_sell_trigger (rule_id, cat_id) VALUES (?,?)", [$rid, $cid6]);
+        foreach ($targs as $i6 => $pid6)
+          q("INSERT INTO ws_cross_sell_target (rule_id, product_id, sort_order) VALUES (?,?,?)", [$rid, $pid6, $i6]);
+        foreach (array_values(array_filter(array_map('intval', (array) ($b['shops'] ?? [])))) as $sid6)
+          q("INSERT IGNORE INTO ws_cross_sell_shop (rule_id, shop_id) VALUES (?,?)", [$rid, $sid6]);
+        if ($ownX) $pdoX->commit();
+      } catch (Throwable $e) {
+        if ($ownX && $pdoX->inTransaction()) $pdoX->rollBack();
+        json_out(['ok' => false, 'error' => 'Règle non enregistrée (aucune modification appliquée) : ' . $e->getMessage()], 500);
+      }
+      json_out(['ok' => true, 'id' => $rid]);
+    }
+
+    if ($m === 'DELETE' && $p === '/franchisor/cross-sell') {
+      if (!xsell_tbl('ws_cross_sell_rule')) json_out(['ok' => false, 'error' => 'tables absentes'], 501);
+      $rid = (int) (qp('id') ?: (body()['id'] ?? 0));
+      if (!$rid) json_out(['ok' => false, 'error' => 'id requis'], 400);
+      foreach (['ws_cross_sell_trigger', 'ws_cross_sell_target', 'ws_cross_sell_shop', 'ws_cross_sell_pause'] as $t6)
+        if (xsell_tbl($t6)) q("DELETE FROM $t6 WHERE rule_id=?", [$rid]);
+      q("DELETE FROM ws_cross_sell_rule WHERE id=?", [$rid]);
+      // Les statistiques SURVIVENT à la suppression de la règle : effacer
+      // l'historique de ce qui a été vendu grâce à elle rendrait toute
+      // comparaison impossible.
+      json_out(['ok' => true]);
     }
 
     if ($m === 'POST' && $p === '/franchisor/product') {
@@ -7494,6 +7719,36 @@ function allowed_methods($shop, $profile) {
    Renvoie une chaine vide tant que la migration 0055 n'est pas passee : l'API
    est deployee avant les migrations, la requete doit rester valide entre les
    deux. */
+/* Existence d'une table des ventes croisées. Mémorisée : l'évaluation du panier
+   est appelée à chaque modification, on ne réinterroge pas le schéma à chaque
+   fois. Tables absentes = fonctionnalité inactive, jamais une erreur : le
+   panier doit continuer de fonctionner si la migration 0056 n'est pas passée. */
+function xsell_tbl($name) {
+  static $c = [];
+  if (!array_key_exists($name, $c)) {
+    try {
+      $c[$name] = (bool) row("SELECT 1 x FROM information_schema.tables
+                               WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1", [$name]);
+    } catch (Throwable $e) { $c[$name] = false; }
+  }
+  return $c[$name];
+}
+
+/* Le produit suggéré est-il RÉELLEMENT disponible ce jour-là ?
+   Absence de ligne de stock = pas de plafond (règle du catalogue), donc
+   disponible. Sinon on exige un reste strictement positif : proposer un
+   produit épuisé fait cliquer le client sur une impasse. */
+function xsell_in_stock($pid, $shopId, $date, $mode) {
+  try {
+    if (!xsell_tbl('ws_product_stock')) return true;
+    $st = row("SELECT qty_total, qty_reserved, qty_sold FROM ws_product_stock
+                WHERE product_id=? AND shop_id=? AND date=? AND mode=? AND active=1 LIMIT 1",
+              [(int) $pid, (int) $shopId, $date, $mode]);
+    if (!$st) return true;
+    return ((int) $st['qty_total'] - (int) $st['qty_reserved'] - (int) $st['qty_sold']) > 0;
+  } catch (Throwable $e) { return true; }
+}
+
 function oline_own() {
   static $c = null;
   if ($c === null) $c = col_exists('ws_order_lines', 'parent_line_id') ? ' AND l.parent_line_id IS NULL' : '';

@@ -1291,7 +1291,72 @@ function CrossPortionStrip({ calc }) {
   );
 }
 
-function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, notesEnabled, deliveryFeeResult }) {
+/* Suggestions « Panier Croisé ». Le serveur reçoit le panier et rend les
+   produits à proposer, DÉJÀ filtrés sur l'assortiment de la boutique, la gamme
+   saisonnière à la date de retrait et le stock du jour : le navigateur ne
+   décide de rien. L'heure comparée est celle du CRÉNEAU DE RETRAIT, pas de la
+   commande — on commande le soir pour le lendemain midi.
+   Aucune suggestion → aucun bloc : pas de rubrique vide. */
+function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
+  const [items, setItems] = React.useState([]);
+  const ids = basket.map((l) => l.productId).filter(Boolean);
+  const key = ids.slice().sort().join(',') + '|' + (date || '') + '|' + (time || '') + '|' + mode;
+  React.useEffect(() => {
+    let alive = true;
+    const base = window.WSCatalog && window.WSCatalog.endpoint;
+    if (!base || !shopId || ids.length === 0) { setItems([]); return; }
+    fetch(base + '/cross-sell', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId, mode, date: date || null, time: time || null, placement, productIds: ids }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((list) => { if (alive) setItems(Array.isArray(list) ? list : []); })
+      // Une panne de suggestions ne doit RIEN casser du panier — mais elle se
+      // trace, sinon « aucune suggestion » et « serveur muet » se ressemblent.
+      .catch((e) => { if (alive) { setItems([]); console.error('[cross-sell] suggestions indisponibles', e); } });
+    return () => { alive = false; };
+  }, [key, shopId, placement]);
+
+  // Mesure : une impression comptée par produit réellement affiché.
+  React.useEffect(() => {
+    const base = window.WSCatalog && window.WSCatalog.endpoint;
+    if (!base || !items.length) return;
+    for (const it of items) {
+      fetch(base + '/cross-sell/stat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: 'impression', ruleId: it.ruleId, productId: it.productId, shopId }),
+      }).catch(() => {});
+    }
+  }, [items.map((i) => i.productId).join(','), shopId]);
+
+  if (!items.length) return null;
+  return (
+    <div className="ws-xsell">
+      <div className="ws-xsell__h">Pour accompagner</div>
+      {items.map((it) => (
+        <div className="ws-xsell__i" key={it.productId}>
+          {it.img ? <img className="ws-xsell__img" src={it.img} alt="" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}/>
+                  : <span className="ws-xsell__img"/>}
+          <span className="ws-xsell__n">{it.name}</span>
+          <span className="ws-xsell__p">€{Number(it.price).toFixed(2)}</span>
+          <button type="button" className="ws-xsell__add" aria-label={`Ajouter ${it.name}`} title="Ajouter au panier"
+            onClick={() => {
+              const base = window.WSCatalog && window.WSCatalog.endpoint;
+              if (base) fetch(base + '/cross-sell/stat', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ event: 'add', ruleId: it.ruleId, productId: it.productId, shopId }),
+              }).catch(() => {});
+              onAdd(it);
+            }}>+</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, notesEnabled, deliveryFeeResult,
+                  date, slotTime, onCrossAdd }) {
   // TODO[BACKEND]: replace with `await WSPricing.quote({ shopId, mode, basket })`
   // and render the returned subtotal / discounts / total. The synchronous
   // computation below is a fallback so the demo basket still totals correctly
@@ -1372,6 +1437,10 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
             )}
           </div>
         ))}
+        {typeof onCrossAdd === 'function' && (
+          <CrossSell shopId={shop && shop.id} mode={mode} date={date} time={slotTime}
+                     basket={basket} placement="cart" onAdd={onCrossAdd}/>
+        )}
       </div>
 
       {crossOffer && <CrossPortionStrip calc={crossOffer}/>}
@@ -4760,6 +4829,35 @@ function ShopFrame({ variant }) {
     stockReserve(line.productId, line.qty || 1, lineId);
   }
 
+  /* Heure de RETRAIT du créneau choisi — décision validée : c'est elle que les
+     règles de ventes croisées comparent, jamais l'heure de la commande.
+     Les créneaux sont libellés « 12:00 – 12:30 » ; on en prend le début.
+     Tant qu'aucun créneau n'est choisi (cas du panier, avant le paiement),
+     l'heure reste inconnue et la contrainte horaire ne s'applique pas — à
+     l'étape de paiement, où le créneau est choisi, elle s'applique exactement. */
+  const crossSlotTime = React.useMemo(() => {
+    const hit = (officeSlots || []).find((s) => s.slot_type === selectedSlot || s.id === selectedSlot);
+    const m = String((hit && hit.label) || '').match(/([01]\d|2[0-3]):[0-5]\d/);
+    return m ? m[0] : null;
+  }, [officeSlots, selectedSlot]);
+
+  /* Ajout depuis une suggestion « Panier Croisé ». On passe par le MÊME chemin
+     qu'un ajout ordinaire — réservation de stock comprise — pour qu'un produit
+     suggéré ne soit pas un citoyen de seconde zone dans le panier. */
+  function handleCrossAdd(it) {
+    const p = allProducts.find((x) => String(x.id) === String(it.productId));
+    handleAddConfigured({
+      productId: it.productId,
+      name: p ? p.name : it.name,
+      qty: 1,
+      price: Number(it.price) || (p ? p.price : 0),
+      options: [],
+      portion: null,
+      cat: p ? p.cat : null,
+      basePrice: p ? p.price : Number(it.price) || 0,
+    });
+  }
+
   const Nav = variant === 'A' ? NavbarA : variant === 'B' ? NavbarB : NavbarC;
 
   // Auto-switch back to collect if delivery cutoff passes while already in delivery mode.
@@ -4904,7 +5002,7 @@ function ShopFrame({ variant }) {
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
         </button>
 
-        <Basket shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} deliveryFeeResult={deliveryFeeResult}/>
+        <Basket shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} deliveryFeeResult={deliveryFeeResult} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
       </div>
 
       {/* Mobile bottom tab bar — 2 buttons, 50/50 split */}
@@ -4938,7 +5036,7 @@ function ShopFrame({ variant }) {
           <div className="ws-drawer__panel">
             <button className="ws-drawer__close" onClick={() => setCartDrawerOpen(false)} aria-label="Fermer">×</button>
             <div className="ws-drawer__handle" aria-hidden="true"/>
-            <Basket shop={shop} mode={mode} basket={basket} onCheckout={() => { setCartDrawerOpen(false); handleCheckout(); }} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled}/>
+            <Basket shop={shop} mode={mode} basket={basket} onCheckout={() => { setCartDrawerOpen(false); handleCheckout(); }} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
           </div>
         </div>
       )}
