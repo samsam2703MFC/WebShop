@@ -4329,7 +4329,18 @@ function dispatch($m, $p) {
           'lat'       => $geo ? $geo['lat'] : null,
           'lng'       => $geo ? $geo['lng'] : null,
           'geoSource' => $geo ? $geo['source'] : null,
+          // Le MOTIF va jusqu'à l'écran : « position inconnue » sans cause
+          // oblige à deviner entre trois pannes qui ne se corrigent pas au
+          // même endroit (migration, adresse vide, service injoignable).
+          'geoReason' => $geo ? $geo['reason'] : null,
         ] : null,
+        // Boutique non résolue : le back-office doit pouvoir le DIRE. Sans ce
+        // motif, la console affiche « Ma boutique » et laisse croire à un
+        // défaut d'affichage, alors que la portée n'a pas été établie.
+        'shopReason' => $shop ? null
+          : ($shopParam === null || $shopParam === ''
+             ? 'Aucune boutique demandée (?shop= absent) — le jeton admin est réseau, la portée doit être précisée.'
+             : 'Boutique « ' . $shopParam . ' » introuvable dans la table shops (ni par id, ni par slug).'),
         'consoleLabel' => 'Console franchisé' . ($shop ? ' · ' . ($shop['city'] ?: $shop['name']) : ''),
       ]);
     }
@@ -4343,9 +4354,12 @@ function dispatch($m, $p) {
       if (!col_exists('shops', 'lat'))
         json_out(['ok' => false, 'error' => 'Migration 0060 non passée — colonnes lat/lng absentes.'], 501);
       $geo = shop_geo($shop, true);
-      if (!$geo) json_out(['ok' => false,
-        'error' => 'Adresse non résolue — vérifiez address_line et zip de la boutique.'], 409);
+      if (!$geo || $geo['lat'] === null) json_out(['ok' => false,
+        'error' => $geo['reason'] ?? 'Adresse non résolue — vérifiez address_line et zip de la boutique.',
+        'adresse' => trim(trim((string) ($shop['address_line'] ?? '')) . ' · '
+                        . trim(((string) ($shop['zip'] ?? '')) . ' ' . ((string) ($shop['city'] ?? ''))), ' ·')], 409);
       json_out(['ok' => true, 'lat' => $geo['lat'], 'lng' => $geo['lng'], 'source' => $geo['source'],
+        'reason' => $geo['reason'],
         'exact' => $geo['source'] === 'address' || $geo['source'] === 'manual']);
     }
 
@@ -8134,35 +8148,47 @@ function zip_centroid($zip) {
    écrasée, et un échec est daté pour ne pas réessayer à chaque affichage. */
 function shop_geo($shop, $force = false) {
   $has = fn($c) => col_exists('shops', $c);
-  if (!$has('lat') || !$has('lng')) return null;          // migration 0060 pas passée
+  // Un échec renvoie TOUJOURS sa cause. « Position inconnue » sans motif oblige
+  // à deviner entre une migration non passée, une adresse vide et un service
+  // tiers injoignable — trois pannes qui ne se corrigent pas au même endroit.
+  $ko = fn($why) => ['lat' => null, 'lng' => null, 'source' => null, 'reason' => $why];
+  if (!$has('lat') || !$has('lng'))
+    return $ko('Colonnes shops.lat / shops.lng absentes — migration 0060 non passée sur cette base.');
+  $ok = fn($la, $ln, $sr) => ['lat' => (float) $la, 'lng' => (float) $ln, 'source' => $sr, 'reason' => null];
   $src = $has('geo_source') ? ($shop['geo_source'] ?? null) : null;
   if (!$force) {
     if ($shop['lat'] !== null && $shop['lng'] !== null && $src !== 'zip')
-      return ['lat' => (float) $shop['lat'], 'lng' => (float) $shop['lng'], 'source' => $src ?: 'address'];
+      return $ok($shop['lat'], $shop['lng'], $src ?: 'address');
     // Échec récent ou centroïde déjà posé : on ne relance pas un appel externe
     // à chaque ouverture de la console. Une journée suffit à laisser corriger
     // l'adresse, et /franchisee/shop-geocode force la reprise à la demande.
     if ($has('geo_at') && !empty($shop['geo_at']) && strtotime((string) $shop['geo_at']) > time() - 86400) {
-      if ($shop['lat'] !== null && $shop['lng'] !== null)
-        return ['lat' => (float) $shop['lat'], 'lng' => (float) $shop['lng'], 'source' => $src ?: 'zip'];
-      return null;
+      if ($shop['lat'] !== null && $shop['lng'] !== null) return $ok($shop['lat'], $shop['lng'], $src ?: 'zip');
+      return $ko('Dernière résolution en échec (' . $shop['geo_at'] . ') — nouvel essai dans 24 h,'
+               . ' ou immédiatement via « Recalculer la position ».');
     }
   }
-  if ($src === 'manual' && !$force) return $shop['lat'] !== null
-    ? ['lat' => (float) $shop['lat'], 'lng' => (float) $shop['lng'], 'source' => 'manual'] : null;
+  if ($src === 'manual' && !$force)
+    return $shop['lat'] !== null ? $ok($shop['lat'], $shop['lng'], 'manual')
+                                 : $ko('Position marquée « saisie manuelle » mais lat/lng vides.');
 
   $addr = trim((string) ($shop['address_line'] ?? ''));
   $zip  = trim((string) ($shop['zip'] ?? ''));
   $city = trim((string) ($shop['city'] ?? ''));
-  $hit = null; $source = null;
-  if ($addr !== '' || $zip !== '') {
-    $qy = trim($addr . ', ' . trim($zip . ' ' . $city) . ', Belgique', " ,");
-    $hit = nominatim_lookup($qy);
-    if ($hit) $source = 'address';
-  }
+  if ($addr === '' && $zip === '')
+    return $ko('Boutique sans adresse : address_line et zip sont vides dans la table shops.');
+
+  $hit = null; $source = null; $why = null;
+  $qy = trim($addr . ', ' . trim($zip . ' ' . $city) . ', Belgique', " ,");
+  [$hit, $nomWhy] = nominatim_lookup($qy);
+  if ($hit) $source = 'address';
   if (!$hit) {                                            // repli ASSUMÉ, étiqueté comme tel
     $c = zip_centroid($zip);
-    if ($c) { $hit = $c; $source = 'zip'; }
+    if ($c) { $hit = $c; $source = 'zip';
+      $why = 'Adresse non géocodée (' . $nomWhy . ') — repli sur le centre du code postal ' . $zip . '.'; }
+    else $why = $zip === ''
+      ? 'Adresse non géocodée (' . $nomWhy . ') et aucun code postal pour se rabattre sur la commune.'
+      : 'Adresse non géocodée (' . $nomWhy . ') et code postal « ' . $zip .' » absent du référentiel belge.';
   }
   $cols = ['lat = ?', 'lng = ?'];
   $vals = [$hit ? $hit['lat'] : null, $hit ? $hit['lng'] : null];
@@ -8171,14 +8197,19 @@ function shop_geo($shop, $force = false) {
   $vals[] = (int) $shop['id'];
   try { q("UPDATE shops SET " . implode(', ', $cols) . " WHERE id = ?", $vals); }
   catch (Throwable $e) { error_log('[ws] shop_geo écriture KO : ' . $e->getMessage()); }
-  return $hit ? ['lat' => (float) $hit['lat'], 'lng' => (float) $hit['lng'], 'source' => $source] : null;
+  if (!$hit) return $ko($why);
+  return ['lat' => (float) $hit['lat'], 'lng' => (float) $hit['lng'], 'source' => $source, 'reason' => $why];
 }
 
 /* Appel Nominatim (OpenStreetMap). Délai court : la console ne doit pas
    attendre un service tiers. Aucune exception ne remonte — sans réponse, on
-   retombe sur le centroïde, jamais sur une position inventée. */
+   retombe sur le centroïde, jamais sur une position inventée.
+   Renvoie [position|null, motif] : le motif REMONTE jusqu'à l'écran. Un
+   hébergeur qui bloque les appels sortants et une adresse introuvable
+   produisent le même pin ; ils ne se corrigent pas du tout au même endroit. */
 function nominatim_lookup($query) {
-  if (trim((string) $query) === '') return null;
+  if (trim((string) $query) === '') return [null, 'requête vide'];
+  if (!function_exists('curl_init')) return [null, 'extension cURL absente du PHP du serveur'];
   $url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=be&q='
        . rawurlencode($query);
   try {
@@ -8188,14 +8219,23 @@ function nominatim_lookup($query) {
       // Nominatim exige un agent identifiable ; un appel anonyme est refusé.
       CURLOPT_USERAGENT => 'AtelierBy-BackOffice/1.0 (+' . (cfg()['mail_from'] ?: 'no-reply@atelierby.be') . ')',
     ]);
-    $raw = curl_exec($ch);
+    $raw  = curl_exec($ch);
     $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err  = curl_error($ch);
     curl_close($ch);
-    if ($code !== 200 || !$raw) { error_log('[ws] nominatim HTTP ' . $code . ' pour « ' . $query . ' »'); return null; }
+    if ($raw === false || $code === 0) {
+      error_log('[ws] nominatim injoignable : ' . $err);
+      return [null, 'service de géocodage injoignable depuis le serveur' . ($err ? ' — ' . $err : '')];
+    }
+    if ($code !== 200) { error_log('[ws] nominatim HTTP ' . $code . ' pour « ' . $query . ' »');
+      return [null, 'service de géocodage : HTTP ' . $code]; }
     $j = json_decode((string) $raw, true);
-    if (!is_array($j) || !isset($j[0]['lat'], $j[0]['lon'])) { error_log('[ws] nominatim sans résultat : « ' . $query . ' »'); return null; }
-    return ['lat' => (float) $j[0]['lat'], 'lng' => (float) $j[0]['lon']];
-  } catch (Throwable $e) { error_log('[ws] nominatim KO : ' . $e->getMessage()); return null; }
+    if (!is_array($j) || !isset($j[0]['lat'], $j[0]['lon'])) {
+      error_log('[ws] nominatim sans résultat : « ' . $query . ' »');
+      return [null, 'adresse « ' . $query . ' » introuvable']; }
+    return [['lat' => (float) $j[0]['lat'], 'lng' => (float) $j[0]['lon']], null];
+  } catch (Throwable $e) { error_log('[ws] nominatim KO : ' . $e->getMessage());
+    return [null, 'erreur du géocodage : ' . $e->getMessage()]; }
 }
 
 /* Produit PORTEUR de la formule d'un produit donné.
