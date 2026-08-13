@@ -92,6 +92,78 @@ function send_order_email($ref, $lines, $total, $to) {
   @mail($to, "Confirmation de commande $ref", $body, $headers);
 }
 
+/* =====================================================================
+   Gabarits d'e-mail — rendu minimal, volontairement
+   =====================================================================
+   Trois marqueurs, et rien d'autre :
+     {{ var }}                              substitution, ÉCHAPPÉE en HTML
+     <!-- IF var -->…<!-- ENDIF -->         gardé si la valeur est non vide
+     <!-- FOR liste -->…<!-- ENDFOR -->     répété par élément de la liste
+
+   Pas de moteur de gabarit : ces courriers portent des conditions
+   commerciales, pas de la logique. Toute valeur absente fait DISPARAÎTRE son
+   bloc — jamais de « — », jamais de montant par défaut. Un chiffre affiché
+   dans ce document engage la boutique.
+   ===================================================================== */
+function mail_esc($v) {
+  return htmlspecialchars((string) $v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+function mail_render($tpl, array $vars) {
+  // Les boucles d'abord : leur corps peut contenir des IF et des variables.
+  $tpl = preg_replace_callback('/<!-- FOR ([a-z_]+) -->(.*?)<!-- ENDFOR -->/s',
+    function ($m) use ($vars) {
+      $liste = $vars[$m[1]] ?? [];
+      if (!is_array($liste) || !$liste) return '';
+      $out = '';
+      foreach ($liste as $item)
+        $out .= mail_render($m[2], is_array($item) ? array_merge($vars, $item) : $vars);
+      return $out;
+    }, $tpl);
+  // Puis les conditions, du bloc le plus interne vers l'extérieur.
+  $avant = null;
+  while ($avant !== $tpl) {
+    $avant = $tpl;
+    $tpl = preg_replace_callback('/<!-- IF ([a-z_]+) -->((?:(?!<!-- IF ).)*?)<!-- ENDIF -->/s',
+      function ($m) use ($vars) {
+        $v = $vars[$m[1]] ?? '';
+        $plein = is_array($v) ? count($v) > 0 : (trim((string) $v) !== '');
+        return $plein ? $m[2] : '';
+      }, $tpl);
+  }
+  // Enfin les variables. Une variable inconnue s'efface : mieux vaut un vide
+  // qu'un « {{ plafond }} » lu par le client.
+  return preg_replace_callback('/\{\{\s*([a-z_]+)\s*\}\}/',
+    function ($m) use ($vars) {
+      $v = $vars[$m[1]] ?? '';
+      return is_array($v) ? '' : mail_esc($v);
+    }, $tpl);
+}
+
+/* Envoi d'un courrier HTML avec sa version texte (multipart/alternative).
+   Best-effort, comme les commandes : un envoi qui échoue ne doit jamais
+   défaire ce qui vient d'être écrit en base. Renvoie false si rien n'est
+   parti, pour que l'appelant puisse le DIRE plutôt que de le supposer. */
+function send_html_mail($to, $subject, $html, $text = '') {
+  $from = cfg()['mail_from'] ?? '';
+  if (!$to || !$from || !filter_var($to, FILTER_VALIDATE_EMAIL)) return false;
+  if ($text === '') {
+    $text = trim(html_entity_decode(strip_tags(preg_replace('/<(style|script)\b[^>]*>.*?<\/\1>/is', '', $html)),
+                                    ENT_QUOTES, 'UTF-8'));
+    $text = preg_replace("/\n{3,}/", "\n\n", preg_replace('/[ \t]+/', ' ', $text));
+  }
+  $b = 'b' . bin2hex(random_bytes(8));
+  $headers = "From: $from\r\nMIME-Version: 1.0\r\n"
+           . "Content-Type: multipart/alternative; boundary=\"$b\"\r\n";
+  $body = "--$b\r\nContent-Type: text/plain; charset=UTF-8\r\n"
+        . "Content-Transfer-Encoding: 8bit\r\n\r\n$text\r\n"
+        . "--$b\r\nContent-Type: text/html; charset=UTF-8\r\n"
+        . "Content-Transfer-Encoding: 8bit\r\n\r\n$html\r\n--$b--\r\n";
+  // Sujet encodé : « Bienvenue chez L'Atelier By » contient des accents, et un
+  // en-tête brut les rend en mojibake dans la moitié des clients.
+  $sub = '=?UTF-8?B?' . base64_encode($subject) . '?=';
+  return @mail($to, $sub, $body, $headers);
+}
+
 /* Back-offices Franchise Buddy (franchisé / franchiseur) — sessions isolées.
  * Additif : ne charge que des définitions de fonctions ; n'affecte aucune route
  * existante tant qu'aucune requête « /bo/… » n'arrive (voir index.php). */

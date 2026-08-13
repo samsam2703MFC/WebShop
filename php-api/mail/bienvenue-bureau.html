@@ -32,13 +32,15 @@
   <!-- 1. En-tête -->
   <tr>
     <td bgcolor="#F5EFE6" class="px" style="padding:24px 32px; background-color:#F5EFE6;">
-      <img src="assets/logo.png" width="180" height="31" alt="L'Atelier By - sucré, salé, à emporter" style="display:block; width:180px; height:31px; border:0; outline:none; text-decoration:none;">
+      <!-- IF url_logo -->
+      <img src="{{ url_logo }}" width="180" height="31" alt="L'Atelier By - sucré, salé, à emporter" style="display:block; width:180px; height:31px; border:0; outline:none; text-decoration:none;">
+      <!-- ENDIF -->
     </td>
   </tr>
   <tr>
     <td bgcolor="#8D1D2C" class="px" style="padding:26px 32px; background-color:#8D1D2C;">
       <p style="margin:0; font-family:Arial,Helvetica,sans-serif; font-size:26px; line-height:32px; mso-line-height-rule:exactly; color:#FFFFFF; font-weight:bold;">Votre compte de livraison est ouvert</p>
-      <p style="margin:8px 0 0; font-family:Arial,Helvetica,sans-serif; font-size:15px; line-height:22px; mso-line-height-rule:exactly; color:#F1D9DC;">{{ raison }} &mdash; {{ code_client }}</p>
+      <p style="margin:8px 0 0; font-family:Arial,Helvetica,sans-serif; font-size:15px; line-height:22px; mso-line-height-rule:exactly; color:#F1D9DC;">{{ raison }}<!-- IF code_client --> &mdash; {{ code_client }}<!-- ENDIF --></p>
     </td>
   </tr>
 
@@ -84,30 +86,42 @@
           <td class="lbl" width="45%" style="width:45%; padding:12px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">Adresse de livraison</td>
           <td class="val" width="55%" style="width:55%; padding:12px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:15px; line-height:21px; mso-line-height-rule:exactly; color:#222222; font-weight:bold;">{{ site_adresse }}<br>{{ site_cp }} {{ site_localite }}</td>
         </tr>
+        <!-- IF site_office -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:12px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">B&acirc;timent / office</td>
           <td class="val" width="55%" style="width:55%; padding:12px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:15px; line-height:21px; mso-line-height-rule:exactly; color:#222222; font-weight:bold;">{{ site_office }}</td>
         </tr>
+        <!-- ENDIF -->
+        <!-- IF site_etage -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:12px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">&Eacute;tage / local</td>
           <td class="val" width="55%" style="width:55%; padding:12px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:15px; line-height:21px; mso-line-height-rule:exactly; color:#222222; font-weight:bold;">{{ site_etage }}</td>
         </tr>
+        <!-- ENDIF -->
+        <!-- IF jours -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:12px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">Jours desservis</td>
           <td class="val" width="55%" style="width:55%; padding:12px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:15px; line-height:21px; mso-line-height-rule:exactly; color:#222222; font-weight:bold;">{{ jours }}</td>
         </tr>
+        <!-- ENDIF -->
+        <!-- IF fenetre -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:12px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">Fen&ecirc;tre de livraison</td>
           <td class="val" width="55%" style="width:55%; padding:12px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:15px; line-height:21px; mso-line-height-rule:exactly; color:#222222; font-weight:bold;">{{ fenetre }}</td>
         </tr>
+        <!-- ENDIF -->
+        <!-- IF validation -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:12px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">Validation &agrave; la r&eacute;ception</td>
           <td class="val" width="55%" style="width:55%; padding:12px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:15px; line-height:21px; mso-line-height-rule:exactly; color:#222222; font-weight:bold;">{{ validation }}</td>
         </tr>
+        <!-- ENDIF -->
+        <!-- IF tournee -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:12px 14px; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">Tourn&eacute;e</td>
           <td class="val" width="55%" style="width:55%; padding:12px 14px; font-family:Arial,Helvetica,sans-serif; font-size:15px; line-height:21px; mso-line-height-rule:exactly; color:#222222; font-weight:bold;">{{ tournee }}</td>
         </tr>
+        <!-- ENDIF -->
       </table>
     </td>
   </tr>
@@ -117,40 +131,56 @@
     <td class="px" style="padding:26px 32px 0;">
       <p style="margin:0 0 4px; font-family:Arial,Helvetica,sans-serif; font-size:11px; line-height:14px; mso-line-height-rule:exactly; letter-spacing:2px; text-transform:uppercase; color:#8D1D2C; font-weight:bold;">Vos conditions</p>
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%; background-color:#FFFFFF;">
+        <!-- IF code_client -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">Code client</td>
           <td class="val" width="55%" style="width:55%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:'Courier New',Courier,monospace; font-size:14px; line-height:20px; mso-line-height-rule:exactly; color:#222222; font-weight:bold;">{{ code_client }}</td>
         </tr>
+        <!-- ENDIF -->
+        <!-- IF tva -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">N&deg; TVA</td>
           <td class="val" width="55%" style="width:55%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:20px; mso-line-height-rule:exactly; color:#222222;">{{ tva }}</td>
         </tr>
+        <!-- ENDIF -->
+        <!-- IF segment -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">Segment</td>
           <td class="val" width="55%" style="width:55%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:20px; mso-line-height-rule:exactly; color:#222222;">{{ segment }}</td>
         </tr>
+        <!-- ENDIF -->
+        <!-- IF paiement -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">Conditions de paiement</td>
           <td class="val" width="55%" style="width:55%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:20px; mso-line-height-rule:exactly; color:#222222; font-weight:bold;">{{ paiement }}</td>
         </tr>
+        <!-- ENDIF -->
+        <!-- IF plafond -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">Encours autoris&eacute;</td>
           <td class="val" width="55%" style="width:55%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:20px; mso-line-height-rule:exactly; color:#222222;">{{ plafond }}</td>
         </tr>
+        <!-- ENDIF -->
+        <!-- IF franco -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">Franco de port</td>
           <td class="val" width="55%" style="width:55%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:20px; mso-line-height-rule:exactly; color:#222222; font-weight:bold;">{{ franco }}</td>
         </tr>
+        <!-- ENDIF -->
+        <!-- IF remise_web -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">Remise webshop</td>
           <td class="val" width="55%" style="width:55%; padding:11px 14px; border-bottom:1px solid #E3D9CB; font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:20px; mso-line-height-rule:exactly; color:#222222; font-weight:bold;">{{ remise_web }}</td>
         </tr>
+        <!-- ENDIF -->
+        <!-- IF facturation -->
         <tr>
           <td class="lbl" width="45%" style="width:45%; padding:11px 14px; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:19px; mso-line-height-rule:exactly; color:#6B6259;">Facturation</td>
           <td class="val" width="55%" style="width:55%; padding:11px 14px; font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:20px; mso-line-height-rule:exactly; color:#222222;">{{ facturation }}</td>
         </tr>
+        <!-- ENDIF -->
       </table>
-      <p style="margin:10px 0 0; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:20px; mso-line-height-rule:exactly; color:#6B6259;">Au-del&agrave; du franco de port {{ franco }}, la livraison est offerte. La remise {{ remise_web }} s'applique automatiquement au panier en ligne.</p>
+      <p style="margin:10px 0 0; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:20px; mso-line-height-rule:exactly; color:#6B6259;"><!-- IF franco -->Au-del&agrave; du franco de port {{ franco }}, la livraison est offerte. <!-- ENDIF --><!-- IF remise_web -->La remise {{ remise_web }} s'applique automatiquement au panier en ligne.<!-- ENDIF --></p>
     </td>
   </tr>
 
@@ -183,14 +213,18 @@
                 <td width="26" valign="top" style="width:26px; padding:0 0 10px; font-family:'Courier New',Courier,monospace; font-size:15px; line-height:22px; mso-line-height-rule:exactly; color:#C87A3F; font-weight:bold;">1</td>
                 <td valign="top" style="padding:0 0 10px; font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:22px; mso-line-height-rule:exactly; color:#F0E6D8;">Chaque collaborateur cr&eacute;e son compte sur le webshop.</td>
               </tr>
-              <tr>
+              <!-- IF boutique_nom -->
+        <tr>
                 <td width="26" valign="top" style="width:26px; padding:0 0 10px; font-family:'Courier New',Courier,monospace; font-size:15px; line-height:22px; mso-line-height-rule:exactly; color:#C87A3F; font-weight:bold;">2</td>
                 <td valign="top" style="padding:0 0 10px; font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:22px; mso-line-height-rule:exactly; color:#F0E6D8;">La demande arrive chez votre boutique {{ boutique_nom }}.</td>
               </tr>
-              <tr>
+        <!-- ENDIF -->
+              <!-- IF raison -->
+        <tr>
                 <td width="26" valign="top" style="width:26px; font-family:'Courier New',Courier,monospace; font-size:15px; line-height:22px; mso-line-height-rule:exactly; color:#C87A3F; font-weight:bold;">3</td>
                 <td valign="top" style="font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:22px; mso-line-height-rule:exactly; color:#F0E6D8;">Il est rattach&eacute; &agrave; {{ raison }} et &agrave; son d&eacute;partement, et commande aux conditions ci-dessus.</td>
               </tr>
+        <!-- ENDIF -->
             </table>
             <!--
               LIEN D'INVITATION · un seul paramètre, signé.
@@ -212,12 +246,18 @@
               validation du franchisé. Pas de repli — un jeton absent, expiré ou révoqué
               affiche un message, jamais un formulaire vide.
             -->
+            <!-- SANS LIEN, PAS DE BOUTON. invite_issue() peut ne rien rendre (table
+                 0062 absente) : un bouton « Créer mon compte » à href vide enverrait
+                 le personnel nulle part, et le bureau croirait avoir été invité. -->
+            <!-- IF invite_url -->
             <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;" class="btn">
-              <tr>
+              <!-- IF invite_url -->
+        <tr>
                 <td bgcolor="#8D1D2C" align="center" style="background-color:#8D1D2C; border-radius:2px;">
                   <a href="{{ invite_url }}" style="display:block; padding:14px 28px; font-family:Arial,Helvetica,sans-serif; font-size:15px; line-height:20px; mso-line-height-rule:exactly; color:#FFFFFF; font-weight:bold; text-decoration:none;">Cr&eacute;er mon compte</a>
                 </td>
               </tr>
+        <!-- ENDIF -->
             </table>
             <p style="margin:12px 0 0; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:20px; mso-line-height-rule:exactly; color:#F0E6D8;"><strong style="color:#FFFFFF;">Transf&eacute;rez cet e-mail &agrave; vos collaborateurs.</strong> Le lien les am&egrave;ne au formulaire avec votre soci&eacute;t&eacute;, votre site de livraison et votre boutique d&eacute;j&agrave; rattach&eacute;s : ils ne saisissent que leur identit&eacute; et leur mot de passe.</p>
             <!-- Le lien est le m&ecirc;me pour tout le monde : ne le d&eacute;coupez pas par personne. -->
@@ -226,6 +266,7 @@
                  {{ invite_url }} (module 4 mm minimum), l&#39;URL en toutes lettres dessous en
                  police mono, et la date d&#39;expiration &agrave; c&ocirc;t&eacute;. Un PDF finit affich&eacute; au mur
                  d&#39;une cafet&eacute;ria : le QR doit rester lisible &agrave; 60 cm et l&#39;URL recopiable. -->
+            <!-- ENDIF -->
             <!-- IF staff -->
             <p style="margin:20px 0 6px; font-family:Arial,Helvetica,sans-serif; font-size:11px; line-height:14px; mso-line-height-rule:exactly; letter-spacing:2px; text-transform:uppercase; color:#B9A88F; font-weight:bold;">D&eacute;j&agrave; invit&eacute;s</p>
             <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;">
@@ -252,10 +293,10 @@
             <p style="margin:0; font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:21px; mso-line-height-rule:exactly; color:#222222; font-weight:bold;">{{ boutique_nom }}</p>
             <p style="margin:4px 0 0; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:20px; mso-line-height-rule:exactly; color:#6B6259;">{{ boutique_adresse }}<br>{{ boutique_tel }}</p>
             <p style="margin:12px 0 0; font-family:Arial,Helvetica,sans-serif; font-size:13px; line-height:20px; mso-line-height-rule:exactly; color:#6B6259;">
-              <a href="{{ url_webshop }}" style="color:#8D1D2C; text-decoration:underline;">Webshop</a> &nbsp;&middot;&nbsp;
-              <a href="{{ url_aide }}" style="color:#8D1D2C; text-decoration:underline;">Aide</a>
+              <!-- IF url_webshop --><a href="{{ url_webshop }}" style="color:#8D1D2C; text-decoration:underline;">Webshop</a><!-- ENDIF --><!-- IF url_aide --> &nbsp;&middot;&nbsp;
+              <a href="{{ url_aide }}" style="color:#8D1D2C; text-decoration:underline;">Aide</a><!-- ENDIF -->
             </p>
-            <p style="margin:14px 0 0; font-family:Arial,Helvetica,sans-serif; font-size:11px; line-height:17px; mso-line-height-rule:exactly; color:#8A8177;">Cet e-mail vous est adress&eacute; en tant que contact du compte de livraison {{ code_client }}. Conditions g&eacute;n&eacute;rales de vente disponibles en boutique et sur le webshop. <a href="{{ url_desabonnement }}" style="color:#8A8177; text-decoration:underline;">Se d&eacute;sabonner des informations commerciales</a>.</p>
+            <p style="margin:14px 0 0; font-family:Arial,Helvetica,sans-serif; font-size:11px; line-height:17px; mso-line-height-rule:exactly; color:#8A8177;">Cet e-mail vous est adress&eacute; en tant que contact du compte de livraison<!-- IF code_client --> {{ code_client }}<!-- ENDIF -->. Conditions g&eacute;n&eacute;rales de vente disponibles en boutique et sur le webshop.<!-- IF url_desabonnement --> <a href="{{ url_desabonnement }}" style="color:#8A8177; text-decoration:underline;">Se d&eacute;sabonner des informations commerciales</a>.<!-- ENDIF --></p>
           </td>
         </tr>
       </table>

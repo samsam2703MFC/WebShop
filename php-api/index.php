@@ -7978,9 +7978,96 @@ function dispatch($m, $p) {
         'domain' => $emailDom, 'cp' => $obZip,
         'by' => is_admin_request() ? 'admin' : ('pin:' . (string) ($pinSes['id'] ?? '?')),
       ]);
+      $inviteUrl = $inv ? invite_link($inv['token']) : null;
+
+      /* COURRIER DE BIENVENUE AU BUREAU.
+         C'est le document de référence du contact : ce qui a été convenu, et
+         le bouton qu'il transfère à son personnel. Il part sur demande
+         explicite de la console (sendMail) — un envoi par défaut expédierait
+         des conditions commerciales à chaque essai d'onboarding.
+         Best-effort : un courrier qui ne part pas ne défait pas le bureau,
+         mais il se DIT (mail_sent / mail_reason). Un franchisé qui croit le
+         contact prévenu alors que rien n'est parti attendra une commande qui
+         ne viendra jamais. */
+      $mailSent = false; $mailReason = null;
+      $ctTo = trim((string) ($b['contactEmail'] ?? ''));
+      if (empty($b['sendMail'])) {
+        $mailReason = 'Courrier non demandé.';
+      } elseif (!filter_var($ctTo, FILTER_VALIDATE_EMAIL)) {
+        $mailReason = 'Courrier non envoyé : l’adresse du contact est absente ou invalide.';
+      } elseif (!is_file(__DIR__ . '/mail/bienvenue-bureau.html')) {
+        $mailReason = 'Courrier non envoyé : gabarit mail/bienvenue-bureau.html introuvable sur le serveur.';
+      } else {
+        $sh = $obShop ? row("SELECT name, phone, city, zip, TRIM(CONCAT_WS(' ', street, street_num)) AS address
+                               FROM shops WHERE id = ?", [(int) $obShop]) : null;
+        $num = function ($v, $suffixe) {
+          $v = trim((string) $v);
+          if ($v === '') return '';
+          return is_numeric($v) ? ($v . ' ' . $suffixe) : $v;
+        };
+        /* Le libellé et la valeur d'un voucher ne sont PAS relus en base :
+           ws_vouchers n'en garde que le code. Ils viennent du corps posté,
+           c'est-à-dire de ce que le franchisé a saisi et validé à l'écran. */
+        $vTpl = [];
+        foreach ((array) ($b['vouchers'] ?? []) as $v) {
+          if (!is_array($v)) continue;
+          $code = strtoupper(trim((string) ($v['code'] ?? '')));
+          if ($code === '') continue;
+          $vTpl[] = ['voucher_titre' => (string) ($v['libelle'] ?? 'Voucher'),
+                     'voucher_code' => $code,
+                     'voucher_valeur' => (string) ($v['valeur'] ?? ''),
+                     'voucher_validite' => (string) ($v['validite'] ?? '')];
+        }
+        $dTpl = [];
+        foreach ((array) ($b['departements'] ?? []) as $d)
+          if (is_array($d) && trim((string) ($d['dept'] ?? '')) !== '')
+            $dTpl[] = ['dept' => (string) $d['dept'], 'effectif' => (string) ($d['effectif'] ?? '')];
+        $sTpl = [];
+        foreach ((array) ($b['staff'] ?? []) as $st)
+          if (is_array($st) && trim((string) ($st['email'] ?? '')) !== '')
+            $sTpl[] = ['nom' => (string) ($st['name'] ?? ''), 'email' => (string) $st['email']];
+        $expFr = '';
+        if (!empty($inv['expires_at']) && ($t = strtotime((string) $inv['expires_at']))) $expFr = date('d/m/Y', $t);
+        $codeCli = '';
+        if ($newClientId) $codeCli = col_exists('client', 'code')
+          ? (string) (row("SELECT code FROM client WHERE id=?", [$newClientId])['code'] ?? $newClientId)
+          : (string) $newClientId;
+
+        $vars = [
+          'raison' => $raison, 'code_client' => $codeCli, 'tva' => (string) ($b['tva'] ?? ''),
+          'segment' => (string) ($b['seg'] ?? ''), 'paiement' => (string) ($b['paiement'] ?? ''),
+          'plafond' => $num($b['plafond'] ?? '', '€'), 'franco' => (string) ($b['franco'] ?? ''),
+          'remise_web' => $num($b['remiseWeb'] ?? '', '%'), 'facturation' => (string) ($b['facturation'] ?? ''),
+          'contact_nom' => (string) ($b['contactNom'] ?? ''),
+          'site_adresse' => (string) ($b['adr'] ?? ''), 'site_cp' => $obZip, 'site_localite' => $obLoc,
+          'site_office' => (string) ($b['office'] ?? ''), 'site_etage' => (string) ($b['etage'] ?? ''),
+          'jours' => (string) ($b['jours'] ?? ''), 'fenetre' => (string) ($b['fenetre'] ?? ''),
+          'validation' => (string) ($b['validation'] ?? ''), 'tournee' => $tourWanted,
+          'boutique_nom' => (string) ($sh['name'] ?? ''),
+          'boutique_adresse' => trim(implode(', ', array_filter([
+              (string) ($sh['address'] ?? ''), trim(((string) ($sh['zip'] ?? '')) . ' ' . ((string) ($sh['city'] ?? '')))]))),
+          'boutique_tel' => (string) ($sh['phone'] ?? ''),
+          'url_webshop' => (string) (cfg()['webshop_base'] ?? ''),
+          'url_aide' => 'mailto:aide@latelierby.be',
+          // Le logo doit être une URL ABSOLUE : le courrier s'ouvre hors du
+          // site, un chemin relatif n'y désigne rien. Absent de la config,
+          // il disparaît — un cadre d'image cassé fait plus de mal que pas
+          // de logo du tout.
+          'url_logo' => (string) (cfg()['mail_logo_url'] ?? ''),
+          'url_desabonnement' => '',   // aucun système de désabonnement : le lien disparaît
+          'invite_url' => (string) ($inviteUrl ?? ''), 'invite_expire_le' => $expFr,
+          'invite_domaine' => (string) ($emailDom ?? ''),
+          'vouchers' => $vTpl, 'departements' => $dTpl, 'staff' => $sTpl,
+        ];
+        $html = mail_render(file_get_contents(__DIR__ . '/mail/bienvenue-bureau.html'), $vars);
+        $mailSent = send_html_mail($ctTo, 'Votre compte de livraison est ouvert — ' . $raison, $html);
+        if (!$mailSent) $mailReason = 'Courrier NON parti : mail() a échoué (mail_from configuré ? MTA du serveur ?).';
+      }
+
       json_out(['ok' => true, 'office_id' => $officeId, 'voucher_created' => $voucherCreated,
                 'vouchers_created' => $vouchersCreated,
-                'invite_url'        => $inv ? invite_link($inv['token']) : null,
+                'mail_sent' => $mailSent, 'mail_to' => $mailSent ? $ctTo : null, 'mail_reason' => $mailReason,
+                'invite_url'        => $inviteUrl,
                 'invite_expires_at' => $inv['expires_at'] ?? null,
                 'invite_reason'     => $inv ? null
                   : 'Lien d’invitation non émis : la table ws_office_invites est absente (migration 0062). Le bureau est créé.']);
