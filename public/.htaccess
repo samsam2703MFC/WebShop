@@ -42,3 +42,15 @@
     Header set Cache-Control "public, max-age=31536000, immutable"
   </FilesMatch>
 </IfModule>
+
+# « Créer mon compte » — le lien magique d'invitation.
+#
+# L'URL envoyée par e-mail et imprimée en QR code est /inscription?i=<jeton> :
+# pas d'extension, parce qu'elle se recopie à la main depuis une affiche de
+# cafétéria. Le fichier servi reste inscription.html — cette règle ne fait que
+# lui donner cette adresse-là. Sans mod_rewrite, /inscription.html?i=<jeton>
+# fonctionne toujours ; c'est le repli, pas une page différente.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^inscription/?$ inscription.html [L,QSA]
+</IfModule>

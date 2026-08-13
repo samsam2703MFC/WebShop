@@ -1671,6 +1671,149 @@ function dispatch($m, $p) {
     json_out(['ok' => true, 'requestId' => $rid, 'status' => 'pending',
               'message' => 'Demande transmise à votre boutique. Vous serez rattaché après validation.'], 201);
   }
+
+  /* ── LIEN MAGIQUE « Créer mon compte » (public, jeton signé) ───────────────
+     Le franchisé crée le bureau, le serveur émet UN lien, le contact du bureau
+     le transfère à son personnel. Chaque collaborateur ouvre la page avec sa
+     boutique, son bureau et son site DÉJÀ liés : il ne saisit que son identité.
+
+     Ce qui suit sert la page. Deux principes gouvernent les deux endpoints :
+
+     • LE JETON FAIT AUTORITÉ, PAS LE FORMULAIRE. Boutique, bureau et site sont
+       relus dans la charge signée à chaque appel ; les mêmes valeurs postées
+       par le navigateur sont ignorées. Sinon il suffirait de remplacer
+       office=17 par office=18 pour s'inscrire — et commander — chez un autre
+       client, en paiement différé.
+     • LE LIEN PRÉ-REMPLIT, IL N'OUVRE RIEN. Le compte créé entre en `pending`
+       dans ws_office_join_requests, exactement comme une demande faite à la
+       main : c'est le franchisé qui écrit client.office_id. ── */
+  if ($m === 'GET' && $p === '/inscription') {
+    [$d, $ko, $row] = invite_check((string) qp('i', ''));
+    // 410 Gone : le lien a existé et ne vaut plus. Le corps porte le MOTIF —
+    // « expiré » se redemande au responsable, « invalide » signale une URL
+    // coupée par un client mail : la page ne dit pas la même chose.
+    if (!$d) json_out(['ok' => false, 'error' => $ko], 410);
+    $shop = row("SELECT id, name, city FROM shops WHERE id = ?", [(int) ($d['shop'] ?? 0)]);
+    $off  = !empty($d['office'])
+      ? row("SELECT id, name, address, postal_code, city, active FROM ws_offices WHERE id = ?", [(int) $d['office']]) : null;
+    $site = !empty($d['site'])
+      ? row("SELECT id, name, address, floor_room FROM ws_office_delivery_sites WHERE id = ? AND active = 1", [(int) $d['site']]) : null;
+    // Le bureau est la raison d'être du lien : sans lui, la page créerait un
+    // compte rattaché à rien. On refuse plutôt que d'afficher un formulaire.
+    if (!$off) json_out(['ok' => false, 'error' => 'Le bureau de ce lien n’existe plus. Demandez un nouveau lien à votre responsable.'], 410);
+    $depts = [];
+    $dIds  = array_values(array_filter(array_map('intval', (array) ($d['depts'] ?? []))));
+    if ($dIds && row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='b2b_client_company_department'"))
+      $depts = rows("SELECT id, name FROM b2b_client_company_department
+                      WHERE id IN (" . implode(',', $dIds) . ") ORDER BY name");
+    /* RIEN N'EST INVENTÉ : une valeur absente est renvoyée à null et la page
+       retire la ligne, au lieu d'afficher un texte de remplacement que
+       l'employé prendrait pour une donnée de son entreprise. */
+    json_out(['ok' => true,
+      'office'    => ['id' => (int) $off['id'], 'name' => $off['name'] ?: null,
+                      'validated' => (int) $off['active'] === 1],
+      'site'      => $site ? ['address' => $site['address'] ?: null,
+                              'floor' => $site['floor_room'] ?: null] : null,
+      'shop'      => $shop ? ['id' => (int) $shop['id'], 'name' => $shop['name'] ?: null] : null,
+      'depts'     => array_map(fn ($x) => ['id' => (int) $x['id'], 'name' => $x['name']], $depts),
+      'domain'    => $d['domain'] ?: null,
+      'cp'        => $d['cp'] ?: null,
+      'expiresAt' => $row['expires_at'] ?? null]);
+  }
+
+  if ($m === 'POST' && $p === '/inscription') {
+    rate_limit('inscription', 10, 600);
+    $b = body();
+    [$d, $ko] = invite_check((string) ($b['i'] ?? ''));
+    if (!$d) json_out(['ok' => false, 'error' => $ko], 410);
+    $shopI = (int) ($d['shop'] ?? 0);
+    $offI  = (int) ($d['office'] ?? 0);
+    $off   = $offI ? row("SELECT id, name, address FROM ws_offices WHERE id = ?", [$offI]) : null;
+    if (!$off)   json_out(['ok' => false, 'error' => 'Le bureau de ce lien n’existe plus. Demandez un nouveau lien à votre responsable.'], 410);
+    if (!$shopI) json_out(['ok' => false, 'error' => 'Ce lien ne désigne aucune boutique livreuse — il ne peut pas créer de compte.'], 409);
+
+    $first = trim((string) ($b['firstName'] ?? ''));
+    $last  = trim((string) ($b['lastName'] ?? ''));
+    $mail  = strtolower(trim((string) ($b['email'] ?? '')));
+    if ($first === '' || $last === '') json_out(['ok' => false, 'error' => 'Prénom et nom requis.'], 400);
+    if (!filter_var($mail, FILTER_VALIDATE_EMAIL)) json_out(['ok' => false, 'error' => 'Adresse e-mail invalide.'], 400);
+    // Domaine imposé : contrôlé ICI, pas seulement dans le navigateur. Le
+    // contrôle du formulaire est un confort ; celui-ci est la règle.
+    $dom = strtolower(trim((string) ($d['domain'] ?? '')));
+    if ($dom !== '' && !str_ends_with($mail, '@' . $dom))
+      json_out(['ok' => false, 'error' => 'Cette invitation est réservée aux adresses @' . $dom . '.'], 403);
+    [$pfx, $phone, $e164] = norm_phone($b['phonePrefix'] ?? '+32', $b['phone'] ?? '');
+    $zip = trim((string) ($b['postalCode'] ?? ($d['cp'] ?? '')));
+    if ($zip === '') json_out(['ok' => false, 'error' => 'Code postal requis.'], 400);
+    $zip = zip_validate($zip, 'BE');
+    if ($zip === null) json_out(['ok' => false, 'error' => 'Code postal invalide.'], 400);
+    $loc  = zip_locality($zip, $b['locality'] ?? '');
+    $pass = (string) ($b['password'] ?? '');
+    // 12 caractères, un chiffre, une majuscule — la règle annoncée sous le
+    // champ. Annoncée et non appliquée, elle ne serait qu'un texte.
+    if (strlen($pass) < 12 || !preg_match('/[0-9]/', $pass) || !preg_match('/[A-Z]/', $pass))
+      json_out(['ok' => false, 'error' => 'Mot de passe : 12 caractères minimum, dont un chiffre et une majuscule.'], 400);
+
+    // Compte déjà là : on ne fusionne pas et on n'écrase aucun mot de passe —
+    // la page propose de se connecter (même contrat que /auth/register).
+    if (row("SELECT id FROM client WHERE LOWER(TRIM(email)) = ? LIMIT 1", [$mail]))
+      json_out(['ok' => false, 'exists' => true,
+                'error' => 'Un compte existe déjà pour cette adresse. Connectez-vous pour commander.'], 409);
+
+    // Département CHOISI, et seulement parmi ceux du jeton : une liste postée
+    // par le navigateur laisserait choisir le département d'une autre société.
+    $dIds   = array_values(array_filter(array_map('intval', (array) ($d['depts'] ?? []))));
+    $deptId = (int) ($b['deptId'] ?? 0);
+    if ($deptId && !in_array($deptId, $dIds, true)) $deptId = 0;
+
+    $hasLoc  = col_exists('client', 'locality');
+    $hasPref = col_exists('client', 'preferred_shop_id');
+    $hasDept = col_exists('client', 'department_id') && $deptId;
+    /* office_id N'EST PAS ÉCRIT ICI. C'est la clé de la livraison au bureau :
+       la poser à l'inscription reviendrait à laisser le porteur du lien
+       commander sur le compte de l'entreprise avant toute validation. */
+    q("INSERT INTO client (id_main_shop, " . ($hasPref ? "preferred_shop_id, " : "") . "email, phone, phone_prefix, phone_e164,
+                           name, surname, zip, " . ($hasLoc ? "locality, " : "") . ($hasDept ? "department_id, " : "") . "password_hash,
+                           active, source_channel, webshop_user, preferred_auth_method)
+       VALUES (?," . ($hasPref ? "?," : "") . "?,?,?,?,?,?,?," . ($hasLoc ? "?," : "") . ($hasDept ? "?," : "") . "?,1,'invite',1,'email')",
+      array_merge([$shopI], $hasPref ? [$shopI] : [],
+        [$mail, ($phone ?: null), ($phone !== '' ? $pfx : null), ($e164 ?: null), $first, $last, $zip],
+        $hasLoc ? [$loc] : [], $hasDept ? [$deptId] : [],
+        [password_hash($pass, PASSWORD_BCRYPT)]));
+    $uid = (int) db()->lastInsertId();
+
+    // Demande de rattachement — le bureau est CONNU (il vient du jeton), donc
+    // écrit tel quel : le franchisé n'a plus à le deviner par ressemblance de
+    // nom, il valide ou rejette.
+    $jrOk = false;
+    if (row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_office_join_requests'")) {
+      $set = ['office_name_raw' => (string) $off['name'], 'status' => 'pending'];
+      if (col_exists('ws_office_join_requests', 'client_id'))     $set['client_id']     = $uid;
+      if (col_exists('ws_office_join_requests', 'address_raw'))   $set['address_raw']   = (string) ($off['address'] ?? '');
+      if (col_exists('ws_office_join_requests', 'contact_email')) $set['contact_email'] = $mail;
+      if (col_exists('ws_office_join_requests', 'contact_phone')) $set['contact_phone'] = ($phone ?: null);
+      if (col_exists('ws_office_join_requests', 'shop_id'))       $set['shop_id']       = $shopI;
+      if (col_exists('ws_office_join_requests', 'office_id'))     $set['office_id']     = $offI;
+      try {
+        q("INSERT INTO ws_office_join_requests (" . implode(', ', array_keys($set)) . ")
+           VALUES (" . implode(', ', array_fill(0, count($set), '?')) . ")", array_values($set));
+        $jrOk = true;
+      } catch (Throwable $e) { error_log('[ws] inscription join-request KO : ' . $e->getMessage()); }
+    }
+    try { q("UPDATE ws_office_invites SET uses = uses + 1, last_use_at = NOW() WHERE jti = ?", [(string) $d['jti']]); }
+    catch (Throwable $e) { /* le compteur d'usages n'est pas une condition d'inscription */ }
+
+    /* Le compte est créé et connecté, mais NON RATTACHÉ : le webshop
+       s'ouvre en click & collect ; la livraison au bureau s'ouvrira à la
+       validation. On le dit, plutôt que de laisser l'employé chercher
+       pourquoi son bureau n'apparaît pas. */
+    json_out(['ok' => true, 'status' => 'pending', 'user' => user_payload($uid),
+      'token'  => sign_token(['id' => $uid, 'exp' => time() + 30 * 86400]),
+      'office' => $off['name'], 'joinRequest' => $jrOk,
+      'message' => $jrOk
+        ? 'Compte créé. Votre rattachement à ' . $off['name'] . ' est transmis pour validation ; vous recevrez un e-mail dès qu’il est actif.'
+        : 'Compte créé, mais la demande de rattachement n’a pas pu être enregistrée — contactez votre boutique pour être rattaché à ' . $off['name'] . '.'], 201);
+  }
   // Sites de livraison d'un bureau (validé) — alimente WSDeliveryFees.listSites
   // au checkout (le module WSDeliveryFees appelle tout en POST + body JSON).
   // Même 0/1 que l'éligibilité : bureau et site doivent être actifs.
@@ -4882,6 +5025,81 @@ function dispatch($m, $p) {
       return (int) db()->lastInsertId();
     };
 
+    /* ── LIEN D'INVITATION D'UN BUREAU (fiche bureau, console franchisé) ─────
+       Lire, ré-émettre, révoquer. La portée boutique est reprise du serveur
+       ($shopId), jamais de l'id posté : sans cela, un franchisé lirait — et
+       révoquerait — le lien d'un bureau d'une autre boutique. ── */
+    if ($m === 'GET' && $p === '/franchisee/office-invite') {
+      $oid = (int) qp('office', 0);
+      if (!$oid) json_out(['ok' => false, 'error' => 'Bureau non précisé.'], 400);
+      $oSc = ($shopId && col_exists('ws_offices', 'shop_id')) ? " AND (shop_id IS NULL OR shop_id=" . (int) $shopId . ")" : "";
+      if (!row("SELECT 1 x FROM ws_offices WHERE id=?$oSc", [$oid]))
+        json_out(['ok' => false, 'error' => 'Bureau inconnu, ou hors de votre boutique.'], 404);
+      [$inv, $why] = invite_for_office($oid);
+      json_out(['ok' => (bool) $inv, 'invite' => $inv, 'error' => $why]);
+    }
+
+    if ($m === 'POST' && $p === '/franchisee/office-invite') {
+      $b   = body();
+      $oid = (int) ($b['office'] ?? 0);
+      if (!$oid) json_out(['ok' => false, 'error' => 'Bureau non précisé.'], 400);
+      $oSc = ($shopId && col_exists('ws_offices', 'shop_id')) ? " AND (o.shop_id IS NULL OR o.shop_id=" . (int) $shopId . ")" : "";
+      $o = row("SELECT o.id, o.name, o.postal_code, o.email, o.shop_id FROM ws_offices o WHERE o.id=?$oSc", [$oid]);
+      if (!$o) json_out(['ok' => false, 'error' => 'Bureau inconnu, ou hors de votre boutique.'], 404);
+      /* RÉVOQUER PUIS RÉ-ÉMETTRE, dans cet ordre et dans le même geste : deux
+         liens valables en même temps pour un bureau, c'est celui qu'on croyait
+         avoir retiré qui continue de servir. */
+      try { q("UPDATE ws_office_invites SET revoked_at=NOW() WHERE office_id=? AND revoked_at IS NULL", [$oid]); }
+      catch (Throwable $e) { json_out(['ok' => false, 'error' => 'Invitations indisponibles : la table ws_office_invites est absente (migration 0062).'], 501); }
+      $site = row("SELECT id FROM ws_office_delivery_sites WHERE office_client_id=? AND active=1 ORDER BY is_default DESC, id LIMIT 1", [$oid]);
+      $cli  = col_exists('ws_offices', 'client_id') ? row("SELECT client_id FROM ws_offices WHERE id=?", [$oid]) : null;
+      $cid  = (int) ($cli['client_id'] ?? 0);
+      $deps = [];
+      if ($cid && $tblExists('b2b_client_company_department')) {
+        $dk = col_exists('b2b_client_company_department', 'id_client') ? 'id_client'
+            : (col_exists('b2b_client_company_department', 'client_id') ? 'client_id' : null);
+        if ($dk) $deps = array_map(fn ($x) => (int) $x['id'],
+          rows("SELECT id FROM b2b_client_company_department WHERE $dk=? ORDER BY id", [$cid]));
+      }
+      $dom = null;
+      $om  = trim((string) ($o['email'] ?? ''));
+      if (filter_var($om, FILTER_VALIDATE_EMAIL)) {
+        $dm = strtolower(substr(strrchr($om, '@'), 1));
+        if (!in_array($dm, ['gmail.com', 'hotmail.com', 'hotmail.be', 'outlook.com', 'outlook.be',
+                            'live.be', 'live.com', 'yahoo.com', 'yahoo.fr', 'icloud.com',
+                            'proximus.be', 'skynet.be', 'telenet.be', 'voo.be'], true)) $dom = $dm;
+      }
+      $inv = invite_issue(['shop' => (int) ($o['shop_id'] ?: $shopId), 'office' => $oid,
+        'client' => $cid ?: null, 'site' => $site ? (int) $site['id'] : null,
+        'depts' => $deps, 'domain' => $dom, 'cp' => $o['postal_code'] ?: null,
+        'by' => is_admin_request() ? 'admin' : ('pin:' . (string) ($pinSes['id'] ?? '?'))]);
+      if (!$inv) json_out(['ok' => false, 'error' => 'Lien non émis : la table ws_office_invites est absente (migration 0062).'], 501);
+      json_out(['ok' => true, 'invite' => ['jti' => $inv['jti'], 'url' => invite_link($inv['token']),
+                'expiresAt' => $inv['expires_at'], 'uses' => 0]]);
+    }
+
+    if ($m === 'POST' && $p === '/franchisee/invite-revoke') {
+      $b   = body();
+      $oid = (int) ($b['office'] ?? 0);
+      $jti = trim((string) ($b['jti'] ?? ''));
+      if (!$oid && $jti === '') json_out(['ok' => false, 'error' => 'Bureau ou jeton à révoquer non précisé.'], 400);
+      $oSc = ($shopId && col_exists('ws_offices', 'shop_id')) ? " AND (shop_id IS NULL OR shop_id=" . (int) $shopId . ")" : "";
+      if ($oid && !row("SELECT 1 x FROM ws_offices WHERE id=?$oSc", [$oid]))
+        json_out(['ok' => false, 'error' => 'Bureau inconnu, ou hors de votre boutique.'], 404);
+      try {
+        // Un jti seul reste borné à la boutique : la ligne porte shop_id.
+        $n = $oid
+          ? q("UPDATE ws_office_invites SET revoked_at=NOW() WHERE office_id=? AND revoked_at IS NULL", [$oid])->rowCount()
+          : q("UPDATE ws_office_invites SET revoked_at=NOW() WHERE jti=? AND revoked_at IS NULL"
+              . ($shopId ? " AND shop_id=" . (int) $shopId : ""), [$jti])->rowCount();
+      } catch (Throwable $e) {
+        json_out(['ok' => false, 'error' => 'Invitations indisponibles : la table ws_office_invites est absente (migration 0062).'], 501);
+      }
+      json_out(['ok' => true, 'revoked' => (int) $n, 'message' => $n
+        ? 'Lien révoqué : les liens déjà transférés ne créent plus de compte. Émettez-en un nouveau pour reprendre les inscriptions.'
+        : 'Aucun lien actif à révoquer pour ce bureau.']);
+    }
+
     if ($m === 'POST' && $p === '/franchisee/route-office') {
       $b = body();
       $cp = preg_replace('/\D+/', '', (string) ($b['cp'] ?? ''));
@@ -6163,13 +6381,26 @@ function dispatch($m, $p) {
       $oScope = col_exists('ws_offices', 'shop_id') ? " AND (r.shop_id IS NULL OR f.shop_id = r.shop_id)" : "";
       $cand   = "FROM ws_offices f WHERE f.active = 1
                   AND f.name LIKE CONCAT('%', LEFT(r.office_name_raw, 12), '%') $oScope LIMIT 1";
+      /* Bureau DÉSIGNÉ par la demande (r.office_id) : une inscription par lien
+         magique sait exactement à quel bureau elle se rattache. On le préfère à
+         la ressemblance de nom — qui reste le repli des demandes saisies à la
+         main. Le bureau doit être validé dans les deux cas : c'est la validation
+         qui ouvre la livraison. */
+      $hasOff = col_exists('ws_office_join_requests', 'office_id');
+      $exact  = $hasOff ? "FROM ws_offices f WHERE f.id = r.office_id AND f.active = 1 $oScope LIMIT 1" : null;
+      $eId    = $exact ? "COALESCE((SELECT f.id   $exact), (SELECT f.id   $cand))" : "(SELECT f.id   $cand)";
+      $eNom   = $exact ? "COALESCE((SELECT f.name $exact), (SELECT f.name $cand))" : "(SELECT f.name $cand)";
+      // Bureau visé mais PAS ENCORE VALIDÉ : le dire, au lieu du « aucun bureau
+      // ne correspond » qui enverrait le franchisé en créer un second.
+      $attNom = $hasOff ? "(SELECT f.name FROM ws_offices f WHERE f.id = r.office_id LIMIT 1)" : "NULL";
       $rs = rows("SELECT r.id, r.office_name_raw, r.address_raw,
                          " . ($hasCli  ? 'r.client_id'    : 'NULL') . " AS client_id,
                          " . ($hasMail ? 'r.contact_email' : 'NULL') . " AS contact_email,
                          " . ($hasTel  ? 'r.contact_phone' : 'NULL') . " AS contact_phone,
                          $cliName AS cli_name, $cliMail AS cli_mail,
-                         (SELECT f.id   $cand) AS office_id,
-                         (SELECT f.name $cand) AS proche
+                         $attNom AS vise_nom,
+                         $eId AS office_id,
+                         $eNom AS proche
                     FROM ws_office_join_requests r$joinCli
                    WHERE " . $scope('r.shop_id') . " AND r.status='pending' ORDER BY r.created_at DESC LIMIT 50");
       json_out(array_map(function ($r) {
@@ -6184,7 +6415,9 @@ function dispatch($m, $p) {
                         . ($r['contact_phone'] ? ' · ' . $r['contact_phone'] : ''),
           'proche'   => $r['office_id']
             ? ($r['proche'] . ($r['address_raw'] ? ' (' . $r['address_raw'] . ')' : ''))
-            : 'aucun bureau validé ne correspond — créez le bureau (Clients B2B › Bureaux) avant de lier',
+            : ($r['vise_nom']
+              ? 'le bureau « ' . $r['vise_nom'] . ' » existe mais n’est pas encore validé — validez-le dans Clients B2B › Bureaux, puis liez'
+              : 'aucun bureau validé ne correspond — créez le bureau (Clients B2B › Bureaux) avant de lier'),
           'dup'      => (bool) $r['office_id'],
           // Champs BRUTS de la demande. Ils n'existaient que fondus dans les
           // phrases ci-dessus : pour créer le bureau manquant, le franchisé
@@ -6400,6 +6633,9 @@ function dispatch($m, $p) {
       $oid = (int) ($b['officeId'] ?? 0);
       $oSc = col_exists('ws_offices', 'shop_id') && !empty($r['shop_id'])
              ? " AND (shop_id IS NULL OR shop_id=" . (int) $r['shop_id'] . ")" : "";
+      // Bureau DÉSIGNÉ par la demande avant la ressemblance de nom : une
+      // inscription venue d'un lien magique porte son bureau exact.
+      if (!$oid && !empty($r['office_id'])) $oid = (int) $r['office_id'];
       if (!$oid) {
         $cand = row("SELECT id FROM ws_offices
                       WHERE active=1 AND name LIKE CONCAT('%', ?, '%')$oSc ORDER BY id LIMIT 1",
@@ -6407,8 +6643,14 @@ function dispatch($m, $p) {
         $oid = (int) ($cand['id'] ?? 0);
       }
       if (!$oid) json_out(['ok' => false, 'error' => 'Aucun bureau validé ne correspond à « ' . $r['office_name_raw'] . ' » — créez-le dans Clients B2B › Bureaux, puis liez.'], 409);
-      if (!row("SELECT 1 AS x FROM ws_offices WHERE id=? AND active=1$oSc", [$oid]))
-        json_out(['ok' => false, 'error' => 'Bureau #' . $oid . ' inconnu, non validé, ou hors de votre boutique.'], 409);
+      if (!row("SELECT 1 AS x FROM ws_offices WHERE id=? AND active=1$oSc", [$oid])) {
+        // Dire LEQUEL des trois cas : « validez le bureau » et « ce bureau
+        // n'est pas le vôtre » n'appellent pas le même geste.
+        $ex = row("SELECT name, active FROM ws_offices WHERE id=?$oSc", [$oid]);
+        json_out(['ok' => false, 'error' => $ex
+          ? 'Le bureau « ' . $ex['name'] . ' » n’est pas encore validé — validez-le dans Clients B2B › Bureaux, puis liez.'
+          : 'Bureau #' . $oid . ' inconnu, ou hors de votre boutique.'], 409);
+      }
 
       q("UPDATE client SET office_id=? WHERE id=?", [$oid, $cid]);
       q("UPDATE ws_office_join_requests SET status='linked'"
@@ -7645,11 +7887,13 @@ function dispatch($m, $p) {
           } catch (Throwable $e) { /* colonne NOT NULL inattendue : l'office reste créé */ }
         }
       }
+      $newSiteId = null;
       if ($tblExists('ws_office_delivery_sites')) {
         q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, tournee_id, site_access_minutes, active" . ($obShop ? ", shop_id" : "") . ")
             VALUES (?,?,?,?,?,?,1" . ($obShop ? "," . (int) $obShop : "") . ")",
           [$officeId, $raison . ' — ' . ((string) ($b['office'] ?? 'Site')), (string) ($b['adr'] ?? ''),
            (string) ($b['etage'] ?? ''), $tourId, (float) ($b['acc'] ?? 6)]);
+        $newSiteId = (int) db()->lastInsertId();
       }
       /* Départements B2B. L'INSERT écrivait SEPT colonnes (client_id, company,
          site, office, name, effectif, contact) dans une table ERP qui n'en a
@@ -7659,6 +7903,7 @@ function dispatch($m, $p) {
          au client réellement créé, jamais à un code fabriqué.
          Sans client réel, on n'écrit rien : une ligne rattachée à un id
          approximatif est pire qu'une ligne absente. */
+      $newDeptIds = [];
       if (!empty($b['departements']) && is_array($b['departements'])
           && $tblExists('b2b_client_company_department') && !empty($newClientId)) {
         $DT   = 'b2b_client_company_department';
@@ -7677,7 +7922,7 @@ function dispatch($m, $p) {
           foreach ($b['departements'] as $d) {
             $dVals = array_merge([(int) $newClientId, (string) ($d['dept'] ?? '—')], array_values($dOpt));
             if ($hasEff) $dVals[] = (int) ($d['effectif'] ?? 1);
-            try { q($dSql, $dVals); }
+            try { q($dSql, $dVals); $newDeptIds[] = (int) db()->lastInsertId(); }
             catch (Throwable $e) { /* un département refusé ne doit pas annuler le bureau */ }
           }
         }
@@ -7693,7 +7938,36 @@ function dispatch($m, $p) {
           $voucherCreated = true;
         }
       }
-      json_out(['ok' => true, 'office_id' => $officeId, 'voucher_created' => $voucherCreated]);
+      /* LIEN MAGIQUE « Créer mon compte ». Le bureau reçoit UN lien et le
+         transfère à son personnel : chaque collaborateur arrive avec sa
+         boutique, son bureau, son site et ses départements déjà rattachés.
+         Le domaine e-mail est déduit de l'adresse du CONTACT — c'est le
+         domaine de l'entreprise, pas une valeur inventée — sauf s'il s'agit
+         d'une messagerie grand public : imposer « @gmail.com » n'écarterait
+         personne et donnerait l'illusion d'un filtre.
+         Émettre le lien ne peut pas faire échouer la création du bureau :
+         invite_issue() renvoie null (table 0062 absente, par exemple) et la
+         console l'annonce au lieu d'afficher un lien qui n'existe pas. */
+      $emailDom = null;
+      $ctMail   = trim((string) ($b['contactEmail'] ?? ''));
+      if (filter_var($ctMail, FILTER_VALIDATE_EMAIL)) {
+        $dm = strtolower(substr(strrchr($ctMail, '@'), 1));
+        $grandPublic = ['gmail.com', 'hotmail.com', 'hotmail.be', 'outlook.com', 'outlook.be',
+                        'live.be', 'live.com', 'yahoo.com', 'yahoo.fr', 'icloud.com',
+                        'proximus.be', 'skynet.be', 'telenet.be', 'voo.be'];
+        if ($dm !== '' && !in_array($dm, $grandPublic, true)) $emailDom = $dm;
+      }
+      $inv = invite_issue([
+        'shop' => (int) ($obShop ?: $shopId), 'office' => $officeId,
+        'client' => $newClientId, 'site' => $newSiteId, 'depts' => $newDeptIds,
+        'domain' => $emailDom, 'cp' => $obZip,
+        'by' => is_admin_request() ? 'admin' : ('pin:' . (string) ($pinSes['id'] ?? '?')),
+      ]);
+      json_out(['ok' => true, 'office_id' => $officeId, 'voucher_created' => $voucherCreated,
+                'invite_url'        => $inv ? invite_link($inv['token']) : null,
+                'invite_expires_at' => $inv['expires_at'] ?? null,
+                'invite_reason'     => $inv ? null
+                  : 'Lien d’invitation non émis : la table ws_office_invites est absente (migration 0062). Le bureau est créé.']);
     }
 
     json_out(['error' => 'Not found', 'path' => $p], 404);
@@ -8376,6 +8650,139 @@ function oline_own() {
   return $c;
 }
 
+/* ── LIEN MAGIQUE « Créer mon compte » ────────────────────────────────────
+   Le bureau reçoit UN lien et le transfère à son personnel. Chaque
+   collaborateur arrive avec sa boutique, son bureau, son site et ses
+   départements DÉJÀ liés : il ne saisit que son identité.
+
+   UN SEUL paramètre dans l'URL, signé. Pas de ?shop=2&office=17 en clair :
+   ces valeurs décident qui facture et à quelles conditions ; lisibles, elles
+   seraient modifiables — changer office=17 en office=18 suffirait à
+   s'inscrire chez un autre client.
+
+   La SIGNATURE fait autorité sur le contenu (sign_token/verify_token, HMAC
+   SHA-256, le mécanisme déjà utilisé pour les sessions — pas de second système
+   à maintenir). La TABLE ws_office_invites fait autorité sur la validité :
+   un jeton signé ne sait pas qu'il a été révoqué, ni combien de fois il a
+   servi.
+
+   Le lien PRÉ-REMPLIT, il n'ouvre rien : le compte créé entre en `pending`
+   dans ws_office_join_requests et attend la validation du franchisé. Sans
+   cela, quiconque détient le lien commanderait sur le compte de l'entreprise,
+   en paiement différé. */
+
+/* Charge du jeton — UN SEUL endroit. L'émission et la reconstitution (console,
+   quand le franchisé rouvre la fiche du bureau) doivent produire exactement le
+   même jeton : la signature porte sur le JSON, donc l'ORDRE des clés en fait
+   partie. Deux constructions parallèles finiraient par diverger d'une clé, et
+   le lien affiché dans la console ne serait plus celui envoyé par e-mail. */
+function invite_payload($jti, $exp, array $d) {
+  // Types NORMALISÉS ici, et pas chez l'appelant : la base rend des chaînes là
+  // où l'insertion passait des entiers, et « "client":"41" » ne signe pas comme
+  // « "client":41 ». Le lien reconstitué serait alors refusé par verify_token.
+  $n = fn ($v) => ($v === null || $v === '') ? null : (int) $v;
+  $s = fn ($v) => ($v === null || $v === '') ? null : (string) $v;
+  return [
+    'v' => 1, 'k' => 'invite', 'jti' => (string) $jti, 'exp' => (int) $exp,
+    'shop' => (int) ($d['shop'] ?? 0), 'office' => $n($d['office'] ?? null),
+    'client' => $s($d['client'] ?? null), 'site' => $n($d['site'] ?? null),
+    'depts' => array_values(array_map('intval', (array) ($d['depts'] ?? []))),
+    'domain' => $s($d['domain'] ?? null), 'cp' => $s($d['cp'] ?? null),
+  ];
+}
+
+function invite_issue(array $d, $jours = 30) {
+  $jti = 'inv_' . bin2hex(random_bytes(8));
+  $exp = time() + $jours * 86400;
+  $depts = array_values(array_map('intval', (array) ($d['depts'] ?? [])));
+  $tok = sign_token(invite_payload($jti, $exp, $d));
+  try {
+    q("INSERT INTO ws_office_invites (jti, shop_id, office_id, client_code, site_id, domain, depts, cp, expires_at, created_by)
+       VALUES (?,?,?,?,?,?,?,?,FROM_UNIXTIME(?),?)",
+      [$jti, (int) ($d['shop'] ?? 0), $d['office'] ?? null, $d['client'] ?? null,
+       $d['site'] ?? null, $d['domain'] ?? null, ($depts ? implode(',', $depts) : null),
+       $d['cp'] ?? null, $exp, $d['by'] ?? null]);
+  } catch (Throwable $e) {
+    // Table absente (migration 0062 pas passée) : pas de lien plutôt qu'un lien
+    // irrévocable. Un jeton qu'on ne peut pas retirer de la circulation est pire
+    // que pas de jeton.
+    error_log('[ws] invite_issue KO : ' . $e->getMessage());
+    return null;
+  }
+  return ['jti' => $jti, 'token' => $tok, 'expires_at' => date('c', $exp)];
+}
+
+/* Invitation EN COURS d'un bureau, telle qu'affichée dans la console : le lien
+   reconstitué, sa date de fin, le nombre d'inscriptions déjà faites.
+   Le jeton n'est pas stocké — il est REFABRIQUÉ depuis la ligne. Garder un
+   jeton en base n'apporterait rien qu'on n'ait déjà, et ferait de la table un
+   trousseau de clés à protéger. Renvoie [info|null, motif]. */
+function invite_for_office($officeId) {
+  try {
+    $r = row("SELECT * FROM ws_office_invites
+               WHERE office_id = ? AND revoked_at IS NULL AND expires_at > NOW()
+               ORDER BY created_at DESC LIMIT 1", [(int) $officeId]);
+  } catch (Throwable $e) {
+    return [null, 'Invitations indisponibles : la table ws_office_invites est absente (migration 0062).'];
+  }
+  if (!$r) {
+    // Distinguer « jamais émis » de « révoqué ou expiré » : le franchisé n'a
+    // pas le même geste à faire — émettre, ou ré-émettre et prévenir.
+    $any = row("SELECT revoked_at, expires_at FROM ws_office_invites
+                 WHERE office_id = ? ORDER BY created_at DESC LIMIT 1", [(int) $officeId]);
+    if (!$any) return [null, 'Aucun lien d’invitation n’a été émis pour ce bureau.'];
+    return [null, !empty($any['revoked_at'])
+      ? 'Le dernier lien a été révoqué le ' . substr((string) $any['revoked_at'], 0, 10) . '.'
+      : 'Le dernier lien a expiré le ' . substr((string) $any['expires_at'], 0, 10) . '.'];
+  }
+  $tok = sign_token(invite_payload($r['jti'], strtotime((string) $r['expires_at']), [
+    'shop' => $r['shop_id'], 'office' => $r['office_id'] === null ? null : (int) $r['office_id'],
+    'client' => $r['client_code'], 'site' => $r['site_id'] === null ? null : (int) $r['site_id'],
+    'depts' => ($r['depts'] ?? '') === '' ? [] : explode(',', (string) $r['depts']),
+    'domain' => $r['domain'] ?? null, 'cp' => $r['cp'] ?? null,
+  ]));
+  return [['jti' => $r['jti'], 'url' => invite_link($tok), 'expiresAt' => $r['expires_at'],
+           'uses' => (int) $r['uses'], 'lastUseAt' => $r['last_use_at'],
+           'createdAt' => $r['created_at']], null];
+}
+
+/* URL complète de la page « Créer mon compte » pour un jeton donné.
+   L'API vit dans <racine webshop>/api : la racine se déduit du chemin du script
+   plutôt que d'une constante à tenir à jour. L'URL est ABSOLUE parce qu'elle
+   part par e-mail et s'imprime en QR code — un chemin relatif n'y sert à rien. */
+function invite_link($tok) {
+  $https = ((($_SERVER['HTTPS'] ?? '') !== '' && ($_SERVER['HTTPS'] ?? '') !== 'off')
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'));
+  $host  = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? 'localhost');
+  $base  = rtrim(str_replace('\\', '/', dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '/api/index.php'))), '/');
+  if ($base === '.' || $base === '/') $base = '';
+  return ($https ? 'https://' : 'http://') . $host . $base . '/inscription?i=' . rawurlencode($tok);
+}
+
+/* Vérifie un jeton d'invitation. Renvoie [charge|null, motif, ligne].
+   Le motif REMONTE À L'ÉCRAN : « lien expiré », « lien révoqué » et « lien
+   invalide » n'appellent pas la même réaction du collaborateur — le premier se
+   redemande au responsable, le dernier signale une URL tronquée par un client
+   mail. La troisième valeur est la ligne ws_office_invites (date d'expiration,
+   usages) pour les appelants qui l'affichent. */
+function invite_check($tok) {
+  $d = verify_token($tok);
+  if (!$d || ($d['k'] ?? '') !== 'invite')
+    return [null, 'Ce lien d’invitation est invalide ou incomplet. Vérifiez qu’il a été copié en entier.', null];
+  $jti = (string) ($d['jti'] ?? '');
+  if ($jti === '') return [null, 'Ce lien d’invitation est invalide.', null];
+  try {
+    $r = row("SELECT jti, revoked_at, expires_at FROM ws_office_invites WHERE jti = ?", [$jti]);
+  } catch (Throwable $e) { return [null, 'Invitations indisponibles — merci de réessayer plus tard.', null]; }
+  // Inconnu en base = émis par une autre installation, ou table réinitialisée.
+  if (!$r) return [null, 'Ce lien d’invitation n’est plus reconnu. Demandez-en un nouveau à votre responsable.', null];
+  if (!empty($r['revoked_at']))
+    return [null, 'Ce lien d’invitation a été révoqué par votre Atelier. Demandez-en un nouveau à votre responsable.', null];
+  if (!empty($r['expires_at']) && strtotime((string) $r['expires_at']) < time())
+    return [null, 'Ce lien d’invitation a expiré. Demandez-en un nouveau à votre responsable.', null];
+  return [$d, null, $r];
+}
+
 /* AU CATALOGUE RÉSEAU — ws_products.brand_whitelist.
    Premier barreau de l'échelle marque : au catalogue > obligatoire > webshop >
    livraison bureau. La colonne existait depuis la migration 0003 et n'était
@@ -8991,6 +9398,7 @@ function bo_endpoint_section($name) {
     // Clients B2B
     'ws-office-delivery-sites' => 'sites',
     'ws-offices' => 'offices', 'onboard-office' => 'offices', 'route-office' => 'offices',
+    'office-invite' => 'offices', 'invite-revoke' => 'offices',
     'b2b-clients' => 'b2bClients', 'b2b-departments' => 'b2bClients', 'fr-clients' => 'b2bClients',
     'client-active' => 'b2bClients', 'client-attach' => 'b2bClients', 'client-billing' => 'b2bClients',
     'client-block' => 'b2bClients', 'client-office-delivery' => 'b2bClients', 'client-zip' => 'b2bClients',
