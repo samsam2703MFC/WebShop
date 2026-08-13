@@ -40,6 +40,24 @@ function json_out($data, $code = 200) {
   echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
   exit;
 }
+/* Table ABSENTE : le corps reste `[]`, et un en-tête DIT laquelle manque.
+ *
+ * POURQUOI PAS UN 501. « Table absente » et « aucune donnée » rendaient tous
+ * deux `[]` : une migration oubliée ressemblait exactement à une base vide, et
+ * plus rien ne les distinguait à l'écran. Mais répondre 501 casserait les
+ * écrans dont la table est LÉGITIMEMENT optionnelle sur une installation
+ * donnée — un back-office qui refuse de s'afficher parce qu'une table annexe
+ * manque est pire que le doute qu'on veut lever.
+ *
+ * L'en-tête est donc ADDITIF : tout consommateur existant continue de recevoir
+ * `[]` et fonctionne, pendant que la console lit `X-Tables-Absentes` et
+ * l'annonce dans son bandeau d'erreur — là où quelqu'un le verra.
+ */
+function json_vide($tables) {
+  $t = is_array($tables) ? $tables : [$tables];
+  header('X-Tables-Absentes: ' . implode(',', $t));
+  json_out([]);
+}
 function body() { $b = json_decode(file_get_contents('php://input'), true); return is_array($b) ? $b : []; }
 function qp($key, $default = null) { return $_GET[$key] ?? $default; }
 

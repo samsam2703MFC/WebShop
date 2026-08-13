@@ -4316,7 +4316,7 @@ function dispatch($m, $p) {
        ses comptes (nom + PIN) et leur attribue un de ces profils — il ne peut
        donc jamais s'octroyer un accès que la marque n'a pas prévu. ── */
     if ($m === 'GET' && $p === '/franchisor/bo-roles') {
-      if (!$tblExists('bo_role')) json_out([]);
+      if (!$tblExists('bo_role')) json_vide(['bo_role']);
       $rs = rows("SELECT r.id, r.role_key, r.label, r.sections, r.active,
                          (SELECT COUNT(*) FROM bo_users u WHERE u.role_id = r.id) AS nb_comptes
                     FROM bo_role r ORDER BY r.active DESC, r.label");
@@ -4771,7 +4771,7 @@ function dispatch($m, $p) {
 
     // ── Clients B2B (fr_clients) — ws_offices + sites (points de livraison). ──
     if ($m === 'GET' && $p === '/franchisee/fr-clients') {
-      if (!$tblExists('ws_offices')) json_out([]);
+      if (!$tblExists('ws_offices')) json_vide(['ws_offices']);
       $join = ''; $wh = '1=1';
       if ($shopId && $tblExists('ws_tours')) {
         $join = "LEFT JOIN ws_tours t ON t.id = f.tour_id";
@@ -4800,7 +4800,7 @@ function dispatch($m, $p) {
 
     // ── Incidents (fr_incidents) — ws_incidents, shape fiche du design. ──
     if ($m === 'GET' && $p === '/franchisee/fr-incidents') {
-      if (!$tblExists('ws_incidents')) json_out([]);
+      if (!$tblExists('ws_incidents')) json_vide(['ws_incidents']);
       $rs = rows("SELECT i.id, i.order_ref, i.type, i.severity, i.status, i.title, i.description,
                          DATE_FORMAT(i.created_at,'%d/%m %H:%i') AS ts, sh.name AS shop
                     FROM ws_incidents i LEFT JOIN $SHOPS sh ON sh.id = i.shop_id
@@ -4826,7 +4826,7 @@ function dispatch($m, $p) {
 
     // ── Alertes (fr_alertes) — dérivées des incidents ouverts. ──
     if ($m === 'GET' && $p === '/franchisee/fr-alertes') {
-      if (!$tblExists('ws_incidents')) json_out([]);
+      if (!$tblExists('ws_incidents')) json_vide(['ws_incidents']);
       $rs = rows("SELECT i.type, i.severity, i.title, i.order_ref FROM ws_incidents i
                    WHERE " . $scope('i.shop_id') . " AND i.status='open'
                    ORDER BY (i.severity='high') DESC, i.created_at DESC LIMIT 8");
@@ -4839,7 +4839,7 @@ function dispatch($m, $p) {
 
     // ── Rentabilité (fr_rentabilite) — arbre tournée › site : CA réel, coûts estimés. ──
     if ($m === 'GET' && $p === '/franchisee/fr-rentabilite') {
-      if (!$hasOrders || !$tblExists('ws_tours') || !$tblExists('ws_offices')) json_out([]);
+      if (!$hasOrders || !$tblExists('ws_tours') || !$tblExists('ws_offices')) json_vide(['ws_orders', 'ws_tours', 'ws_offices']);
       $from = qp('from', date('Y-m-01'));
       $prep = (float) ws_param('cost_prep_per_order', '0');
       $emb  = (float) ws_param('cost_packaging_unit', '0');
@@ -4864,7 +4864,7 @@ function dispatch($m, $p) {
 
     // ── Chauffeurs live (fr_live_drivers) — télémétrie ws_tour_tracking. ──
     if ($m === 'GET' && $p === '/franchisee/fr-live-drivers') {
-      if (!$tblExists('ws_tour_tracking') || !$tblExists('ws_tours')) json_out([]);
+      if (!$tblExists('ws_tour_tracking') || !$tblExists('ws_tours')) json_vide(['ws_tour_tracking', 'ws_tours']);
       $rs = rows("SELECT tk.driver_name, tk.vehicle, tk.stops_done, tk.stops_total, t.name
                     FROM ws_tour_tracking tk JOIN ws_tours t ON t.id = tk.tour_id
                    WHERE " . $scope('t.shop_id') . " AND tk.driver_name IS NOT NULL ORDER BY t.name LIMIT 20");
@@ -4879,7 +4879,7 @@ function dispatch($m, $p) {
 
     // ── Tournées (ws_tours) — table unique du constructeur. ──
     if ($m === 'GET' && $p === '/franchisee/ws-tours') {
-      if (!$tblExists('ws_tours')) json_out([]);
+      if (!$tblExists('ws_tours')) json_vide(['ws_tours']);
       $hasTk = $tblExists('ws_tour_tracking');
       $hasZ  = $tblExists('ws_delivery_zones');
       $hasFV = col_exists('ws_tours', 'delivery_fee');
@@ -4929,7 +4929,7 @@ function dispatch($m, $p) {
 
     // ── Zones de livraison (ws_delivery_zones). ──
     if ($m === 'GET' && $p === '/franchisee/ws-delivery-zones') {
-      if (!$tblExists('ws_delivery_zones')) json_out([]);
+      if (!$tblExists('ws_delivery_zones')) json_vide(['ws_delivery_zones']);
       $hasZoning = (bool) row("SELECT 1 x FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='ws_delivery_zones' AND column_name='postcodes'");
       $rs = rows("SELECT z.id, z.name, z.sort_order, z.active" .
                  ($hasZoning ? ", z.postcodes, z.zone_type, c.name AS catchment_name" : ", NULL AS postcodes, 'secondary' AS zone_type, NULL AS catchment_name") . "
@@ -4952,7 +4952,7 @@ function dispatch($m, $p) {
     // Alimente le sélecteur de CP du formulaire « Créer une tournée » : le franchisé ne
     // peut cocher que des codes postaux de SA chalandise (ws_franchisor_catchment).
     if ($m === 'GET' && $p === '/franchisee/catchment-postcodes') {
-      if (!$tblExists('ws_franchisor_catchment')) json_out([]);
+      if (!$tblExists('ws_franchisor_catchment')) json_vide(['ws_franchisor_catchment']);
       $hasShop = (bool) row("SELECT 1 x FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='ws_franchisor_catchment' AND column_name='shop_id'");
       $rs = rows("SELECT name, postcodes FROM ws_franchisor_catchment WHERE active=1" .
                  ($hasShop && $shopId ? " AND (shop_id = " . (int) $shopId . " OR shop_id IS NULL)" : "") .
@@ -5217,7 +5217,7 @@ function dispatch($m, $p) {
 
     // ── CP déjà affectés à chaque tournée (préremplissage du formulaire Tournée). ──
     if ($m === 'GET' && $p === '/franchisee/ws-tour-postcodes') {
-      if (!$tblExists('ws_tour_postcodes')) json_out([]);
+      if (!$tblExists('ws_tour_postcodes')) json_vide(['ws_tour_postcodes']);
       json_out(rows("SELECT tp.tour_id, tp.postcode FROM ws_tour_postcodes tp" .
                     ($shopId ? " JOIN ws_tours t ON t.id = tp.tour_id AND t.shop_id = " . (int) $shopId : "") .
                     " ORDER BY tp.tour_id, tp.postcode"));
@@ -5225,7 +5225,7 @@ function dispatch($m, $p) {
 
     // ── Sites de livraison (ws_office_delivery_sites) — table réelle complète. ──
     if ($m === 'GET' && $p === '/franchisee/ws-office-delivery-sites') {
-      if (!$tblExists('ws_office_delivery_sites')) json_out([]);
+      if (!$tblExists('ws_office_delivery_sites')) json_vide(['ws_office_delivery_sites']);
       $hasT = $tblExists('ws_tours');
       $hasStop = col_exists('ws_office_delivery_sites', 'tournee_stop_id');
       $rs = rows("SELECT s.id, s.office_client_id, s.client_id, s.name, s.address, s.floor_room,
@@ -5259,7 +5259,7 @@ function dispatch($m, $p) {
 
     // ── Offices / bureaux (ws_offices) — table réelle. ──
     if ($m === 'GET' && $p === '/franchisee/ws-offices') {
-      if (!$tblExists('ws_offices')) json_out([]);
+      if (!$tblExists('ws_offices')) json_vide(['ws_offices']);
       $join = ''; $wh = '1=1'; $tourSel = "NULL AS tour";
       if ($tblExists('ws_tours')) {
         $join = "LEFT JOIN ws_tours t ON t.id = f.tour_id";
@@ -5289,7 +5289,7 @@ function dispatch($m, $p) {
        seule adresse de la fiche : tout contact ajouté disparaissait au
        rechargement, et aucun e-mail ne partait vers lui. ── */
     if ($m === 'GET' && $p === '/franchisee/ws-office-emails') {
-      if (!$tblExists('ws_offices')) json_out([]);
+      if (!$tblExists('ws_offices')) json_vide(['ws_offices']);
       // Cloisonné : cette liste servait les bureaux de TOUT le réseau, adresses
       // e-mail comprises. Un franchisé y lisait le carnet d'adresses des autres.
       $sc  = (col_exists('ws_offices', 'shop_id') && $shopId) ? " AND o.shop_id = " . (int) $shopId : "";
@@ -5391,7 +5391,7 @@ function dispatch($m, $p) {
 
     // ── Départements B2B (b2b_client_company_department) — table ERP si synchronisée. ──
     if ($m === 'GET' && $p === '/franchisee/b2b-departments') {
-      if (!$tblExists('b2b_client_company_department')) json_out([]);
+      if (!$tblExists('b2b_client_company_department')) json_vide(['b2b_client_company_department']);
       /* Cloisonné par le CLIENT porteur : la table servait ses 500 premières
          lignes, tous réseaux confondus — les départements des clients des
          autres boutiques compris. Le nom de la colonne de rattachement varie
@@ -5497,7 +5497,7 @@ function dispatch($m, $p) {
     //    magasin (pwa_purchases si présente), bureau/tournée via ws_offices,
     //    différé au niveau bureau. Cloisonné boutique (preferred/id_main_shop).
     if ($m === 'GET' && $p === '/franchisee/b2b-clients') {
-      if (!$tblExists('client')) json_out([]);
+      if (!$tblExists('client')) json_vide(['client']);
       $cc = fn ($c) => col_exists('client', $c);
       $sel = "c.id, c.name, c.surname, c.email, c.phone, c.zip";
       foreach (['company_name','phone_e164','locality','city','is_b2b','office_id','department_id','active','tax_number','office_delivery'] as $col)
@@ -5798,7 +5798,7 @@ function dispatch($m, $p) {
     // ── BONS de la boutique (modèle ERP unifié — mêmes tables que la marque). ──
     // Liste : MES bons (éditables) + les bons MARQUE applicables (lecture seule).
     if ($m === 'GET' && $p === '/franchisee/fr-vouchers') {
-      if (!$tblExists('voucher_code')) json_out([]);
+      if (!$tblExists('voucher_code')) json_vide(['voucher_code']);
       $hasReason = col_exists('voucher_campaign', 'reason_kind');
       $vs = rows("SELECT vco.code, vc.id_shop, vc.target_kind, vc.target_id,
                          vco.usage_count, vco.usage_limit, vc.usage_limit_per_customer, vco.valid_to AS expires_at," .
@@ -5958,7 +5958,8 @@ function dispatch($m, $p) {
     // ── Fiche client : commandes du client (droplist réclamation + note ★1-5). ──
     if ($m === 'GET' && $p === '/franchisee/client-orders') {
       $cid = (int) qp('client_id', 0);
-      if (!$cid || !$tblExists('ws_orders')) json_out([]);
+      if (!$tblExists('ws_orders')) json_vide(['ws_orders']);
+      if (!$cid) json_out([]);   // pas de client demandé : ce n'est pas une panne
       $hasRating = col_exists('ws_orders', 'rating');
       json_out(rows("SELECT id, order_ref, created_at, total, status" .
                     ($hasRating ? ", rating" : ", NULL AS rating") . "
@@ -5997,7 +5998,7 @@ function dispatch($m, $p) {
 
     // ── Horaires tournées (ws_tour_availability) — fenêtres agrégées par tournée. ──
     if ($m === 'GET' && $p === '/franchisee/ws-tour-availability') {
-      if (!$tblExists('ws_tour_availability') || !$tblExists('ws_tours')) json_out([]);
+      if (!$tblExists('ws_tour_availability') || !$tblExists('ws_tours')) json_vide(['ws_tour_availability', 'ws_tours']);
       $rs = rows("SELECT t.name AS tour,
                          GROUP_CONCAT(DISTINCT av.delivery_day ORDER BY av.delivery_day) AS days,
                          TIME_FORMAT(MIN(av.delivery_start),'%H:%i') AS dep,
@@ -6016,7 +6017,7 @@ function dispatch($m, $p) {
 
     // ── Fermetures ponctuelles (ws_tour_closures). ──
     if ($m === 'GET' && $p === '/franchisee/ws-tour-closures') {
-      if (!$tblExists('ws_tour_closures')) json_out([]);
+      if (!$tblExists('ws_tour_closures')) json_vide(['ws_tour_closures']);
       $ctSel = col_exists('ws_tour_closures', 'closure_type') ? "cl.closure_type" : "NULL";
       $rs = rows("SELECT COALESCE(t.name,'Toutes les tournées') AS tour,
                          DATE_FORMAT(cl.closure_date,'%d/%m/%Y') AS date, COALESCE(cl.reason,'—') AS motif,
@@ -6030,7 +6031,7 @@ function dispatch($m, $p) {
 
     // ── Règles calendrier (ws_calendar_rules). ──
     if ($m === 'GET' && $p === '/franchisee/ws-calendar-rules') {
-      if (!$tblExists('ws_calendar_rules')) json_out([]);
+      if (!$tblExists('ws_calendar_rules')) json_vide(['ws_calendar_rules']);
       $rs = rows("SELECT id, mode, open_days, cutoff_hour, cutoff_minutes, lead_hours FROM ws_calendar_rules
                    WHERE " . $scope('shop_id') . " AND active=1 ORDER BY mode LIMIT 50");
       json_out(array_map(function ($r) use ($DAYS) {
@@ -6131,7 +6132,7 @@ function dispatch($m, $p) {
        pouvait remplir sans que rien ne les enregistre. La capacité est un
        autre écran (fr_capacity) ; elle est retirée d'ici plutôt que simulée. */
     if ($m === 'GET' && $p === '/franchisee/ws-slots') {
-      if (!$tblExists('ws_slots')) json_out([]);
+      if (!$tblExists('ws_slots')) json_vide(['ws_slots']);
       $rs = rows("SELECT id, mode, label, sort_order FROM ws_slots
                    WHERE " . $scope('shop_id') . " AND active=1 ORDER BY sort_order, label LIMIT 100");
       json_out(array_map(fn ($r) => ['id' => (int) $r['id'],
@@ -6176,7 +6177,7 @@ function dispatch($m, $p) {
 
     // ── Bons locaux (ws_vouchers_local) — ws_vouchers boutique + marque. ──
     if ($m === 'GET' && $p === '/franchisee/ws-vouchers-local') {
-      if (!$tblExists('ws_vouchers')) json_out([]);
+      if (!$tblExists('ws_vouchers')) json_vide(['ws_vouchers']);
       $sw = $shopId ? "(shop_id = " . (int) $shopId . " OR shop_id IS NULL)" : '1=1';
       $rs = rows("SELECT code, type, value, expires_at, shop_id FROM ws_vouchers WHERE $sw AND active=1 ORDER BY code LIMIT 200");
       json_out(array_map(function ($v) {
@@ -6190,7 +6191,7 @@ function dispatch($m, $p) {
 
     // ── Règles de prix locales (ws_pricing_rules_local) — ws_pricing_rules. ──
     if ($m === 'GET' && $p === '/franchisee/ws-pricing-rules-local') {
-      if (!$tblExists('ws_pricing_rules')) json_out([]);
+      if (!$tblExists('ws_pricing_rules')) json_vide(['ws_pricing_rules']);
       $sw = $shopId ? "(shop_id = " . (int) $shopId . " OR shop_id IS NULL)" : '1=1';
       $rs = rows("SELECT id, rule_type, label, x, y, threshold, shop_id FROM ws_pricing_rules WHERE $sw AND active=1 ORDER BY id LIMIT 200");
       json_out(array_map(function ($r) {
@@ -6264,7 +6265,7 @@ function dispatch($m, $p) {
 
     // ── Jours exceptionnels (ws_shop_exceptions) — table réelle. ──
     if ($m === 'GET' && $p === '/franchisee/ws-shop-exceptions') {
-      if (!$tblExists('ws_shop_exceptions')) json_out([]);
+      if (!$tblExists('ws_shop_exceptions')) json_vide(['ws_shop_exceptions']);
       $rs = rows("SELECT id, DATE_FORMAT(exception_date,'%d/%m/%Y') AS date,
                          DATE_FORMAT(exception_date,'%Y-%m-%d') AS iso, type, COALESCE(reason,'—') AS reason
                     FROM ws_shop_exceptions WHERE " . $scope('shop_id') . " ORDER BY exception_date LIMIT 100");
@@ -6364,7 +6365,7 @@ function dispatch($m, $p) {
        dérogation et un héritage se ressemblent, et on ne sait pas si modifier
        ce champ touchera un bureau ou toute la tournée. */
     if ($m === 'GET' && $p === '/franchisee/ws-office-delivery-settings') {
-      if (!$tblExists('ws_offices') || !$tblExists('ws_tours')) json_out([]);
+      if (!$tblExists('ws_offices') || !$tblExists('ws_tours')) json_vide(['ws_offices', 'ws_tours']);
       $hasAv  = $tblExists('ws_tour_availability');
       $hasSet = $tblExists('ws_office_delivery_settings');
       $hasOff = $hasSet && col_exists('ws_office_delivery_settings', 'cutoff_offset');
@@ -6452,7 +6453,7 @@ function dispatch($m, $p) {
 
     // ── Paramètres (ws_param clé/valeur) — '0'/'1' exposés en bool (toggles UI). ──
     if ($m === 'GET' && $p === '/franchisee/params') {
-      if (!$tblExists('ws_param')) json_out([]);
+      if (!$tblExists('ws_param')) json_vide(['ws_param']);
       $ps = rows("SELECT param_key, param_value FROM ws_param ORDER BY param_key");
       json_out(array_map(function ($x) {
         $v = (string) $x['param_value'];
@@ -6465,7 +6466,7 @@ function dispatch($m, $p) {
 
     // ── Barème de frais en cascade (ws_delivery_fee_rules — table réelle du schéma). ──
     if ($m === 'GET' && $p === '/franchisee/ws-delivery-fee-rules') {
-      if (!$tblExists('ws_delivery_fee_rules')) json_out([]);
+      if (!$tblExists('ws_delivery_fee_rules')) json_vide(['ws_delivery_fee_rules']);
       $sw = $shopId ? "(r.shop_id = " . (int) $shopId . " OR r.shop_id IS NULL)" : '1=1';
       /* L'id ET les valeurs BRUTES accompagnent le texte affiché. Sans elles,
          l'écran ne pouvait éditer que « 4,50 € », « Offert » et « — » : des
@@ -6596,7 +6597,7 @@ function dispatch($m, $p) {
     //    shop_name / shop_city viennent de la table shops : les tuiles
     //    « Magasins » du BO affichent le vrai nom du franchisé.
     if ($m === 'GET' && $p === '/franchisee/ws-franchisor-catchment') {
-      if (!$tblExists('ws_franchisor_catchment')) json_out([]);
+      if (!$tblExists('ws_franchisor_catchment')) json_vide(['ws_franchisor_catchment']);
       $hasShopC = col_exists('ws_franchisor_catchment', 'shop_id');
       $rs = $hasShopC
         ? rows("SELECT c.id, c.name, c.postcodes, c.exclusive, c.shop_id,
@@ -6616,7 +6617,7 @@ function dispatch($m, $p) {
     // ── Dispo produit — exceptions réelles : ws_products.active (réseau) +
     //    ws_product_shops.active / no_delivery (boutique). Pas de table dédiée.
     if ($m === 'GET' && $p === '/franchisee/ws-product-availability') {
-      if (!$tblExists('ws_products')) json_out([]);
+      if (!$tblExists('ws_products')) json_vide(['ws_products']);
       $out = [];
       $off = rows("SELECT pr.name, c.label AS cat FROM ws_products pr
                      LEFT JOIN ws_categories c ON c.id = pr.cat_id
@@ -6692,7 +6693,7 @@ function dispatch($m, $p) {
     // La tournée est donc dérivée du SITE quand la colonne est vide, ce que
     // l'arbre faisait déjà. Une seule source de vérité, aucune donnée à migrer.
     if ($m === 'GET' && $p === '/franchisee/fr-tdb-tournees') {
-      if (!$tblExists('ws_tours') || !$hasOrders) json_out([]);
+      if (!$tblExists('ws_tours') || !$hasOrders) json_vide(['ws_tours', 'ws_orders']);
       $hasTk = $tblExists('ws_tour_tracking');
       $hasAv = $tblExists('ws_tour_availability');
       $rs = rows("SELECT t.id, t.name" . ($hasTk ? ", tk.driver_name, tk.vehicle, tk.stops_done" : ", NULL AS driver_name, NULL AS vehicle, 0 AS stops_done") . ",
@@ -6734,7 +6735,7 @@ function dispatch($m, $p) {
     // ce n'est plus un écran d'exploitation.
     $tdbHorizon = max(0, min(7, (int) qp('horizon', 1)));
     if ($m === 'GET' && $p === '/franchisee/fr-tdb-tree') {
-      if (!$tblExists('ws_tours') || !$tblExists('ws_office_delivery_sites') || !$hasOrders) json_out([]);
+      if (!$tblExists('ws_tours') || !$tblExists('ws_office_delivery_sites') || !$hasOrders) json_vide(['ws_tours', 'ws_office_delivery_sites', 'ws_orders']);
       $hasTk = $tblExists('ws_tour_tracking');
       $hasZ  = $tblExists('ws_delivery_zones');
       $tours = rows("SELECT t.id, t.name" . ($hasZ ? ", z.name AS zone" : ", NULL AS zone") .
@@ -6849,7 +6850,7 @@ function dispatch($m, $p) {
     // catégorie × produit × créneau × tournée, aujourd'hui + 31 jours (le BO
     // filtre par jour via les badges). ws_order_lines × ws_orders réels.
     if ($m === 'GET' && $p === '/franchisee/fr-prep-lines') {
-      if (!$hasOrders || !$tblExists('ws_order_lines')) json_out([]);
+      if (!$hasOrders || !$tblExists('ws_order_lines')) json_vide(['ws_orders', 'ws_order_lines']);
       $hasT = $tblExists('ws_tours') && $tblExists('ws_office_delivery_sites');
       // DATE_FORMAT force le format YYYY-MM-DD quel que soit le type réel de
       // delivery_date (un DATETIME ferait rater le filtre par jour du BO) ;
@@ -6911,7 +6912,7 @@ function dispatch($m, $p) {
 
     // Statut d'envoi tablette + validation chauffeur, par tournée.
     if ($m === 'GET' && $p === '/franchisee/tour-dispatch-status') {
-      if (!$tblExists('ws_tour_tracking') || !$tblExists('ws_tours')) json_out([]);
+      if (!$tblExists('ws_tour_tracking') || !$tblExists('ws_tours')) json_vide(['ws_tour_tracking', 'ws_tours']);
       $hasDis = col_exists('ws_tour_tracking', 'dispatched_at');
       $hasVal = col_exists('ws_tour_tracking', 'driver_validated_at');
       $rs = rows("SELECT t.name AS tour, tk.driver_name,
@@ -6956,7 +6957,7 @@ function dispatch($m, $p) {
 
     // Bon de chargement (prep) — colis du jour groupés par site.
     if ($m === 'GET' && $p === '/franchisee/fr-prep-points') {
-      if (!$tblExists('ws_office_delivery_sites') || !$hasOrders) json_out([]);
+      if (!$tblExists('ws_office_delivery_sites') || !$hasOrders) json_vide(['ws_office_delivery_sites', 'ws_orders']);
       // Bonne colonne (office_delivery_site_id) + repli par bureau : le bon de
       // chargement était vide car delivery_site_id n'existe pas.
       $rs = rows("SELECT COALESCE(NULLIF(TRIM(s.name),''), s.address, f2.name) AS libelle,
@@ -6977,7 +6978,7 @@ function dispatch($m, $p) {
 
     // Suivi live — table chauffeurs (télémétrie réelle ; ETA sans source → «—»).
     if ($m === 'GET' && $p === '/franchisee/fr-live-table') {
-      if (!$tblExists('ws_tour_tracking') || !$tblExists('ws_tours')) json_out([]);
+      if (!$tblExists('ws_tour_tracking') || !$tblExists('ws_tours')) json_vide(['ws_tour_tracking', 'ws_tours']);
       $rs = rows("SELECT tk.driver_name, tk.vehicle, tk.stops_done, tk.stops_total, t.name
                     FROM ws_tour_tracking tk JOIN ws_tours t ON t.id = tk.tour_id
                    WHERE " . $scope('t.shop_id') . " AND tk.driver_name IS NOT NULL ORDER BY t.name LIMIT 20");
@@ -6995,7 +6996,7 @@ function dispatch($m, $p) {
 
     // Comptes Office en attente de validation — ws_offices.status='pending'.
     if ($m === 'GET' && $p === '/franchisee/fr-validations') {
-      if (!$tblExists('ws_offices')) json_out([]);
+      if (!$tblExists('ws_offices')) json_vide(['ws_offices']);
       // Scopé boutique : un bureau « pending » n'apparaît que chez SON franchisé
       // (ws_offices.shop_id, posé par le trigger 0021 = client.id_main_shop).
       // shop_id NULL = bureaux historiques d'avant 0021 → visibles partout.
@@ -7019,7 +7020,7 @@ function dispatch($m, $p) {
        bo_endpoint_section, donc une session PIN ne peut jamais les atteindre —
        un vendeur ne se crée pas un compte « admin boutique ». ── */
     if ($m === 'GET' && $p === '/franchisee/bo-roles') {
-      if (!$tblExists('bo_role')) json_out([]);
+      if (!$tblExists('bo_role')) json_vide(['bo_role']);
       json_out(array_map(static function ($r) {
         $sec = $r['sections'] ? (json_decode((string) $r['sections'], true) ?: []) : [];
         return ['id' => (int) $r['id'], 'label' => $r['label'], 'key' => $r['role_key'],
@@ -7028,7 +7029,8 @@ function dispatch($m, $p) {
     }
 
     if ($m === 'GET' && $p === '/franchisee/bo-users') {
-      if (!$tblExists('bo_users') || !$shopId) json_out([]);
+      if (!$tblExists('bo_users')) json_vide(['bo_users']);
+      if (!$shopId) json_out([]);   // sans portée boutique : liste vide, pas une panne
       $hasRole = col_exists('bo_users', 'role_id');
       $rs = rows("SELECT u.id, u.display_name AS nom, u.active,
                          (u.pin_hash IS NOT NULL AND u.pin_hash <> '') AS pin_pose, u.pin_set_at,
@@ -7108,7 +7110,7 @@ function dispatch($m, $p) {
     // On identifie le DEMANDEUR (client.id, nom, e-mail) : sans lui, la
     // décision « Lier » ne sait pas qui rattacher — c'était le trou du flow.
     if ($m === 'GET' && $p === '/franchisee/fr-join-requests') {
-      if (!$tblExists('ws_office_join_requests')) json_out([]);
+      if (!$tblExists('ws_office_join_requests')) json_vide(['ws_office_join_requests']);
       $hasCli  = col_exists('ws_office_join_requests', 'client_id');
       $hasMail = col_exists('ws_office_join_requests', 'contact_email');
       $hasTel  = col_exists('ws_office_join_requests', 'contact_phone');
@@ -7260,7 +7262,7 @@ function dispatch($m, $p) {
     // ── Capacité / calendrier — RÉEL : créneaux (ws_slots) × réservations
     //    (ws_orders.slot_id par delivery_date), 5 prochains jours. ──
     if ($m === 'GET' && $p === '/franchisee/fr-capacity') {
-      if (!$tblExists('ws_slots')) json_out([]);
+      if (!$tblExists('ws_slots')) json_vide(['ws_slots']);
       $slots = rows("SELECT id, label, mode FROM ws_slots WHERE " . $scope('shop_id') . " AND active=1 ORDER BY sort_order, label LIMIT 20");
       if (!$slots) json_out([]);
       $hasCap = $tblExists('ws_slot_capacity');
@@ -7405,7 +7407,8 @@ function dispatch($m, $p) {
     //    Apricot = Delivery) — ws_order_lines × ws_orders, jour courant. ──
     if ($m === 'GET' && $p === '/franchisee/stock-product-orders') {
       $pn = trim((string) qp('product', ''));
-      if ($pn === '' || !$tblExists('ws_orders') || !$tblExists('ws_order_lines')) json_out([]);
+      if (!$tblExists('ws_orders') || !$tblExists('ws_order_lines')) json_vide(['ws_orders', 'ws_order_lines']);
+      if ($pn === '') json_out([]);   // aucun produit demandé : ce n'est pas une panne
       $rs = rows("SELECT o.order_ref, o.mode, o.status, l.qty,
                          DATE_FORMAT(o.created_at,'%H:%i') AS heure,
                          COALESCE(NULLIF(o.guest_name,''), '') AS client
@@ -7684,7 +7687,7 @@ function dispatch($m, $p) {
       // repris dans l'assortiment webshop de la boutique (ws_product_shops
       // actif ou sans surcharge) — les quantités du jour viennent de
       // ws_product_stock quand elles existent, sinon 0.
-      if (!$tblExists('ws_products')) json_out([]);
+      if (!$tblExists('ws_products')) json_vide(['ws_products']);
       $hasStock = $tblExists('ws_product_stock');
       $hasPS = $shopId && $tblExists('ws_product_shops');
       // SUM sans ELSE : « aucune ligne du jour pour ce canal » = NULL (et non
@@ -7774,7 +7777,7 @@ function dispatch($m, $p) {
 
     // Assortiment — ws_products × ws_product_shops (actif / sans livraison / verrou marque).
     if ($m === 'GET' && $p === '/franchisee/fr-assortiment') {
-      if (!$tblExists('ws_products')) json_out([]);
+      if (!$tblExists('ws_products')) json_vide(['ws_products']);
       $hasPS = $shopId && $tblExists('ws_product_shops');
       // MÊME périmètre que le back-office franchisor : uniquement les
       // catégories ACTIVES (ws_categories.active=1) — une catégorie retirée
@@ -7828,7 +7831,7 @@ function dispatch($m, $p) {
 
     // Dispo par catégorie — ws_categories (délai/cut-off par défaut ws_param).
     if ($m === 'GET' && $p === '/franchisee/fr-dispo-cats') {
-      if (!$tblExists('ws_categories')) json_out([]);
+      if (!$tblExists('ws_categories')) json_vide(['ws_categories']);
       $rs = rows("SELECT slug, label, active FROM ws_categories WHERE " . $scope('shop_id') . " OR shop_id IS NULL ORDER BY sort_order, label LIMIT 50");
       $cut = ws_param('order.cutoff_default', '17:00');
       // Le délai par catégorie n'a pas de source en base : on renvoie la valeur
