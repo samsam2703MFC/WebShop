@@ -139,9 +139,22 @@ jobs:
             if [ "${n:-0}" -ge 1 ] 2>/dev/null; then echo "OK       $3"
             else echo "ABSENT   $3   (marqueur absent de $1)"; fail=1; fi
           }
+          # Un marqueur PRESENT ne prouve pas que l ancien code a disparu : les deux
+          # peuvent cohabiter dans le meme bundle si un ecran n a pas ete repris.
+          # On verifie donc aussi des ABSENCES — ici, l ancienne liste deroulante
+          # de bureaux, qui existait en DEUX exemplaires et dont un seul avait
+          # ete remplace.
+          absent() {   # $1 = asset, $2 = marqueur qui ne doit PLUS exister, $3 = quoi
+            if [ -z "$1" ]; then return; fi
+            n=$(distant "curl -sf 'http://localhost/webshop/$1' | grep -cF -- '$2'" | tr -d ' \r')
+            if [ "${n:-0}" = "0" ]; then echo "OK       $3"
+            else echo "ENCORE LA  $3   ($n occurrence(s) dans $1)"; fail=1; fi
+          }
           verifie "$CSS" 'ws-acc__pick-item'  'recherche de societe (liste deroulante remplacee)'
           verifie "$CSS" 'ws-mode__lbl-full'  'libelles du selecteur de mode en mobile'
           verifie "$JS"  'Rechercher une '    'placeholder de la recherche de societe'
+          absent  "$JS"  'lectionner un bureau' 'plus aucune liste deroulante de bureaux'
+          absent  "$JS"  'lectionnez un bureau —' 'plus aucun libelle de deroulante residuel'
           # Sans Cache-Control, le navigateur applique sa fraicheur heuristique et
           # garde la page : le deploiement est en ligne sans etre visible sur
           # l appareil. C est ce qui s est produit, et ca ressemble a un bug de
