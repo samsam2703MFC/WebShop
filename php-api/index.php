@@ -5219,7 +5219,10 @@ function dispatch($m, $p) {
         'tour' => $s2['tour_name'] ?: '—', 'tournee_id' => $s2['tournee_id'] !== null ? (int) $s2['tournee_id'] : null,
         'stop' => $s2['tournee_stop_id'] !== null ? (int) $s2['tournee_stop_id'] : null,
         'office_address' => $s2['office_address'] ?: '', 'office_cp' => $s2['office_cp'] ?: '', 'office_city' => $s2['office_city'] ?: '',
-        'acc' => (float) $s2['site_access_minutes'], 'site_access_minutes' => (float) $s2['site_access_minutes'],
+        // NULL reste NULL : (float) NULL rendait 0, que l'écran lisait comme
+        // « zéro minute d'accès » — une mesure, alors que rien n'a été mesuré.
+        'acc' => $s2['site_access_minutes'] === null ? null : (float) $s2['site_access_minutes'],
+        'site_access_minutes' => $s2['site_access_minutes'] === null ? null : (float) $s2['site_access_minutes'],
         'shop_id' => $s2['shop_id'], 'active' => (bool) $s2['active'],
       ], $rs));
     }
@@ -5698,7 +5701,8 @@ function dispatch($m, $p) {
           else q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, tournee_id, site_access_minutes, active, shop_id)
                     VALUES (?,?,?,?,?,1,?)",
                  [(int) $off['id'], $tpl['name'] ?? null, $siteAdr, $tpl['tournee_id'] ?? null,
-                  $tpl['site_access_minutes'] ?? 6, $shopId ?: ($tpl['shop_id'] ?? null)]);
+                  // Repris du site modèle tel quel : absent chez lui, absent ici.
+                  $tpl['site_access_minutes'] ?? null, $shopId ?: ($tpl['shop_id'] ?? null)]);
           if (($tpl['tournee_id'] ?? null) !== null) {
             if (col_exists('ws_offices', 'tour_id'))
               q("UPDATE ws_offices SET tour_id=? WHERE id=?", [(int) $tpl['tournee_id'], (int) $off['id']]);
@@ -6797,7 +6801,9 @@ function dispatch($m, $p) {
                       [$sa, $tpl2['name'] ?? null, $tpl2['tournee_id'] ?? null, (int) $ex2['id']]);
           else q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, tournee_id, site_access_minutes, active" . ($shopId ? ", shop_id" : "") . ")
                     VALUES (?,?,?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
-                 [$id, $tpl2['name'] ?? null, $sa, $tpl2['tournee_id'] ?? null, (float) ($tpl2['site_access_minutes'] ?? 6)]);
+                 // Temps d'accès repris du site modèle, ou absent — jamais 6 par défaut.
+                 [$id, $tpl2['name'] ?? null, $sa, $tpl2['tournee_id'] ?? null,
+                  $tpl2['site_access_minutes'] ?? null]);
           if ($tpl2 && $tpl2['tournee_id'] !== null && col_exists('ws_offices', 'tour_id'))
             q("UPDATE ws_offices SET tour_id=COALESCE(tour_id, ?) WHERE id=?", [(int) $tpl2['tournee_id'], $id]);
         }
@@ -8105,7 +8111,11 @@ function dispatch($m, $p) {
         q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, tournee_id, site_access_minutes, active" . ($obShop ? ", shop_id" : "") . ")
             VALUES (?,?,?,?,?,?,1" . ($obShop ? "," . (int) $obShop : "") . ")",
           [$officeId, $raison . ' — ' . ((string) ($b['office'] ?? 'Site')), (string) ($b['adr'] ?? ''),
-           (string) ($b['etage'] ?? ''), $tourId, (float) ($b['acc'] ?? 6)]);
+           // Temps d'accès : celui qui a été saisi, sinon RIEN. Les 6 minutes
+           // par défaut entraient dans toutes les heures d'arrivée de la
+           // tournée sans que personne les ait mesurées.
+           (string) ($b['etage'] ?? ''), $tourId,
+           (($b['acc'] ?? '') === '' || !is_numeric($b['acc'])) ? null : (float) $b['acc']]);
         $newSiteId = (int) db()->lastInsertId();
       }
       /* Départements B2B. L'INSERT écrivait SEPT colonnes (client_id, company,
