@@ -3350,7 +3350,13 @@ function dispatch($m, $p) {
     if ($m === 'GET' && $p === '/franchisor/catalog') {
       $totalShops = (int) (row("SELECT COUNT(*) n FROM $SHOPS WHERE active=1")['n'] ?? 0);
       $hasPS = $tblExists('ws_product_shops');
-      $cats = rows("SELECT id, label, img, COALESCE(menu_default,0) AS menu_default FROM ws_categories WHERE active=1 ORDER BY sort_order, label");
+      // Console marque (gestion de l'assortiment) : renvoyer TOUTES les catégories,
+      // pas seulement les actives. Une catégorie dont tous les produits sont en
+      // brouillon passe active=0 (règle auto) et DISPARAISSAIT de l'assistant — la
+      // marque ne pouvait alors ni la voir ni la piloter (« je n'ai que 2 catégories »).
+      // Le filtre « avec produits » reste géré plus bas (if $rows2) : les catégories
+      // réellement vides restent exclues.
+      $cats = rows("SELECT id, label, img, COALESCE(menu_default,0) AS menu_default FROM ws_categories ORDER BY sort_order, label");
       /* Sous-catégories : ws_category_subs fait foi. Les déduire des produits
          (ce que faisait le constructeur de menus) ne montrait que celles déjà
          pourvues et masquait les autres — or une étape de formule doit pouvoir
