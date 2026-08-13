@@ -4732,7 +4732,11 @@ function dispatch($m, $p) {
       $vat  = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string) ($b['vat'] ?? '')));
       $ex = $mail !== '' ? row("SELECT id FROM client WHERE email IS NOT NULL AND LOWER(TRIM(email))=? LIMIT 1", [$mail]) : null;
       if ($ex) {
+        // L'aiguillage DÉPLACE le client vers le franchisé qui couvre son CP :
+        // les deux rattachements suivent, sinon la console de la boutique cible
+        // ne le verrait jamais (elle cloisonne sur preferred_shop_id).
         $sets = ['id_main_shop=' . (int) $target];
+        if (col_exists('client', 'preferred_shop_id')) $sets[] = 'preferred_shop_id=' . (int) $target;
         if (col_exists('client', 'is_b2b'))          $sets[] = 'is_b2b=1';
         if (col_exists('client', 'office_delivery')) $sets[] = 'office_delivery=1';
         if (col_exists('client', 'status'))          $sets[] = 'status=1';
@@ -4743,6 +4747,7 @@ function dispatch($m, $p) {
       $cols = ['id_main_shop', 'email', 'name', 'zip', 'city', 'active', 'source_channel', 'webshop_user'];
       $ivals = [(int) $target, $mail ?: null, trim((string) ($b['name'] ?? '')) ?: 'Office', $cp,
                 trim((string) ($b['city'] ?? '')), 1, 'webshop', 0];
+      if (col_exists('client', 'preferred_shop_id')) { $cols[] = 'preferred_shop_id'; $ivals[] = (int) $target; }
       if (col_exists('client', 'company_name'))    { $cols[] = 'company_name';    $ivals[] = trim((string) ($b['name'] ?? '')) ?: null; }
       if (col_exists('client', 'is_b2b'))          { $cols[] = 'is_b2b';          $ivals[] = 1; }
       if (col_exists('client', 'office_delivery')) { $cols[] = 'office_delivery'; $ivals[] = 1; }
