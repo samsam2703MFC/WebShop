@@ -1727,6 +1727,9 @@ function dispatch($m, $p) {
         'id'         => (int) $r['id'],
         'name'       => $r['name'],
         'address'    => $r['address'],
+        // L'écran regroupe et SÉLECTIONNE par bureau : il lui faut son id, pas
+        // seulement son nom — deux sociétés peuvent partager une raison sociale.
+        'officeId'   => $r['office_id'] !== null ? (int) $r['office_id'] : null,
         'officeName' => $r['office_name'],
         'livrable'   => $ok,
         'motif'      => $why,

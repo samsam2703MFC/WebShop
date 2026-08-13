@@ -257,23 +257,25 @@ function OfficeSearchPicker({ items, value, onPick, label }) {
   const norm = (v) => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const qq = norm(q).trim();
 
-  /* On REGROUPE par société. Les entrées servies par /office-sites sont des
-     POINTS de livraison ; une même société en a souvent plusieurs (réception,
-     étage, annexe). Les aligner à plat répétait le nom de la société autant de
-     fois qu'elle a de points, et noyait ce que le client cherche : son
-     employeur d'abord, l'entrée précise ensuite.
-     La sélection reste le POINT — c'est lui que le serveur rattache — mais il
-     se lit désormais sous le bureau auquel il appartient. */
+  /* On choisit un BUREAU, pas un point de livraison.
+     C'est la société qu'on rattache à son compte : elle porte la validation de
+     l'Atelier, la tournée, la facturation. Les points (réception, étage, zoning)
+     sont des détails de dépôt — utiles à LIRE pour reconnaître son employeur,
+     jamais l'objet du choix. Le premier rendu les rendait cliquables un par un,
+     ce qui demandait au client de trancher une question qui n'est pas la sienne.
+     Le serveur, lui, continue d'être rattaché par un point : on lui transmet
+     donc celui du bureau retenu, sans le lui faire choisir. */
   const groupes = [];
   const parCle = new Map();
   (items || []).forEach((o) => {
-    const cle = o.officeName ? 'o:' + (o.officeId || o.officeName) : 'sans';
+    const cle = o.officeId ? 'o:' + o.officeId : (o.officeName ? 'n:' + o.officeName : 'sans');
     if (!parCle.has(cle)) {
-      const g = { cle, bureau: o.officeName || null, motif: o.livrable === false ? o.motif : null, sites: [] };
-      parCle.set(cle, g); groupes.push(g);
+      parCle.set(cle, { cle, bureau: o.officeName || null, motif: null, livrable: false, sites: [] });
+      groupes.push(parCle.get(cle));
     }
     const g = parCle.get(cle);
-    if (o.livrable === false && !g.motif) g.motif = o.motif;
+    if (o.livrable) g.livrable = true;
+    if (!o.livrable && !g.motif) g.motif = o.motif;
     g.sites.push(o);
   });
 
@@ -287,8 +289,7 @@ function OfficeSearchPicker({ items, value, onPick, label }) {
       return sites.length ? { ...g, sites } : null;
     })
     .filter(Boolean);
-  const total = (items || []).length;
-  const restants = vus.reduce((n, g) => n + g.sites.length, 0);
+  const total = groupes.length;
 
   return (
     <div className="ws-acc__pick">
@@ -298,48 +299,42 @@ function OfficeSearchPicker({ items, value, onPick, label }) {
         aria-label={label || 'Rechercher un bureau'} autoComplete="off"/>
       {vus.length === 0 ? (
         <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>
-          Aucune société ne correspond à «&nbsp;{q.trim()}&nbsp;» parmi les {total} entrées
-          de cette boutique. Si c'est la vôtre, demandez son ajout ci-dessous.
+          Aucune société ne correspond à «&nbsp;{q.trim()}&nbsp;» parmi les {total} bureaux
+          de cette boutique. Si c'est le vôtre, demandez son ajout ci-dessous.
         </p>
       ) : (
         <ul className="ws-acc__pick-list" role="listbox" aria-label={label || 'Bureaux'}>
-          {vus.map((g) => (
-            <li key={g.cle} className="ws-acc__pick-grp">
-              <div className="ws-acc__pick-office">
-                <span className="ws-acc__pick-office-name">
-                  {g.bureau || 'Points sans société rattachée'}
-                </span>
-                {/* Le motif est porté par la SOCIÉTÉ (non validée, sans tournée,
-                    inexistante) : il se dit une fois, en tête du groupe. */}
-                {g.motif ? <span className="ws-acc__pick-ko">{g.motif}</span> : null}
-              </div>
-              <ul className="ws-acc__pick-sites">
-                {g.sites.map((o) => {
-                  const ko = o.livrable === false;
-                  return (
-                    <li key={o.id}>
-                      <button type="button" role="option"
-                        aria-selected={String(value) === String(o.id)}
-                        aria-disabled={ko || undefined}
-                        className={'ws-acc__pick-item'
-                          + (String(value) === String(o.id) ? ' is-picked' : '')
-                          + (ko ? ' is-ko' : '')}
-                        onClick={() => { if (!ko) onPick(String(o.id)); }}>
-                        <span className="ws-acc__pick-name">{o.name}</span>
-                        {o.address ? <span className="ws-acc__pick-addr">{o.address}</span> : null}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </li>
-          ))}
+          {vus.map((g) => {
+            const ko = !g.livrable;
+            // Le point transmis au serveur : celui du bureau retenu. Quand il y
+            // en a plusieurs, le premier — ils partagent la même société, donc
+            // la même tournée et la même facturation.
+            const cible = g.sites[0];
+            const choisi = g.sites.some((o) => String(value) === String(o.id));
+            return (
+              <li key={g.cle}>
+                <button type="button" role="option"
+                  aria-selected={choisi}
+                  aria-disabled={ko || undefined}
+                  className={'ws-acc__pick-item ws-acc__pick-bureau'
+                    + (choisi ? ' is-picked' : '') + (ko ? ' is-ko' : '')}
+                  onClick={() => { if (!ko && cible) onPick(String(cible.id)); }}>
+                  <span className="ws-acc__pick-name">{g.bureau || 'Bureau sans société rattachée'}</span>
+                  {/* Les points de livraison : lus, pas choisis. */}
+                  {g.sites.map((o) => (
+                    <span key={o.id} className="ws-acc__pick-site">
+                      {o.name}{o.address ? ' · ' + o.address : ''}
+                    </span>
+                  ))}
+                  {ko && g.motif ? <span className="ws-acc__pick-ko">{g.motif}</span> : null}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
-      {qq !== '' && restants > 0 && (
-        <p className="ws-acc__pick-count">
-          {restants} entrée{restants > 1 ? 's' : ''} sur {total} · {vus.length} société{vus.length > 1 ? 's' : ''}
-        </p>
+      {qq !== '' && vus.length > 0 && (
+        <p className="ws-acc__pick-count">{vus.length} bureau{vus.length > 1 ? 'x' : ''} sur {total}</p>
       )}
     </div>
   );

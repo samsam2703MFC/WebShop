@@ -2652,19 +2652,18 @@
   -webkit-overflow-scrolling: touch;
 }
 .ws-acc__pick-list > li + li { border-top: 1px solid var(--color-border-tertiary); }
-/* Le BUREAU en tête, ses POINTS de livraison en dessous. Une société a souvent
-   plusieurs points ; à plat, son nom se répétait à chaque ligne et noyait ce
-   que le client cherche — son employeur d'abord, l'entrée précise ensuite. */
-.ws-acc__pick-office {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 9px 12px 6px;
-  background: var(--color-bg-secondary);
+/* UNE ligne = UN BUREAU. C'est la société qu'on rattache à son compte : elle
+   porte la validation, la tournée, la facturation. Ses points de livraison
+   s'affichent dessous pour reconnaître l'entreprise, mais ne se cliquent pas —
+   ce n'est pas au client de trancher entre « réception » et « étage 3 ». */
+.ws-acc__pick-bureau { gap: 3px; padding: 11px 12px; }
+.ws-acc__pick-site {
+  font-size: 11.5px; line-height: 1.35;
+  color: var(--color-text-muted);
+  padding-left: 10px;
+  border-left: 2px solid var(--color-border-tertiary);
 }
-.ws-acc__pick-office-name { font-size: 13px; font-weight: 600; color: var(--color-text); }
-.ws-acc__pick-sites { list-style: none; margin: 0; padding: 0; }
-.ws-acc__pick-sites > li + li { border-top: 1px solid var(--color-border-tertiary); }
-.ws-acc__pick-sites .ws-acc__pick-item { padding-left: 22px; }
-.ws-acc__pick-sites .ws-acc__pick-name { font-weight: 500; }
+.ws-acc__pick-bureau.is-picked .ws-acc__pick-site { border-left-color: var(--color-primary); }
 .ws-acc__pick-item {
   display: flex; flex-direction: column; gap: 2px;
   width: 100%; min-height: 44px;          /* cible tactile (WCAG 2.5.5) */
