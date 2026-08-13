@@ -4756,6 +4756,35 @@ function dispatch($m, $p) {
        qui COUVRE le code postal (zip_shop). C'est tout l'objet de la route : la
        cloisonner l'empêcherait de router hors de sa propre zone. La boutique
        cible est décidée par le CP, jamais par le client de l'appel. */
+    /* Création du BUREAU d'un client B2B « livraison bureau ».
+       Ce travail était laissé aux triggers trg_client_office_delivery_ai/_au
+       (migrations 0019/0021/0023). Ils sont ABSENTS de la base servie : un
+       client aiguillé arrivait donc sans bureau, et l'écran affichait « Aucun
+       bureau validé ne correspond à … » sur un client pourtant bien créé.
+       Les trois autres chemins qui posent office_delivery=1 créent déjà leur
+       bureau en PHP ; celui-ci était le dernier à compter sur la base. */
+    $ensureOffice = function ($clientId) {
+      if (!$clientId || !$tblExists('ws_offices') || !col_exists('ws_offices', 'client_id')) return null;
+      $c = row("SELECT * FROM client WHERE id=?", [(int) $clientId]);
+      if (!$c) return null;
+      if (empty($c['is_b2b']) || empty($c['office_delivery'])) return null;   // pas un bureau : rien à créer
+      $ex = row("SELECT id FROM ws_offices WHERE client_id=? ORDER BY id DESC LIMIT 1", [(int) $clientId]);
+      if ($ex) { q("UPDATE ws_offices SET active=1 WHERE id=?", [(int) $ex['id']]); return (int) $ex['id']; }
+      $nm = trim((string) ($c['company_name'] ?? '')) ?: (trim((string) ($c['name'] ?? '')) ?: ('Client #' . (int) $clientId));
+      $cols = ['client_id', 'name', 'status', 'active'];
+      $vals = [(int) $clientId, $nm, 'pending', 1];
+      foreach ([['shop_id', ((int) ($c['id_main_shop'] ?? 0)) ?: null],
+                ['postal_code', $c['zip'] ?? null],
+                ['city', $c['locality'] ?? ($c['city'] ?? null)],
+                ['email', $c['email'] ?? null],
+                ['phone', $c['phone'] ?? null]] as [$cn, $cv]) {
+        if (col_exists('ws_offices', $cn)) { $cols[] = $cn; $vals[] = $cv; }
+      }
+      q("INSERT INTO ws_offices (" . implode(',', $cols) . ") VALUES ("
+        . implode(',', array_fill(0, count($cols), '?')) . ")", $vals);
+      return (int) db()->lastInsertId();
+    };
+
     if ($m === 'POST' && $p === '/franchisee/route-office') {
       $b = body();
       $cp = preg_replace('/\D+/', '', (string) ($b['cp'] ?? ''));
@@ -4777,7 +4806,8 @@ function dispatch($m, $p) {
         if (col_exists('client', 'status'))          $sets[] = 'status=1';
         q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", [(int) $ex['id']]);
         if ($vat !== '' && col_exists('client', 'tax_number')) q("UPDATE client SET tax_number=? WHERE id=?", [$vat, (int) $ex['id']]);
-        json_out(['routed' => true, 'shop' => $tName, 'client_id' => (int) $ex['id']]);
+        $offId = $ensureOffice((int) $ex['id']);
+        json_out(['routed' => true, 'shop' => $tName, 'client_id' => (int) $ex['id'], 'office_id' => $offId]);
       }
       $cols = ['id_main_shop', 'email', 'name', 'zip', 'city', 'active', 'source_channel', 'webshop_user'];
       $ivals = [(int) $target, $mail ?: null, trim((string) ($b['name'] ?? '')) ?: 'Office', $cp,
@@ -4789,7 +4819,9 @@ function dispatch($m, $p) {
       if (col_exists('client', 'status'))          { $cols[] = 'status';          $ivals[] = 1; }
       if ($vat !== '' && col_exists('client', 'tax_number')) { $cols[] = 'tax_number'; $ivals[] = $vat; }
       q("INSERT INTO client (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $ivals);
-      json_out(['routed' => true, 'shop' => $tName, 'client_id' => (int) db()->lastInsertId()]);
+      $newId = (int) db()->lastInsertId();
+      $offId = $ensureOffice($newId);
+      json_out(['routed' => true, 'shop' => $tName, 'client_id' => $newId, 'office_id' => $offId]);
     }
 
     // ── CP déjà affectés à chaque tournée (préremplissage du formulaire Tournée). ──
@@ -5073,11 +5105,14 @@ function dispatch($m, $p) {
       json_out(['ok' => true, 'zip' => $zip]);
     }
 
-    // ── Livraison au bureau (client.office_delivery) = VALIDATION MANUELLE du
-    //    franchisé. Activer : valide le client (status=0), déclenche le trigger
-    //    trg_client_office_delivery_au (0023) qui crée/réactive l'office, puis
-    //    l'office est marqué VALIDÉ → livrable. Désactiver : le trigger
-    //    désactive l'office.
+    /* ── Livraison au bureau (client.office_delivery) = VALIDATION MANUELLE du
+       franchisé. Activer : valide le client (status=0), crée ou réactive son
+       bureau, puis le marque VALIDÉ → livrable. Désactiver : le désactive.
+       Tout se fait EN PHP. Le commentaire d'origine renvoyait au trigger
+       trg_client_office_delivery_au (migrations 0019/0021/0023) : ce trigger est
+       ABSENT de la base servie. Le code s'en passait déjà — par la branche
+       « auto-réparation » plus bas — mais la note laissait croire à un mécanisme
+       de secours qui n'existe pas. */
     if ($m === 'POST' && $p === '/franchisee/client-office-delivery') {
       $b = body();
       $id = (int) ($b['id'] ?? 0);
