@@ -6124,11 +6124,54 @@ function dispatch($m, $p) {
     }
 
     // ── Créneaux (ws_slots). ──
+    /* ── Créneaux (ws_slots) ────────────────────────────────────────────────
+       La table ne porte QUE le libellé et l'ordre d'affichage. L'écran servait
+       en plus une « plage horaire » (le libellé recopié) et une « capacité »
+       figée à 0 : deux colonnes qui n'existent pas, donc deux champs qu'on
+       pouvait remplir sans que rien ne les enregistre. La capacité est un
+       autre écran (fr_capacity) ; elle est retirée d'ici plutôt que simulée. */
     if ($m === 'GET' && $p === '/franchisee/ws-slots') {
       if (!$tblExists('ws_slots')) json_out([]);
-      $rs = rows("SELECT mode, label FROM ws_slots WHERE " . $scope('shop_id') . " AND active=1 ORDER BY sort_order, label LIMIT 100");
-      json_out(array_map(fn ($r) => ['mode' => $r['mode'] === 'delivery' ? 'Livraison' : 'Retrait',
-        'libelle' => $r['label'], 'plage' => $r['label'], 'cap' => 0], $rs));
+      $rs = rows("SELECT id, mode, label, sort_order FROM ws_slots
+                   WHERE " . $scope('shop_id') . " AND active=1 ORDER BY sort_order, label LIMIT 100");
+      json_out(array_map(fn ($r) => ['id' => (int) $r['id'],
+        'mode' => $r['mode'] === 'delivery' ? 'Livraison' : 'Retrait',
+        'libelle' => $r['label'], 'ordre' => (int) $r['sort_order']], $rs));
+    }
+
+    /* Écriture d'UN créneau. Le formulaire passait par l'overlay ws_bo_store :
+       le créneau créé s'affichait dans la console et n'était jamais proposé au
+       client, qui lit ws_slots. */
+    if ($m === 'POST' && $p === '/franchisee/slot') {
+      if (!$tblExists('ws_slots')) json_out(['ok' => false, 'error' => 'Table ws_slots absente.'], 501);
+      $b  = body();
+      $sc = $shopId ? (int) $shopId : null;
+      $rid = (int) ($b['id'] ?? 0);
+      $mien = function ($id) use ($sc) {
+        return $sc ? row("SELECT id FROM ws_slots WHERE id=? AND (shop_id=? OR shop_id IS NULL)", [$id, $sc])
+                   : row("SELECT id FROM ws_slots WHERE id=?", [$id]);
+      };
+      if (!empty($b['delete'])) {
+        if (!$rid || !$mien($rid)) json_out(['ok' => false, 'error' => 'Créneau inconnu, ou hors de votre boutique.'], 404);
+        q("UPDATE ws_slots SET active=0 WHERE id=?", [$rid]);
+        json_out(['ok' => true, 'deleted' => true]);
+      }
+      $mode = ['Livraison' => 'delivery', 'Retrait' => 'pickup'][(string) ($b['mode'] ?? '')] ?? null;
+      if (!$mode) json_out(['ok' => false, 'error' => 'Mode attendu : Livraison ou Retrait.'], 400);
+      $lbl = trim((string) ($b['libelle'] ?? ''));
+      if ($lbl === '') json_out(['ok' => false, 'error' => 'Donnez un libellé au créneau — c’est ce que le client lit.'], 400);
+      if (mb_strlen($lbl) > 120) json_out(['ok' => false, 'error' => 'Libellé trop long (120 caractères).'], 400);
+      $ord = $b['ordre'] ?? 0;
+      if (!is_numeric($ord)) json_out(['ok' => false, 'error' => 'Ordre : un nombre est attendu.'], 400);
+      $ord = (int) $ord;
+      if ($rid) {
+        if (!$mien($rid)) json_out(['ok' => false, 'error' => 'Créneau inconnu, ou hors de votre boutique.'], 404);
+        q("UPDATE ws_slots SET mode=?, label=?, sort_order=?, active=1 WHERE id=?", [$mode, $lbl, $ord, $rid]);
+      } else {
+        q("INSERT INTO ws_slots (shop_id, mode, label, sort_order, active) VALUES (?,?,?,?,1)", [$sc, $mode, $lbl, $ord]);
+        $rid = (int) db()->lastInsertId();
+      }
+      json_out(['ok' => true, 'id' => $rid]);
     }
 
     // ── Bons locaux (ws_vouchers_local) — ws_vouchers boutique + marque. ──
@@ -6160,11 +6203,76 @@ function dispatch($m, $p) {
     // ── Jours exceptionnels (ws_shop_exceptions) — table réelle. ──
     if ($m === 'GET' && $p === '/franchisee/ws-shop-exceptions') {
       if (!$tblExists('ws_shop_exceptions')) json_out([]);
-      $rs = rows("SELECT DATE_FORMAT(exception_date,'%d/%m/%Y') AS date, type, COALESCE(reason,'—') AS reason
+      $rs = rows("SELECT id, DATE_FORMAT(exception_date,'%d/%m/%Y') AS date,
+                         DATE_FORMAT(exception_date,'%Y-%m-%d') AS iso, type, COALESCE(reason,'—') AS reason
                     FROM ws_shop_exceptions WHERE " . $scope('shop_id') . " ORDER BY exception_date LIMIT 100");
-      json_out(array_map(fn ($r) => ['date' => $r['date'],
+      // `label` et `detail` sortaient tous deux de `reason` : l'écran montrait
+      // deux fois la même colonne, et le formulaire proposait deux champs pour
+      // elle. Un seul motif, plus la date en ISO pour l'édition.
+      json_out(array_map(fn ($r) => ['id' => (int) $r['id'], 'date' => $r['date'],
         'label' => $r['reason'], 'type' => $r['type'] === 'closed' ? 'Fermé' : 'Horaire spécial',
-        'detail' => $r['reason']], $rs));
+        'detail' => $r['reason'], 'vIso' => $r['iso'], 'vMotif' => $r['reason'] === '—' ? '' : $r['reason']], $rs));
+    }
+
+    /* Écriture d'UN jour exceptionnel — ou d'une PLAGE, qui devient une ligne
+       par jour (la table porte une date, pas un intervalle).
+       Le formulaire écrivait dans l'overlay : une fermeture saisie s'affichait
+       dans la console et la boutique restait ouverte au checkout, qui lit
+       ws_shop_exceptions. Les dates s'y saisissaient en texte « JJ/MM/AAAA » ;
+       elles arrivent maintenant en ISO, imposées par un sélecteur de date. */
+    if ($m === 'POST' && $p === '/franchisee/shop-exception') {
+      if (!$tblExists('ws_shop_exceptions'))
+        json_out(['ok' => false, 'error' => 'Table ws_shop_exceptions absente.'], 501);
+      $b  = body();
+      $sc = $shopId ? (int) $shopId : null;
+      $mien = function ($id) use ($sc) {
+        return $sc ? row("SELECT id FROM ws_shop_exceptions WHERE id=? AND (shop_id=? OR shop_id IS NULL)", [$id, $sc])
+                   : row("SELECT id FROM ws_shop_exceptions WHERE id=?", [$id]);
+      };
+      if (!empty($b['delete'])) {
+        $rid = (int) ($b['id'] ?? 0);
+        if (!$rid || !$mien($rid)) json_out(['ok' => false, 'error' => 'Date inconnue, ou hors de votre boutique.'], 404);
+        q("DELETE FROM ws_shop_exceptions WHERE id=?", [$rid]);
+        json_out(['ok' => true, 'deleted' => true]);
+      }
+      $iso = function ($v, $lbl) {
+        $v = trim((string) $v);
+        if ($v === '') return null;
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) || !strtotime($v))
+          json_out(['ok' => false, 'error' => "$lbl : date attendue au format AAAA-MM-JJ, reçue « $v »."], 400);
+        return $v;
+      };
+      $d1 = $iso($b['date'] ?? '', 'Date de début');
+      if (!$d1) json_out(['ok' => false, 'error' => 'Précisez la date.'], 400);
+      $d2 = $iso($b['dateFin'] ?? '', 'Date de fin') ?: $d1;
+      if (strtotime($d2) < strtotime($d1))
+        json_out(['ok' => false, 'error' => 'La date de fin précède la date de début.'], 400);
+      // Une plage se compte en jours : 366 est déjà une année entière fermée.
+      $nb = (int) floor((strtotime($d2) - strtotime($d1)) / 86400) + 1;
+      if ($nb > 366) json_out(['ok' => false, 'error' => "Plage de $nb jours — 366 au maximum."], 400);
+
+      $type  = ((string) ($b['type'] ?? 'Fermé')) === 'Horaire spécial' ? 'special' : 'closed';
+      $motif = trim((string) ($b['motif'] ?? ''));
+      if ($motif === '') json_out(['ok' => false, 'error' => 'Donnez un motif — il explique la fermeture à qui relit le calendrier.'], 400);
+
+      $rid = (int) ($b['id'] ?? 0);
+      if ($rid) {
+        if (!$mien($rid)) json_out(['ok' => false, 'error' => 'Date inconnue, ou hors de votre boutique.'], 404);
+        q("UPDATE ws_shop_exceptions SET exception_date=?, type=?, reason=? WHERE id=?", [$d1, $type, $motif, $rid]);
+        json_out(['ok' => true, 'id' => $rid, 'n' => 1]);
+      }
+      // Une plage : une ligne par jour, et une date déjà posée est MISE À JOUR
+      // plutôt que doublée — deux exceptions le même jour se contrediraient.
+      $n = 0;
+      for ($t = strtotime($d1); $t <= strtotime($d2); $t += 86400) {
+        $j = date('Y-m-d', $t);
+        $dej = $sc ? row("SELECT id FROM ws_shop_exceptions WHERE exception_date=? AND shop_id=?", [$j, $sc])
+                   : row("SELECT id FROM ws_shop_exceptions WHERE exception_date=? AND shop_id IS NULL", [$j]);
+        if ($dej) q("UPDATE ws_shop_exceptions SET type=?, reason=? WHERE id=?", [$type, $motif, (int) $dej['id']]);
+        else      q("INSERT INTO ws_shop_exceptions (shop_id, exception_date, type, reason) VALUES (?,?,?,?)", [$sc, $j, $type, $motif]);
+        $n++;
+      }
+      json_out(['ok' => true, 'n' => $n]);
     }
 
     // ── Moyens de paiement (ws_payment_methods) — par profil (webshop/comptoir/bureau). ──
@@ -10026,6 +10134,8 @@ function bo_endpoint_section($name) {
     'office-delivery-setting' => 'bureauParams',
     'delivery-fee-rule' => 'frais',
     'calendar-rule' => 'calendarRules',
+    'slot' => 'creneaux',
+    'shop-exception' => 'joursExcept',
     'b2b-clients' => 'b2bClients', 'b2b-departments' => 'b2bClients', 'b2b-department' => 'b2bClients',
     'fr-clients' => 'b2bClients',
     'client-active' => 'b2bClients', 'client-attach' => 'b2bClients', 'client-billing' => 'b2bClients',
