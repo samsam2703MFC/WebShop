@@ -3286,7 +3286,13 @@
     flex: 1 1 auto;
     width: auto;
     gap: 6px;
-    flex-wrap: nowrap;
+    /* Le sélecteur de mode passe sur SA PROPRE LIGNE (voir .ws-modes plus bas).
+       Il était réduit à deux pictos de 16 px dans 76 px, sans un mot, alors
+       qu'il commande les prix, les créneaux et l'heure limite. wrap plutôt
+       qu'un second conteneur : le DOM reste celui du desktop, donc une seule
+       version du composant à maintenir. */
+    flex-wrap: wrap;
+    row-gap: 0;
     min-width: 0;          /* allow children to shrink */
     align-items: center;
   }
@@ -3301,29 +3307,47 @@
   .ws-nav__brandwrap,
   .ws-nav__shopplate { display: none !important; }
 
-  /* On mobile: ICON-ONLY toggle (labels hidden) */
-  .ws-mode__lbl-full,
+  /* Mobile : les LIBELLÉS REVIENNENT. Ce sont ceux du desktop, pas des
+     chaînes courtes inventées : le sélecteur n'est pas traduit (libellés en
+     dur dans le JSX), en créer d'autres ajouterait du texte non traduit. */
+  .ws-mode__lbl-full { display: inline; }
   .ws-mode__lbl-mob { display: none !important; }
+  /* Le « i » abricot de ModePills est un 3ᵉ enfant de la grille : il tombait
+     en ligne 2, masqué par overflow, tout en restant atteignable au clavier —
+     et il forçait une 2ᵉ rangée, d'où des boutons à demi-hauteur. Le lien
+     .ws-nav__info de la barre rend déjà ce service en mobile.
+     !important est nécessaire : ce span porte des styles EN LIGNE, qu'aucun
+     sélecteur ne peut battre autrement — et le JSX est partagé avec le desktop. */
+  .ws-modes > span:last-child { display: none !important; }
+
+  /* Le fond du segment actif est l'INDICATEUR coulissant, pas le bouton.
+     Sans cette neutralisation, la règle de base .ws-mode--collect.is-active
+     (deux classes, donc plus spécifique) repeint le demi-segment en Ruby —
+     et le libellé, Ruby lui aussi sur mobile, devenait illisible sur son
+     propre fond. Invisible tant qu'il n'y avait qu'un picto blanc. */
+  .ws-modes .ws-mode.is-active { background: transparent; border-color: transparent; }
 
   /* Toggle-switch style segmented control — compact icon-only for single-row */
   .ws-modes {
     position: relative;
-    flex: 0 0 auto;
+    flex: 1 0 100%;                      /* ligne à part, pleine largeur */
+    order: 3;                            /* après la boutique et la date */
+    margin-top: 8px;
     gap: 0;
     background: var(--color-bg, #faf7f2);
     border-radius: 999px;
-    padding: 2px;
+    padding: 3px;
     border: 1px solid var(--color-border-tertiary, rgba(0,0,0,.08));
-    height: 32px;
-    width: 76px;                         /* icon-only: 2 × ~36px halves */
+    height: 44px;                        /* cible au pouce (44 px, WCAG 2.5.5) */
+    width: auto;
     display: grid; grid-template-columns: 1fr 1fr;
     overflow: hidden;
   }
   .ws-modes__indicator {
     display: block;
     position: absolute;
-    top: 2px; bottom: 2px; left: 2px;
-    width: calc(50% - 2px);
+    top: 3px; bottom: 3px; left: 3px;
+    width: calc(50% - 3px);
     border-radius: 999px;
     background: var(--color-surface, #fff);
     box-shadow: 0 1px 3px rgba(0,0,0,.10), 0 0 0 1px rgba(0,0,0,.04);
@@ -3344,12 +3368,21 @@
 
   .ws-mode {
     position: relative; z-index: 1;
-    height: 100%; padding: 0;
+    height: 100%; padding: 0 4px;
     border-radius: 999px; border: 0;
     background: transparent;
     color: var(--color-text-muted, #7a6e62);
     transition: color 200ms ease;
     display: inline-flex; align-items: center; justify-content: center;
+    gap: 6px;
+    font-size: 12.5px;
+    /* Libellé long (« Livraison au bureau ») : il rétrécit plutôt que de
+       déborder du segment ou d'élargir la pastille. */
+    min-width: 0;
+    white-space: nowrap;
+  }
+  .ws-mode .ws-mode__lbl-full {
+    overflow: hidden; text-overflow: ellipsis; min-width: 0;
   }
   .ws-mode.is-active { font-weight: 600; }
   .ws-mode svg {
@@ -3409,8 +3442,16 @@
   .ws-nav__shopchip { font-size: 11px; padding: 0 7px 0 6px; height: 30px; }
   .ws-nav__shopchip span:not(.ws-nav__shopchip-dot) { max-width: 100%; }
   .ws-nav__date { font-size: 11px; padding: 0 8px; height: 30px; }
-  .ws-modes { height: 30px; width: 70px; }
-  .ws-mode svg { width: 15px; height: 15px; }
+  /* 320 px : il manquait 2 px au libellé le plus long. On les reprend sur les
+     rembourrages — pas sur le texte qu'on vient justement de rendre lisible.
+     (Une marge négative ne sert à rien ici : la largeur vient de flex-basis.) */
+  .ws-modes { height: 42px; margin-top: 7px; padding: 2px; }
+  .ws-modes__indicator { top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px); }
+  /* 320 px (iPhone SE 1) : « Livraison au bureau » ne tient qu'à ce corps-là.
+     Mesuré, pas estimé — au-dessus, l'ellipse revient sur le libellé même
+     qu'on est en train de rendre lisible. */
+  .ws-mode { font-size: 11px; gap: 3px; padding: 0 1px; }
+  .ws-mode svg { width: 14px; height: 14px; }
 }
 
 @media (max-width: 1024px) {
