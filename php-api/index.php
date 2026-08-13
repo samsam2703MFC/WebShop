@@ -2566,11 +2566,18 @@ function dispatch($m, $p) {
       // `locality` guardée par col_exists : le code peut être déployé une
       // requête avant que migrate.sh n'ait joué 0015 — pas de 500 pendant la fenêtre.
       $hasLoc = col_exists('client', 'locality');
-      q("INSERT INTO client (id_main_shop, email, phone, phone_prefix, phone_e164, name, surname, zip, " . ($hasLoc ? "locality, " : "") . "password_hash,
+      // preferred_shop_id posé EXPLICITEMENT, comme partout ailleurs : la
+      // console franchisé cloisonne dessus, et un client créé sans lui
+      // n'apparaît dans aucune boutique. Un trigger le fait aussi, mais on ne
+      // confie pas la visibilité d'un client à un objet de base qui a déjà
+      // disparu une fois (cf. trg_client_office_delivery_*).
+      $hasPref = col_exists('client', 'preferred_shop_id');
+      q("INSERT INTO client (id_main_shop, " . ($hasPref ? "preferred_shop_id, " : "") . "email, phone, phone_prefix, phone_e164, name, surname, zip, " . ($hasLoc ? "locality, " : "") . "password_hash,
                              active, source_channel, webshop_user, preferred_auth_method)
-         VALUES (?,?,?,?,?,?,?,?," . ($hasLoc ? "?," : "") . "?,1,'webshop',1,?)",
+         VALUES (?," . ($hasPref ? "?," : "") . "?,?,?,?,?,?,?," . ($hasLoc ? "?," : "") . "?,1,'webshop',1,?)",
         array_merge(
-          [$ms, ($mail ?: null), ($phone ?: null), ($phone !== '' ? $pfx : null), ($e164 ?: null), $first, $last, $zip],
+          [$ms], $hasPref ? [$ms] : [],
+          [($mail ?: null), ($phone ?: null), ($phone !== '' ? $pfx : null), ($e164 ?: null), $first, $last, $zip],
           $hasLoc ? [$locality] : [],
           [$hash, $authM]));
       $id = db()->lastInsertId();
@@ -2770,10 +2777,14 @@ function dispatch($m, $p) {
           [$d['name'], $d['name'], $d['address'], $d['postalCode'], $d['city'], $companyId]);
       } else {
         $ms = (int) ((row("SELECT id_main_shop FROM client WHERE id=?", [$id])['id_main_shop'] ?? 0) ?: 1);
-        q("INSERT INTO client (id_main_shop, is_b2b, company_name, tax_number, invoice_name,
+        // La ligne société suit la boutique de la personne qui la crée : sans
+        // preferred_shop_id elle n'apparaîtrait dans aucune console.
+        $hp = col_exists('client', 'preferred_shop_id');
+        q("INSERT INTO client (id_main_shop, " . ($hp ? "preferred_shop_id, " : "") . "is_b2b, company_name, tax_number, invoice_name,
               invoice_address, invoice_postal_code, invoice_city, active, source_channel, verified_at)
-           VALUES (?,1,?,?,?,?,?,?,1,'webshop',NOW())",
-          [$ms, $d['name'], $d['vat'], $d['name'], $d['address'], $d['postalCode'], $d['city']]);
+           VALUES (?," . ($hp ? "?," : "") . "1,?,?,?,?,?,?,1,'webshop',NOW())",
+          array_merge([$ms], $hp ? [$ms] : [],
+            [$d['name'], $d['vat'], $d['name'], $d['address'], $d['postalCode'], $d['city']]));
         $companyId = (int) db()->lastInsertId();
       }
       // 2) Lier la personne à la société + retirer sa copie des champs société.
@@ -2982,6 +2993,10 @@ function dispatch($m, $p) {
        VALUES (?,1,?,?,?,?,?,1,'webshop')",
       [$ms, $name, $name, $addr ?: null, $pc ?: null, $city ?: null]);
     $co = (int) db()->lastInsertId();
+    // La ligne société suit la boutique de la personne : sans preferred_shop_id
+    // elle n'apparaîtrait dans aucune console franchisé.
+    if (col_exists('client', 'preferred_shop_id'))
+      q("UPDATE client SET preferred_shop_id=? WHERE id=? AND preferred_shop_id IS NULL", [$ms, $co]);
     q("UPDATE client SET company_client_id = ?, is_b2b = 1 WHERE id = ?", [$co, $id]);
     json_out(['user' => user_payload($id)]);
   }
@@ -7200,6 +7215,7 @@ function dispatch($m, $p) {
             $cols = ['id_main_shop', 'name', 'zip', 'city', 'street', 'active', 'source_channel', 'webshop_user'];
             $iv = [(int) ($shopId ?: 0), $rais ?: 'Client B2B', trim((string) ($r['cp'] ?? '')),
                    trim((string) ($r['ville'] ?? '')), trim((string) ($r['adresse'] ?? '')), 1, 'webshop', 0];
+            if (col_exists('client', 'preferred_shop_id')) { $cols[] = 'preferred_shop_id'; $iv[] = (int) ($shopId ?: 0); }
             if (col_exists('client', 'company_name'))    { $cols[] = 'company_name';    $iv[] = $rais ?: null; }
             if ($tva !== '' && col_exists('client', 'tax_number')) { $cols[] = 'tax_number'; $iv[] = $tva; }
             if (col_exists('client', 'is_b2b'))          { $cols[] = 'is_b2b';          $iv[] = 1; }
@@ -7528,6 +7544,7 @@ function dispatch($m, $p) {
         $addC('status', 0);
         $addC('office_id', $officeId);
         $addC('id_main_shop', (int) ($obShop ?: 0));
+        $addC('preferred_shop_id', (int) ($obShop ?: 0));
         $addC('active', 1);
         if ($cCols) {
           try {
