@@ -1692,12 +1692,46 @@ function dispatch($m, $p) {
   /* Sites de livraison au bureau d'un shop — MÊME liste que la PWA
      (repo_offices) : ws_office_delivery_sites actifs, filtrés par shop. Sert le
      sélecteur « bureau » du profil webshop. */
+  /* Bureaux proposés au client pour se rattacher.
+     La liste sort de ws_office_delivery_sites — des SITES de livraison, pas des
+     sociétés. Or lier un site n'active la livraison que s'il pointe vers une
+     ENTREPRISE (office_client_id) elle-même validée et rattachée à une tournée :
+     c'est la chaîne que suit user_payload(). Un site sans entreprise — le cas
+     est fréquent, le code le reconnaît lui-même — se choisissait donc sans
+     effet, et le client se voyait ensuite refuser la livraison faute de bureau.
+     Le serveur renvoie maintenant, pour chaque entrée, la société portée et
+     l'état réel du rattachement. L'écran peut ainsi dire ce qui manque au lieu
+     de proposer des lignes qui ne mènent nulle part. Rien n'est masqué : une
+     ligne inutilisable reste visible, avec son motif. */
   if ($m === 'GET' && $p === '/office-sites') {
     $s = (int) (qp('shopId') ?: 0);
     if (!$s) json_out([]);
-    json_out(rows("SELECT id, name, address FROM ws_office_delivery_sites
-                    WHERE shop_id = ? AND active = 1 AND name IS NOT NULL AND name <> ''
-                    ORDER BY name", [$s]));
+    $hasTour = col_exists('ws_offices', 'tour_id');
+    $rs = rows("SELECT sd.id, sd.name, sd.address,
+                       o.id      AS office_id,
+                       o.name    AS office_name,
+                       o.status  AS office_status,
+                       " . ($hasTour ? "o.tour_id" : "NULL AS tour_id") . "
+                  FROM ws_office_delivery_sites sd
+                  LEFT JOIN ws_offices o ON o.id = sd.office_client_id AND o.active = 1
+                 WHERE sd.shop_id = ? AND sd.active = 1
+                   AND sd.name IS NOT NULL AND sd.name <> ''
+                 ORDER BY sd.name", [$s]);
+    json_out(array_map(function ($r) {
+      $ok = !empty($r['office_id']) && ($r['office_status'] ?? '') === 'validated' && !empty($r['tour_id']);
+      $why = null;
+      if (empty($r['office_id']))                            $why = 'Ce point de livraison n’est rattaché à aucune société.';
+      elseif (($r['office_status'] ?? '') !== 'validated')    $why = 'Société en attente de validation par l’Atelier.';
+      elseif (empty($r['tour_id']))                          $why = 'Société pas encore rattachée à une tournée de livraison.';
+      return [
+        'id'         => (int) $r['id'],
+        'name'       => $r['name'],
+        'address'    => $r['address'],
+        'officeName' => $r['office_name'],
+        'livrable'   => $ok,
+        'motif'      => $why,
+      ];
+    }, $rs));
   }
 
   /* ── Zones de livraison bureau (public) — alimente la droplist de la landing :

@@ -258,7 +258,8 @@ function OfficeSearchPicker({ items, value, onPick, label }) {
   const qq = norm(q).trim();
   // Recherche sur le nom ET l'adresse : un bureau se retrouve souvent par sa rue.
   const hits = qq === '' ? items
-    : items.filter((o) => norm(o.name).includes(qq) || norm(o.address).includes(qq));
+    : items.filter((o) => norm(o.name).includes(qq) || norm(o.address).includes(qq)
+                       || norm(o.officeName).includes(qq));   // la société porte le nom qu'on cherche
   return (
     <div className="ws-acc__pick">
       <input type="search" className="ws-acc__input" value={q}
@@ -272,17 +273,31 @@ function OfficeSearchPicker({ items, value, onPick, label }) {
         </p>
       ) : (
         <ul className="ws-acc__pick-list" role="listbox" aria-label={label || 'Bureaux validés'}>
-          {hits.map((o) => (
-            <li key={o.id}>
-              <button type="button" role="option"
-                aria-selected={String(value) === String(o.id)}
-                className={'ws-acc__pick-item' + (String(value) === String(o.id) ? ' is-picked' : '')}
-                onClick={() => onPick(String(o.id))}>
-                <span className="ws-acc__pick-name">{o.name}</span>
-                {o.address ? <span className="ws-acc__pick-addr">{o.address}</span> : null}
-              </button>
-            </li>
-          ))}
+          {hits.map((o) => {
+            /* `livrable === false` : le serveur a établi que ce point ne peut
+               PAS activer la livraison — pas de société rattachée, société non
+               validée, ou sans tournée. On le montre quand même, avec son
+               motif : le masquer ferait chercher un bureau qui semble absent
+               alors qu'il existe et attend l'Atelier. */
+            const ko = o.livrable === false;
+            return (
+              <li key={o.id}>
+                <button type="button" role="option"
+                  aria-selected={String(value) === String(o.id)}
+                  aria-disabled={ko || undefined}
+                  className={'ws-acc__pick-item'
+                    + (String(value) === String(o.id) ? ' is-picked' : '')
+                    + (ko ? ' is-ko' : '')}
+                  onClick={() => { if (!ko) onPick(String(o.id)); }}>
+                  <span className="ws-acc__pick-name">{o.officeName || o.name}</span>
+                  {o.officeName && o.name !== o.officeName
+                    ? <span className="ws-acc__pick-addr">{o.name}{o.address ? ' · ' + o.address : ''}</span>
+                    : (o.address ? <span className="ws-acc__pick-addr">{o.address}</span> : null)}
+                  {ko && o.motif ? <span className="ws-acc__pick-ko">{o.motif}</span> : null}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
       {qq !== '' && hits.length > 0 && (
