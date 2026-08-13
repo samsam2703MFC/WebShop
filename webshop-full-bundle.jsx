@@ -1280,24 +1280,28 @@ function computeCrossPortionOffer(basket, rule) {
   const r = rule;
   if (!r) return null; // pas de regle serveur -> pas d'offre affichee
   if (!Array.isArray(basket) || basket.length === 0) return null;
+  /* MIROIR EXACT du calcul de POST /orders. C'est le serveur qui facture :
+     tout ce qui s'en écarte promet au client une économie qu'il ne recevra pas.
+     Ses trois règles, telles qu'elles sont écrites en PHP :
+       • UNE entrée par PIÈCE (qty), pas par unité de portion — un demi compte
+         pour un, comme un quart ;
+       • valorisée au PRIX RÉEL de la ligne (prix ERP de la portion), et non à
+         27 % du prix du produit entier — ce pourcentage n'existe nulle part
+         dans la base ;
+       • le nombre d'offerts est floor(nb / x) × y, sous réserve d'atteindre le
+         seuil (threshold) ; ce sont les MOINS CHERS qui sont offerts. */
   const items = [];
   for (const l of basket) {
     if (!l.crossPortion) continue;
-    if (!l.portion) continue;
-    const unitsPerItem = portionUnitsFor(l.portion);
-    if (unitsPerItem <= 0) continue;
-    const quarterValue = (l.basePrice || 0) * 0.27;
-    const total = unitsPerItem * (l.qty || 0);
-    for (let i = 0; i < total; i++) {
-      items.push({ price: quarterValue, name: l.name });
-    }
+    for (let i = 0; i < (l.qty || 0); i++) items.push({ price: l.price || 0, name: l.name });
   }
   const eligibleCount = items.length;
   if (eligibleCount === 0) return null;
-  const groupSize = r.x + r.y;
+  if (r.threshold != null && eligibleCount < r.threshold) return null;
+  const groupSize = r.x;
   items.sort((a, b) => a.price - b.price);
   const cycles = Math.floor(eligibleCount / groupSize);
-  const freeCount = cycles * r.y;
+  const freeCount = Math.min(cycles * r.y, eligibleCount);
   let savings = 0;
   const freeNames = [];
   for (let i = 0; i < freeCount; i++) {
@@ -1317,6 +1321,38 @@ function computeCrossPortionOffer(basket, rule) {
     status: cycles >= 1 ? (cycles >= 2 ? 'boosted' : 'active') : 'dormant',
     threshold: r.x,
   };
+}
+
+/* ── LES TOTAUX ────────────────────────────────────────────────────────────
+   Une seule fonction, parce qu'il n'y a qu'une addition qui compte : celle du
+   serveur (POST /orders). Le panier, le tunnel et la confirmation la lisaient
+   chacun à leur façon — le client voyait donc trois montants pour une seule
+   commande, dont aucun n'était forcément celui facturé.
+
+   Formule du serveur, à la ligne près :
+     total = max(0, sous-total − offre croisée − remise boutique − bon + frais)
+   la remise boutique portant sur (sous-total − offre croisée). */
+function wsArrondi(x) { return Math.round(x * 100) / 100; }
+
+/* Remise de la boutique (shops.discount_type / discount_value, servies par
+   /shops sous webshop_discount_*). Elle était APPLIQUÉE par le serveur et
+   AFFICHÉE nulle part : le client lisait un total supérieur à ce qu'il payait,
+   et l'écart, étant en sa faveur, ne remontait jamais. */
+function wsRemiseBoutique(shop, base) {
+  const type = shop && shop.webshop_discount_type;
+  const val  = Number(shop && shop.webshop_discount_value) || 0;
+  if (!type || val <= 0 || base <= 0) return 0;
+  return wsArrondi(type === 'fixed' ? Math.min(base, val) : Math.round(base * val) / 100);
+}
+
+function wsTotaux({ basket, shop, crossSavings = 0, voucherDiscount = 0, deliveryFee = 0 }) {
+  const sousTotal = (Array.isArray(basket) ? basket : []).reduce((t, l) => t + l.price * l.qty, 0);
+  const croise    = crossSavings || 0;
+  const remise    = wsRemiseBoutique(shop, sousTotal - croise);
+  const total     = Math.max(0, wsArrondi(sousTotal - croise - remise - (voucherDiscount || 0) + (deliveryFee || 0)));
+  return { sousTotal, croise, remise, bon: voucherDiscount || 0, frais: deliveryFee || 0, total,
+           remisePct: (shop && shop.webshop_discount_type === 'percent')
+             ? Number(shop.webshop_discount_value) || 0 : 0 };
 }
 
 function CrossPortionStrip({ calc }) {
@@ -1451,11 +1487,11 @@ function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
 
 function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, notesEnabled, deliveryFeeResult,
                   date, slotTime, onCrossAdd }) {
-  // TODO[BACKEND]: replace with `await WSPricing.quote({ shopId, mode, basket })`
-  // and render the returned subtotal / discounts / total. The synchronous
-  // computation below is a fallback so the demo basket still totals correctly
-  // before the API is wired. The 5% pickup promo is a hardcoded business rule
-  // and MUST disappear once /quote returns it as a discount line.
+  /* Les totaux affichés sont un APERÇU, calculé par wsTotaux() — miroir exact
+     de l'addition du serveur, seule à faire foi. La commande, elle, est
+     recalculée serveur depuis les prix ERP : c'est son total qui s'affiche à
+     la confirmation. (L'ancienne « réduction Webshop · 5 % » codée en dur a
+     disparu : la remise réelle vient de shops.discount_value.) */
   const [crossPortionRule, setCrossPortionRule] = React.useState(null);
   React.useEffect(() => {
     if (window.WSPricing && typeof window.WSPricing.getCrossPortionRule === 'function') {
@@ -1464,14 +1500,14 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
         .catch(() => {});
     }
   }, []);
-  const subtotal = basket.reduce((t, l) => t + l.price * l.qty, 0);
   const crossOffer = computeCrossPortionOffer(basket, crossPortionRule);
   const crossSavings = crossOffer?.savings || 0;
-  // Go-live : aucune remise calculee cote client. Les remises reelles
-  // viennent du serveur (quote/commande) - promo locale forcee a 0.
-  const promo = 0;
   const deliveryFee = (mode === 'delivery' && deliveryFeeResult) ? (deliveryFeeResult.fee_amount || 0) : 0;
-  const total = Math.max(0, subtotal - promo - crossSavings + deliveryFee);
+  // Le bon de réduction se saisit au tunnel : il n'entre pas dans ce total-ci,
+  // exactement comme côté serveur où il s'applique après la remise boutique.
+  const T = wsTotaux({ basket, shop, crossSavings, deliveryFee });
+  const subtotal = T.sousTotal;
+  const total = T.total;
   return (
     <aside className="ws-basket">
       <div className="ws-basket__head">
@@ -1554,10 +1590,10 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
           </div>
         )}
 
-        {promo > 0 && (
+        {T.remise > 0 && (
           <div className="ws-basket__row ws-basket__row--promo">
-            <span>Réduction Webshop · 5%</span>
-            <span>−€{promo.toFixed(2)}</span>
+            <span>Remise boutique{T.remisePct ? ` · ${T.remisePct} %` : ''}</span>
+            <span>−€{T.remise.toFixed(2)}</span>
           </div>
         )}
 
@@ -3506,17 +3542,26 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   // hook de plus a l'ouverture (erreur #310) et le paiement devenait
   // inaccessible.
   const [giftCode, setGiftCode] = useState(null);
+  /* L'offre croisée : le panier la déduisait, le tunnel l'ignorait — le total
+     REMONTAIT donc au passage au paiement. Même règle, même source (la règle
+     serveur), aux deux endroits. Hook AVANT le `return null`, comme celui
+     ci-dessus : un hook conditionnel casse le tunnel (React #310). */
+  const [xRule, setXRule] = useState(null);
+  React.useEffect(() => {
+    if (window.WSPricing && typeof window.WSPricing.getCrossPortionRule === 'function') {
+      window.WSPricing.getCrossPortionRule().then((r) => { if (r) setXRule(r); }).catch(() => {});
+    }
+  }, []);
 
   if (!open) return null;
 
-  // TODO[BACKEND]: same as above — checkout totals must come from WSPricing.quote().
-  const subtotal = basket.reduce((t, l) => t + l.price * l.qty, 0);
-  // Go-live : aucune remise calculee cote client. Les remises reelles
-  // viennent du serveur (quote/commande) - promo locale forcee a 0.
-  const promo = 0;
   const voucherDiscount = voucherApplied && voucherApplied.ok ? voucherApplied.discount : 0;
   const deliveryFee = (mode === 'delivery' && deliveryFeeResult) ? (deliveryFeeResult.fee_amount || 0) : 0;
-  const total = Math.max(0, subtotal - promo - voucherDiscount + deliveryFee);
+  const crossSavings = computeCrossPortionOffer(basket, xRule)?.savings || 0;
+  // Même addition que le panier, et que le serveur (wsTotaux).
+  const T = wsTotaux({ basket, shop, crossSavings, voucherDiscount, deliveryFee });
+  const subtotal = T.sousTotal;
+  const total = T.total;
 
   const isOffice = mode === 'delivery' && user && office;
   const isGuest = !user;
@@ -3598,7 +3643,12 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       // « Bancontact » pour toute méthode non reconnue — donc aussi pour un
       // paiement en boutique ou sur compte, que le client n'a pas fait.
       const payLabel = (paymentMethods.find((x) => x.id === payment) || {}).label || payment;
-      onPlaced({ ...result, slot, payment, paymentLabel: payLabel, total });
+      /* Le total du SERVEUR, pas celui du navigateur. L'ancien ordre
+         (`{ ...result, total }`) écrasait le montant facturé par l'aperçu
+         local : le client lisait sur sa confirmation un montant que personne
+         n'avait débité. L'aperçu ne sert qu'à défaut de réponse chiffrée. */
+      const totalFacture = (result && typeof result.total === 'number') ? result.total : total;
+      onPlaced({ ...result, slot, payment, paymentLabel: payLabel, total: totalFacture });
     } catch (ex) {
       setPayErr(ex.message || 'Erreur lors du paiement. Veuillez réessayer.');
     } finally {
@@ -3657,7 +3707,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         {step === 3 && (
           <>
           <CheckoutStep3
-            mode={mode} basket={basket} subtotal={subtotal} promo={promo} total={total}
+            mode={mode} basket={basket} subtotal={subtotal} totaux={T} total={total}
             deliveryFee={deliveryFee} deliveryFeeResult={deliveryFeeResult} deliveryFeeErr={deliveryFeeErr}
             payment={payment} setPayment={setPayment} paymentMethods={paymentMethods}
             profile={checkoutProfile} companyId={companyId || null}
@@ -4033,7 +4083,7 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
   );
 }
 
-function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, isOffice, isB2B, invoice, setInvoice, vat, setVat,
+function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, isOffice, isB2B, invoice, setInvoice, vat, setVat,
                          shopId, mode, voucherInput, setVoucherInput, voucherApplied, setVoucherApplied, voucherDiscount,
                          giftCode, onGift, giftEmail,
                          deliveryFee, deliveryFeeResult, deliveryFeeErr, profile, companyId, customerId,
@@ -4258,7 +4308,13 @@ function CheckoutStep3({ basket, subtotal, promo, total, payment, setPayment, is
           ))}
         </ul>
         <div className="ws-co-summary__row"><span>Sous-total</span><span>€{subtotal.toFixed(2)}</span></div>
-        {promo > 0 && <div className="ws-co-summary__row ws-co-summary__row--promo"><span>Réduction Webshop · 5%</span><span>−€{promo.toFixed(2)}</span></div>}
+        {totaux && totaux.croise > 0 && (
+          <div className="ws-co-summary__row ws-co-summary__row--promo">
+            <span>Offre cumulable</span><span>−€{totaux.croise.toFixed(2)}</span></div>)}
+        {totaux && totaux.remise > 0 && (
+          <div className="ws-co-summary__row ws-co-summary__row--promo">
+            <span>Remise boutique{totaux.remisePct ? ` · ${totaux.remisePct} %` : ''}</span>
+            <span>−€{totaux.remise.toFixed(2)}</span></div>)}
         {voucherDiscount > 0 && voucherApplied && (
           <div className="ws-co-summary__row ws-co-summary__row--promo">
             <span>Code <strong>{voucherApplied.voucher.code}</strong></span>
