@@ -4290,14 +4290,23 @@ function dispatch($m, $p) {
     $hasOrders = $tblExists('ws_orders');
     $DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
-    // Portée boutique : ?shop=<slug|id>. Absente → réseau (toutes boutiques).
+    /* Portée boutique : ?shop=<id>, et RIEN D'AUTRE. Absente → réseau.
+       Le slug était accepté puis résolu en id, ce qui donnait deux écritures
+       pour la même portée : selon le chemin emprunté, la valeur mémorisée par
+       la console était tantôt « anderlecht », tantôt « 2 ». Une seule forme
+       vaut mieux qu'une conversion silencieuse — et un identifiant refusé le
+       dit, au lieu de retomber sans bruit sur la vue réseau. */
     $shopParam = qp('shop');
-    $shopId = null;
+    $shopId = null; $shopKo = null;
     if ($shopParam !== null && $shopParam !== '') {
-      $sr = ctype_digit((string) $shopParam)
-        ? row("SELECT id FROM $SHOPS WHERE id=?", [(int) $shopParam])
-        : row("SELECT id FROM $SHOPS WHERE slug=?", [$shopParam]);
-      if ($sr) $shopId = (int) $sr['id'];
+      if (!ctype_digit((string) $shopParam)) {
+        $shopKo = 'Portée boutique invalide : « ' . $shopParam . ' » n’est pas un id.'
+                . ' Utilisez ?shop=<id numérique> — la liste est servie par /shops.';
+      } else {
+        $sr = row("SELECT id FROM $SHOPS WHERE id=?", [(int) $shopParam]);
+        if ($sr) $shopId = (int) $sr['id'];
+        else $shopKo = 'Boutique id ' . (int) $shopParam . ' introuvable dans la table shops.';
+      }
     }
     // Session tablette : la portée est CELLE DE LA SESSION, pas celle de l'URL.
     // Sans ça, changer ?shop= dans la barre d'adresse suffisait à lire les
@@ -4340,9 +4349,8 @@ function dispatch($m, $p) {
         // motif, la console affiche « Ma boutique » et laisse croire à un
         // défaut d'affichage, alors que la portée n'a pas été établie.
         'shopReason' => $shop ? null
-          : ($shopParam === null || $shopParam === ''
-             ? 'Aucune boutique demandée (?shop= absent) — le jeton admin est réseau, la portée doit être précisée.'
-             : 'Boutique « ' . $shopParam . ' » introuvable dans la table shops (ni par id, ni par slug).'),
+          : ($shopKo ?: 'Aucune boutique demandée (?shop= absent) — le jeton admin est réseau,'
+                      . ' la portée doit être précisée par ?shop=<id>.'),
         'consoleLabel' => 'Console franchisé' . ($shop ? ' · ' . ($shop['city'] ?: $shop['name']) : ''),
       ]);
     }
