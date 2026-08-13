@@ -6216,7 +6216,12 @@ function dispatch($m, $p) {
     if ($m === 'GET' && $p === '/franchisee/ws-delivery-fee-rules') {
       if (!$tblExists('ws_delivery_fee_rules')) json_out([]);
       $sw = $shopId ? "(r.shop_id = " . (int) $shopId . " OR r.shop_id IS NULL)" : '1=1';
-      $rs = rows("SELECT r.level, r.free_delivery, r.always_charge, r.fee_amount,
+      /* L'id ET les valeurs BRUTES accompagnent le texte affiché. Sans elles,
+         l'écran ne pouvait éditer que « 4,50 € », « Offert » et « — » : des
+         chaînes que personne ne sait relire. C'est ce qui avait fait du
+         formulaire de frais un formulaire de TEXTE LIBRE sur des montants,
+         écrit dans l'overlay au lieu de la table. */
+      $rs = rows("SELECT r.id, r.level, r.free_delivery, r.always_charge, r.fee_amount,
                          r.free_delivery_minimum, r.payment_type,
                          s.name AS site_name, f.name AS office_name, t.name AS tour_name
                     FROM ws_delivery_fee_rules r
@@ -6231,12 +6236,109 @@ function dispatch($m, $p) {
         $cible = $r['site_name'] ?: ($r['office_name'] ?: ($r['tour_name'] ?: 'Toutes livraisons'));
         $montant = $r['free_delivery'] ? 'Offert'
                  : number_format((float) $r['fee_amount'], 2, ',', ' ') . ' €' . ($r['always_charge'] ? ' (toujours)' : '');
-        return ['niveau' => $lvl[$r['level']] ?? $r['level'], 'cible' => $cible,
+        return ['id' => (int) $r['id'],
+                'niveau' => $lvl[$r['level']] ?? $r['level'], 'cible' => $cible,
                 'franco' => ((float) $r['free_delivery_minimum']) > 0
                             ? number_format((float) $r['free_delivery_minimum'], 0, ',', ' ') . ' €' : '—',
                 'montant' => $montant,
-                'paiement' => $pay[$r['payment_type']] ?? ($r['payment_type'] ?: '—')];
+                'paiement' => $pay[$r['payment_type']] ?? ($r['payment_type'] ?: '—'),
+                // Brut, pour le formulaire d'édition.
+                'vOffert' => (int) $r['free_delivery'] === 1,
+                'vToujours' => (int) $r['always_charge'] === 1,
+                'vMontant' => (float) $r['fee_amount'],
+                'vFranco' => (float) $r['free_delivery_minimum'],
+                'vPaiement' => (string) ($r['payment_type'] ?? '')];
       }, $rs));
+    }
+
+    /* Écriture d'UNE règle de frais — l'argent de la livraison.
+       Le formulaire écrivait dans l'overlay ws_bo_store : la console affichait
+       le nouveau franco pendant que le checkout facturait l'ancien, lu dans
+       cette table-ci (/delivery-fees/quote). Personne ne pouvait s'en
+       apercevoir sans comparer un écran et une facture.
+
+       La CIBLE est résolue par le serveur, par son nom et DANS LA BOUTIQUE de
+       la session : accepter un id reçu laisserait un franchisé fixer les frais
+       d'une tournée qui n'est pas la sienne. */
+    if ($m === 'POST' && $p === '/franchisee/delivery-fee-rule') {
+      if (!$tblExists('ws_delivery_fee_rules'))
+        json_out(['ok' => false, 'error' => 'Table ws_delivery_fee_rules absente.'], 501);
+      $b  = body();
+      $sc = $shopId ? (int) $shopId : null;
+
+      // Suppression = désactivation, et seulement d'une règle de SA boutique.
+      if (!empty($b['delete'])) {
+        $rid = (int) ($b['id'] ?? 0);
+        if (!$rid) json_out(['ok' => false, 'error' => 'Règle non précisée.'], 400);
+        $own = $sc ? row("SELECT id FROM ws_delivery_fee_rules WHERE id=? AND (shop_id=? OR shop_id IS NULL)", [$rid, $sc])
+                   : row("SELECT id FROM ws_delivery_fee_rules WHERE id=?", [$rid]);
+        if (!$own) json_out(['ok' => false, 'error' => 'Règle inconnue, ou hors de votre boutique.'], 404);
+        q("UPDATE ws_delivery_fee_rules SET active=0 WHERE id=?", [$rid]);
+        json_out(['ok' => true, 'deleted' => true]);
+      }
+
+      $mapLvl = ['Site' => 'site', 'Bureau' => 'office', 'Tournée' => 'tour', 'Boutique' => 'shop'];
+      $level  = $mapLvl[(string) ($b['niveau'] ?? '')] ?? null;
+      if (!$level) json_out(['ok' => false, 'error' => 'Niveau attendu : Site, Bureau, Tournée ou Boutique.'], 400);
+
+      // Les montants sont des NOMBRES. « 6,50 € », « 150 € ou — » et autres
+      // saisies libres sont refusées avec leur motif : un franco mal lu se
+      // traduit en euros sur chaque facture.
+      $nb = function ($v, $lbl) {
+        if ($v === null || $v === '') return 0.0;
+        if (!is_numeric($v)) json_out(['ok' => false, 'error' => "$lbl : un nombre est attendu (ex. 6.50), reçu « $v »."], 400);
+        $f = (float) $v;
+        if ($f < 0) json_out(['ok' => false, 'error' => "$lbl ne peut pas être négatif."], 400);
+        return $f;
+      };
+      $montant = $nb($b['montant'] ?? 0, 'Montant des frais');
+      $franco  = $nb($b['franco'] ?? 0, 'Franco de port');
+      $offert  = !empty($b['offert']);
+      $touj    = !empty($b['toujours']);
+      if ($offert && $touj)
+        json_out(['ok' => false, 'error' => 'Une règle ne peut pas être « offerte » ET « toujours facturée ».'], 400);
+
+      $mapPay = ['Comptant' => 'immediate', 'Différé' => 'deferred', 'Facturé au bureau' => 'office'];
+      $pt = $mapPay[(string) ($b['paiement'] ?? '')] ?? null;   // null = selon le bureau
+
+      // Résolution de la cible, bornée à la boutique.
+      $cible = trim((string) ($b['cible'] ?? ''));
+      $siteId = null; $offId = null; $tourId = null;
+      if ($level === 'site' || $level === 'office' || $level === 'tour') {
+        if ($cible === '') json_out(['ok' => false, 'error' => 'Précisez la cible de la règle.'], 400);
+        if ($level === 'tour') {
+          $t = row("SELECT id FROM ws_tours WHERE name=?" . ($sc ? " AND shop_id=$sc" : ""), [$cible]);
+          if (!$t) json_out(['ok' => false, 'error' => "Tournée « $cible » inconnue dans votre boutique."], 404);
+          $tourId = (int) $t['id'];
+        } elseif ($level === 'office') {
+          $oSc = ($sc && col_exists('ws_offices', 'shop_id')) ? " AND (shop_id IS NULL OR shop_id=$sc)" : "";
+          $o = row("SELECT id FROM ws_offices WHERE name=?$oSc", [$cible]);
+          if (!$o) json_out(['ok' => false, 'error' => "Bureau « $cible » inconnu dans votre boutique."], 404);
+          $offId = (int) $o['id'];
+        } else {
+          $s2 = row("SELECT id FROM ws_office_delivery_sites WHERE name=? AND active=1", [$cible]);
+          if (!$s2) json_out(['ok' => false, 'error' => "Site « $cible » inconnu."], 404);
+          $siteId = (int) $s2['id'];
+        }
+      }
+
+      $rid = (int) ($b['id'] ?? 0);
+      $args = [$level, $siteId, $offId, $tourId, $sc, $offert ? 1 : 0, $touj ? 1 : 0, $montant, $franco, $pt];
+      if ($rid) {
+        $own = $sc ? row("SELECT id FROM ws_delivery_fee_rules WHERE id=? AND (shop_id=? OR shop_id IS NULL)", [$rid, $sc])
+                   : row("SELECT id FROM ws_delivery_fee_rules WHERE id=?", [$rid]);
+        if (!$own) json_out(['ok' => false, 'error' => 'Règle inconnue, ou hors de votre boutique.'], 404);
+        q("UPDATE ws_delivery_fee_rules SET level=?, site_id=?, office_client_id=?, tour_id=?, shop_id=?,
+             free_delivery=?, always_charge=?, fee_amount=?, free_delivery_minimum=?, payment_type=?, active=1
+           WHERE id=?", array_merge($args, [$rid]));
+      } else {
+        q("INSERT INTO ws_delivery_fee_rules
+             (level, site_id, office_client_id, tour_id, shop_id, free_delivery, always_charge,
+              fee_amount, free_delivery_minimum, payment_type, active)
+           VALUES (?,?,?,?,?,?,?,?,?,?,1)", $args);
+        $rid = (int) db()->lastInsertId();
+      }
+      json_out(['ok' => true, 'id' => $rid]);
     }
 
     // ── Zone de chalandise marque (ws_franchisor_catchment — migration 0012). ──
@@ -9841,6 +9943,7 @@ function bo_endpoint_section($name) {
     'office-invite-pdf' => 'offices', 'office-invite-send' => 'offices',
     'office-invite-poster' => 'offices',
     'office-delivery-setting' => 'bureauParams',
+    'delivery-fee-rule' => 'frais',
     'b2b-clients' => 'b2bClients', 'b2b-departments' => 'b2bClients', 'b2b-department' => 'b2bClients',
     'fr-clients' => 'b2bClients',
     'client-active' => 'b2bClients', 'client-attach' => 'b2bClients', 'client-billing' => 'b2bClients',
