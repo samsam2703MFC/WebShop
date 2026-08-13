@@ -4398,6 +4398,41 @@ function dispatch($m, $p) {
         'exact' => $geo['source'] === 'address' || $geo['source'] === 'manual']);
     }
 
+    // ── Avis clients (PWA) — vue BORNÉE À LA BOUTIQUE DE LA SESSION. Jamais de
+    //    portée réseau ici : $shopId est forcé à la session PIN plus haut, donc
+    //    un porteur de PIN ne lit que SES avis. Même forme que /admin/reviews
+    //    (totals / byProduct / recentNegative), mais un seul shop et sans
+    //    sélecteur. `shop` sert au badge de la console franchisée.
+    if ($m === 'GET' && $p === '/franchisee/reviews') {
+      if (!$shopId) json_out(['error' => 'Boutique de session requise pour les avis.'], 400);
+      $sid = (int) $shopId;
+      $totals = row(
+        "SELECT COUNT(*) total, COALESCE(SUM(liked=1),0) liked, COALESCE(SUM(liked=0),0) disliked,
+                COALESCE(SUM(liked IS NULL),0) pending
+           FROM pwa_reviews WHERE shop_id=?", [$sid]);
+      // Note moyenne par produit (les moins bien notés d'abord).
+      $byProduct = rows(
+        "SELECT ri.product_name, ROUND(AVG(ri.rating),2) avg_rating, COUNT(ri.rating) n
+           FROM pwa_review_items ri JOIN pwa_reviews r ON r.id = ri.review_id
+          WHERE ri.rating IS NOT NULL AND r.shop_id=?
+          GROUP BY ri.product_name ORDER BY avg_rating ASC, n DESC LIMIT 100", [$sid]);
+      // Derniers avis négatifs (liked=0) + leurs notes/commentaires produit.
+      $recent = rows(
+        "SELECT r.id, r.created_at, r.shop_id, p.store
+           FROM pwa_reviews r LEFT JOIN pwa_purchases p ON p.id = r.purchase_id
+          WHERE r.liked = 0 AND r.shop_id=?
+          ORDER BY r.id DESC LIMIT 40", [$sid]);
+      foreach ($recent as &$rv) {
+        $rv['items'] = rows(
+          "SELECT product_name, rating, note FROM pwa_review_items WHERE review_id=? ORDER BY id",
+          [$rv['id']]);
+      }
+      unset($rv);
+      $shop = row("SELECT id, name, city FROM $SHOPS WHERE id=?", [$sid]);
+      json_out(['totals' => $totals, 'byProduct' => $byProduct, 'recentNegative' => $recent,
+                'shop' => $shop ?: null, 'shops' => $shop ? [$shop] : []]);
+    }
+
     // ── Disponibilité boutique (ws_shop_availability) — SOURCE UNIQUE lue par
     //    le webshop (jours, heures, durée créneau, cut-off, lead). Le BO lit ET
     //    écrit DIRECTEMENT cette table (avant : le BO écrivait dans ws_param,
@@ -8816,7 +8851,10 @@ function bo_endpoint_section($name) {
   ];
   // Toujours ouverts à une session PIN : identité et état d'interface. Ils ne
   // portent aucune donnée métier propre à une section.
-  static $FREE = ['me' => true, 'bo-store' => true];
+  // 'reviews' : lecture des avis de SA PROPRE boutique (portée déjà bornée à la
+  // session PIN dans la garde /franchisee/). Feedback client peu sensible, borné
+  // au shop — ouvert à toute session plutôt que gated derrière une section RBAC.
+  static $FREE = ['me' => true, 'bo-store' => true, 'reviews' => true];
   if (isset($FREE[$name])) return '*';
   return $MAP[$name] ?? null;
 }
