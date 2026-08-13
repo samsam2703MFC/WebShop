@@ -424,7 +424,7 @@ function dispatch($m, $p) {
                      AND EXISTS (SELECT 1 FROM ws_products p
                                    LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
                                   WHERE p.cat_id = c.id AND p.active = 1
-                                    AND (ps.product_id IS NULL OR ps.active = 1)$catSeason)
+                                    AND (ps.product_id IS NULL OR ps.active = 1)" . whitelist_where('p') . "$catSeason)
                    ORDER BY c.sort_order, c.label", array_merge([$s, $s], $catSeasonArgs));
     // Rattache les sous-catégories (ws_category_subs) à chaque catégorie -> c.subs[]
     // (le front lit activeCat.subs pour la ligne de nav). Même règle : on
@@ -460,6 +460,7 @@ function dispatch($m, $p) {
     // 28 novembre pour le 2 décembre doit voir la gamme de Noël ; c'est la date
     // de remise de la marchandise qui fait foi, pas celle de la commande.
     [$seasonWhere, $seasonArgs] = availability_where('p', qp('date'));
+    $whitelistWhere = whitelist_where('p');   // retiré du catalogue réseau = invisible partout
     // `badge` (texte) a été migré en FK tag_id -> ws_tags ; on expose le libellé
     // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
     $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id,
@@ -484,7 +485,7 @@ function dispatch($m, $p) {
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
                  LEFT JOIN ws_tags t ON t.id = p.tag_id
                  LEFT JOIN ws_season se ON se.id = p.season_id
-                WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)$deliveryWhere$seasonWhere
+                WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)${whitelistWhere}$deliveryWhere$seasonWhere
                 ORDER BY c.sort_order, p.name", array_merge([$s, $s], $seasonArgs));
     $photos = product_photo_files();
     foreach ($r as &$x) {
@@ -3377,9 +3378,14 @@ function dispatch($m, $p) {
       foreach ($cats as $c) {
         // Le franchisor gère l'assortiment : on renvoie AUSSI les produits inactifs
         // (le toggle « Webshop » = ws_products.active, il faut pouvoir les réactiver).
+        // `wl` = au catalogue réseau (brand_whitelist). Exposée pour que la
+        // console marque puisse afficher le premier barreau de l'échelle : la
+        // colonne était écrite à l'aveugle, jamais relue ni rendue.
         $prods = rows("SELECT p.id, p.name AS nom, p.price AS prix, p.active, p.img,
                               COALESCE(p.brand_mandatory,0) AS bm,
-                              COALESCE(p.office_delivery,1) AS od,
+                              COALESCE(p.office_delivery,1) AS od,"
+                              . (col_exists('ws_products', 'brand_whitelist')
+                                 ? " COALESCE(p.brand_whitelist,1) AS wl," : " 1 AS wl,") . "
                               p.sub_cat_id AS sub_id, sub.label AS sub, se.name AS saison
                          FROM ws_products p
                          LEFT JOIN ws_category_subs sub ON sub.id = p.sub_cat_id
@@ -3799,11 +3805,32 @@ function dispatch($m, $p) {
       // voire les deux. On évalue l'état RÉSULTANT (payload + valeurs en base) :
       // s'il fermait les deux canaux → refus ; rendre obligatoire un produit
       // aux deux canaux fermés ouvre le webshop par défaut.
-      $curP = row("SELECT active, brand_mandatory, COALESCE(office_delivery,1) AS od FROM ws_products WHERE id=?", [$id]);
+      /* ÉCHELLE DE CONTRAINTE, du plus fort au plus faible :
+         au catalogue réseau (brand_whitelist) > obligatoire (brand_mandatory)
+         > webshop (active) > livraison bureau (office_delivery).
+         Chaque barreau ne tient que si celui du dessus tient. On évalue l'état
+         RÉSULTANT — payload + base — plutôt que le seul champ envoyé : sinon
+         deux réglages licites pris l'un après l'autre produisent un état qui ne
+         l'est pas. */
+      $wlCol = col_exists('ws_products', 'brand_whitelist');
+      $curP = row("SELECT active, brand_mandatory, COALESCE(office_delivery,1) AS od"
+                  . ($wlCol ? ", COALESCE(brand_whitelist,1) AS wl" : ", 1 AS wl")
+                  . " FROM ws_products WHERE id=?", [$id]);
       if (!$curP) json_out(['error' => 'produit introuvable'], 404);
+      $nextWl   = array_key_exists('brand_whitelist', $b)  ? !empty($b['brand_whitelist'])  : !empty($curP['wl']);
       $nextMand = array_key_exists('brand_mandatory', $b) ? !empty($b['brand_mandatory']) : !empty($curP['brand_mandatory']);
       $nextAct  = array_key_exists('active', $b)          ? !empty($b['active'])          : !empty($curP['active']);
       $nextOd   = array_key_exists('office_delivery', $b) ? !empty($b['office_delivery']) : !empty($curP['od']);
+      /* Barreau 1 → 2 : rendre un produit OBLIGATOIRE le remet au catalogue
+         réseau. Imposer aux boutiques un produit qu'on vient d'en retirer n'a
+         pas de sens ; on complète plutôt que de refuser, comme le fait déjà
+         « obligatoire » avec le webshop juste dessous. */
+      if ($nextMand && !$nextWl && !empty($b['brand_mandatory'])) { $b['brand_whitelist'] = 1; $nextWl = true; }
+      /* L'inverse se REFUSE : retirer du réseau un produit encore obligatoire
+         laisserait les boutiques avec un article imposé et invendable. La marque
+         doit lever l'obligation d'abord — deux gestes, mais aucun état bâtard. */
+      if (!$nextWl && $nextMand)
+        json_out(['error' => 'Produit OBLIGATOIRE : retirez d’abord l’obligation avant de le sortir du catalogue réseau.'], 400);
       if ($nextMand && !$nextAct && !$nextOd) {
         if (!empty($b['brand_mandatory'])) $b['active'] = 1;
         else json_out(['error' => 'Produit OBLIGATOIRE : il doit rester vendable sur au moins un canal — webshop ou livraison bureau.'], 400);
@@ -3851,7 +3878,14 @@ function dispatch($m, $p) {
         if (!empty($b['office_delivery'])) q("UPDATE ws_products SET office_delivery=1 WHERE cat_id=?", [$id]);
         else q("UPDATE ws_products SET office_delivery=0 WHERE cat_id=? AND (brand_mandatory=0 OR active=1)", [$id]);
       }
-      if (array_key_exists('brand_whitelist', $b)) q("UPDATE ws_products SET brand_whitelist=? WHERE cat_id=?", [!empty($b['brand_whitelist']) ? 1 : 0, $id]);
+      /* Cascade « au catalogue réseau ». Un produit OBLIGATOIRE en est épargné :
+         le retirer du réseau laisserait les boutiques avec un article imposé et
+         invendable — même règle qu'au niveau produit, où l'opération est
+         refusée. La marque lève l'obligation d'abord. */
+      if (array_key_exists('brand_whitelist', $b)) {
+        if (!empty($b['brand_whitelist'])) q("UPDATE ws_products SET brand_whitelist=1 WHERE cat_id=?", [$id]);
+        else q("UPDATE ws_products SET brand_whitelist=0 WHERE cat_id=? AND COALESCE(brand_mandatory,0)=0", [$id]);
+      }
       // Rendre une catégorie obligatoire : chaque produit aux deux canaux
       // fermés récupère le webshop par défaut.
       if (array_key_exists('brand_mandatory', $b)) {
@@ -6681,7 +6715,7 @@ function dispatch($m, $p) {
                     JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") .
                  ($hasStock ? " LEFT JOIN ws_product_stock st ON st.product_id = pr.id AND st.date = ? AND st.active = 1" . ($shopId ? " AND st.shop_id = " . (int) $shopId : "") : "") . "
-                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))" . ($hasPS ? " AND (ps.active IS NULL OR ps.active = 1)" : "") . "
+                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))" . ($hasPS ? " AND (ps.active IS NULL OR ps.active = 1)" : "") . whitelist_where('pr') . "
                    GROUP BY c.sort_order, c.label, pr.id, pr.name, pr.brand_mandatory
                    ORDER BY c.sort_order, c.label, pr.name LIMIT 400", $hasStock ? [$today] : []);
       // Minimums hebdomadaires du JOUR (1=lundi … 7=dimanche) par produit.
@@ -6727,15 +6761,21 @@ function dispatch($m, $p) {
       if (!$tblExists('ws_product_shops') || !$tblExists('ws_products')) json_out(['ok' => false, 'error' => 'tables produits absentes'], 501);
       $active = !empty($b['active']) ? 1 : 0;
       $prods = [];
+      $wlCol = col_exists('ws_products', 'brand_whitelist');
       if (!empty($b['product'])) {
-        $pr = $findProduct($b, 'id, brand_mandatory');
+        $pr = $findProduct($b, 'id, brand_mandatory' . ($wlCol ? ', COALESCE(brand_whitelist,1) AS wl' : ', 1 AS wl'));
         if (!$pr) $prodKo($b);
         if ((int) $pr['brand_mandatory'] && !$active) json_out(['ok' => false, 'error' => 'Produit « marque obligatoire » — non désactivable'], 400);
+        // Retiré du catalogue réseau par la marque : le franchisé ne peut pas le
+        // rouvrir. Il ne le voit plus dans sa liste ; cette garde couvre l'appel
+        // direct, et le DIT plutôt que d'ignorer en silence.
+        if (!(int) $pr['wl'] && $active)
+          json_out(['ok' => false, 'error' => 'Produit retiré du catalogue réseau par la marque — non réactivable depuis la boutique.'], 400);
         $prods[] = $pr;
       } elseif (!empty($b['cat'])) {
         $prods = rows("SELECT pr.id, pr.brand_mandatory FROM ws_products pr
                         LEFT JOIN ws_categories c ON c.id = pr.cat_id
-                       WHERE pr.active=1 AND TRIM(c.label)=?", [trim((string) $b['cat'])]);
+                       WHERE pr.active=1 AND TRIM(c.label)=?" . whitelist_where('pr'), [trim((string) $b['cat'])]);
         if (!$prods) json_out(['ok' => false, 'error' => 'catégorie inconnue'], 400);
       } else json_out(['ok' => false, 'error' => 'product ou cat requis'], 400);
       $n = 0;
@@ -6768,7 +6808,7 @@ function dispatch($m, $p) {
                     FROM ws_products pr JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
                  ($hasSub ? " LEFT JOIN ws_category_subs sc2 ON sc2.id = pr.sub_cat_id" : "") .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") . "
-                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))
+                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))" . whitelist_where('pr') . "
                    ORDER BY c.sort_order, c.label, " . ($hasSub ? "COALESCE(sc2.sort_order, 999), sc2.label, " : "") . "pr.name LIMIT 400");
       // NON TARIFÉ = pas de prix ERP strictement positif pour cette boutique
       // (ligne shop_product absente, ou portion_price à 0 : live, 56 à 108
@@ -8334,6 +8374,20 @@ function oline_own() {
   static $c = null;
   if ($c === null) $c = col_exists('ws_order_lines', 'parent_line_id') ? ' AND l.parent_line_id IS NULL' : '';
   return $c;
+}
+
+/* AU CATALOGUE RÉSEAU — ws_products.brand_whitelist.
+   Premier barreau de l'échelle marque : au catalogue > obligatoire > webshop >
+   livraison bureau. La colonne existait depuis la migration 0003 et n'était
+   LUE NULLE PART — deux écritures, aucun filtre : la marque croyait retirer un
+   produit du réseau, il restait en vente partout.
+   Fragment SQL partagé pour que la règle n'ait qu'une écriture : le catalogue
+   client, la navigation et l'assortiment franchisé la lisent tous ici. La garde
+   col_exists laisse passer les bases antérieures à 0003 — sans colonne, aucun
+   produit n'est retiré à tort. */
+function whitelist_where($alias = 'p') {
+  return col_exists('ws_products', 'brand_whitelist')
+    ? " AND COALESCE($alias.brand_whitelist,1) = 1" : '';
 }
 
 /* Centroïde d'un code postal belge (data/zipcodes_be.json) — le même
