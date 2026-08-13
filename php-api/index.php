@@ -6031,15 +6031,96 @@ function dispatch($m, $p) {
     // ── Règles calendrier (ws_calendar_rules). ──
     if ($m === 'GET' && $p === '/franchisee/ws-calendar-rules') {
       if (!$tblExists('ws_calendar_rules')) json_out([]);
-      $rs = rows("SELECT mode, open_days, cutoff_hour, cutoff_minutes, lead_hours FROM ws_calendar_rules
+      $rs = rows("SELECT id, mode, open_days, cutoff_hour, cutoff_minutes, lead_hours FROM ws_calendar_rules
                    WHERE " . $scope('shop_id') . " AND active=1 ORDER BY mode LIMIT 50");
       json_out(array_map(function ($r) use ($DAYS) {
         $days = json_decode((string) $r['open_days'], true);
-        $jours = is_array($days) ? implode(' · ', array_map(fn ($d) => $DAYS[(((int) $d) + 6) % 7], $days)) : '—';
-        return ['mode' => $r['mode'] === 'delivery' ? 'Livraison' : 'Retrait', 'days' => $jours,
+        $days = is_array($days) ? array_values(array_map('intval', $days)) : [];
+        $jours = $days ? implode(' · ', array_map(fn ($d) => $DAYS[(($d + 6) % 7)], $days)) : '—';
+        return ['id' => (int) $r['id'],
+                'mode' => $r['mode'] === 'delivery' ? 'Livraison' : 'Retrait', 'days' => $jours,
                 'cut' => sprintf('%02d:%02d J-1', (int) $r['cutoff_hour'], (int) $r['cutoff_minutes']),
-                'lead' => ((int) $r['lead_hours']) . ' h'];
+                'lead' => ((int) $r['lead_hours']) . ' h',
+                // Brut, pour l'édition : les jours en ISO (1 = lundi), l'heure
+                // en HH:MM, le délai en heures. Le texte ci-dessus ne se relit
+                // pas — c'est ce qui avait fait du formulaire du texte libre.
+                'vJours' => $days,
+                'vCut' => sprintf('%02d:%02d', (int) $r['cutoff_hour'], (int) $r['cutoff_minutes']),
+                'vLead' => (int) $r['lead_hours']];
       }, $rs));
+    }
+
+    /* Écriture d'UNE règle calendrier — elle décide si une commande est
+       acceptée (jours ouverts, heure limite, délai minimum). Le formulaire
+       écrivait dans l'overlay ws_bo_store : la console montrait le nouveau
+       cut-off pendant que le checkout appliquait l'ancien.
+
+       Les jours arrivent en ISO (1 = lundi), comme date('N') que le checkout
+       compare ; l'heure en HH:MM ; le délai en heures. Les trois étaient du
+       texte : « Lun–Ven », « 17:00 J-1 », « 24 h » — inanalysables. */
+    if ($m === 'POST' && $p === '/franchisee/calendar-rule') {
+      if (!$tblExists('ws_calendar_rules'))
+        json_out(['ok' => false, 'error' => 'Table ws_calendar_rules absente.'], 501);
+      $b  = body();
+      $sc = $shopId ? (int) $shopId : null;
+      $rid = (int) ($b['id'] ?? 0);
+
+      if (!empty($b['delete'])) {
+        if (!$rid) json_out(['ok' => false, 'error' => 'Règle non précisée.'], 400);
+        $own = $sc ? row("SELECT id FROM ws_calendar_rules WHERE id=? AND (shop_id=? OR shop_id IS NULL)", [$rid, $sc])
+                   : row("SELECT id FROM ws_calendar_rules WHERE id=?", [$rid]);
+        if (!$own) json_out(['ok' => false, 'error' => 'Règle inconnue, ou hors de votre boutique.'], 404);
+        q("UPDATE ws_calendar_rules SET active=0 WHERE id=?", [$rid]);
+        json_out(['ok' => true, 'deleted' => true]);
+      }
+
+      $mode = ['Livraison' => 'delivery', 'Retrait' => 'pickup'][(string) ($b['mode'] ?? '')] ?? null;
+      if (!$mode) json_out(['ok' => false, 'error' => 'Mode attendu : Livraison ou Retrait.'], 400);
+
+      // Jours : une liste d'entiers 1..7. Une liste vide fermerait la boutique
+      // tous les jours — on refuse plutôt que d'enregistrer un écran qui coupe
+      // les commandes sans que personne ne comprenne pourquoi.
+      $jours = $b['jours'] ?? [];
+      if (is_string($jours)) $jours = array_filter(explode(',', $jours), 'strlen');
+      $jours = array_values(array_unique(array_map('intval', (array) $jours)));
+      sort($jours);
+      foreach ($jours as $j) if ($j < 1 || $j > 7)
+        json_out(['ok' => false, 'error' => "Jour « $j » hors de 1 (lundi) à 7 (dimanche)."], 400);
+      if (!$jours) json_out(['ok' => false, 'error' => 'Choisissez au moins un jour ouvert à la commande.'], 400);
+
+      $cut = trim((string) ($b['cut'] ?? ''));
+      if (!preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/', $cut, $mm))
+        json_out(['ok' => false, 'error' => 'Heure limite attendue au format HH:MM.'], 400);
+      $ch = (int) $mm[1]; $cmn = (int) $mm[2];
+
+      $lead = $b['lead'] ?? 0;
+      if (!is_numeric($lead)) json_out(['ok' => false, 'error' => 'Délai : un nombre d’heures est attendu.'], 400);
+      $lead = (int) $lead;
+      if ($lead < 0 || $lead > 720) json_out(['ok' => false, 'error' => 'Délai hors de 0 à 720 heures.'], 400);
+
+      $od = json_encode($jours);
+      if ($rid) {
+        $own = $sc ? row("SELECT id FROM ws_calendar_rules WHERE id=? AND (shop_id=? OR shop_id IS NULL)", [$rid, $sc])
+                   : row("SELECT id FROM ws_calendar_rules WHERE id=?", [$rid]);
+        if (!$own) json_out(['ok' => false, 'error' => 'Règle inconnue, ou hors de votre boutique.'], 404);
+        q("UPDATE ws_calendar_rules SET mode=?, open_days=?, cutoff_hour=?, cutoff_minutes=?, lead_hours=?, active=1 WHERE id=?",
+          [$mode, $od, $ch, $cmn, $lead, $rid]);
+      } else {
+        // Un mode n'a qu'une règle par boutique : réactiver celle qui existe
+        // évite deux règles contradictoires dont une seule serait appliquée.
+        $dej = $sc ? row("SELECT id FROM ws_calendar_rules WHERE mode=? AND shop_id=?", [$mode, $sc])
+                   : row("SELECT id FROM ws_calendar_rules WHERE mode=? AND shop_id IS NULL", [$mode]);
+        if ($dej) {
+          q("UPDATE ws_calendar_rules SET open_days=?, cutoff_hour=?, cutoff_minutes=?, lead_hours=?, active=1 WHERE id=?",
+            [$od, $ch, $cmn, $lead, (int) $dej['id']]);
+          $rid = (int) $dej['id'];
+        } else {
+          q("INSERT INTO ws_calendar_rules (shop_id, mode, open_days, cutoff_hour, cutoff_minutes, lead_hours, active)
+             VALUES (?,?,?,?,?,?,1)", [$sc, $mode, $od, $ch, $cmn, $lead]);
+          $rid = (int) db()->lastInsertId();
+        }
+      }
+      json_out(['ok' => true, 'id' => $rid]);
     }
 
     // ── Créneaux (ws_slots). ──
@@ -9944,6 +10025,7 @@ function bo_endpoint_section($name) {
     'office-invite-poster' => 'offices',
     'office-delivery-setting' => 'bureauParams',
     'delivery-fee-rule' => 'frais',
+    'calendar-rule' => 'calendarRules',
     'b2b-clients' => 'b2bClients', 'b2b-departments' => 'b2bClients', 'b2b-department' => 'b2bClients',
     'fr-clients' => 'b2bClients',
     'client-active' => 'b2bClients', 'client-attach' => 'b2bClients', 'client-billing' => 'b2bClients',
