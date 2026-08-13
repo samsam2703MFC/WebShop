@@ -4917,8 +4917,11 @@ function ShopFrame({ variant }) {
   //  • retirer UNE ligne relâchait TOUT le panier (release sans productId).
   const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const [stockErr, setStockErr] = React.useState('');
-  // Motif du refus de la livraison au bureau — affiché, jamais deviné.
-  const [deliveryNotice, setDeliveryNotice] = React.useState(null);
+  /* MOTIF DE CE QUE L'APP VIENT DE FAIRE, ou de ce qu'elle refuse. Toute
+     action décidée à la place du client s'annonce ici : refus de la livraison,
+     bascule automatique de mode, panier vidé, boutique changée. Une app qui
+     agit sans le dire oblige à deviner — et sur un panier perdu, à recommencer. */
+  const [notice, setNotice] = React.useState(null);
   function refreshStock() {
     return window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {}));
   }
@@ -5078,10 +5081,17 @@ function ShopFrame({ variant }) {
 
   const Nav = variant === 'A' ? NavbarA : variant === 'B' ? NavbarB : NavbarC;
 
-  // Auto-switch back to collect if delivery cutoff passes while already in delivery mode.
+  /* L'heure limite tombe PENDANT la navigation : le mode repasse en Click &
+     Collect tout seul. Sans un mot, le client voyait ses prix et ses créneaux
+     changer sous ses yeux sans avoir rien touché. */
   React.useEffect(() => {
     if (mode === 'delivery' && deliveryCutoffPassed) {
       setMode('collect');
+      setNotice({
+        titre: 'Passé en Click & Collect',
+        texte: 'L’heure limite de la livraison au bureau (' + (deliveryCutoffLabel || '11h00')
+             + ') vient d’être atteinte. Pour être livré, choisissez une date ultérieure.',
+      });
     }
   }, [deliveryCutoffPassed, mode]);
 
@@ -5118,7 +5128,7 @@ function ShopFrame({ variant }) {
     // Livraison : compte connecté, bureau lié, validé, et rattaché à une tournée.
     if (next === 'delivery' && !userCanDeliver) {
       const why = deliveryBlockReason();
-      setDeliveryNotice(why);
+      setNotice(why);
       // On ouvre l'écran où l'action se fait — mais seulement quand il y a une
       // action possible. Attendre une validation ou une tournée ne se règle pas
       // depuis le compte : y renvoyer ferait chercher un réglage inexistant.
@@ -5129,7 +5139,7 @@ function ShopFrame({ variant }) {
     // Livraison le jour même : refusée passé l'heure limite. Ce cas ne faisait
     // RIEN — le bouton semblait cassé.
     if (next === 'delivery' && deliveryCutoffPassed) {
-      setDeliveryNotice({
+      setNotice({
         titre: 'Livraison du jour clôturée',
         texte: 'Les commandes en livraison au bureau se prennent avant ' + (deliveryCutoffLabel || '11h00')
              + '. Choisissez une date ultérieure, ou passez en Click & Collect.',
@@ -5137,6 +5147,11 @@ function ShopFrame({ variant }) {
       return;
     }
     stockReleaseAll();
+    if (basket.length > 0) setNotice({
+      titre: 'Panier vidé',
+      texte: 'Les prix et les créneaux diffèrent entre Click & Collect et livraison au bureau : le panier repart à zéro au changement de mode.',
+    });
+    else setNotice(null);
     setMode(next);
     setBasket([]);
   }
@@ -5144,12 +5159,25 @@ function ShopFrame({ variant }) {
     const a = date instanceof Date ? date.toDateString() : String(date);
     const b = next instanceof Date ? next.toDateString() : String(next);
     if (a === b) return;
+    const avait = basket.length > 0;
     stockReleaseAll();
     setDate(next);
     setBasket([]);
-    // If switching to today in delivery mode and cutoff has passed, revert to collect
+    // Aujourd'hui + livraison + heure limite dépassée : retour forcé en Collect.
     if (mode === 'delivery' && isToday(next) && nowHour >= deliveryCutoffMinutes) {
       setMode('collect');
+      setNotice({
+        titre: 'Passé en Click & Collect',
+        texte: 'La livraison au bureau n’est plus possible aujourd’hui (commandes avant '
+             + (deliveryCutoffLabel || '11h00') + ').'
+             + (avait ? ' Votre panier a été vidé : les prix et les créneaux dépendent du mode.' : ''),
+      });
+    } else if (avait) {
+      // Règle du design : changer de date vide le panier. Encore faut-il le dire.
+      setNotice({
+        titre: 'Panier vidé',
+        texte: 'Les disponibilités et les prix changent d’un jour à l’autre : le panier est remis à zéro à chaque changement de date.',
+      });
     }
   }
   function handleAccount() {
@@ -5162,14 +5190,33 @@ function ShopFrame({ variant }) {
     // (rule: "On login, load the preferred shop automatically").
     // Don't reset cart — spec says "Do not reset cart unless the shop change requires it".
     if (u && u.preferredShopId && u.preferredShopId !== shopId) {
+      const cible = (shops || []).find((x) => String(x.id) === String(u.preferredShopId));
       setShopId(u.preferredShopId);
+      // Le catalogue et les prix changent avec la boutique : le dire, sinon le
+      // client croit s'être trompé de page en se connectant.
+      setNotice({
+        titre: 'Boutique ' + (cible ? cible.name : 'préférée') + ' chargée',
+        texte: 'C’est la boutique enregistrée dans votre compte. Vous pouvez en changer à tout moment en haut de l’écran.',
+      });
     }
     // If freshly logged-in user already has delivery enabled & was on collect, leave mode alone (don't surprise the user).
   }
   function handleLogout() {
     stockReleaseAll(); // release before clearing user reference
     setUser(null);
-    if (mode === 'delivery') { setMode('collect'); setBasket([]); }
+    // La livraison au bureau exige un compte : à la déconnexion, le mode revient
+    // à Click & Collect et le panier tombe. Perdre un panier sans un mot oblige
+    // à tout refaire sans comprendre.
+    if (mode === 'delivery') {
+      const avait = basket.length > 0;
+      setMode('collect');
+      setBasket([]);
+      setNotice({
+        titre: 'Retour en Click & Collect',
+        texte: 'La livraison au bureau demande un compte rattaché à un bureau.'
+             + (avait ? ' Votre panier a été vidé.' : ''),
+      });
+    }
   }
 
   // Go-live : sans boutique resolue (API /shops en echec ou vide), on affiche
@@ -5365,17 +5412,17 @@ function ShopFrame({ variant }) {
           </div>
         </div>
       )}
-      {deliveryNotice && (
+      {notice && (
         /* Le motif reste à l'écran jusqu'à ce qu'on le ferme : il porte une
            consigne, et une bulle qui s'efface toute seule se lit rarement en
            entier sur un téléphone. */
         <div className="ws-toast ws-toast--info" role="alert"
              style={{ background: 'var(--color-secondary)', color: 'var(--color-on-abricot)' }}>
           <div>
-            <div className="ws-toast__title">{deliveryNotice.titre}</div>
-            <div className="ws-toast__sub" style={{ opacity: 0.95 }}>{deliveryNotice.texte}</div>
+            <div className="ws-toast__title">{notice.titre}</div>
+            <div className="ws-toast__sub" style={{ opacity: 0.95 }}>{notice.texte}</div>
           </div>
-          <button type="button" onClick={() => setDeliveryNotice(null)}
+          <button type="button" onClick={() => setNotice(null)}
             style={{ marginLeft: 'auto', background: 'transparent', border: 0, color: 'inherit',
                      cursor: 'pointer', font: '600 13px var(--font-ui)' }}>Fermer</button>
         </div>
