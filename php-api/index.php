@@ -4323,7 +4323,9 @@ function dispatch($m, $p) {
           'name'    => $shop['name'],
           'city'    => $shop['city'],
           'cp'      => $shop['zip'] ?: '',
-          'address' => $shop['address_line'] ?? null,
+          'address' => (trim((string) ($shop['address_line'] ?? '')) !== ''
+                        ? $shop['address_line']
+                        : (trim(trim((string) ($shop['street'] ?? '')) . ' ' . trim((string) ($shop['street_num'] ?? ''))) ?: null)),
           // lat/lng absents = position inconnue. Le back-office le DIT au lieu
           // de placer le pin sur un repli qui aurait l'air d'une vraie adresse.
           'lat'       => $geo ? $geo['lat'] : null,
@@ -8172,11 +8174,16 @@ function shop_geo($shop, $force = false) {
     return $shop['lat'] !== null ? $ok($shop['lat'], $shop['lng'], 'manual')
                                  : $ko('Position marquée « saisie manuelle » mais lat/lng vides.');
 
+  // L'adresse se lit d'ABORD dans address_line, sinon dans street + street_num
+  // — les deux formes coexistent dans `shops` (l'endpoint public /shops
+  // reconstruit d'ailleurs la sienne à partir de street). N'en regarder qu'une
+  // aurait déclaré « sans adresse » une boutique dont l'adresse est là.
   $addr = trim((string) ($shop['address_line'] ?? ''));
+  if ($addr === '') $addr = trim(trim((string) ($shop['street'] ?? '')) . ' ' . trim((string) ($shop['street_num'] ?? '')));
   $zip  = trim((string) ($shop['zip'] ?? ''));
   $city = trim((string) ($shop['city'] ?? ''));
   if ($addr === '' && $zip === '')
-    return $ko('Boutique sans adresse : address_line et zip sont vides dans la table shops.');
+    return $ko('Boutique sans adresse : address_line, street/street_num et zip sont tous vides dans la table shops.');
 
   $hit = null; $source = null; $why = null;
   $qy = trim($addr . ', ' . trim($zip . ' ' . $city) . ', Belgique', " ,");
