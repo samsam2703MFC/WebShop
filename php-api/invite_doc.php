@@ -245,7 +245,23 @@ function invite_affiche_html(array $r, $url, $expire = null, $racine = '') {
   $e = fn ($x) => htmlspecialchars((string) $x, ENT_QUOTES, 'UTF-8');
   $res = qr_matrix($url, 'Q');
   $qr  = $res ? ('data:image/png;base64,' . base64_encode(qr_png($res[0], $res[1], 8, 4))) : '';
-  $logo = @file_get_contents(__DIR__ . '/../public/logo-white.png');
+  /* OÙ SONT LES FICHIERS. Le déploiement ne reproduit pas l'arborescence du
+     dépôt : php-api/ part dans <racine>/api/ et dist/ dans <racine>/. Les
+     polices et le logo atterrissent donc dans <racine>/fonts/ et
+     <racine>/logo-white.png, PAS dans un <racine>/public/ — ce dossier
+     n'existe que dans le dépôt.
+
+     Lire uniquement ../public/ marchait en local et échouait en production :
+     l'affiche y sortait sans une seule règle @font-face, donc en Helvetica,
+     sans que rien ne le signale. On essaie donc les deux dispositions. */
+  $lire = function ($chemin) {
+    foreach ([__DIR__ . '/../' . $chemin,           // serveur : <racine>/…
+              __DIR__ . '/../public/' . $chemin,    // dépôt   : public/…
+              __DIR__ . '/../dist/' . $chemin] as $c)
+      if (is_file($c) && ($b = @file_get_contents($c)) !== false) return $b;
+    return null;
+  };
+  $logo = $lire('logo-white.png');
   $logoSrc = $logo ? ('data:image/png;base64,' . base64_encode($logo)) : ($racine . '/logo-white.png');
 
   /* Les conditions sur DEUX colonnes. Empilées, les douze lignes que
@@ -266,50 +282,66 @@ function invite_affiche_html(array $r, $url, $expire = null, $racine = '') {
 
      Police introuvable (déploiement partiel) : la règle @font-face est OMISE
      plutôt qu'écrite dans le vide, et la pile de repli Helvetica/Arial prend le
-     relais. Le rendu se dégrade, il ne casse pas. */
-  $police = function ($fichier, $poids) {
-    $b = @file_get_contents(__DIR__ . '/../public/fonts/' . $fichier);
-    if ($b === false) return '';
-    return "@font-face{font-family:'Gotham';src:url(data:font/otf;base64," . base64_encode($b)
-         . ") format('opentype');font-weight:$poids;font-display:swap}";
+     relais. Le rendu se dégrade, il ne casse pas — mais il le DIT : les
+     polices réellement embarquées sont listées dans <meta name="polices">,
+     que la sonde check-endpoints lit. Sans ce marqueur, une affiche hors
+     charte est indiscernable d'une affiche à la charte tant que personne ne
+     l'imprime. */
+  $embarquees = [];
+  $police = function ($fichier, $poids, $famille = 'Gotham') use ($lire, &$embarquees) {
+    $b = $lire('fonts/' . $fichier);
+    if ($b === null) return '';
+    $embarquees[] = "$famille:$poids";
+    $fmt = substr($fichier, -4) === '.ttf' ? 'truetype' : 'opentype';
+    $mime = $fmt === 'truetype' ? 'font/ttf' : 'font/otf';
+    return "@font-face{font-family:'$famille';src:url(data:$mime;base64," . base64_encode($b)
+         . ") format('$fmt');font-weight:$poids;font-display:swap}";
   };
-  return '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
-    . '<title>Affiche — ' . $e($r['raison'] ?? 'invitation') . '</title><style>'
-    // Deux graisses seulement : celles que cette feuille emploie (400 et 600).
-    // Embarquer la 500 inutilisée aurait alourdi la page sans rien changer.
-    . $police('Gotham_Book.otf', 400) . $police('Gotham_Medium.otf', 600)
-    . ':root{--ruby:#8D1D2C;--abricot:#F2C9A0;--txt:#222;--mut:#6b6560;--bord:rgba(34,34,34,.14)}'
+  /* Les mêmes familles et les mêmes graisses que le webshop (index CSS de la
+     marque) : Vank pour l'affichage, Gotham 300→700 pour le reste. On n'en
+     embarque que ce que cette feuille emploie — chaque fichier pèse ~125 ko. */
+  $css = $police('GC_Vank.ttf', 400, 'Vank')
+       . $police('Gotham_Book.otf', 400)
+       . $police('Gotham_Medium.otf', 600)
+    /* Les JETONS DE LA MARQUE, repris tels quels du CSS du webshop
+       (--color-primary, --color-secondary, --color-bg, --color-text,
+       --color-text-muted, --color-border-secondary). Les valeurs approchées
+       que portait cette feuille (#6b6560 au lieu de #666666, une bordure à
+       .14 au lieu de .18) faisaient une affiche « presque » à la charte. */
+    . ':root{--ruby:#8D1D2C;--abricot:#F2C9A0;--fond:#EAE4DC;--surface:#FFF;'
+    . '--txt:#222222;--mut:#666666;--bord:rgba(34,34,34,.18);'
+    . '--ui:Gotham,Helvetica,Arial,sans-serif;--display:Vank,Gotham,Helvetica,Arial,sans-serif}'
     . '*{box-sizing:border-box}'
-    . 'body{margin:0;background:#EAE4DC;color:var(--txt);font:400 15px/1.5 Gotham,Helvetica,Arial,sans-serif}'
+    . 'body{margin:0;background:var(--fond);color:var(--txt);font:400 15px/1.5 var(--ui)}'
     /* La feuille : exactement une A4, marges comprises — ce qui s'affiche à
        l'écran est ce qui sort de l'imprimante. */
     . '.feuille{width:210mm;min-height:297mm;margin:0 auto;background:#fff;'
     . 'box-shadow:0 10px 40px rgba(0,0,0,.12);display:flex;flex-direction:column}'
     . '.bandeau{background:var(--ruby);color:#fff;padding:14mm 16mm 10mm}'
     . '.bandeau img{height:12mm;width:auto;display:block;margin-bottom:5mm}'
-    . '.bandeau h1{margin:0 0 3mm;font:600 30px/1.15 Gotham,Helvetica,Arial,sans-serif;letter-spacing:-.01em}'
-    . '.bandeau p{margin:0;font:400 14px/1.5 Gotham,Helvetica,Arial,sans-serif;opacity:.9}'
+    . '.bandeau h1{margin:0 0 3mm;font:400 34px/1.12 var(--display);letter-spacing:.005em}'
+    . '.bandeau p{margin:0;font:400 14px/1.5 var(--ui);opacity:.9}'
     . '.corps{padding:10mm 16mm 12mm;flex:1;display:flex;flex-direction:column}'
-    . '.raison{font:600 20px Gotham,Helvetica,Arial,sans-serif;margin:0 0 2mm}'
-    . '.consigne{font:400 13px Gotham,Helvetica,Arial,sans-serif;color:var(--mut);margin:0 0 6mm}'
+    . '.raison{font:600 20px var(--ui);margin:0 0 2mm}'
+    . '.consigne{font:400 13px var(--ui);color:var(--mut);margin:0 0 6mm}'
     . '.qr{display:block;width:58mm;height:58mm;margin:0 auto 5mm;image-rendering:pixelated}'
     . '.url{text-align:center;margin-bottom:7mm}'
-    . '.url .lbl{font:400 12px Gotham,Helvetica,Arial,sans-serif;color:var(--mut);margin-bottom:2mm}'
-    . '.url .adr{font:400 13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}'
-    . '.url .exp{font:400 12px Gotham,Helvetica,Arial,sans-serif;color:var(--mut);margin-top:2mm}'
-    . 'h2{font:600 15px Gotham,Helvetica,Arial,sans-serif;margin:0 0 4mm;padding-top:5mm;border-top:.4mm solid var(--bord)}'
+    . '.url .lbl{font:400 12px var(--ui);color:var(--mut);margin-bottom:2mm}'
+    . '.url .adr{font:600 13px/1.4 var(--ui);letter-spacing:.01em;word-break:break-all}'
+    . '.url .exp{font:400 12px var(--ui);color:var(--mut);margin-top:2mm}'
+    . 'h2{font:600 15px var(--ui);margin:0 0 4mm;padding-top:5mm;border-top:.4mm solid var(--bord)}'
     /* Quatre pistes = deux paires « intitulé / valeur » par ligne. L'intitulé
        a une largeur fixe pour que les deux colonnes s'alignent ; la valeur
        prend le reste et peut revenir à la ligne sans pousser sa voisine. */
     . '.cond{display:grid;grid-template-columns:33mm 1fr 33mm 1fr;gap:1.4mm 4mm;'
-    . 'margin:0;font:400 12.5px/1.35 Gotham,Helvetica,Arial,sans-serif}'
+    . 'margin:0;font:400 12.5px/1.35 var(--ui)}'
     . '.cond dt{color:var(--mut)}'
     . '.cond dd{margin:0;overflow-wrap:anywhere}'
-    . '.pied{margin-top:auto;padding-top:6mm;font:400 11.5px Gotham,Helvetica,Arial,sans-serif;color:var(--mut)}'
+    . '.pied{margin-top:auto;padding-top:6mm;font:400 11.5px var(--ui);color:var(--mut)}'
     /* La barre d'action ne s'imprime pas : elle n'existe qu'à l'écran. */
     . '.barre{position:fixed;top:0;left:0;right:0;background:var(--ruby);color:#fff;padding:10px 16px;'
-    . 'display:flex;align-items:center;gap:14px;font:400 13px Gotham,Helvetica,Arial,sans-serif;z-index:9}'
-    . '.barre button{font:600 13px Gotham,Helvetica,Arial,sans-serif;border:none;border-radius:8px;'
+    . 'display:flex;align-items:center;gap:14px;font:400 13px var(--ui);z-index:9}'
+    . '.barre button{font:600 13px var(--ui);border:none;border-radius:8px;'
     . 'background:#fff;color:var(--ruby);padding:8px 16px;cursor:pointer}'
     . 'body{padding-top:52px}'
     /* À l'impression la feuille GARDE sa hauteur : c'est elle qui pousse le
@@ -319,7 +351,15 @@ function invite_affiche_html(array $r, $url, $expire = null, $racine = '') {
     . '@media print{body{background:#fff;padding:0}.barre{display:none}'
     . '.feuille{width:auto;min-height:296mm;box-shadow:none;margin:0}'
     . '@page{size:A4;margin:0}'
-    . '*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}'
+    . '*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}';
+
+  /* Le CSS est assemblé AVANT la page : c'est en le construisant que $police
+     remplit $embarquees, et le marqueur ci-dessous doit pouvoir le lire. */
+  return '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
+    . '<title>Affiche — ' . $e($r['raison'] ?? 'invitation') . '</title>'
+    // Ce que la sonde lit pour dire si l'affiche est VRAIMENT à la charte.
+    . '<meta name="polices" content="' . $e($embarquees ? implode(' ', $embarquees) : 'aucune') . '">'
+    . '<style>' . $css
     . '</style></head><body>'
     . '<div class="barre"><button onclick="window.print()">Imprimer · enregistrer en PDF</button>'
     . '<span>Choisissez « Enregistrer au format PDF » comme destination — la mise en page est déjà au format A4.</span></div>'
