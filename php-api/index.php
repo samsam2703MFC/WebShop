@@ -7927,17 +7927,32 @@ function dispatch($m, $p) {
           }
         }
       }
-      $voucherCreated = false;
-      $vc = strtoupper(trim((string) ($b['voucher']['code'] ?? '')));
-      if ($vc !== '') {
+      /* LES VOUCHERS DE L'ONBOARDING — zéro, un ou plusieurs.
+         Un bureau peut repartir avec un bon de bienvenue ET la découverte
+         d'une gamme ET un geste commercial : n'en accepter qu'un obligeait à
+         créer les autres à la main, hors du dossier. La console envoie
+         désormais « vouchers » (liste) ; « voucher » (objet) reste lu pour
+         les versions qui ne l'envoient pas encore. */
+      $voucherList = [];
+      foreach ((array) ($b['vouchers'] ?? []) as $vRow) {
+        $c = strtoupper(trim((string) (is_array($vRow) ? ($vRow['code'] ?? '') : $vRow)));
+        if ($c !== '' && !in_array($c, $voucherList, true)) $voucherList[] = $c;
+      }
+      if (!$voucherList) {
+        $vc1 = strtoupper(trim((string) ($b['voucher']['code'] ?? '')));
+        if ($vc1 !== '') $voucherList[] = $vc1;
+      }
+      $vouchersCreated = 0;
+      if ($voucherList) {
         // ws_vouchers peut être une VUE (modèle ERP) — n'insérer que si table de base.
         $isBase = row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_vouchers' AND table_type='BASE TABLE'");
-        if ($isBase) {
+        if ($isBase) foreach ($voucherList as $vc) {
           q("INSERT IGNORE INTO ws_vouchers (code, type, value, active" . ($shopId ? ", shop_id" : "") . ") VALUES (?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
             [$vc, 'add_office', 0]);
-          $voucherCreated = true;
+          $vouchersCreated++;
         }
       }
+      $voucherCreated = $vouchersCreated > 0;
       /* LIEN MAGIQUE « Créer mon compte ». Le bureau reçoit UN lien et le
          transfère à son personnel : chaque collaborateur arrive avec sa
          boutique, son bureau, son site et ses départements déjà rattachés.
@@ -7964,6 +7979,7 @@ function dispatch($m, $p) {
         'by' => is_admin_request() ? 'admin' : ('pin:' . (string) ($pinSes['id'] ?? '?')),
       ]);
       json_out(['ok' => true, 'office_id' => $officeId, 'voucher_created' => $voucherCreated,
+                'vouchers_created' => $vouchersCreated,
                 'invite_url'        => $inv ? invite_link($inv['token']) : null,
                 'invite_expires_at' => $inv['expires_at'] ?? null,
                 'invite_reason'     => $inv ? null
