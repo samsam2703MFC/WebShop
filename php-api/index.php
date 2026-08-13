@@ -5246,15 +5246,100 @@ function dispatch($m, $p) {
       json_out(array_map(fn ($f) => ['deferred_billing_enabled' => ((int) $f['deferred_billing_enabled'] ? 'Oui' : 'Non')] + $f, $rs));
     }
 
-    // ── Emails bureau (ws_office_emails) — dérivés des contacts ws_offices. ──
+    /* ── Contacts e-mail d'un bureau ──────────────────────────────────────────
+       DEUX SOURCES, ET ON LE DIT. La fiche du bureau porte un contact déclaré
+       (ws_offices.email) ; les contacts ajoutés depuis l'écran vivent dans
+       ws_office_emails (migration 0063). On sert l'UNION, chaque ligne marquée
+       de son origine : `source` vaut `office` (non supprimable ici — cela se
+       corrige sur la fiche) ou `table`.
+       Avant 0063, l'écran écrivait dans l'overlay ws_bo_store et relisait la
+       seule adresse de la fiche : tout contact ajouté disparaissait au
+       rechargement, et aucun e-mail ne partait vers lui. ── */
     if ($m === 'GET' && $p === '/franchisee/ws-office-emails') {
       if (!$tblExists('ws_offices')) json_out([]);
       // Cloisonné : cette liste servait les bureaux de TOUT le réseau, adresses
       // e-mail comprises. Un franchisé y lisait le carnet d'adresses des autres.
-      $rs = rows("SELECT name, email FROM ws_offices WHERE email IS NOT NULL AND email <> '' AND active=1"
-        . ((col_exists('ws_offices', 'shop_id') && $shopId) ? " AND shop_id = " . (int) $shopId : "")
-        . " ORDER BY name LIMIT 300");
-      json_out(array_map(fn ($f) => ['bureau' => $f['name'], 'addr' => $f['email'], 'role' => 'Principal'], $rs));
+      $sc  = (col_exists('ws_offices', 'shop_id') && $shopId) ? " AND o.shop_id = " . (int) $shopId : "";
+      $out = [];
+      foreach (rows("SELECT o.id, o.name, o.email FROM ws_offices o
+                      WHERE o.email IS NOT NULL AND o.email <> '' AND o.active = 1$sc
+                      ORDER BY o.name LIMIT 300") as $f)
+        $out[] = ['id' => null, 'officeId' => (int) $f['id'], 'bureau' => $f['name'],
+                  'addr' => $f['email'], 'role' => 'Principal', 'source' => 'office'];
+      if ($tblExists('ws_office_emails')) {
+        foreach (rows("SELECT e.id, e.office_id, e.email, e.role, o.name
+                         FROM ws_office_emails e
+                         JOIN ws_offices o ON o.id = e.office_id
+                        WHERE e.active = 1$sc ORDER BY o.name, e.role, e.id LIMIT 500") as $e) {
+          // Doublon exact avec la fiche : une seule ligne, celle de la fiche.
+          foreach ($out as $x)
+            if ($x['officeId'] === (int) $e['office_id']
+                && strcasecmp($x['addr'], $e['email']) === 0 && $x['role'] === $e['role']) continue 2;
+          $out[] = ['id' => (int) $e['id'], 'officeId' => (int) $e['office_id'], 'bureau' => $e['name'],
+                    'addr' => $e['email'], 'role' => $e['role'], 'source' => 'table'];
+        }
+      }
+      json_out($out);
+    }
+
+    /* Écriture d'UN contact — jamais le remplacement de la table.
+       Même raison que pour les départements : /franchisee/save remplace une
+       table entière, ce qui n'a pas de sens pour une ligne rattachée à un
+       bureau, et a déjà vidé une table ERP une fois. */
+    if ($m === 'POST' && $p === '/franchisee/office-email') {
+      if (!$tblExists('ws_office_emails'))
+        json_out(['ok' => false, 'error' => 'Table ws_office_emails absente — migration 0063 non appliquée.'], 501);
+      $b   = body();
+      $oSc = (col_exists('ws_offices', 'shop_id') && $shopId) ? " AND (shop_id IS NULL OR shop_id = " . (int) $shopId . ")" : "";
+      $aMoi = function ($id) use ($oSc) {
+        return row("SELECT e.id FROM ws_office_emails e
+                      JOIN ws_offices o ON o.id = e.office_id
+                     WHERE e.id = ?" . str_replace('shop_id', 'o.shop_id', $oSc), [(int) $id]);
+      };
+
+      if (!empty($b['delete'])) {
+        $id = (int) ($b['id'] ?? 0);
+        if (!$id) json_out(['ok' => false, 'error' =>
+          'Ce contact vient de la fiche du bureau — modifiez-le sur la fiche (Clients B2B › Offices), il n’est pas supprimable ici.'], 409);
+        if (!$aMoi($id)) json_out(['ok' => false, 'error' => 'Contact inconnu, ou rattaché à un bureau d’une autre boutique.'], 404);
+        q("DELETE FROM ws_office_emails WHERE id = ?", [$id]);
+        json_out(['ok' => true, 'deleted' => $id]);
+      }
+
+      $mail = strtolower(trim((string) ($b['addr'] ?? ($b['email'] ?? ''))));
+      if (!filter_var($mail, FILTER_VALIDATE_EMAIL))
+        json_out(['ok' => false, 'error' => 'Adresse e-mail invalide.'], 400);
+      $role  = trim((string) ($b['role'] ?? 'Principal'));
+      $ROLES = ['Principal', 'Facturation', 'Livraison'];
+      if (!in_array($role, $ROLES, true))
+        json_out(['ok' => false, 'error' => 'Rôle inconnu — attendu : ' . implode(', ', $ROLES) . '.'], 400);
+
+      // Bureau : par id, sinon par nom (c'est ce que l'écran connaît).
+      $oid = (int) ($b['officeId'] ?? 0);
+      $nom = trim((string) ($b['bureau'] ?? ''));
+      if (!$oid && $nom !== '') {
+        $o = row("SELECT id FROM ws_offices WHERE name = ?$oSc ORDER BY id LIMIT 1", [$nom]);
+        $oid = (int) ($o['id'] ?? 0);
+      }
+      if (!$oid) json_out(['ok' => false, 'error' => $nom === ''
+        ? 'Aucun bureau indiqué — un contact se rattache à un bureau.'
+        : 'Aucun bureau « ' . $nom . ' » dans votre boutique.'], 409);
+      if (!row("SELECT 1 x FROM ws_offices WHERE id = ?$oSc", [$oid]))
+        json_out(['ok' => false, 'error' => 'Ce bureau appartient à une autre boutique.'], 403);
+
+      $id = (int) ($b['id'] ?? 0);
+      if ($id) {
+        if (!$aMoi($id)) json_out(['ok' => false, 'error' => 'Contact inconnu, ou rattaché à un bureau d’une autre boutique.'], 404);
+        q("UPDATE ws_office_emails SET office_id=?, email=?, role=? WHERE id=?", [$oid, $mail, $role, $id]);
+        json_out(['ok' => true, 'id' => $id]);
+      }
+      // Le même contact deux fois pour le même rôle n'ajoute rien : on renvoie
+      // la ligne existante plutôt qu'une erreur — le geste a bien abouti.
+      $dej = row("SELECT id FROM ws_office_emails WHERE office_id=? AND email=? AND role=?", [$oid, $mail, $role]);
+      if ($dej) { q("UPDATE ws_office_emails SET active=1 WHERE id=?", [(int) $dej['id']]);
+                  json_out(['ok' => true, 'id' => (int) $dej['id'], 'deja' => true]); }
+      q("INSERT INTO ws_office_emails (office_id, email, role) VALUES (?,?,?)", [$oid, $mail, $role]);
+      json_out(['ok' => true, 'id' => (int) db()->lastInsertId()], 201);
     }
 
     // ── Départements B2B (b2b_client_company_department) — table ERP si synchronisée. ──
@@ -8128,8 +8213,25 @@ function dispatch($m, $p) {
           $recap, invite_link($inv['token']), invite_link_court($inv['jti']),
           date('d/m/Y', strtotime($inv['expires_at'])));
       }
+      // L'invitation au personnel : le même lien, envoyé à chacun.
+      if ($inv && $staff && !empty($b['sendAdhesion'])) {
+        require_once __DIR__ . '/invite_doc.php';
+        // Même récapitulatif que le contact — les mêmes conditions, la même
+        // liste de bons ; le reconstruire autrement enverrait deux documents
+        // différents pour un seul bureau.
+        $recapS = $recap ?? invite_recap($officeId, $vouchersCreated ? $voucherNoms : null);
+        foreach (array_unique($staff) as $sm) {
+          if (!$recapS) break;
+          [$okS, $whyS] = invite_mail_envoyer($recapS, invite_link($inv['token']),
+            invite_link_court($inv['jti']), date('d/m/Y', strtotime($inv['expires_at'])), $sm);
+          if ($okS) $staffInvites++; elseif (!$staffPourquoi) $staffPourquoi = $whyS;
+        }
+      }
       json_out(['ok' => true, 'office_id' => $officeId, 'voucher_created' => $voucherCreated,
                 'vouchers_created'  => $vouchersCreated,
+                'staff_saved'       => $staffOk,
+                'staff_invited'     => $staffInvites,
+                'staff_reason'      => $staffPourquoi,
                 'invite_url'        => $inv ? invite_link($inv['token']) : null,
                 'invite_short_url'  => $inv ? invite_link_court($inv['jti']) : null,
                 'invite_expires_at' => $inv['expires_at'] ?? null,
@@ -9608,7 +9710,7 @@ function bo_endpoint_section($name) {
     'client-block' => 'b2bClients', 'client-office-delivery' => 'b2bClients', 'client-zip' => 'b2bClients',
     'client-orders' => 'b2bClients', 'vies-check' => 'b2bClients',
     'ws-office-delivery-settings' => 'bureauParams',
-    'ws-office-emails' => 'emailsBureau',
+    'ws-office-emails' => 'emailsBureau', 'office-email' => 'emailsBureau',
     'fr-validations' => 'validations', 'validation-decide' => 'validations',
     'fr-join-requests' => 'demandesBureau', 'join-decide' => 'demandesBureau',
     // Disponibilité
