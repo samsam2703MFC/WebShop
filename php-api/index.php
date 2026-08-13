@@ -1688,7 +1688,8 @@ function dispatch($m, $p) {
        dans ws_office_join_requests, exactement comme une demande faite à la
        main : c'est le franchisé qui écrit client.office_id. ── */
   if ($m === 'GET' && $p === '/inscription') {
-    [$d, $ko, $row] = invite_check((string) qp('i', ''));
+    // ?i= jeton signé (e-mail) ou ?c= code court (QR et URL recopiée à la main).
+    [$d, $ko, $row] = invite_check((string) (qp('i', '') !== '' ? qp('i', '') : qp('c', '')));
     // 410 Gone : le lien a existé et ne vaut plus. Le corps porte le MOTIF —
     // « expiré » se redemande au responsable, « invalide » signale une URL
     // coupée par un client mail : la page ne dit pas la même chose.
@@ -1724,7 +1725,7 @@ function dispatch($m, $p) {
   if ($m === 'POST' && $p === '/inscription') {
     rate_limit('inscription', 10, 600);
     $b = body();
-    [$d, $ko] = invite_check((string) ($b['i'] ?? ''));
+    [$d, $ko] = invite_check((string) (($b['i'] ?? '') !== '' ? $b['i'] : ($b['c'] ?? '')));
     if (!$d) json_out(['ok' => false, 'error' => $ko], 410);
     $shopI = (int) ($d['shop'] ?? 0);
     $offI  = (int) ($d['office'] ?? 0);
@@ -5075,7 +5076,52 @@ function dispatch($m, $p) {
         'by' => is_admin_request() ? 'admin' : ('pin:' . (string) ($pinSes['id'] ?? '?'))]);
       if (!$inv) json_out(['ok' => false, 'error' => 'Lien non émis : la table ws_office_invites est absente (migration 0062).'], 501);
       json_out(['ok' => true, 'invite' => ['jti' => $inv['jti'], 'url' => invite_link($inv['token']),
+                'urlCourt' => invite_link_court($inv['jti']),
                 'expiresAt' => $inv['expires_at'], 'uses' => 0]]);
+    }
+
+    /* L'AFFICHE (PDF, A4) — QR code + URL courte + conditions du bureau.
+       Servie en pièce téléchargeable : elle s'imprime et se punaise. */
+    if ($m === 'GET' && $p === '/franchisee/office-invite-pdf') {
+      $oid = (int) qp('office', 0);
+      if (!$oid) json_out(['ok' => false, 'error' => 'Bureau non précisé.'], 400);
+      $oSc = ($shopId && col_exists('ws_offices', 'shop_id')) ? " AND (shop_id IS NULL OR shop_id=" . (int) $shopId . ")" : "";
+      if (!row("SELECT 1 x FROM ws_offices WHERE id=?$oSc", [$oid]))
+        json_out(['ok' => false, 'error' => 'Bureau inconnu, ou hors de votre boutique.'], 404);
+      [$inv, $why] = invite_for_office($oid);
+      if (!$inv) json_out(['ok' => false, 'error' => $why . ' Émettez un lien avant d’imprimer l’affiche.'], 409);
+      require_once __DIR__ . '/invite_doc.php';
+      $recap = invite_recap($oid);
+      $pdf   = $recap ? invite_pdf($recap, $inv['urlCourt'], date('d/m/Y', strtotime($inv['expiresAt']))) : null;
+      if (!$pdf) json_out(['ok' => false, 'error' => 'L’affiche n’a pas pu être produite pour ce bureau.'], 500);
+      $nom = 'invitation-' . preg_replace('/[^A-Za-z0-9]+/', '-', (string) ($recap['raison'] ?? 'bureau')) . '.pdf';
+      header('Content-Type: application/pdf');
+      header('Content-Disposition: attachment; filename="' . $nom . '"');
+      header('Content-Length: ' . strlen($pdf));
+      header('Cache-Control: no-store');
+      echo $pdf;
+      exit;
+    }
+
+    /* ENVOYER (ou renvoyer) l'e-mail d'invitation au contact du bureau. */
+    if ($m === 'POST' && $p === '/franchisee/office-invite-send') {
+      $b   = body();
+      $oid = (int) ($b['office'] ?? 0);
+      if (!$oid) json_out(['ok' => false, 'error' => 'Bureau non précisé.'], 400);
+      $oSc = ($shopId && col_exists('ws_offices', 'shop_id')) ? " AND (shop_id IS NULL OR shop_id=" . (int) $shopId . ")" : "";
+      if (!row("SELECT 1 x FROM ws_offices WHERE id=?$oSc", [$oid]))
+        json_out(['ok' => false, 'error' => 'Bureau inconnu, ou hors de votre boutique.'], 404);
+      [$inv, $why] = invite_for_office($oid);
+      if (!$inv) json_out(['ok' => false, 'error' => $why . ' Émettez un lien avant de l’envoyer.'], 409);
+      require_once __DIR__ . '/invite_doc.php';
+      $recap = invite_recap($oid);
+      if (!$recap) json_out(['ok' => false, 'error' => 'Bureau introuvable.'], 404);
+      // Destinataire : celui saisi dans la console, sinon le contact du bureau.
+      $dest = trim((string) ($b['email'] ?? ''));
+      [$ok, $motif] = invite_mail_envoyer($recap, $inv['url'], $inv['urlCourt'],
+        date('d/m/Y', strtotime($inv['expiresAt'])), $dest ?: null);
+      json_out(['ok' => $ok, 'error' => $ok ? null : $motif, 'warning' => $ok ? $motif : null,
+        'message' => $ok ? ('E-mail envoyé à ' . ($dest ?: $recap['email']) . ' — affiche PDF jointe.') : null]);
     }
 
     if ($m === 'POST' && $p === '/franchisee/invite-revoke') {
@@ -7963,9 +8009,26 @@ function dispatch($m, $p) {
         'domain' => $emailDom, 'cp' => $obZip,
         'by' => is_admin_request() ? 'admin' : ('pin:' . (string) ($pinSes['id'] ?? '?')),
       ]);
+      /* L'E-MAIL au contact du bureau : récapitulatif des conditions, bouton
+         « Créer mon compte », et l'affiche à QR code en pièce jointe. Il ne
+         part que si le franchisé l'a demandé (case du wizard). Son échec ne
+         défait pas le bureau, mais il est DIT — un e-mail qu'on croit parti
+         est pire qu'un e-mail non envoyé. */
+      $mailFait = false; $mailPourquoi = null;
+      if ($inv && !empty($b['sendMail'])) {
+        require_once __DIR__ . '/invite_doc.php';
+        $recap = invite_recap($officeId, $voucherCreated ? $vc : null);
+        if (!$recap) $mailPourquoi = 'Bureau introuvable juste après sa création — e-mail non envoyé.';
+        else [$mailFait, $mailPourquoi] = invite_mail_envoyer(
+          $recap, invite_link($inv['token']), invite_link_court($inv['jti']),
+          date('d/m/Y', strtotime($inv['expires_at'])));
+      }
       json_out(['ok' => true, 'office_id' => $officeId, 'voucher_created' => $voucherCreated,
                 'invite_url'        => $inv ? invite_link($inv['token']) : null,
+                'invite_short_url'  => $inv ? invite_link_court($inv['jti']) : null,
                 'invite_expires_at' => $inv['expires_at'] ?? null,
+                'mail_sent'         => $mailFait,
+                'mail_reason'       => $mailPourquoi,
                 'invite_reason'     => $inv ? null
                   : 'Lien d’invitation non émis : la table ws_office_invites est absente (migration 0062). Le bureau est créé.']);
     }
@@ -8741,7 +8804,8 @@ function invite_for_office($officeId) {
     'depts' => ($r['depts'] ?? '') === '' ? [] : explode(',', (string) $r['depts']),
     'domain' => $r['domain'] ?? null, 'cp' => $r['cp'] ?? null,
   ]));
-  return [['jti' => $r['jti'], 'url' => invite_link($tok), 'expiresAt' => $r['expires_at'],
+  return [['jti' => $r['jti'], 'url' => invite_link($tok),
+           'urlCourt' => invite_link_court($r['jti']), 'expiresAt' => $r['expires_at'],
            'uses' => (int) $r['uses'], 'lastUseAt' => $r['last_use_at'],
            'createdAt' => $r['created_at']], null];
 }
@@ -8750,14 +8814,19 @@ function invite_for_office($officeId) {
    L'API vit dans <racine webshop>/api : la racine se déduit du chemin du script
    plutôt que d'une constante à tenir à jour. L'URL est ABSOLUE parce qu'elle
    part par e-mail et s'imprime en QR code — un chemin relatif n'y sert à rien. */
-function invite_link($tok) {
+function invite_link($tok, $param = 'i') {
   $https = ((($_SERVER['HTTPS'] ?? '') !== '' && ($_SERVER['HTTPS'] ?? '') !== 'off')
         || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'));
   $host  = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? 'localhost');
   $base  = rtrim(str_replace('\\', '/', dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '/api/index.php'))), '/');
   if ($base === '.' || $base === '/') $base = '';
-  return ($https ? 'https://' : 'http://') . $host . $base . '/inscription?i=' . rawurlencode($tok);
+  return ($https ? 'https://' : 'http://') . $host . $base . '/inscription?' . $param . '=' . rawurlencode($tok);
 }
+
+/* Le MÊME lien, sous sa forme COURTE (?c=inv_…) : celle qui va sur l'affiche,
+   en QR et en toutes lettres dessous. Vingt caractères se recopient à la main
+   depuis un mur de cafétéria ; deux cent cinquante, non. */
+function invite_link_court($jti) { return invite_link($jti, 'c'); }
 
 /* Vérifie un jeton d'invitation. Renvoie [charge|null, motif, ligne].
    Le motif REMONTE À L'ÉCRAN : « lien expiré », « lien révoqué » et « lien
@@ -8766,14 +8835,41 @@ function invite_link($tok) {
    mail. La troisième valeur est la ligne ws_office_invites (date d'expiration,
    usages) pour les appelants qui l'affichent. */
 function invite_check($tok) {
-  $d = verify_token($tok);
-  if (!$d || ($d['k'] ?? '') !== 'invite')
-    return [null, 'Ce lien d’invitation est invalide ou incomplet. Vérifiez qu’il a été copié en entier.', null];
-  $jti = (string) ($d['jti'] ?? '');
+  $tok = trim((string) $tok);
+  /* DEUX FORMES POUR LE MÊME LIEN.
+     • le JETON SIGNÉ (?i=…), ~250 caractères : ce qui part par e-mail, où la
+       longueur ne coûte rien puisqu'un bouton la porte ;
+     • le CODE COURT (?c=inv_…), 20 caractères : ce qui s'imprime sous un QR au
+       mur d'une cafétéria, et qui doit pouvoir se RECOPIER À LA MAIN. Une
+       affiche portant 250 caractères ne se recopie pas — c'est une affiche qui
+       ne sert qu'aux téléphones dont l'appareil photo marche.
+     La sécurité ne baisse pas : les deux formes exigent la ligne
+     ws_office_invites, seule autorité sur la validité, et le code fait 64 bits
+     de hasard — il ne se devine pas. La signature protège le CONTENU d'un
+     jeton auto-porteur ; le code court, lui, ne porte aucun contenu : tout
+     vient de la ligne. */
+  $court = (bool) preg_match('/^inv_[0-9a-f]{16}$/', $tok);
+  $d = null; $jti = '';
+  if ($court) { $jti = $tok; }
+  else {
+    $d = verify_token($tok);
+    if (!$d || ($d['k'] ?? '') !== 'invite')
+      return [null, 'Ce lien d’invitation est invalide ou incomplet. Vérifiez qu’il a été copié en entier.', null];
+    $jti = (string) ($d['jti'] ?? '');
+  }
   if ($jti === '') return [null, 'Ce lien d’invitation est invalide.', null];
   try {
-    $r = row("SELECT jti, revoked_at, expires_at FROM ws_office_invites WHERE jti = ?", [$jti]);
+    $r = row("SELECT * FROM ws_office_invites WHERE jti = ?", [$jti]);
   } catch (Throwable $e) { return [null, 'Invitations indisponibles — merci de réessayer plus tard.', null]; }
+  if ($court && $r) {
+    // Charge reconstituée depuis la ligne : le code court n'en porte aucune.
+    $d = invite_payload($r['jti'], strtotime((string) $r['expires_at']), [
+      'shop' => $r['shop_id'], 'office' => $r['office_id'], 'client' => $r['client_code'],
+      'site' => $r['site_id'],
+      'depts' => ($r['depts'] ?? '') === '' ? [] : explode(',', (string) $r['depts']),
+      'domain' => $r['domain'] ?? null, 'cp' => $r['cp'] ?? null,
+    ]);
+  }
   // Inconnu en base = émis par une autre installation, ou table réinitialisée.
   if (!$r) return [null, 'Ce lien d’invitation n’est plus reconnu. Demandez-en un nouveau à votre responsable.', null];
   if (!empty($r['revoked_at']))
@@ -9399,6 +9495,7 @@ function bo_endpoint_section($name) {
     'ws-office-delivery-sites' => 'sites',
     'ws-offices' => 'offices', 'onboard-office' => 'offices', 'route-office' => 'offices',
     'office-invite' => 'offices', 'invite-revoke' => 'offices',
+    'office-invite-pdf' => 'offices', 'office-invite-send' => 'offices',
     'b2b-clients' => 'b2bClients', 'b2b-departments' => 'b2bClients', 'fr-clients' => 'b2bClients',
     'client-active' => 'b2bClients', 'client-attach' => 'b2bClients', 'client-billing' => 'b2bClients',
     'client-block' => 'b2bClients', 'client-office-delivery' => 'b2bClients', 'client-zip' => 'b2bClients',
