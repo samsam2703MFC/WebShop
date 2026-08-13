@@ -133,11 +133,15 @@
     },
 
     /* ── Bureau (site de livraison) — liste par shop + liaison (parité PWA) ── */
-    async listOfficeSites({ shopId }) {
+    // q : terme de recherche. Le serveur ne rend RIEN sans lui — on retrouve son
+    // bureau parce qu'on le connaît, on ne feuillette pas le carnet d'adresses
+    // B2B de la boutique.
+    async listOfficeSites({ shopId, q }) {
       if (!api.endpoint || !shopId) return [];
+      if (!q || String(q).trim().length < 2) return [];
       try {
         const base = api.endpoint.replace(/\/auth\/?$/, '');
-        const r = await fetch(`${base}/office-sites?shopId=${encodeURIComponent(shopId)}`, { credentials: 'include' });
+        const r = await fetch(`${base}/office-sites?shopId=${encodeURIComponent(shopId)}&q=${encodeURIComponent(String(q).trim())}`, { credentials: 'include' });
         if (r.ok) { const j = await r.json(); return Array.isArray(j) ? j : []; }
       } catch (_) {}
       return [];

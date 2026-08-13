@@ -1692,49 +1692,38 @@ function dispatch($m, $p) {
   /* Sites de livraison au bureau d'un shop — MÊME liste que la PWA
      (repo_offices) : ws_office_delivery_sites actifs, filtrés par shop. Sert le
      sélecteur « bureau » du profil webshop. */
-  /* Bureaux proposés au client pour se rattacher.
-     La liste sort de ws_office_delivery_sites — des SITES de livraison, pas des
-     sociétés. Or lier un site n'active la livraison que s'il pointe vers une
-     ENTREPRISE (office_client_id) elle-même validée et rattachée à une tournée :
-     c'est la chaîne que suit user_payload(). Un site sans entreprise — le cas
-     est fréquent, le code le reconnaît lui-même — se choisissait donc sans
-     effet, et le client se voyait ensuite refuser la livraison faute de bureau.
-     Le serveur renvoie maintenant, pour chaque entrée, la société portée et
-     l'état réel du rattachement. L'écran peut ainsi dire ce qui manque au lieu
-     de proposer des lignes qui ne mènent nulle part. Rien n'est masqué : une
-     ligne inutilisable reste visible, avec son motif. */
+  /* BUREAUX PROPOSÉS AU CLIENT — uniquement ceux qu'on peut réellement livrer.
+     Règle : le bureau est une ligne de ws_office_delivery_sites, et il n'est
+     proposé QUE s'il porte une tournée ACTIVE (tournee_id). C'est la seule
+     condition qui compte pour le client : une entreprise sans tournée ne sera
+     pas livrée, la proposer revient à lui faire lier un bureau sans effet.
+
+     Les entrées non livrables ne sont plus « affichées avec leur motif » : ce
+     motif ne veut rien dire pour un client — « bureau sans société rattachée »
+     décrit un état interne du back-office, pas quelque chose qu'il puisse
+     corriger. Elles sortent donc de la liste ; le franchisé, lui, les voit
+     comptées et nommées par le workflow check-endpoints.
+
+     RECHERCHE SEULEMENT, jamais de catalogue : sans terme de recherche, la
+     réponse est vide. Le carnet d'adresses B2B d'une boutique n'a pas à être
+     feuilleté par n'importe quel visiteur connecté — on retrouve son employeur
+     parce qu'on le connaît, on ne découvre pas ceux des autres. */
   if ($m === 'GET' && $p === '/office-sites') {
     $s = (int) (qp('shopId') ?: 0);
+    $q = trim((string) qp('q'));
     if (!$s) json_out([]);
-    $hasTour = col_exists('ws_offices', 'tour_id');
-    $rs = rows("SELECT sd.id, sd.name, sd.address,
-                       o.id      AS office_id,
-                       o.name    AS office_name,
-                       o.status  AS office_status,
-                       " . ($hasTour ? "o.tour_id" : "NULL AS tour_id") . "
-                  FROM ws_office_delivery_sites sd
-                  LEFT JOIN ws_offices o ON o.id = sd.office_client_id AND o.active = 1
-                 WHERE sd.shop_id = ? AND sd.active = 1
-                   AND sd.name IS NOT NULL AND sd.name <> ''
-                 ORDER BY sd.name", [$s]);
-    json_out(array_map(function ($r) {
-      $ok = !empty($r['office_id']) && ($r['office_status'] ?? '') === 'validated' && !empty($r['tour_id']);
-      $why = null;
-      if (empty($r['office_id']))                            $why = 'Ce point de livraison n’est rattaché à aucune société.';
-      elseif (($r['office_status'] ?? '') !== 'validated')    $why = 'Société en attente de validation par l’Atelier.';
-      elseif (empty($r['tour_id']))                          $why = 'Société pas encore rattachée à une tournée de livraison.';
-      return [
-        'id'         => (int) $r['id'],
-        'name'       => $r['name'],
-        'address'    => $r['address'],
-        // L'écran regroupe et SÉLECTIONNE par bureau : il lui faut son id, pas
-        // seulement son nom — deux sociétés peuvent partager une raison sociale.
-        'officeId'   => $r['office_id'] !== null ? (int) $r['office_id'] : null,
-        'officeName' => $r['office_name'],
-        'livrable'   => $ok,
-        'motif'      => $why,
-      ];
-    }, $rs));
+    // Deux caractères : en dessous, « a » rendrait presque tout le carnet.
+    if (mb_strlen($q) < 2) json_out([]);
+    $hasTournee = col_exists('ws_office_delivery_sites', 'tournee_id');
+    if (!$hasTournee) json_out([]);   // sans ce lien, aucune livrabilité vérifiable
+    $like = '%' . $q . '%';
+    json_out(rows("SELECT sd.id, sd.name, sd.address, t.name AS tourName
+                     FROM ws_office_delivery_sites sd
+                     JOIN ws_tours t ON t.id = sd.tournee_id AND t.active = 1
+                    WHERE sd.shop_id = ? AND sd.active = 1
+                      AND sd.name IS NOT NULL AND sd.name <> ''
+                      AND (sd.name LIKE ? OR sd.address LIKE ?)
+                    ORDER BY sd.name LIMIT 25", [$s, $like, $like]));
   }
 
   /* ── Zones de livraison bureau (public) — alimente la droplist de la landing :
@@ -8592,10 +8581,19 @@ function user_payload($id) {
   // vide.
   $officeSite = null;
   try {
-    $officeSite = row("SELECT s.id, s.name, s.address, s.shop_id AS shopId, s.active
+    // tourId/tourName : le bureau lié est livrable dès que SON SITE porte une
+    // tournée active. Sans cette information, la console refusait la livraison
+    // à un client pourtant correctement rattaché — la chaîne vers ws_offices
+    // étant souvent vide, elle ne pouvait pas conclure.
+    $stCols = col_exists('ws_office_delivery_sites', 'tournee_id')
+      ? ", s.tournee_id AS tourId, t.name AS tourName" : ", NULL AS tourId, NULL AS tourName";
+    $stJoin = col_exists('ws_office_delivery_sites', 'tournee_id')
+      ? " LEFT JOIN ws_tours t ON t.id = s.tournee_id AND t.active = 1" : "";
+    $officeSite = row("SELECT s.id, s.name, s.address, s.shop_id AS shopId, s.active" . $stCols . "
                          FROM pwa_client_office co
                          JOIN pwa_offices po ON po.id = co.office_id
-                         JOIN ws_office_delivery_sites s ON s.id = CAST(po.office_ref AS UNSIGNED) AND s.id > 0
+                         JOIN ws_office_delivery_sites s ON s.id = CAST(po.office_ref AS UNSIGNED) AND s.id > 0"
+                         . $stJoin . "
                         WHERE co.client_id = ? LIMIT 1", [$u['id']]);
   } catch (Throwable $e) { /* tables legacy absentes */ }
   // Société liée (modèle « company link » de la PWA) : client.company_client_id

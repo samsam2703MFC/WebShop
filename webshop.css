@@ -2664,6 +2664,12 @@
   border-left: 2px solid var(--color-border-tertiary);
 }
 .ws-acc__pick-bureau.is-picked .ws-acc__pick-site { border-left-color: var(--color-primary); }
+/* La tournée qui dessert le bureau : c'est ELLE qui le rend livrable, autant
+   que le client la voie avant de choisir. */
+.ws-acc__pick-tour {
+  font-size: 11px; font-weight: 600; margin-top: 2px;
+  color: var(--color-collection-border);
+}
 .ws-acc__pick-item {
   display: flex; flex-direction: column; gap: 2px;
   width: 100%; min-height: 44px;          /* cible tactile (WCAG 2.5.5) */

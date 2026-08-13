@@ -251,90 +251,71 @@ function DatePill({ mode, value, onChange, shopId,
    UN SEUL composant pour les DEUX écrans qui choisissent un bureau. Ils avaient
    chacun leur liste déroulante, et corriger l'une laissait l'autre en arrière —
    c'est exactement ce qui vient de se produire. */
-function OfficeSearchPicker({ items, value, onPick, label }) {
+/* RECHERCHE D'UN BUREAU — le serveur ne répond qu'à une question posée.
+   Aucune liste n'est affichée tant que rien n'est saisi : le carnet d'adresses
+   B2B d'une boutique n'a pas à être feuilleté par n'importe quel visiteur
+   connecté. On retrouve son employeur parce qu'on le connaît ; on ne découvre
+   pas ceux des autres.
+   Seuls les bureaux RÉELLEMENT LIVRABLES remontent — leur site porte une
+   tournée active. Les autres ne sont pas montrés « avec leur motif » : un
+   « bureau sans société rattachée » décrit un état interne du back-office, que
+   le client ne peut ni comprendre ni corriger. C'est au franchisé de les
+   traiter, et le workflow check-endpoints les lui compte et les lui nomme. */
+function OfficeSearchPicker({ chercher, value, onPick, label }) {
   const [q, setQ] = React.useState('');
-  // Insensible à la casse ET aux accents : « chenes » doit sortir « Chênes ».
-  const norm = (v) => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const qq = norm(q).trim();
+  const [hits, setHits] = React.useState([]);
+  const [busy, setBusy] = React.useState(false);
+  const [cherche, setCherche] = React.useState(false);
 
-  /* On choisit un BUREAU, pas un point de livraison.
-     C'est la société qu'on rattache à son compte : elle porte la validation de
-     l'Atelier, la tournée, la facturation. Les points (réception, étage, zoning)
-     sont des détails de dépôt — utiles à LIRE pour reconnaître son employeur,
-     jamais l'objet du choix. Le premier rendu les rendait cliquables un par un,
-     ce qui demandait au client de trancher une question qui n'est pas la sienne.
-     Le serveur, lui, continue d'être rattaché par un point : on lui transmet
-     donc celui du bureau retenu, sans le lui faire choisir. */
-  const groupes = [];
-  const parCle = new Map();
-  (items || []).forEach((o) => {
-    const cle = o.officeId ? 'o:' + o.officeId : (o.officeName ? 'n:' + o.officeName : 'sans');
-    if (!parCle.has(cle)) {
-      parCle.set(cle, { cle, bureau: o.officeName || null, motif: null, livrable: false, sites: [] });
-      groupes.push(parCle.get(cle));
-    }
-    const g = parCle.get(cle);
-    if (o.livrable) g.livrable = true;
-    if (!o.livrable && !g.motif) g.motif = o.motif;
-    g.sites.push(o);
-  });
-
-  // Un mot qui vise la SOCIÉTÉ garde tous ses points ; sinon on filtre point
-  // par point, sur le nom et l'adresse — un bureau se retrouve par sa rue.
-  const vus = groupes
-    .map((g) => {
-      if (qq === '') return g;
-      if (norm(g.bureau).includes(qq)) return g;
-      const sites = g.sites.filter((o) => norm(o.name).includes(qq) || norm(o.address).includes(qq));
-      return sites.length ? { ...g, sites } : null;
-    })
-    .filter(Boolean);
-  const total = groupes.length;
+  React.useEffect(() => {
+    const terme = q.trim();
+    if (terme.length < 2) { setHits([]); setCherche(false); setBusy(false); return; }
+    let vivant = true;
+    setBusy(true);
+    // Petite attente : une requête par frappe inonderait le serveur et ferait
+    // clignoter la liste sous le doigt.
+    const t = setTimeout(() => {
+      Promise.resolve(chercher(terme))
+        .then((r) => { if (vivant) { setHits(Array.isArray(r) ? r : []); setCherche(true); } })
+        .catch(() => { if (vivant) { setHits([]); setCherche(true); } })
+        .then(() => { if (vivant) setBusy(false); });
+    }, 260);
+    return () => { vivant = false; clearTimeout(t); };
+  }, [q]);
 
   return (
     <div className="ws-acc__pick">
       <input type="search" className="ws-acc__input" value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="Rechercher une société ou une adresse…"
+        placeholder="Nom de votre société ou adresse…"
         aria-label={label || 'Rechercher un bureau'} autoComplete="off"/>
-      {vus.length === 0 ? (
+      {q.trim().length < 2 ? (
         <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>
-          Aucune société ne correspond à «&nbsp;{q.trim()}&nbsp;» parmi les {total} bureaux
-          de cette boutique. Si c'est le vôtre, demandez son ajout ci-dessous.
+          Tapez le nom de votre société, ou son adresse. Seuls les bureaux desservis
+          par une tournée de cette boutique apparaissent.
+        </p>
+      ) : busy ? (
+        <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>Recherche…</p>
+      ) : hits.length === 0 && cherche ? (
+        <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>
+          Aucun bureau desservi ne correspond à «&nbsp;{q.trim()}&nbsp;». S'il s'agit du vôtre,
+          demandez son ajout ci-dessous : votre Atelier le rattachera à une tournée.
         </p>
       ) : (
         <ul className="ws-acc__pick-list" role="listbox" aria-label={label || 'Bureaux'}>
-          {vus.map((g) => {
-            const ko = !g.livrable;
-            // Le point transmis au serveur : celui du bureau retenu. Quand il y
-            // en a plusieurs, le premier — ils partagent la même société, donc
-            // la même tournée et la même facturation.
-            const cible = g.sites[0];
-            const choisi = g.sites.some((o) => String(value) === String(o.id));
-            return (
-              <li key={g.cle}>
-                <button type="button" role="option"
-                  aria-selected={choisi}
-                  aria-disabled={ko || undefined}
-                  className={'ws-acc__pick-item ws-acc__pick-bureau'
-                    + (choisi ? ' is-picked' : '') + (ko ? ' is-ko' : '')}
-                  onClick={() => { if (!ko && cible) onPick(String(cible.id)); }}>
-                  <span className="ws-acc__pick-name">{g.bureau || 'Bureau sans société rattachée'}</span>
-                  {/* Les points de livraison : lus, pas choisis. */}
-                  {g.sites.map((o) => (
-                    <span key={o.id} className="ws-acc__pick-site">
-                      {o.name}{o.address ? ' · ' + o.address : ''}
-                    </span>
-                  ))}
-                  {ko && g.motif ? <span className="ws-acc__pick-ko">{g.motif}</span> : null}
-                </button>
-              </li>
-            );
-          })}
+          {hits.map((o) => (
+            <li key={o.id}>
+              <button type="button" role="option"
+                aria-selected={String(value) === String(o.id)}
+                className={'ws-acc__pick-item ws-acc__pick-bureau' + (String(value) === String(o.id) ? ' is-picked' : '')}
+                onClick={() => onPick(String(o.id))}>
+                <span className="ws-acc__pick-name">{o.name}</span>
+                {o.address ? <span className="ws-acc__pick-site">{o.address}</span> : null}
+                {o.tourName ? <span className="ws-acc__pick-tour">Tournée {o.tourName}</span> : null}
+              </button>
+            </li>
+          ))}
         </ul>
-      )}
-      {qq !== '' && vus.length > 0 && (
-        <p className="ws-acc__pick-count">{vus.length} bureau{vus.length > 1 ? 'x' : ''} sur {total}</p>
       )}
     </div>
   );
@@ -2713,15 +2694,11 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   // ── Bureau « site de livraison » (parité PWA) : lier / changer / délier ──
   // Liste = ws_office_delivery_sites du shop (même source que la PWA) ; la
   // liaison est persistée côté serveur dans pwa_client_office (partagé PWA⇄WS).
-  async function openSitePicker() {
-    setSiteErr(''); setSitePicked(''); setSiteStep('pick'); setSiteBusy(true);
-    try {
-      const shopId = (user.officeSite && user.officeSite.shopId) || form.preferredShopId || currentShopId;
-      const list = (window.WSAuth && typeof window.WSAuth.listOfficeSites === 'function')
-        ? await window.WSAuth.listOfficeSites({ shopId }) : [];
-      setSiteList(Array.isArray(list) ? list : []);
-    } catch (_) { setSiteList([]); }
-    setSiteBusy(false);
+  /* Ouvre l'écran, sans rien précharger : la liste des bureaux ne se feuillette
+     pas, elle se cherche. Charger l'inventaire à l'ouverture, c'était l'exposer
+     à quiconque ouvre son profil. */
+  function openSitePicker() {
+    setSiteErr(''); setSitePicked(''); setSiteList([]); setSiteBusy(false); setSiteStep('pick');
   }
   async function saveSite() {
     if (!sitePicked) { setSiteErr('Sélectionnez un bureau.'); return; }
@@ -3188,15 +3165,17 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>
               Bureaux de {((shops || []).find((s) => s.id === ((user.officeSite && user.officeSite.shopId) || form.preferredShopId || currentShopId)) || {}).name || 'votre boutique'}
             </div>
-            {siteBusy && <p className="ws-acc__hint">Chargement…</p>}
-            {!siteBusy && siteList.length === 0 && (
-              <p className="ws-acc__hint">Aucun bureau de livraison disponible pour cette boutique.</p>
-            )}
-            {!siteBusy && siteList.length > 0 && (
-              <OfficeSearchPicker items={siteList} value={sitePicked}
-                onPick={(id) => { setSitePicked(id); setSiteErr(''); }}
-                label="Choisir un bureau de livraison"/>
-            )}
+            {/* Plus de chargement de liste à l'ouverture : le serveur ne répond
+                qu'à une recherche. L'affichage ne dépend donc plus d'un
+                inventaire préchargé — il dépend de ce que le client tape. */}
+            <OfficeSearchPicker
+              chercher={(q) => (window.WSAuth && window.WSAuth.listOfficeSites)
+                ? window.WSAuth.listOfficeSites({
+                    shopId: (user.officeSite && user.officeSite.shopId) || form.preferredShopId || currentShopId,
+                    q }) : []}
+              value={sitePicked}
+              onPick={(id) => { setSitePicked(id); setSiteErr(''); }}
+              label="Choisir un bureau de livraison"/>
             {siteErr && <p className="ws-acc__vat-msg ws-acc__vat-msg--err">⚠ {siteErr}</p>}
             <div className="ws-acc__row-foot">
               <button type="button" className="ws-fid__cancel" onClick={() => setSiteStep('idle')}>Annuler</button>
@@ -4964,7 +4943,15 @@ function ShopFrame({ variant }) {
   }, [shopId, date, mode]);
 
   const cartCount = basket.reduce((t, l) => t + l.qty, 0);
-  const userCanDeliver = !!(userOffice && userOffice.status === 'validated' && userTour);
+  /* LIVRABLE : deux chemins, parce que la base en connaît deux.
+     • l'entreprise ws_offices validée et rattachée à une tournée (chaîne ERP) ;
+     • OU le bureau lié porte lui-même une tournée active (user.officeSite.tourId).
+     Le second manquait. Or c'est celui que suit le rattachement depuis le
+     profil : la liste ne propose QUE des bureaux desservis, mais la porte
+     n'acceptait que la chaîne ERP — souvent vide. Le client liait un bureau
+     desservi et se voyait refuser la livraison faute de « bureau lié ». */
+  const siteTour = !!(user && user.officeSite && user.officeSite.tourId);
+  const userCanDeliver = !!((userOffice && userOffice.status === 'validated' && userTour) || siteTour);
 
   // Maintien de stock (15 min) — clients connectés. Trois corrections :
   //  • l'échec n'est plus avalé : il est affiché (sinon le produit était au
@@ -5166,9 +5153,13 @@ function ShopFrame({ variant }) {
       titre: 'Connectez-vous pour la livraison au bureau',
       texte: 'Ce mode est réservé aux comptes rattachés à un bureau livré. Connectez-vous ou créez un compte.',
     };
-    if (!userOffice) return {
+    if (!userOffice && !(user.officeSite && user.officeSite.id)) return {
       titre: 'Aucun bureau lié à votre compte',
-      texte: 'Choisissez votre société dans « Livraison au bureau », ou demandez son ajout si elle n’y figure pas.',
+      texte: 'Cherchez votre société dans « Livraison au bureau », ou demandez son ajout si elle n’y figure pas.',
+    };
+    if (!userOffice && user.officeSite && !user.officeSite.tourId) return {
+      titre: 'Votre bureau n’est pas desservi par une tournée',
+      texte: '« ' + (user.officeSite.name || 'Votre bureau') + ' » est bien lié à votre compte, mais aucune tournée ne le dessert encore. Votre Atelier doit l’y rattacher ; cela ne dépend pas de vous.',
     };
     if (userOffice.status !== 'validated') return {
       titre: 'Votre bureau attend la validation de l’Atelier',
