@@ -3828,6 +3828,8 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/franchisor/category') {
       $b = body(); $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['error' => 'id requis'], 400);
+      // Renommage de la catégorie (assistant : étape « Identité »).
+      if (array_key_exists('name', $b)) { $nm = trim((string) $b['name']); if ($nm !== '') q("UPDATE ws_categories SET label=? WHERE id=?", [$nm, $id]); }
       if (array_key_exists('menu_default', $b)) q("UPDATE ws_categories SET menu_default=? WHERE id=?", [!empty($b['menu_default']) ? 1 : 0, $id]);
       // Cascades canaux : un produit OBLIGATOIRE garde toujours AU MOINS UN
       // canal ouvert (webshop OU livraison bureau) — la cascade qui fermerait
