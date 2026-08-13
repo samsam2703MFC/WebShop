@@ -1692,38 +1692,52 @@ function dispatch($m, $p) {
   /* Sites de livraison au bureau d'un shop — MÊME liste que la PWA
      (repo_offices) : ws_office_delivery_sites actifs, filtrés par shop. Sert le
      sélecteur « bureau » du profil webshop. */
-  /* BUREAUX PROPOSÉS AU CLIENT — uniquement ceux qu'on peut réellement livrer.
-     Règle : le bureau est une ligne de ws_office_delivery_sites, et il n'est
-     proposé QUE s'il porte une tournée ACTIVE (tournee_id). C'est la seule
-     condition qui compte pour le client : une entreprise sans tournée ne sera
-     pas livrée, la proposer revient à lui faire lier un bureau sans effet.
+  /* BUREAUX PROPOSÉS AU CLIENT — des SOCIÉTÉS, pas des points de livraison.
+     La requête part de ws_offices, pas de ws_office_delivery_sites. Partir des
+     sites renvoyait le nom du POINT : une recherche « lou » sortait trois fois
+     « Zoning Nord LLN · Chemin du Cyclotron 3 » — trois entreprises différentes
+     du même bâtiment, rigoureusement indiscernables. Le client cherche son
+     employeur, pas l'adresse du hall.
 
-     Les entrées non livrables ne sont plus « affichées avec leur motif » : ce
-     motif ne veut rien dire pour un client — « bureau sans société rattachée »
-     décrit un état interne du back-office, pas quelque chose qu'il puisse
-     corriger. Elles sortent donc de la liste ; le franchisé, lui, les voit
-     comptées et nommées par le workflow check-endpoints.
+     La chaîne exigée est celle du métier : BUREAU → SITE → TOURNÉE. Un bureau
+     n'est proposé que s'il est rattaché à un site actif, lui-même desservi par
+     une tournée active. Sans ces trois maillons il ne sera pas livré, et le
+     proposer revient à faire lier un bureau sans effet.
 
-     RECHERCHE SEULEMENT, jamais de catalogue : sans terme de recherche, la
-     réponse est vide. Le carnet d'adresses B2B d'une boutique n'a pas à être
-     feuilleté par n'importe quel visiteur connecté — on retrouve son employeur
-     parce qu'on le connaît, on ne découvre pas ceux des autres. */
+     GROUP BY sur le bureau : une société ayant plusieurs points n'apparaît
+     qu'UNE fois. Le site transmis au serveur est le plus ancien de ses points
+     (MIN) — ils partagent la même société, donc la même tournée.
+
+     RECHERCHE SEULEMENT : sans terme, réponse vide. Le carnet d'adresses B2B
+     d'une boutique n'a pas à être feuilleté par n'importe quel visiteur. */
   if ($m === 'GET' && $p === '/office-sites') {
     $s = (int) (qp('shopId') ?: 0);
     $q = trim((string) qp('q'));
     if (!$s) json_out([]);
-    // Deux caractères : en dessous, « a » rendrait presque tout le carnet.
-    if (mb_strlen($q) < 2) json_out([]);
-    $hasTournee = col_exists('ws_office_delivery_sites', 'tournee_id');
-    if (!$hasTournee) json_out([]);   // sans ce lien, aucune livrabilité vérifiable
+    if (mb_strlen($q) < 2) json_out([]);   // « a » rendrait presque tout le carnet
+    if (!col_exists('ws_office_delivery_sites', 'tournee_id')) json_out([]);
     $like = '%' . $q . '%';
-    json_out(rows("SELECT sd.id, sd.name, sd.address, t.name AS tourName
-                     FROM ws_office_delivery_sites sd
+    json_out(rows("SELECT MIN(sd.id) AS id,
+                          o.id        AS officeId,
+                          o.name      AS name,
+                          MIN(sd.address) AS address,
+                          MIN(t.name)     AS tourName,
+                          -- Sous-requête, pas COUNT sur la jointure filtrée : le
+                          -- filtre de recherche ne retient qu'une partie des
+                          -- points, et le compte aurait varié selon le mot tapé
+                          -- (« 1 point » sur une recherche, « 2 » sur une autre,
+                          -- pour le même bureau).
+                          (SELECT COUNT(*) FROM ws_office_delivery_sites sp
+                            WHERE sp.office_client_id = o.id AND sp.active = 1) AS points
+                     FROM ws_offices o
+                     JOIN ws_office_delivery_sites sd
+                       ON sd.office_client_id = o.id AND sd.active = 1
                      JOIN ws_tours t ON t.id = sd.tournee_id AND t.active = 1
-                    WHERE sd.shop_id = ? AND sd.active = 1
-                      AND sd.name IS NOT NULL AND sd.name <> ''
-                      AND (sd.name LIKE ? OR sd.address LIKE ?)
-                    ORDER BY sd.name LIMIT 25", [$s, $like, $like]));
+                    WHERE o.shop_id = ? AND o.active = 1 AND o.status = 'validated'
+                      AND o.name IS NOT NULL AND o.name <> ''
+                      AND (o.name LIKE ? OR sd.name LIKE ? OR sd.address LIKE ?)
+                    GROUP BY o.id, o.name
+                    ORDER BY o.name LIMIT 25", [$s, $like, $like, $like]));
   }
 
   /* ── Zones de livraison bureau (public) — alimente la droplist de la landing :

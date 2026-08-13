@@ -309,8 +309,11 @@ function OfficeSearchPicker({ chercher, value, onPick, label }) {
                 aria-selected={String(value) === String(o.id)}
                 className={'ws-acc__pick-item ws-acc__pick-bureau' + (String(value) === String(o.id) ? ' is-picked' : '')}
                 onClick={() => onPick(String(o.id))}>
+                {/* Le nom est celui de la SOCIÉTÉ ; l'adresse et la tournée
+                    servent à la reconnaître, pas à la choisir. */}
                 <span className="ws-acc__pick-name">{o.name}</span>
-                {o.address ? <span className="ws-acc__pick-site">{o.address}</span> : null}
+                {o.address ? <span className="ws-acc__pick-site">{o.address}
+                  {o.points > 1 ? ' · ' + o.points + ' points de livraison' : ''}</span> : null}
                 {o.tourName ? <span className="ws-acc__pick-tour">Tournée {o.tourName}</span> : null}
               </button>
             </li>
