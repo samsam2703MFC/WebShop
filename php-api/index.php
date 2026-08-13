@@ -5299,6 +5299,15 @@ function dispatch($m, $p) {
                       ORDER BY o.name LIMIT 300") as $f)
         $out[] = ['id' => null, 'officeId' => (int) $f['id'], 'bureau' => $f['name'],
                   'addr' => $f['email'], 'role' => 'Principal', 'source' => 'office'];
+      /* La colonne `role` est vérifiée, pas supposée. ws_office_emails
+         EXISTAIT avant le système de migrations, avec un autre jeu de colonnes
+         (contract_url, pas de role) : la 0063, écrite en CREATE TABLE IF NOT
+         EXISTS, n'a donc rien fait sur les installations concernées, et ce
+         SELECT partait en erreur SQL — écran mort, HTTP 500, aucun motif. La
+         0065 ajoute la colonne ; tant qu'elle n'est pas passée, on DIT lequel
+         des deux problèmes on a plutôt que de rendre une liste amputée. */
+      if ($tblExists('ws_office_emails') && !col_exists('ws_office_emails', 'role'))
+        json_out(['ok' => false, 'error' => 'Table ws_office_emails sans colonne « role » — migration 0065 non appliquée.'], 501);
       if ($tblExists('ws_office_emails')) {
         foreach (rows("SELECT e.id, e.office_id, e.email, e.role, o.name
                          FROM ws_office_emails e
@@ -5322,6 +5331,11 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/franchisee/office-email') {
       if (!$tblExists('ws_office_emails'))
         json_out(['ok' => false, 'error' => 'Table ws_office_emails absente — migration 0063 non appliquée.'], 501);
+      // Même garde qu'en lecture : la table peut exister SANS `role`, héritée
+      // d'avant les migrations. Écrire un rôle dans une colonne inexistante
+      // aurait rendu un 500 au lieu du geste à faire.
+      if (!col_exists('ws_office_emails', 'role'))
+        json_out(['ok' => false, 'error' => 'Table ws_office_emails sans colonne « role » — migration 0065 non appliquée.'], 501);
       $b   = body();
       $oSc = (col_exists('ws_offices', 'shop_id') && $shopId) ? " AND (shop_id IS NULL OR shop_id = " . (int) $shopId . ")" : "";
       $aMoi = function ($id) use ($oSc) {
