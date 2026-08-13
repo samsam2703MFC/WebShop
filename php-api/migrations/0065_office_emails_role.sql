@@ -36,8 +36,25 @@ PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 -- l'ancienne clé : il continue de fonctionner, puisqu'il n'écrit pas `role` et
 -- retombe donc toujours sur 'Principal' — même triplet, même collision.
 --
--- Le nom de l'index n'est pas connu d'avance (table créée hors migrations) :
--- on le RETROUVE par ses colonnes au lieu de le deviner.
+-- L'INDEX DE REMPLACEMENT D'ABORD. La table porte une clé étrangère
+-- (office_id → ws_offices.id) que l'ancien index unique (office_id, email)
+-- servait, étant son préfixe gauche. Supprimer cet index sans autre index sur
+-- office_id fait échouer MariaDB :
+--     ERROR 1553 : Cannot drop index 'uq_office_email': needed in a foreign
+--     key constraint
+-- C'est exactement ce qui s'est produit en production, et comme migrate.sh
+-- s'arrête à la première erreur, TOUS les déploiements suivants ont été
+-- bloqués. L'ordre n'est donc pas un détail de style : l'index de
+-- remplacement doit exister AVANT la suppression.
+SET @a := (SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.statistics s
+            WHERE s.table_schema = DATABASE() AND s.table_name = 'ws_office_emails'
+              AND s.INDEX_NAME = 'idx_office_emails_office');
+SET @s := IF(@t = 0 OR @a > 0, 'DO 0',
+  'ALTER TABLE ws_office_emails ADD KEY idx_office_emails_office (office_id)');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
+-- Le nom de l'ancien index n'est pas connu d'avance (table créée hors
+-- migrations) : on le RETROUVE par ses colonnes au lieu de le deviner.
 SET @idx := (SELECT INDEX_NAME FROM information_schema.statistics s
               WHERE s.table_schema = DATABASE() AND s.table_name = 'ws_office_emails'
                 AND s.NON_UNIQUE = 0 AND s.INDEX_NAME <> 'PRIMARY'
@@ -64,9 +81,5 @@ SET @s := IF(@t = 0 OR @a > 0, 'DO 0',
   'ALTER TABLE ws_office_emails ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP');
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
-SET @a := (SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.statistics s
-            WHERE s.table_schema = DATABASE() AND s.table_name = 'ws_office_emails'
-              AND s.INDEX_NAME = 'idx_office_emails_office');
-SET @s := IF(@t = 0 OR @a > 0, 'DO 0',
-  'ALTER TABLE ws_office_emails ADD KEY idx_office_emails_office (office_id)');
-PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+-- (L'index sur office_id est posé PLUS HAUT, avant la suppression de l'ancien
+--  unique : il y est indispensable ; ici, il serait trop tard.)
