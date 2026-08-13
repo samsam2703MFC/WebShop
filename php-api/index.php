@@ -4312,13 +4312,41 @@ function dispatch($m, $p) {
 
     // ── Contexte session (admin_token → pas de bo_user ; contexte minimal). ──
     if ($m === 'GET' && $p === '/franchisee/me') {
-      // zip (CP) inclus : géolocalisation de la BOUTIQUE sur les cartes
-      // (départ des tournées) — même référentiel CP→GPS que les sites.
-      $shop = $shopId ? row("SELECT id, name, city, zip FROM $SHOPS WHERE id=?", [$shopId]) : null;
+      // Identité ET position de la BOUTIQUE. L'adresse (address_line + zip) est
+      // la source : le seul CP ne donnait qu'un centroïde de commune, à des
+      // kilomètres de la boutique, alors que les tournées en partent.
+      $shop = $shopId ? row("SELECT * FROM $SHOPS WHERE id=?", [$shopId]) : null;
+      $geo = $shop ? shop_geo($shop) : null;
       json_out([
-        'shop'         => $shop ? ['id' => (int) $shop['id'], 'name' => $shop['name'], 'city' => $shop['city'], 'cp' => $shop['zip'] ?: ''] : null,
+        'shop' => $shop ? [
+          'id'      => (int) $shop['id'],
+          'name'    => $shop['name'],
+          'city'    => $shop['city'],
+          'cp'      => $shop['zip'] ?: '',
+          'address' => $shop['address_line'] ?? null,
+          // lat/lng absents = position inconnue. Le back-office le DIT au lieu
+          // de placer le pin sur un repli qui aurait l'air d'une vraie adresse.
+          'lat'       => $geo ? $geo['lat'] : null,
+          'lng'       => $geo ? $geo['lng'] : null,
+          'geoSource' => $geo ? $geo['source'] : null,
+        ] : null,
         'consoleLabel' => 'Console franchisé' . ($shop ? ' · ' . ($shop['city'] ?: $shop['name']) : ''),
       ]);
+    }
+
+    // ── Reprise du géocodage de la boutique, à la demande : après correction de
+    //    l'adresse, sans attendre l'expiration du délai anti-boucle. ──
+    if ($m === 'POST' && $p === '/franchisee/shop-geocode') {
+      if (!$shopId) json_out(['ok' => false, 'error' => 'Boutique non résolue.'], 400);
+      $shop = row("SELECT * FROM $SHOPS WHERE id=?", [$shopId]);
+      if (!$shop) json_out(['ok' => false, 'error' => 'Boutique introuvable.'], 404);
+      if (!col_exists('shops', 'lat'))
+        json_out(['ok' => false, 'error' => 'Migration 0060 non passée — colonnes lat/lng absentes.'], 501);
+      $geo = shop_geo($shop, true);
+      if (!$geo) json_out(['ok' => false,
+        'error' => 'Adresse non résolue — vérifiez address_line et zip de la boutique.'], 409);
+      json_out(['ok' => true, 'lat' => $geo['lat'], 'lng' => $geo['lng'], 'source' => $geo['source'],
+        'exact' => $geo['source'] === 'address' || $geo['source'] === 'manual']);
     }
 
     // ── Disponibilité boutique (ws_shop_availability) — SOURCE UNIQUE lue par
@@ -8076,6 +8104,98 @@ function oline_own() {
   static $c = null;
   if ($c === null) $c = col_exists('ws_order_lines', 'parent_line_id') ? ' AND l.parent_line_id IS NULL' : '';
   return $c;
+}
+
+/* Centroïde d'un code postal belge (data/zipcodes_be.json) — le même
+   référentiel que celui servi au front par /geo/postcodes. Approximatif par
+   nature : c'est le centre de la commune, pas une adresse. */
+function zip_centroid($zip) {
+  static $idx = null;
+  if ($idx === null) {
+    $idx = [];
+    $f = __DIR__ . '/data/zipcodes_be.json';
+    if (is_file($f)) foreach ((json_decode((string) file_get_contents($f), true) ?: []) as $e)
+      $idx[(string) $e['zip']] = ['lat' => (float) $e['lat'], 'lng' => (float) $e['lng'], 'city' => $e['city']];
+  }
+  $z = trim((string) $zip);
+  return $z !== '' && isset($idx[$z]) ? $idx[$z] : null;
+}
+
+/* POSITION DE LA BOUTIQUE — géocodée une fois depuis son ADRESSE, puis gardée.
+   Les cartes du BO franchisé résolvaient le seul code postal : le pin tombait
+   au centroïde de la commune, à des kilomètres de la boutique, et sans CP
+   résolu sur Bruxelles-centre. Comme tous les tracés de tournée partent de ce
+   point et que les ETA en découlent, une position fausse fausse la journée.
+
+   Ordre : position déjà connue > géocodage de address_line + zip (Nominatim,
+   l'OpenStreetMap qui sert déjà les tuiles) > centroïde du CP. Chaque niveau
+   est ÉTIQUETÉ dans geo_source : le back-office affiche l'avertissement tant
+   qu'on n'est pas sur l'adresse exacte. Une saisie 'manual' n'est jamais
+   écrasée, et un échec est daté pour ne pas réessayer à chaque affichage. */
+function shop_geo($shop, $force = false) {
+  $has = fn($c) => col_exists('shops', $c);
+  if (!$has('lat') || !$has('lng')) return null;          // migration 0060 pas passée
+  $src = $has('geo_source') ? ($shop['geo_source'] ?? null) : null;
+  if (!$force) {
+    if ($shop['lat'] !== null && $shop['lng'] !== null && $src !== 'zip')
+      return ['lat' => (float) $shop['lat'], 'lng' => (float) $shop['lng'], 'source' => $src ?: 'address'];
+    // Échec récent ou centroïde déjà posé : on ne relance pas un appel externe
+    // à chaque ouverture de la console. Une journée suffit à laisser corriger
+    // l'adresse, et /franchisee/shop-geocode force la reprise à la demande.
+    if ($has('geo_at') && !empty($shop['geo_at']) && strtotime((string) $shop['geo_at']) > time() - 86400) {
+      if ($shop['lat'] !== null && $shop['lng'] !== null)
+        return ['lat' => (float) $shop['lat'], 'lng' => (float) $shop['lng'], 'source' => $src ?: 'zip'];
+      return null;
+    }
+  }
+  if ($src === 'manual' && !$force) return $shop['lat'] !== null
+    ? ['lat' => (float) $shop['lat'], 'lng' => (float) $shop['lng'], 'source' => 'manual'] : null;
+
+  $addr = trim((string) ($shop['address_line'] ?? ''));
+  $zip  = trim((string) ($shop['zip'] ?? ''));
+  $city = trim((string) ($shop['city'] ?? ''));
+  $hit = null; $source = null;
+  if ($addr !== '' || $zip !== '') {
+    $qy = trim($addr . ', ' . trim($zip . ' ' . $city) . ', Belgique', " ,");
+    $hit = nominatim_lookup($qy);
+    if ($hit) $source = 'address';
+  }
+  if (!$hit) {                                            // repli ASSUMÉ, étiqueté comme tel
+    $c = zip_centroid($zip);
+    if ($c) { $hit = $c; $source = 'zip'; }
+  }
+  $cols = ['lat = ?', 'lng = ?'];
+  $vals = [$hit ? $hit['lat'] : null, $hit ? $hit['lng'] : null];
+  if ($has('geo_source')) { $cols[] = 'geo_source = ?'; $vals[] = $hit ? $source : 'failed'; }
+  if ($has('geo_at'))       $cols[] = 'geo_at = NOW()';
+  $vals[] = (int) $shop['id'];
+  try { q("UPDATE shops SET " . implode(', ', $cols) . " WHERE id = ?", $vals); }
+  catch (Throwable $e) { error_log('[ws] shop_geo écriture KO : ' . $e->getMessage()); }
+  return $hit ? ['lat' => (float) $hit['lat'], 'lng' => (float) $hit['lng'], 'source' => $source] : null;
+}
+
+/* Appel Nominatim (OpenStreetMap). Délai court : la console ne doit pas
+   attendre un service tiers. Aucune exception ne remonte — sans réponse, on
+   retombe sur le centroïde, jamais sur une position inventée. */
+function nominatim_lookup($query) {
+  if (trim((string) $query) === '') return null;
+  $url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=be&q='
+       . rawurlencode($query);
+  try {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+      CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 5, CURLOPT_CONNECTTIMEOUT => 3,
+      // Nominatim exige un agent identifiable ; un appel anonyme est refusé.
+      CURLOPT_USERAGENT => 'AtelierBy-BackOffice/1.0 (+' . (cfg()['mail_from'] ?: 'no-reply@atelierby.be') . ')',
+    ]);
+    $raw = curl_exec($ch);
+    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code !== 200 || !$raw) { error_log('[ws] nominatim HTTP ' . $code . ' pour « ' . $query . ' »'); return null; }
+    $j = json_decode((string) $raw, true);
+    if (!is_array($j) || !isset($j[0]['lat'], $j[0]['lon'])) { error_log('[ws] nominatim sans résultat : « ' . $query . ' »'); return null; }
+    return ['lat' => (float) $j[0]['lat'], 'lng' => (float) $j[0]['lon']];
+  } catch (Throwable $e) { error_log('[ws] nominatim KO : ' . $e->getMessage()); return null; }
 }
 
 /* Produit PORTEUR de la formule d'un produit donné.
