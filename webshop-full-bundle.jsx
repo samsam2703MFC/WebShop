@@ -243,6 +243,55 @@ function DatePill({ mode, value, onChange, shopId,
   );
 }
 
+/* CHOIX D'UN BUREAU — recherche, jamais liste déroulante.
+   Une déroulante oblige à parcourir l'inventaire pour retrouver un nom déjà
+   connu, et se prête mal au pouce. La saisie NE CRÉE RIEN : seules les sociétés
+   déjà validées par l'Atelier apparaissent ; l'absente passe par la demande
+   d'ajout, seul chemin qui fasse valider un bureau.
+   UN SEUL composant pour les DEUX écrans qui choisissent un bureau. Ils avaient
+   chacun leur liste déroulante, et corriger l'une laissait l'autre en arrière —
+   c'est exactement ce qui vient de se produire. */
+function OfficeSearchPicker({ items, value, onPick, label }) {
+  const [q, setQ] = React.useState('');
+  // Insensible à la casse ET aux accents : « chenes » doit sortir « Chênes ».
+  const norm = (v) => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const qq = norm(q).trim();
+  // Recherche sur le nom ET l'adresse : un bureau se retrouve souvent par sa rue.
+  const hits = qq === '' ? items
+    : items.filter((o) => norm(o.name).includes(qq) || norm(o.address).includes(qq));
+  return (
+    <div className="ws-acc__pick">
+      <input type="search" className="ws-acc__input" value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Rechercher une société ou une adresse…"
+        aria-label={label || 'Rechercher un bureau'} autoComplete="off"/>
+      {hits.length === 0 ? (
+        <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>
+          Aucune société ne correspond à «&nbsp;{q.trim()}&nbsp;» parmi les {items.length} validées
+          pour cette boutique. Si c'est la vôtre, demandez son ajout ci-dessous.
+        </p>
+      ) : (
+        <ul className="ws-acc__pick-list" role="listbox" aria-label={label || 'Bureaux validés'}>
+          {hits.map((o) => (
+            <li key={o.id}>
+              <button type="button" role="option"
+                aria-selected={String(value) === String(o.id)}
+                className={'ws-acc__pick-item' + (String(value) === String(o.id) ? ' is-picked' : '')}
+                onClick={() => onPick(String(o.id))}>
+                <span className="ws-acc__pick-name">{o.name}</span>
+                {o.address ? <span className="ws-acc__pick-addr">{o.address}</span> : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {qq !== '' && hits.length > 0 && (
+        <p className="ws-acc__pick-count">{hits.length} résultat{hits.length > 1 ? 's' : ''} sur {items.length}</p>
+      )}
+    </div>
+  );
+}
+
 // Mode pill — Ruby (collect) / Abricot (delivery)
 function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel }) {
   const [hover, setHover] = React.useState(false);
@@ -3096,16 +3145,9 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
               <p className="ws-acc__hint">Aucun bureau de livraison disponible pour cette boutique.</p>
             )}
             {!siteBusy && siteList.length > 0 && (
-              <div className="ws-acc__select-row">
-                <select className="ws-acc__input" value={sitePicked}
-                  onChange={(e) => { setSitePicked(e.target.value); setSiteErr(''); }}
-                  aria-label="Choisir un bureau de livraison">
-                  <option value="">— Sélectionner un bureau —</option>
-                  {siteList.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}{s.address ? ' — ' + s.address : ''}</option>
-                  ))}
-                </select>
-              </div>
+              <OfficeSearchPicker items={siteList} value={sitePicked}
+                onPick={(id) => { setSitePicked(id); setSiteErr(''); }}
+                label="Choisir un bureau de livraison"/>
             )}
             {siteErr && <p className="ws-acc__vat-msg ws-acc__vat-msg--err">⚠ {siteErr}</p>}
             <div className="ws-acc__row-foot">
@@ -3154,48 +3196,11 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             {!officeBusy && approvedOffices.length === 0 && (
               <p className="ws-acc__hint">Aucun bureau validé pour cette boutique. Vous pouvez demander l'ajout du vôtre ci-dessous.</p>
             )}
-            {!officeBusy && approvedOffices.length > 0 && (() => {
-              // Comparaison insensible à la casse ET aux accents : « Sarl Chênes »
-              // doit sortir sur « chenes ». Recherche sur le nom ET l'adresse —
-              // un bureau se retrouve souvent par sa rue.
-              const norm = (v) => String(v || '').toLowerCase()
-                .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-              const q = norm(officeQuery).trim();
-              const hits = q === '' ? approvedOffices
-                : approvedOffices.filter((o) => norm(o.name).includes(q) || norm(o.address).includes(q));
-              return (
-                <div className="ws-acc__pick">
-                  <input
-                    type="search" className="ws-acc__input" value={officeQuery}
-                    onChange={(e) => { setOfficeQuery(e.target.value); setOfficeErr(''); }}
-                    placeholder="Rechercher une société ou une adresse…"
-                    aria-label="Rechercher un bureau" autoComplete="off"/>
-                  {hits.length === 0 ? (
-                    <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>
-                      Aucune société ne correspond à « {officeQuery.trim()} » parmi les {approvedOffices.length} validées
-                      pour cette boutique. Si c'est la vôtre, demandez son ajout ci-dessous.
-                    </p>
-                  ) : (
-                    <ul className="ws-acc__pick-list" role="listbox" aria-label="Bureaux validés">
-                      {hits.map((o) => (
-                        <li key={o.id}>
-                          <button type="button" role="option"
-                            aria-selected={String(pickedOfficeId) === String(o.id)}
-                            className={'ws-acc__pick-item' + (String(pickedOfficeId) === String(o.id) ? ' is-picked' : '')}
-                            onClick={() => { setPickedOfficeId(String(o.id)); setOfficeErr(''); }}>
-                            <span className="ws-acc__pick-name">{o.name}</span>
-                            {o.address ? <span className="ws-acc__pick-addr">{o.address}</span> : null}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {q !== '' && hits.length > 0 && (
-                    <p className="ws-acc__pick-count">{hits.length} résultat{hits.length > 1 ? 's' : ''} sur {approvedOffices.length}</p>
-                  )}
-                </div>
-              );
-            })()}
+            {!officeBusy && approvedOffices.length > 0 && (
+              <OfficeSearchPicker items={approvedOffices} value={pickedOfficeId}
+                onPick={(id) => { setPickedOfficeId(id); setOfficeErr(''); }}
+                label="Bureaux validés"/>
+            )}
             {officeErr && <p className="ws-form__err">{officeErr}</p>}
             <button type="button" className="ws-acc__addlink" onClick={() => { setOfficeErr(''); setOfficeStep('add'); }}>Mon bureau n'est pas dans la liste</button>
             <div className="ws-acc__row-foot">
@@ -5422,13 +5427,13 @@ function ShopFrame({ variant }) {
            consigne, et une bulle qui s'efface toute seule se lit rarement en
            entier sur un téléphone. */
         <div className="ws-toast ws-toast--notice" role="alert">
-          <div>
+          <div className="ws-toast__body">
             <div className="ws-toast__title">{notice.titre}</div>
-            <div className="ws-toast__sub" style={{ opacity: 0.95 }}>{notice.texte}</div>
+            <div className="ws-toast__sub">{notice.texte}</div>
           </div>
-          <button type="button" onClick={() => setNotice(null)}
-            style={{ marginLeft: 'auto', background: 'transparent', border: 0, color: 'inherit',
-                     cursor: 'pointer', font: '600 13px var(--font-ui)' }}>Fermer</button>
+          {/* « Fermer » EN BAS : à droite du texte, il comprimait le titre sur
+              deux lignes et tombait haut dans l'écran, loin du pouce. */}
+          <button type="button" className="ws-toast__close" onClick={() => setNotice(null)}>Fermer</button>
         </div>
       )}
       {stockErr && (

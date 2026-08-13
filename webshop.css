@@ -3123,9 +3123,25 @@
   z-index: 300;                                       /* modales : 90–100 */
   background: var(--color-secondary);
   color: var(--color-on-abricot);
-  align-items: flex-start;
+  /* Empilé : le texte, puis l'action. « Fermer » placé à droite comprimait le
+     titre sur deux lignes et se retrouvait haut dans le bandeau, là où le
+     pouce ne va pas naturellement sur un téléphone. */
+  display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+  padding: 14px 16px;
 }
+.ws-toast--notice .ws-toast__body { display: flex; flex-direction: column; gap: 3px; }
 .ws-toast--notice .ws-toast__sub { opacity: 0.95; line-height: 1.45; }
+.ws-toast__close {
+  align-self: stretch;
+  min-height: 44px;                                   /* cible au pouce */
+  border: 1px solid color-mix(in oklab, var(--color-on-abricot) 30%, transparent);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  color: inherit;
+  font: 600 13px var(--font-ui);
+  cursor: pointer;
+}
+.ws-toast__close:active { background: rgba(255, 255, 255, 0.85); }
 @media (min-width: 721px) {
   .ws-toast--notice { bottom: 22px; }                 /* pas de barre d'onglets */
 }
