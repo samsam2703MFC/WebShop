@@ -1,0 +1,44 @@
+# Webshop — politique de cache.
+#
+# POURQUOI. La page servie ne portait AUCUN en-tête Cache-Control : seulement
+# Last-Modified et ETag. Sans consigne, le navigateur applique sa « fraîcheur
+# heuristique » et garde la page sans rien redemander. Résultat, un
+# déploiement pouvait être en ligne — assets vérifiés sur le serveur — sans
+# être visible sur l'appareil, ce qui ressemble à un bug de mise en page alors
+# que c'est une copie périmée.
+#
+# La règle diffère selon le type de fichier, et c'est tout l'intérêt :
+#
+#   • index.html      — nom STABLE, contenu changeant. C'est lui qui désigne
+#                       les assets à charger. Il doit être revalidé à chaque
+#                       fois, sinon il continue de pointer vers les anciens
+#                       hachages et rien d'autre ne peut rattraper l'erreur.
+#
+#   • sw.js           — le service worker. Un SW mis en cache ne se met JAMAIS
+#                       à jour tout seul : il continue de servir sa version
+#                       précachée, indéfiniment. C'est le piège classique des
+#                       PWA, et le plus coûteux : l'application installée reste
+#                       figée sur une version que plus personne ne déploie.
+#
+#   • assets/…        — noms CONTENU-HACHÉS par Vite (index-DD_riVNv.css). Un
+#                       changement produit un NOUVEAU nom, donc ces fichiers
+#                       peuvent être gardés un an sans risque. « immutable »
+#                       évite même la requête de revalidation.
+#
+# Sans effet si AllowOverride est désactivé ou mod_headers absent — l'API et la
+# landing s'appuient déjà sur des .htaccess, donc il est bien pris en compte.
+
+<IfModule mod_headers.c>
+  # La coquille et le service worker : toujours revalidés.
+  <FilesMatch "\.(html|webmanifest)$">
+    Header set Cache-Control "no-cache, must-revalidate, max-age=0"
+  </FilesMatch>
+  <FilesMatch "^(sw|registerSW)\.js$">
+    Header set Cache-Control "no-cache, must-revalidate, max-age=0"
+  </FilesMatch>
+
+  # Fichiers hachés : le nom change avec le contenu, donc cache long.
+  <FilesMatch "^index-[A-Za-z0-9_-]+\.(js|css)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>
