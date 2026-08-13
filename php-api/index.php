@@ -6192,12 +6192,74 @@ function dispatch($m, $p) {
     if ($m === 'GET' && $p === '/franchisee/ws-pricing-rules-local') {
       if (!$tblExists('ws_pricing_rules')) json_out([]);
       $sw = $shopId ? "(shop_id = " . (int) $shopId . " OR shop_id IS NULL)" : '1=1';
-      $rs = rows("SELECT rule_type, label, x, y, threshold, shop_id FROM ws_pricing_rules WHERE $sw AND active=1 ORDER BY id LIMIT 200");
+      $rs = rows("SELECT id, rule_type, label, x, y, threshold, shop_id FROM ws_pricing_rules WHERE $sw AND active=1 ORDER BY id LIMIT 200");
       json_out(array_map(function ($r) {
         $effet = $r['rule_type'] === 'cross_portion' ? ((int) $r['x'] . ' achetés → ' . (int) $r['y'] . ' offert(s)') : (string) ($r['threshold'] ?? '—');
-        return ['nom' => $r['label'] ?: $r['rule_type'], 'cible' => $r['rule_type'], 'effet' => $effet,
-                'loc' => $r['shop_id'] !== null];
+        return ['id' => (int) $r['id'], 'nom' => $r['label'] ?: $r['rule_type'], 'cible' => $r['rule_type'], 'effet' => $effet,
+                'loc' => $r['shop_id'] !== null,
+                // Brut, pour l'édition. `loc` dit surtout si la règle est
+                // MODIFIABLE ICI : une règle réseau (shop_id NULL) appartient à
+                // la marque, et l'écran doit le montrer plutôt que de proposer
+                // une modification que le serveur refusera.
+                'vType' => (string) $r['rule_type'], 'vX' => (int) $r['x'], 'vY' => (int) $r['y'],
+                'vSeuil' => $r['threshold'] === null ? '' : (float) $r['threshold']];
       }, $rs));
+    }
+
+    /* Écriture d'UNE règle de prix locale. Le formulaire écrivait dans
+       l'overlay ws_pricing_rules_local — un nom qui n'existe dans aucune base —
+       pendant que le webshop applique ws_pricing_rules. Ses trois champs
+       (libellé, cible, effet) étaient en outre du texte libre sans rapport
+       avec les colonnes réelles : rule_type, x, y, threshold.
+
+       UNE RÈGLE RÉSEAU NE S'ÉDITE PAS ICI. shop_id NULL = règle de la marque ;
+       la modifier depuis une boutique la changerait pour tout le réseau. */
+    if ($m === 'POST' && $p === '/franchisee/pricing-rule') {
+      if (!$tblExists('ws_pricing_rules'))
+        json_out(['ok' => false, 'error' => 'Table ws_pricing_rules absente.'], 501);
+      if (!$shopId)
+        json_out(['ok' => false, 'error' => 'Portée boutique requise pour une règle locale.'], 400);
+      $b   = body();
+      $sc  = (int) $shopId;
+      $rid = (int) ($b['id'] ?? 0);
+      $mien = fn ($id) => row("SELECT id FROM ws_pricing_rules WHERE id=? AND shop_id=?", [$id, $sc]);
+      if ($rid && !$mien($rid))
+        json_out(['ok' => false, 'error' => 'Règle inconnue, ou règle réseau — elle se modifie dans la console marque.'], 403);
+
+      if (!empty($b['delete'])) {
+        if (!$rid) json_out(['ok' => false, 'error' => 'Règle non précisée.'], 400);
+        q("UPDATE ws_pricing_rules SET active=0 WHERE id=? AND shop_id=?", [$rid, $sc]);
+        json_out(['ok' => true, 'deleted' => true]);
+      }
+
+      $type = (string) ($b['type'] ?? '');
+      if (!in_array($type, ['cross_portion', 'threshold'], true))
+        json_out(['ok' => false, 'error' => 'Type attendu : cross_portion (X achetés → Y offerts) ou threshold (seuil).'], 400);
+      $lbl = trim((string) ($b['nom'] ?? ''));
+      if ($lbl === '') json_out(['ok' => false, 'error' => 'Donnez un libellé à la règle.'], 400);
+
+      $x = 0; $y = 0; $seuil = null;
+      if ($type === 'cross_portion') {
+        $x = (int) ($b['x'] ?? 0); $y = (int) ($b['y'] ?? 0);
+        if ($x < 1) json_out(['ok' => false, 'error' => 'Le nombre de pièces achetées doit valoir au moins 1.'], 400);
+        if ($y < 1) json_out(['ok' => false, 'error' => 'Le nombre de pièces offertes doit valoir au moins 1.'], 400);
+        if ($y >= $x) json_out(['ok' => false, 'error' => "Offrir $y pièce(s) pour $x achetée(s) revient à tout offrir."], 400);
+      } else {
+        $s2 = $b['seuil'] ?? '';
+        if (!is_numeric($s2)) json_out(['ok' => false, 'error' => 'Seuil : un nombre est attendu.'], 400);
+        $seuil = (float) $s2;
+        if ($seuil <= 0) json_out(['ok' => false, 'error' => 'Le seuil doit être supérieur à zéro.'], 400);
+      }
+
+      if ($rid) {
+        q("UPDATE ws_pricing_rules SET rule_type=?, label=?, x=?, y=?, threshold=?, active=1 WHERE id=? AND shop_id=?",
+          [$type, $lbl, $x, $y, $seuil, $rid, $sc]);
+      } else {
+        q("INSERT INTO ws_pricing_rules (shop_id, rule_type, label, x, y, threshold, active) VALUES (?,?,?,?,?,?,1)",
+          [$sc, $type, $lbl, $x, $y, $seuil]);
+        $rid = (int) db()->lastInsertId();
+      }
+      json_out(['ok' => true, 'id' => $rid]);
     }
 
     // ── Jours exceptionnels (ws_shop_exceptions) — table réelle. ──
@@ -6569,9 +6631,53 @@ function dispatch($m, $p) {
                         AND (ps.active = 0 OR ps.no_delivery = 1)
                       ORDER BY pr.name LIMIT 200");
         foreach ($loc as $r) $out[] = ['produit' => $r['name'], 'cat' => $r['cat'] ?: '—',
-          'rule' => !$r['ps_active'] ? 'Désactivé boutique' : 'Sans livraison'];
+          'rule' => !$r['ps_active'] ? 'Désactivé boutique' : 'Sans livraison',
+          // `local` distingue ce que LA BOUTIQUE peut lever de ce que la marque
+          // a décidé : une désactivation réseau ne se corrige pas d'ici.
+          'local' => true, 'statut' => !$r['ps_active'] ? 'Désactivé en boutique' : 'Sans livraison'];
       }
+      // Les lignes réseau sont marquées non modifiables plutôt qu'absentes :
+      // savoir qu'un produit est coupé par la marque évite de le chercher.
+      foreach ($out as &$o) if (!isset($o['local'])) { $o['local'] = false; $o['statut'] = 'Désactivé (réseau)'; }
+      unset($o);
       json_out($out);
+    }
+
+    /* Écriture de la disponibilité d'un produit DANS CETTE BOUTIQUE.
+       L'écran « Exception produit » écrivait dans l'overlay sous le nom
+       ws_product_availability — une table qui n'existe nulle part. L'exception
+       saisie n'a donc jamais rien produit ; le vrai levier est
+       ws_product_shops (active, no_delivery), et il est ici.
+
+       Les quatre « exceptions » que proposait le formulaire (Sur devis,
+       Saisonnier, Non livrable, Délai spécifique) n'étaient pas stockables :
+       la base ne sait dire que « vendu ici », « pas vendu ici » et « pas
+       livrable ». On s'en tient à ce qu'elle sait. */
+    if ($m === 'POST' && $p === '/franchisee/product-availability') {
+      if (!$tblExists('ws_product_shops') || !$tblExists('ws_products'))
+        json_out(['ok' => false, 'error' => 'Tables produits absentes.'], 501);
+      if (!$shopId) json_out(['ok' => false, 'error' => 'Portée boutique requise.'], 400);
+      $b   = body();
+      $sc  = (int) $shopId;
+      $nom = trim((string) ($b['produit'] ?? ''));
+      if ($nom === '') json_out(['ok' => false, 'error' => 'Produit non précisé.'], 400);
+      $pr = row("SELECT id, active FROM ws_products WHERE name=?", [$nom]);
+      if (!$pr) json_out(['ok' => false, 'error' => "Produit « $nom » inconnu au catalogue."], 404);
+      if ((int) $pr['active'] === 0)
+        json_out(['ok' => false, 'error' => "« $nom » est désactivé par la marque — cela ne se lève pas depuis une boutique."], 403);
+      $pid = (int) $pr['id'];
+
+      $st = (string) ($b['statut'] ?? '');
+      $map = ['Disponible' => [1, 0], 'Désactivé en boutique' => [0, 0], 'Sans livraison' => [1, 1]];
+      if (!isset($map[$st]))
+        json_out(['ok' => false, 'error' => 'Statut attendu : Disponible, Désactivé en boutique, ou Sans livraison.'], 400);
+      [$act, $nd] = $map[$st];
+
+      if (row("SELECT product_id FROM ws_product_shops WHERE product_id=? AND shop_id=?", [$pid, $sc]))
+        q("UPDATE ws_product_shops SET active=?, no_delivery=? WHERE product_id=? AND shop_id=?", [$act, $nd, $pid, $sc]);
+      else
+        q("INSERT INTO ws_product_shops (product_id, shop_id, active, no_delivery) VALUES (?,?,?,?)", [$pid, $sc, $act, $nd]);
+      json_out(['ok' => true, 'statut' => $st]);
     }
 
     /* ── Écrans TDB / prep / suivi / validations / stock / assortiment ──
@@ -10136,6 +10242,8 @@ function bo_endpoint_section($name) {
     'calendar-rule' => 'calendarRules',
     'slot' => 'creneaux',
     'shop-exception' => 'joursExcept',
+    'pricing-rule' => 'pricingRules',
+    'product-availability' => 'dispoProd',
     'b2b-clients' => 'b2bClients', 'b2b-departments' => 'b2bClients', 'b2b-department' => 'b2bClients',
     'fr-clients' => 'b2bClients',
     'client-active' => 'b2bClients', 'client-attach' => 'b2bClients', 'client-billing' => 'b2bClients',
