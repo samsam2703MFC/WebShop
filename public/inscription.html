@@ -238,8 +238,19 @@
        Adresse et code postal forment l'adresse (virgule) ; étage et département
        sont des précisions (point médian) — d'où deux assemblages distincts. */
     var adr = [];
-    if (d.site && d.site.address) adr.push(d.site.address);
-    if (d.cp) adr.push(d.cp);
+    var rue = (d.site && d.site.address) ? String(d.site.address) : '';
+    if (rue) adr.push(rue);
+    /* Le code postal n'est ajouté que s'il n'apparaît pas DÉJÀ dans l'adresse.
+       « Avenue des Nerviens 9-31, 1040 Etterbeek » + cp donnait
+       « …, 1040 Etterbeek, 1040 » : le lecteur y voit une adresse mal saisie,
+       et doute alors du reste du bandeau — où tout est exact.
+       On cherche le code comme nombre entier (pas comme suite de chiffres),
+       sans pouvoir distinguer un code postal d'un numéro de rue identique :
+       « Rue du Test 1040 » fait donc omettre le « 1040 ». C'est le compromis
+       choisi — l'adresse reste complète et lisible, alors qu'un code affiché
+       deux fois se lit comme une erreur de saisie. */
+    if (d.cp && !(rue && new RegExp('(^|[^0-9])' + String(d.cp).replace(/[^0-9]/g, '') + '([^0-9]|$)').test(rue)))
+      adr.push(d.cp);
     var bouts = [];
     if (adr.length) bouts.push(adr.join(', '));
     if (d.site && d.site.floor) bouts.push(d.site.floor);

@@ -15,6 +15,10 @@ return [
   'admin_token'  => getenv('WS_ADMIN_TOKEN') ?: 'change-me-admin-token',
   // E-mails de commande (from). Laisse vide pour désactiver l'envoi.
   'mail_from'    => getenv('WS_MAIL_FROM') ?: 'no-reply@atelierby.be',
+  // Logo des courriers HTML — URL ABSOLUE (l'e-mail s'ouvre hors du site, un
+  // chemin relatif n'y désigne rien). Vide : le courrier part sans logo,
+  // plutôt qu'avec un cadre d'image cassé.
+  'mail_logo_url' => getenv('WS_MAIL_LOGO') ?: '',
   // Origines autorisées (ton GitHub Pages).
   'cors_origins' => array_values(array_filter(array_map('trim',
                     explode(',', getenv('WS_CORS') ?: 'https://samsam2703mfc.github.io')))),

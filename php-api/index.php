@@ -7973,17 +7973,37 @@ function dispatch($m, $p) {
           }
         }
       }
-      $voucherCreated = false;
-      $vc = strtoupper(trim((string) ($b['voucher']['code'] ?? '')));
-      if ($vc !== '') {
+      /* LES VOUCHERS DE L'ONBOARDING — zéro, un ou plusieurs.
+         Un bureau peut repartir avec un bon de bienvenue ET la découverte
+         d'une gamme ET un geste commercial : n'en accepter qu'un obligeait à
+         créer les autres à la main, hors du dossier. La console envoie
+         désormais « vouchers » (liste) ; « voucher » (objet) reste lu pour
+         les versions qui ne l'envoient pas encore. */
+      $voucherList = []; $voucherNoms = [];
+      foreach ((array) ($b['vouchers'] ?? []) as $vRow) {
+        $c = strtoupper(trim((string) (is_array($vRow) ? ($vRow['code'] ?? '') : $vRow)));
+        if ($c === '' || in_array($c, $voucherList, true)) continue;
+        $voucherList[] = $c;
+        // Le libellé ne sera pas stocké (ws_vouchers ne garde que le code) :
+        // il ne sert qu'au document envoyé dans la foulée.
+        $voucherNoms[] = ['code' => $c,
+                          'libelle' => trim((string) (is_array($vRow) ? ($vRow['libelle'] ?? '') : ''))];
+      }
+      if (!$voucherList) {
+        $vc1 = strtoupper(trim((string) ($b['voucher']['code'] ?? '')));
+        if ($vc1 !== '') { $voucherList[] = $vc1; $voucherNoms[] = ['code' => $vc1, 'libelle' => '']; }
+      }
+      $vouchersCreated = 0;
+      if ($voucherList) {
         // ws_vouchers peut être une VUE (modèle ERP) — n'insérer que si table de base.
         $isBase = row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_vouchers' AND table_type='BASE TABLE'");
-        if ($isBase) {
+        if ($isBase) foreach ($voucherList as $vc) {
           q("INSERT IGNORE INTO ws_vouchers (code, type, value, active" . ($shopId ? ", shop_id" : "") . ") VALUES (?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
             [$vc, 'add_office', 0]);
-          $voucherCreated = true;
+          $vouchersCreated++;
         }
       }
+      $voucherCreated = $vouchersCreated > 0;
       /* LIEN MAGIQUE « Créer mon compte ». Le bureau reçoit UN lien et le
          transfère à son personnel : chaque collaborateur arrive avec sa
          boutique, son bureau, son site et ses départements déjà rattachés.
@@ -8017,13 +8037,17 @@ function dispatch($m, $p) {
       $mailFait = false; $mailPourquoi = null;
       if ($inv && !empty($b['sendMail'])) {
         require_once __DIR__ . '/invite_doc.php';
-        $recap = invite_recap($officeId, $voucherCreated ? $vc : null);
+        // La LISTE des codes réellement insérés — pas $vc, qui n'est que la
+        // dernière valeur de la boucle et n'existe même pas si ws_vouchers est
+        // une vue. Le document annonce tous les bons, ou aucun.
+        $recap = invite_recap($officeId, $vouchersCreated ? $voucherNoms : null);
         if (!$recap) $mailPourquoi = 'Bureau introuvable juste après sa création — e-mail non envoyé.';
         else [$mailFait, $mailPourquoi] = invite_mail_envoyer(
           $recap, invite_link($inv['token']), invite_link_court($inv['jti']),
           date('d/m/Y', strtotime($inv['expires_at'])));
       }
       json_out(['ok' => true, 'office_id' => $officeId, 'voucher_created' => $voucherCreated,
+                'vouchers_created'  => $vouchersCreated,
                 'invite_url'        => $inv ? invite_link($inv['token']) : null,
                 'invite_short_url'  => $inv ? invite_link_court($inv['jti']) : null,
                 'invite_expires_at' => $inv['expires_at'] ?? null,

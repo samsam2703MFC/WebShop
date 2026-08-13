@@ -21,6 +21,9 @@ require_once __DIR__ . '/pdf.php';
 
 /* Récapitulatif d'un bureau, tel qu'il sera écrit au client. Chaque clé est
    null quand la donnée n'existe pas — l'appelant la retire de son rendu. */
+/* $voucherCode : un code, une LISTE de codes, ou rien. Un onboarding peut
+   porter plusieurs bons (bienvenue, découverte, geste commercial) ; n'en
+   accepter qu'un faisait taire les autres dans le document envoyé au client. */
 function invite_recap($officeId, $voucherCode = null) {
   $o = row("SELECT * FROM ws_offices WHERE id = ?", [(int) $officeId]);
   if (!$o) return null;
@@ -90,6 +93,7 @@ function invite_recap($officeId, $voucherCode = null) {
     'officeId'  => (int) $officeId,
     'raison'    => $o['name'] ?: null,
     'contact'   => $o['contact'] ?: null,
+    'tva'       => ($o['vat'] ?? '') !== '' ? $o['vat'] : null,
     'email'     => $o['email'] ?: null,
     'boutique'  => $shop ? ($shop['name'] ?: $shop['city']) : null,
     'site'      => $site ? ($site['name'] ?: null) : null,
@@ -103,7 +107,21 @@ function invite_recap($officeId, $voucherCode = null) {
     'frais'     => $frais,
     'remise'    => $remise,
     'paiement'  => ((int) ($o['deferred_billing_enabled'] ?? 0) === 1) ? 'Facturation différée' : 'Paiement à la commande',
-    'voucher'   => $voucherCode ?: null,
+    /* Un bon peut arriver NOMMÉ (['code' => …, 'libelle' => …]) ou nu. Son
+       libellé n'est pas en base — ws_vouchers n'en garde que le code — donc il
+       ne survit qu'au moment de la création, où le franchisé vient de le
+       saisir. Un renvoi ultérieur affichera le code seul : c'est exact, là où
+       recoller « Bon de bienvenue » sur « Découverte petit-déjeuner » ne le
+       serait pas. */
+    'vouchers'  => ($vBons = array_values(array_filter(array_map(
+                      function ($v) {
+                        $c = trim((string) (is_array($v) ? ($v['code'] ?? '') : $v));
+                        if ($c === '') return null;
+                        return ['code' => $c,
+                                'titre' => trim((string) (is_array($v) ? ($v['libelle'] ?? '') : ''))];
+                      },
+                      is_array($voucherCode) ? $voucherCode : [$voucherCode])))),
+    'voucher'   => $vBons ? implode(' · ', array_column($vBons, 'code')) : null,
     'validated' => ((int) ($o['active'] ?? 0) === 1),
   ];
 }
@@ -123,7 +141,7 @@ function invite_conditions(array $r) {
   $ajoute('Franco',           $r['franco']);
   $ajoute('Remise négociée',  $r['remise']);
   $ajoute('Facturation',      $r['paiement']);
-  $ajoute('Bon de bienvenue', $r['voucher']);
+  $ajoute(count($r['vouchers'] ?? []) > 1 ? 'Bons de bienvenue' : 'Bon de bienvenue', $r['voucher']);
   return $l;
 }
 
@@ -195,47 +213,64 @@ function invite_pdf(array $r, $url, $expire = null) {
 
 /* ── L'E-MAIL ─────────────────────────────────────────────────────────────── */
 
+/* Le corps HTML — rendu du GABARIT dessiné (mail/bienvenue-bureau.html), pas
+   d'un HTML assemblé ici. Un courrier qui part chez un client se relit, se
+   corrige et se traduit : il a sa place dans un fichier qu'on ouvre, pas dans
+   une concaténation de chaînes.
+
+   Le gabarit ne connaît que trois marqueurs (mail_render dans lib.php), et
+   surtout : toute valeur absente y fait DISPARAÎTRE sa ligne. C'est la même
+   règle que ce fichier applique depuis le début — une condition que la base ne
+   porte pas ne doit pas être remplacée par un tiret, encore moins par une
+   valeur par défaut.
+
+   Gabarit introuvable (déploiement partiel) : on ne renvoie pas un courrier
+   vide, on le DIT à l'appelant en renvoyant null — il refusera l'envoi plutôt
+   que d'expédier une page blanche à un client. */
 function invite_mail_html(array $r, $urlLong, $expire = null) {
-  $e = fn ($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
-  $lignes = '';
-  foreach (invite_conditions($r) as [$lbl, $val])
-    $lignes .= '<tr><td style="padding:7px 0;color:#6b6560;font:400 13px Helvetica,Arial,sans-serif;width:170px">'
-             . $e($lbl) . '</td><td style="padding:7px 0;color:#222;font:400 13.5px Helvetica,Arial,sans-serif">'
-             . $e($val) . '</td></tr>';
-  $raison = $r['raison'] ? $e($r['raison']) : 'votre bureau';
-  /* Le bouton est un tableau, pas un <a> stylé : Outlook ignore les bordures et
-     le rembourrage d'un lien, et le bouton s'y réduirait à du texte souligné. */
-  $bouton = '<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 10px"><tr>'
-          . '<td style="background:#8D1D2C;border-radius:8px">'
-          . '<a href="' . $e($urlLong) . '" style="display:inline-block;padding:14px 26px;color:#fff;'
-          . 'font:700 15px Helvetica,Arial,sans-serif;text-decoration:none">Créer mon compte</a></td></tr></table>';
-  return '<!doctype html><html lang="fr"><body style="margin:0;background:#F5EFE6;padding:24px 12px">'
-    . '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;margin:0 auto;'
-    . 'background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e6ddd0">'
-    . '<tr><td style="background:#8D1D2C;padding:22px 26px;color:#fff">'
-    . '<div style="font:700 12px Helvetica,Arial,sans-serif;letter-spacing:.16em;text-transform:uppercase;opacity:.85">L\'Atelier By</div>'
-    . '<div style="font:700 22px Helvetica,Arial,sans-serif;margin-top:8px">Votre compte de livraison au bureau</div>'
-    . '<div style="font:400 13.5px Helvetica,Arial,sans-serif;opacity:.9;margin-top:6px">'
-    . 'Tout est en place pour ' . $raison . '.</div></td></tr>'
-    . '<tr><td style="padding:22px 26px">'
-    . '<div style="font:700 15px Helvetica,Arial,sans-serif;color:#222;margin-bottom:4px">Inviter vos collaborateurs</div>'
-    . '<div style="font:400 13.5px/1.6 Helvetica,Arial,sans-serif;color:#444;margin-bottom:14px">'
-    . 'Le bouton ci-dessous ouvre le formulaire de création de compte, avec votre bureau, '
-    . 'votre site de livraison et votre boutique <b>déjà rattachés</b>.</div>'
-    . $bouton
-    . '<div style="font:400 12px/1.55 Helvetica,Arial,sans-serif;color:#6b6560">'
-    . 'Transférez cet e-mail à vos collaborateurs : le lien les amène directement au formulaire, '
-    . 'avec votre bureau et votre département déjà rattachés.'
-    . ($expire ? '<br>Lien valable jusqu\'au <b>' . $e($expire) . '</b>.' : '')
-    . '<br>L\'affiche jointe porte le même lien en QR code, à imprimer pour la cafétéria.</div>'
-    . '<hr style="border:none;border-top:1px solid #e6ddd0;margin:20px 0">'
-    . '<div style="font:700 15px Helvetica,Arial,sans-serif;color:#222;margin-bottom:6px">Vos conditions</div>'
-    . '<table role="presentation" cellpadding="0" cellspacing="0" width="100%">' . $lignes . '</table>'
-    . '<div style="font:400 12px/1.6 Helvetica,Arial,sans-serif;color:#6b6560;margin-top:18px">'
-    . 'Chaque compte créé nous est transmis pour validation avant sa première commande.'
-    . '</div></td></tr></table>'
-    . '<div style="max-width:560px;margin:16px auto 0;text-align:center;font:400 11.5px Helvetica,Arial,sans-serif;color:#6b6560">'
-    . 'Besoin d\'aide ? aide@latelierby.be</div></body></html>';
+  $f = __DIR__ . '/mail/bienvenue-bureau.html';
+  if (!is_file($f)) return null;
+  $vTpl = [];
+  // Un bon peut arriver nommé (invite_recap) ou nu (appel direct) : les deux
+  // se rendent, aucun ne fait tomber l'envoi.
+  foreach (($r['vouchers'] ?? []) as $bon) {
+    $code = trim((string) (is_array($bon) ? ($bon['code'] ?? '') : $bon));
+    if ($code === '') continue;
+    $vTpl[] = ['voucher_titre' => is_array($bon) ? (string) ($bon['titre'] ?? '') : '',
+               'voucher_code' => $code, 'voucher_valeur' => '', 'voucher_validite' => ''];
+  }
+  /* Les commentaires du gabarit sont retirés du message envoyé : ils
+     expliquent le fichier à qui le maintient, ils n'ont rien à faire chez le
+     client, qui peut afficher la source. Les commentaires CONDITIONNELS
+     (<!--[if mso]>) restent : ce sont des instructions pour Outlook, pas des
+     explications. */
+  $rendu = mail_render(file_get_contents($f), [
+    'raison'        => (string) ($r['raison'] ?? ''),
+    'contact_nom'   => (string) ($r['contact'] ?? ''),
+    // Pas de code client dans le recap : la ligne disparaît du courrier
+    // plutôt que d'afficher un identifiant approximatif.
+    'code_client'   => '',
+    'tva'           => (string) ($r['tva'] ?? ''),
+    'site_adresse'  => (string) ($r['adresse'] ?? ''),
+    'site_office'   => (string) ($r['site'] ?? ''),
+    'site_etage'    => (string) ($r['etage'] ?? ''),
+    'tournee'       => (string) ($r['tournee'] ?? ''),
+    'jours'         => (string) ($r['jours'] ?? ''),
+    'fenetre'       => (string) ($r['horaire'] ?? ''),
+    'cutoff'        => (string) ($r['cutoff'] ?? ''),
+    'frais'         => (string) ($r['frais'] ?? ''),
+    'franco'        => (string) ($r['franco'] ?? ''),
+    'remise_web'    => (string) ($r['remise'] ?? ''),
+    'facturation'   => (string) ($r['paiement'] ?? ''),
+    'boutique_nom'  => (string) ($r['boutique'] ?? ''),
+    'url_webshop'   => (string) (cfg()['webshop_base'] ?? ''),
+    'url_aide'      => 'mailto:aide@latelierby.be',
+    'url_logo'      => (string) (cfg()['mail_logo_url'] ?? ''),
+    'invite_url'    => (string) $urlLong,
+    'invite_expire_le' => (string) ($expire ?? ''),
+    'vouchers'      => $vTpl,
+  ]);
+  return preg_replace('/<!--(?!\[if|<!\[endif)(?:(?!<!\[endif).)*?-->/s', '', $rendu);
 }
 
 function invite_mail_texte(array $r, $urlLong, $expire = null) {
@@ -263,6 +298,9 @@ function invite_mail_envoyer(array $r, $urlLong, $urlCourt, $expire = null, $des
   if (!$from) return [false, 'Aucune adresse d’expédition configurée sur le serveur (mail_from).'];
   if (!function_exists('mail')) return [false, 'La fonction d’envoi d’e-mail est désactivée sur ce serveur.'];
 
+  $html = invite_mail_html($r, $urlLong, $expire);
+  if ($html === null)
+    return [false, 'Gabarit mail/bienvenue-bureau.html introuvable sur le serveur — rien n’a été envoyé.'];
   $pdf   = invite_pdf($r, $urlCourt, $expire);
   $bnd   = 'ab_' . bin2hex(random_bytes(8));
   $bndA  = 'ac_' . bin2hex(random_bytes(8));
@@ -272,7 +310,7 @@ function invite_mail_envoyer(array $r, $urlLong, $urlCourt, $expire = null, $des
   $corps .= "--$bndA\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n"
           . chunk_split(base64_encode(invite_mail_texte($r, $urlLong, $expire))) . "\r\n";
   $corps .= "--$bndA\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n"
-          . chunk_split(base64_encode(invite_mail_html($r, $urlLong, $expire))) . "\r\n";
+          . chunk_split(base64_encode($html)) . "\r\n";
   $corps .= "--$bndA--\r\n";
   if ($pdf) {
     $nom = 'invitation-' . preg_replace('/[^A-Za-z0-9]+/', '-', (string) ($r['raison'] ?? 'bureau')) . '.pdf';
