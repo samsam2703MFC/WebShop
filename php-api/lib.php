@@ -20,9 +20,23 @@ function q($sql, $params = []) { $st = db()->prepare($sql); $st->execute($params
 function rows($sql, $p = []) { return q($sql, $p)->fetchAll(); }
 function row($sql, $p = []) { $r = q($sql, $p)->fetch(); return $r ?: null; }
 
+/* Réponse JSON — JAMAIS mise en cache.
+   Sans Cache-Control, le navigateur applique sa « fraîcheur heuristique » et
+   réutilise une réponse sans la redemander. Sur cette API, c'est faux par
+   nature : le catalogue, les prix, le stock et les créneaux changent d'une
+   minute à l'autre. Symptôme observé — un produit désactivé côté marque
+   (ws_products.active=0) restait en vente sur le webshop : la requête n'était
+   plus émise, le client relisait l'ancienne liste.
+   La configuration du service worker affirmait déjà que « l'API n'est jamais
+   mise en cache » ; c'était vrai du SW, pas du cache HTTP du navigateur. Ces
+   en-têtes rendent la phrase exacte.
+   no-store plutôt que no-cache : il n'y a rien à revalider, une donnée d'ERP
+   périmée n'a aucune valeur — mieux vaut la redemander. */
 function json_out($data, $code = 200) {
   http_response_code($code);
   header('Content-Type: application/json; charset=utf-8');
+  header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+  header('Pragma: no-cache');   // proxys et navigateurs anciens
   echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
   exit;
 }
