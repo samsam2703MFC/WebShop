@@ -5080,8 +5080,38 @@ function dispatch($m, $p) {
                 'expiresAt' => $inv['expires_at'], 'uses' => 0]]);
     }
 
-    /* L'AFFICHE (PDF, A4) — QR code + URL courte + conditions du bureau.
-       Servie en pièce téléchargeable : elle s'imprime et se punaise. */
+    /* L'AFFICHE EN HTML — celle qu'on imprime, et qu'on exporte en PDF depuis
+       le navigateur. C'est la seule façon d'avoir les POLICES et le style de la
+       marque : un PDF n'a pas de moteur CSS, et notre écrivain PDF ne sait
+       poser que les polices de base. Le navigateur, lui, sait déjà tout faire —
+       « Imprimer → Enregistrer en PDF » rend exactement ce qui est à l'écran.
+       (La version PDF ci-dessous reste, elle : l'e-mail a besoin d'un fichier
+       à joindre, et un serveur PHP ne rend pas du HTML.) */
+    if ($m === 'GET' && $p === '/franchisee/office-invite-poster') {
+      $oid = (int) qp('office', 0);
+      if (!$oid) json_out(['ok' => false, 'error' => 'Bureau non précisé.'], 400);
+      $oSc = ($shopId && col_exists('ws_offices', 'shop_id')) ? " AND (shop_id IS NULL OR shop_id=" . (int) $shopId . ")" : "";
+      if (!row("SELECT 1 x FROM ws_offices WHERE id=?$oSc", [$oid]))
+        json_out(['ok' => false, 'error' => 'Bureau inconnu, ou hors de votre boutique.'], 404);
+      [$inv, $why] = invite_for_office($oid);
+      if (!$inv) json_out(['ok' => false, 'error' => $why . ' Émettez un lien avant d’imprimer l’affiche.'], 409);
+      require_once __DIR__ . '/invite_doc.php';
+      $recap = invite_recap($oid);
+      if (!$recap) json_out(['ok' => false, 'error' => 'Bureau introuvable.'], 404);
+      // Racine du webshop en ABSOLU. La page s'ouvre depuis un blob:, où un
+      // chemin relatif ne mène nulle part. Polices et logo sont EMBARQUÉS dans
+      // la page ; cette racine ne sert que de dernier recours au logo, si le
+      // PNG manquait à côté du script.
+      $racine = preg_replace('#/inscription\?.*$#', '', invite_link(''));
+      header('Content-Type: text/html; charset=utf-8');
+      header('Cache-Control: no-store');
+      echo invite_affiche_html($recap, $inv['urlCourt'], date('d/m/Y', strtotime($inv['expiresAt'])), $racine);
+      exit;
+    }
+
+    /* L'AFFICHE (PDF, A4) — la même, écrite par le serveur. Elle sert de PIÈCE
+       JOINTE à l'e-mail, où il faut un fichier ; l'écran, lui, passe par la
+       version HTML ci-dessus, qui porte les polices de la marque. */
     if ($m === 'GET' && $p === '/franchisee/office-invite-pdf') {
       $oid = (int) qp('office', 0);
       if (!$oid) json_out(['ok' => false, 'error' => 'Bureau non précisé.'], 400);
@@ -9714,6 +9744,7 @@ function bo_endpoint_section($name) {
     'ws-offices' => 'offices', 'onboard-office' => 'offices', 'route-office' => 'offices',
     'office-invite' => 'offices', 'invite-revoke' => 'offices',
     'office-invite-pdf' => 'offices', 'office-invite-send' => 'offices',
+    'office-invite-poster' => 'offices',
     'b2b-clients' => 'b2bClients', 'b2b-departments' => 'b2bClients', 'b2b-department' => 'b2bClients',
     'fr-clients' => 'b2bClients',
     'client-active' => 'b2bClients', 'client-attach' => 'b2bClients', 'client-billing' => 'b2bClients',

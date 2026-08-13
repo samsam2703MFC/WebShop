@@ -229,6 +229,117 @@ function invite_pdf(array $r, $url, $expire = null) {
   return pdf_document($c, $imgs, $L, $H);
 }
 
+/* ── L'AFFICHE EN HTML (imprimée / exportée en PDF par le navigateur) ──────
+   POURQUOI DEUX AFFICHES. Celle du dessus est écrite en PDF par le serveur :
+   il lui faut un fichier à joindre à l'e-mail, et un serveur PHP ne sait pas
+   rendre du HTML. Mais un PDF écrit à la main n'a ni les polices de la marque,
+   ni son système de composants — un PDF n'a pas de moteur CSS, et embarquer
+   Gotham demanderait de coder l'inclusion d'une police OpenType.
+   Le navigateur, lui, sait déjà tout cela. Cette version-ci est donc du HTML
+   servi tel quel : Gotham, les couleurs de la marque, la mise en page — et
+   « Imprimer → Enregistrer en PDF » produit le fichier, avec le rendu exact.
+   Les ressources sont en URL ABSOLUE ou en data: : la page s'ouvre depuis un
+   blob (l'endpoint exige le jeton admin), où les chemins relatifs ne résolvent
+   plus. */
+function invite_affiche_html(array $r, $url, $expire = null, $racine = '') {
+  $e = fn ($x) => htmlspecialchars((string) $x, ENT_QUOTES, 'UTF-8');
+  $res = qr_matrix($url, 'Q');
+  $qr  = $res ? ('data:image/png;base64,' . base64_encode(qr_png($res[0], $res[1], 8, 4))) : '';
+  $logo = @file_get_contents(__DIR__ . '/../public/logo-white.png');
+  $logoSrc = $logo ? ('data:image/png;base64,' . base64_encode($logo)) : ($racine . '/logo-white.png');
+
+  /* Les conditions sur DEUX colonnes. Empilées, les douze lignes que
+     invite_conditions peut produire au maximum débordaient de 45 mm et
+     l'affiche sortait sur deux pages — une affiche se punaise, elle ne
+     s'agrafe pas. Deux colonnes ramènent la hauteur sous l'A4 avec de la
+     marge pour les valeurs qui reviennent à la ligne (une adresse longue). */
+  $lignes = '';
+  foreach (invite_conditions($r) as [$lbl, $val])
+    $lignes .= '<dt>' . $e($lbl) . '</dt><dd>' . $e($val) . '</dd>';
+
+  /* Les polices sont EMBARQUÉES, pas liées. La console ouvre cette page depuis
+     un blob: — même origine qu'elle, donc AUTRE origine que l'API qui sert les
+     .otf — et une requête @font-face part toujours en mode anonyme : sans
+     en-tête CORS sur les fichiers de police, Gotham serait silencieusement
+     remplacée par Helvetica et l'affiche imprimée ne serait plus à la marque.
+     Embarquées, elles survivent aussi à un « enregistrer sous » du franchisé.
+
+     Police introuvable (déploiement partiel) : la règle @font-face est OMISE
+     plutôt qu'écrite dans le vide, et la pile de repli Helvetica/Arial prend le
+     relais. Le rendu se dégrade, il ne casse pas. */
+  $police = function ($fichier, $poids) {
+    $b = @file_get_contents(__DIR__ . '/../public/fonts/' . $fichier);
+    if ($b === false) return '';
+    return "@font-face{font-family:'Gotham';src:url(data:font/otf;base64," . base64_encode($b)
+         . ") format('opentype');font-weight:$poids;font-display:swap}";
+  };
+  return '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
+    . '<title>Affiche — ' . $e($r['raison'] ?? 'invitation') . '</title><style>'
+    // Deux graisses seulement : celles que cette feuille emploie (400 et 600).
+    // Embarquer la 500 inutilisée aurait alourdi la page sans rien changer.
+    . $police('Gotham_Book.otf', 400) . $police('Gotham_Medium.otf', 600)
+    . ':root{--ruby:#8D1D2C;--abricot:#F2C9A0;--txt:#222;--mut:#6b6560;--bord:rgba(34,34,34,.14)}'
+    . '*{box-sizing:border-box}'
+    . 'body{margin:0;background:#EAE4DC;color:var(--txt);font:400 15px/1.5 Gotham,Helvetica,Arial,sans-serif}'
+    /* La feuille : exactement une A4, marges comprises — ce qui s'affiche à
+       l'écran est ce qui sort de l'imprimante. */
+    . '.feuille{width:210mm;min-height:297mm;margin:0 auto;background:#fff;'
+    . 'box-shadow:0 10px 40px rgba(0,0,0,.12);display:flex;flex-direction:column}'
+    . '.bandeau{background:var(--ruby);color:#fff;padding:14mm 16mm 10mm}'
+    . '.bandeau img{height:12mm;width:auto;display:block;margin-bottom:5mm}'
+    . '.bandeau h1{margin:0 0 3mm;font:600 30px/1.15 Gotham,Helvetica,Arial,sans-serif;letter-spacing:-.01em}'
+    . '.bandeau p{margin:0;font:400 14px/1.5 Gotham,Helvetica,Arial,sans-serif;opacity:.9}'
+    . '.corps{padding:10mm 16mm 12mm;flex:1;display:flex;flex-direction:column}'
+    . '.raison{font:600 20px Gotham,Helvetica,Arial,sans-serif;margin:0 0 2mm}'
+    . '.consigne{font:400 13px Gotham,Helvetica,Arial,sans-serif;color:var(--mut);margin:0 0 6mm}'
+    . '.qr{display:block;width:58mm;height:58mm;margin:0 auto 5mm;image-rendering:pixelated}'
+    . '.url{text-align:center;margin-bottom:7mm}'
+    . '.url .lbl{font:400 12px Gotham,Helvetica,Arial,sans-serif;color:var(--mut);margin-bottom:2mm}'
+    . '.url .adr{font:400 13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}'
+    . '.url .exp{font:400 12px Gotham,Helvetica,Arial,sans-serif;color:var(--mut);margin-top:2mm}'
+    . 'h2{font:600 15px Gotham,Helvetica,Arial,sans-serif;margin:0 0 4mm;padding-top:5mm;border-top:.4mm solid var(--bord)}'
+    /* Quatre pistes = deux paires « intitulé / valeur » par ligne. L'intitulé
+       a une largeur fixe pour que les deux colonnes s'alignent ; la valeur
+       prend le reste et peut revenir à la ligne sans pousser sa voisine. */
+    . '.cond{display:grid;grid-template-columns:33mm 1fr 33mm 1fr;gap:1.4mm 4mm;'
+    . 'margin:0;font:400 12.5px/1.35 Gotham,Helvetica,Arial,sans-serif}'
+    . '.cond dt{color:var(--mut)}'
+    . '.cond dd{margin:0;overflow-wrap:anywhere}'
+    . '.pied{margin-top:auto;padding-top:6mm;font:400 11.5px Gotham,Helvetica,Arial,sans-serif;color:var(--mut)}'
+    /* La barre d'action ne s'imprime pas : elle n'existe qu'à l'écran. */
+    . '.barre{position:fixed;top:0;left:0;right:0;background:var(--ruby);color:#fff;padding:10px 16px;'
+    . 'display:flex;align-items:center;gap:14px;font:400 13px Gotham,Helvetica,Arial,sans-serif;z-index:9}'
+    . '.barre button{font:600 13px Gotham,Helvetica,Arial,sans-serif;border:none;border-radius:8px;'
+    . 'background:#fff;color:var(--ruby);padding:8px 16px;cursor:pointer}'
+    . 'body{padding-top:52px}'
+    /* À l'impression la feuille GARDE sa hauteur : c'est elle qui pousse le
+       pied de page en bas, via le margin-top:auto. 296 et non 297 — un A4 vaut
+       297 mm au millimètre près, et arrondir par excès suffisait à faire naître
+       une seconde page vide. */
+    . '@media print{body{background:#fff;padding:0}.barre{display:none}'
+    . '.feuille{width:auto;min-height:296mm;box-shadow:none;margin:0}'
+    . '@page{size:A4;margin:0}'
+    . '*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}'
+    . '</style></head><body>'
+    . '<div class="barre"><button onclick="window.print()">Imprimer · enregistrer en PDF</button>'
+    . '<span>Choisissez « Enregistrer au format PDF » comme destination — la mise en page est déjà au format A4.</span></div>'
+    . '<div class="feuille">'
+    . '<div class="bandeau"><img src="' . $e($logoSrc) . '" alt="L\'Atelier By">'
+    . '<h1>Commandez au bureau</h1>'
+    . '<p>Votre entreprise a ouvert un compte — créez le vôtre en une minute.</p></div>'
+    . '<div class="corps">'
+    . ($r['raison'] ? '<p class="raison">' . $e($r['raison']) . '</p>' : '')
+    . '<p class="consigne">Scannez ce code avec l\'appareil photo de votre téléphone.</p>'
+    . ($qr ? '<img class="qr" src="' . $qr . '" alt="Code QR vers le formulaire d\'inscription">' : '')
+    . '<div class="url"><div class="lbl">Ou tapez cette adresse dans votre navigateur :</div>'
+    . '<div class="adr">' . $e($url) . '</div>'
+    . ($expire ? '<div class="exp">Valable jusqu\'au ' . $e($expire) . '</div>' : '') . '</div>'
+    . ($lignes ? '<h2>Vos conditions</h2><dl class="cond">' . $lignes . '</dl>' : '')
+    . '<p class="pied">Votre compte est transmis à votre boutique livreuse pour validation.<br>'
+    . 'Besoin d\'aide : aide@latelierby.be</p>'
+    . '</div></div></body></html>';
+}
+
 /* ── L'E-MAIL ─────────────────────────────────────────────────────────────── */
 
 /* Le corps HTML — rendu du GABARIT dessiné (mail/bienvenue-bureau.html), pas
