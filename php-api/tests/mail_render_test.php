@@ -110,5 +110,50 @@ else {
   check('aucun marqueur ne survit non plus en cas plein', !preg_match('/\{\{|<!-- (IF|FOR) /', $plein));
 }
 
+echo "\n── le courrier tel que le serveur le construit ──\n";
+/* invite_mail_html() est le seul chemin d'envoi : ce qu'il rend est ce que le
+   client lit. On le teste avec un récapitulatif comme invite_recap() en
+   produit, valeurs manquantes comprises. */
+require_once __DIR__ . '/../invite_doc.php';
+$recapMinimal = ['raison' => 'Asima sp z oo', 'contact' => 'Jan', 'email' => 'jan@asima.be',
+                 'boutique' => "L'Atelier By Anderlecht", 'vouchers' => []];
+$h = invite_mail_html($recapMinimal, 'https://exemple.be/inscription?i=JET', '30/09/2026');
+check('le gabarit est trouvé et rendu', is_string($h) && $h !== '');
+check('aucun marqueur ne survit', is_string($h) && !preg_match('/\{\{|<!-- (IF|FOR) /', $h));
+check('le bouton porte le lien', is_string($h) && strpos($h, 'https://exemple.be/inscription?i=JET') !== false);
+check('aucune condition inventée', is_string($h) && stripos($h, 'franco de port ,') === false);
+// La carte d'un bon a un FOND abricot (l'abricot sert aussi à numéroter les
+// étapes : c'est bien « background-color » qu'il faut chercher).
+check('aucune carte de bon quand la liste est vide',
+  is_string($h) && strpos($h, 'background-color:#C87A3F') === false);
+// Les commentaires du gabarit expliquent le fichier, pas le message : ils ne
+// doivent pas partir chez le client, qui peut afficher la source.
+check('aucun commentaire de gabarit dans le message',
+  is_string($h) && !preg_match('/<!--(?!\[if)/', $h));
+check('les commentaires conditionnels Outlook survivent',
+  is_string($h) && strpos($h, '<!--[if') !== false && strpos($h, '<![endif]') !== false);
+
+$recapPlein = $recapMinimal + ['tva' => 'BE 0418.467.437', 'adresse' => 'Zoning Sud, 1300 Wavre',
+  'etage' => '2e', 'tournee' => 'Wavre & LLN SUD', 'jours' => 'Mar · Jeu', 'horaire' => '09:00–10:30',
+  'cutoff' => '17:00 la veille', 'frais' => '6 €', 'franco' => '150 €', 'remise' => '8 %',
+  'paiement' => 'Facturation différée'];
+// Bons NOMMÉS, comme invite_recap les produit à la création.
+$recapPlein['vouchers'] = [['code' => 'BW1', 'titre' => 'Voucher de bienvenue'],
+                           ['code' => 'PDJ2026', 'titre' => 'Découverte petit-déjeuner']];
+$h2 = invite_mail_html($recapPlein, 'https://exemple.be/inscription?i=JET', '30/09/2026');
+check('les deux bons sont des cartes distinctes',
+  substr_count($h2, 'BW1') === 1 && substr_count($h2, 'PDJ2026') === 1);
+check('l’heure limite de commande n’est pas perdue', strpos($h2, '17:00 la veille') !== false);
+check('les frais de livraison non plus', strpos($h2, '6 €') !== false);
+check('la fenêtre de livraison est là', strpos($h2, '09:00–10:30') !== false);
+check('aucun marqueur ne survit non plus en cas plein', !preg_match('/\{\{|<!-- (IF|FOR) /', $h2));
+check('le libellé saisi est le titre de la carte',
+  strpos($h2, 'Découverte petit-déjeuner') !== false);
+// Un renvoi ultérieur ne dispose que des codes (ws_vouchers ne stocke pas les
+// libellés) : la carte se rend quand même, sans titre inventé.
+$h3 = invite_mail_html(array_merge($recapPlein, ['vouchers' => ['BW1']]), 'https://exemple.be/i', null);
+check('un bon sans libellé se rend sans titre inventé',
+  strpos($h3, 'BW1') !== false && stripos($h3, 'Bon de bienvenue') === false);
+
 echo "\n" . ($F ? "$F échec(s) sur $T" : "tout est vert ($T contrôles)") . "\n";
 exit($F ? 1 : 0);

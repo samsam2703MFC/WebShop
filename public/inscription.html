@@ -212,7 +212,11 @@
      que l'URL soit /webshop/inscription ou /webshop/inscription.html, le
      dossier courant est le même. Aucune constante à tenir à jour. */
   var API = location.pathname.replace(/[^/]*$/, '') + 'api';
-  var JETON = new URLSearchParams(location.search).get('i') || '';
+  /* Deux formes du même lien : ?i= le jeton signé reçu par e-mail, ?c= le code
+     court imprimé sous le QR de l'affiche (et recopiable à la main). Le serveur
+     accepte les deux ; la page transmet ce qu'elle a reçu, sans le réécrire. */
+  var Q = new URLSearchParams(location.search);
+  var JETON = Q.get('i') || Q.get('c') || '';
 
   var inv = null;             // ce que le serveur a renvoyé pour ce jeton
   var vu  = {};               // champs déjà quittés : on n'accuse pas avant
