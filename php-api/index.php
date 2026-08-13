@@ -4319,6 +4319,31 @@ function dispatch($m, $p) {
     // Fragment WHERE de portée pour une colonne shop (réseau → 1=1). $shopId est un int contrôlé.
     $scope = function ($col) use ($shopId) { return $shopId ? "$col = " . (int) $shopId : '1=1'; };
 
+    /* PORTÉE DES ÉCRITURES CLIENT. La LISTE est cloisonnée depuis toujours
+       (preferred_shop_id), pas les écritures : elles prenaient l'id reçu et
+       écrivaient. L'id d'un client d'une autre boutique suffisait donc à le
+       bloquer, le désactiver, changer son code postal ou sa facturation — sans
+       jamais l'avoir vu à l'écran.
+       La règle est EXACTEMENT celle de la lecture : ce qui n'est pas visible
+       n'est pas modifiable. Portée réseau ($shopId nul) = accès complet, comme
+       la liste. Schéma sans colonne de rattachement = on ne refuse pas à tort. */
+    $clientShopCol = col_exists('client', 'preferred_shop_id') ? 'preferred_shop_id'
+                   : (col_exists('client', 'id_main_shop') ? 'id_main_shop' : null);
+    $clientGuard = function ($id) use ($shopId, $clientShopCol) {
+      if (!$shopId || !$clientShopCol) return;
+      if (!row("SELECT 1 x FROM client WHERE id=? AND $clientShopCol=?", [(int) $id, (int) $shopId]))
+        json_out(['ok' => false,
+          'error' => 'Client #' . (int) $id . ' hors de votre boutique — modification refusée.'], 403);
+    };
+    // Même règle pour un bureau : il porte shop_id, et un bureau d'une autre
+    // boutique ne doit pas pouvoir être rattaché à l'un de vos clients.
+    $officeGuard = function ($id) use ($shopId) {
+      if (!$shopId || !col_exists('ws_offices', 'shop_id')) return;
+      if (!row("SELECT 1 x FROM ws_offices WHERE id=? AND shop_id=?", [(int) $id, (int) $shopId]))
+        json_out(['ok' => false,
+          'error' => 'Bureau #' . (int) $id . ' hors de votre boutique — rattachement refusé.'], 403);
+    };
+
     // ── Contexte session (admin_token → pas de bo_user ; contexte minimal). ──
     if ($m === 'GET' && $p === '/franchisee/me') {
       // Identité ET position de la BOUTIQUE. L'adresse (address_line + zip) est
@@ -4692,6 +4717,10 @@ function dispatch($m, $p) {
     // ── Renvoi d'un client office vers le franchisé couvrant son CP (choix 1 du
     //    contrôle TVA vs tournée) : crée/active la fiche client rattachée à la
     //    boutique dont la chalandise couvre le CP → son bureau pending naît chez elle. ──
+    /* PORTÉE RÉSEAU ASSUMÉE — aiguillage d'une demande B2B vers le franchisé
+       qui COUVRE le code postal (zip_shop). C'est tout l'objet de la route : la
+       cloisonner l'empêcherait de router hors de sa propre zone. La boutique
+       cible est décidée par le CP, jamais par le client de l'appel. */
     if ($m === 'POST' && $p === '/franchisee/route-office') {
       $b = body();
       $cp = preg_replace('/\D+/', '', (string) ($b['cp'] ?? ''));
@@ -4787,14 +4816,31 @@ function dispatch($m, $p) {
     // ── Emails bureau (ws_office_emails) — dérivés des contacts ws_offices. ──
     if ($m === 'GET' && $p === '/franchisee/ws-office-emails') {
       if (!$tblExists('ws_offices')) json_out([]);
-      $rs = rows("SELECT name, email FROM ws_offices WHERE email IS NOT NULL AND email <> '' AND active=1 ORDER BY name LIMIT 300");
+      // Cloisonné : cette liste servait les bureaux de TOUT le réseau, adresses
+      // e-mail comprises. Un franchisé y lisait le carnet d'adresses des autres.
+      $rs = rows("SELECT name, email FROM ws_offices WHERE email IS NOT NULL AND email <> '' AND active=1"
+        . ((col_exists('ws_offices', 'shop_id') && $shopId) ? " AND shop_id = " . (int) $shopId : "")
+        . " ORDER BY name LIMIT 300");
       json_out(array_map(fn ($f) => ['bureau' => $f['name'], 'addr' => $f['email'], 'role' => 'Principal'], $rs));
     }
 
     // ── Départements B2B (b2b_client_company_department) — table ERP si synchronisée. ──
     if ($m === 'GET' && $p === '/franchisee/b2b-departments') {
       if (!$tblExists('b2b_client_company_department')) json_out([]);
-      json_out(rows("SELECT * FROM b2b_client_company_department LIMIT 500"));
+      /* Cloisonné par le CLIENT porteur : la table servait ses 500 premières
+         lignes, tous réseaux confondus — les départements des clients des
+         autres boutiques compris. Le nom de la colonne de rattachement varie
+         selon la version du schéma ERP, d'où la résolution défensive ; sans
+         aucune d'elles, on ne peut pas cloisonner, donc on ne sert rien plutôt
+         que de servir tout. */
+      $depCli = col_exists('b2b_client_company_department', 'id_client') ? 'id_client'
+              : (col_exists('b2b_client_company_department', 'client_id') ? 'client_id' : null);
+      if (!$shopId || !$clientShopCol)
+        json_out(rows("SELECT * FROM b2b_client_company_department LIMIT 500"));
+      if (!$depCli) json_out([]);
+      json_out(rows("SELECT d.* FROM b2b_client_company_department d
+                       JOIN client c ON CAST(c.id AS CHAR) = CAST(d.$depCli AS CHAR)
+                      WHERE c.$clientShopCol = ? LIMIT 500", [(int) $shopId]));
     }
 
     // ── Menu « Clients » — clients (table ERP client) rattachés aux bureaux. ──
@@ -4933,18 +4979,30 @@ function dispatch($m, $p) {
       $b = body();
       $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['ok' => false, 'error' => 'id manquant'], 400);
+      $clientGuard($id);
       $sets = []; $args = [];
       if (array_key_exists('office_id', $b) && col_exists('client', 'office_id')) {
         $ov = ($b['office_id'] === null || $b['office_id'] === '') ? null : (int) $b['office_id'];
         if ($ov !== null && $tblExists('ws_offices') && !row("SELECT id FROM ws_offices WHERE id=?", [$ov]))
           json_out(['ok' => false, 'error' => 'office inconnu'], 400);
+        if ($ov !== null) $officeGuard($ov);
         $sets[] = "office_id=?"; $args[] = $ov;
       }
       if (array_key_exists('department_id', $b) && col_exists('client', 'department_id')) {
         $dv = ($b['department_id'] === null || $b['department_id'] === '') ? null : (int) $b['department_id'];
-        if ($dv !== null && $tblExists('b2b_client_company_department')
-            && !row("SELECT id FROM b2b_client_company_department WHERE id=?", [$dv]))
-          json_out(['ok' => false, 'error' => 'département inconnu'], 400);
+        // Le département doit appartenir à un client de CETTE boutique : sans
+        // ce contrôle, on rattachait son propre client au département d'une
+        // autre — les deux fiches se retrouvaient liées entre boutiques.
+        if ($dv !== null && $tblExists('b2b_client_company_department')) {
+          $dCli = col_exists('b2b_client_company_department', 'id_client') ? 'id_client'
+                : (col_exists('b2b_client_company_department', 'client_id') ? 'client_id' : null);
+          $okDep = ($shopId && $clientShopCol && $dCli)
+            ? row("SELECT d.id FROM b2b_client_company_department d
+                     JOIN client c ON CAST(c.id AS CHAR) = CAST(d.$dCli AS CHAR)
+                    WHERE d.id=? AND c.$clientShopCol=?", [$dv, (int) $shopId])
+            : row("SELECT id FROM b2b_client_company_department WHERE id=?", [$dv]);
+          if (!$okDep) json_out(['ok' => false, 'error' => 'département inconnu ou hors de votre boutique'], 400);
+        }
         $sets[] = "department_id=?"; $args[] = $dv;
       }
       if (!$sets) json_out(['ok' => false, 'error' => 'rien à rattacher (office_id / department_id)'], 400);
@@ -4958,6 +5016,7 @@ function dispatch($m, $p) {
       $b = body();
       $id = (int) ($b['id'] ?? 0);
       if (!$id || !col_exists('client', 'active')) json_out(['ok' => false, 'error' => 'id ou colonne active manquant'], 400);
+      $clientGuard($id);
       q("UPDATE client SET active=? WHERE id=?", [!empty($b['active']) ? 1 : 0, $id]);
       json_out(['ok' => true, 'active' => !empty($b['active'])]);
     }
@@ -4969,6 +5028,7 @@ function dispatch($m, $p) {
       $zip = trim((string) ($b['zip'] ?? ''));
       if (!$id) json_out(['ok' => false, 'error' => 'id manquant'], 400);
       if (!preg_match('/^\d{4}$/', $zip)) json_out(['ok' => false, 'error' => 'code postal invalide (4 chiffres)'], 400);
+      $clientGuard($id);
       q("UPDATE client SET zip=? WHERE id=?", [$zip, $id]);
       json_out(['ok' => true, 'zip' => $zip]);
     }
@@ -4982,6 +5042,7 @@ function dispatch($m, $p) {
       $b = body();
       $id = (int) ($b['id'] ?? 0);
       if (!$id || !col_exists('client', 'office_delivery')) json_out(['ok' => false, 'error' => 'id ou colonne office_delivery manquant'], 400);
+      $clientGuard($id);
       $on = !empty($b['enabled']) ? 1 : 0;
       // Activer force is_b2b=1 (le trigger ne crée l'office QUE si is_b2b=1 —
       // un client « personne morale » via invoice_vat seul serait sinon ignoré)
@@ -5051,6 +5112,7 @@ function dispatch($m, $p) {
       $b = body();
       $id = (int) ($b['id'] ?? 0);
       if (!$id || !col_exists('client', 'blocked')) json_out(['ok' => false, 'error' => 'id ou colonne blocked manquant'], 400);
+      $clientGuard($id);
       q("UPDATE client SET blocked=? WHERE id=?", [!empty($b['blocked']) ? 1 : 0, $id]);
       json_out(['ok' => true, 'blocked' => !empty($b['blocked'])]);
     }
@@ -5060,6 +5122,7 @@ function dispatch($m, $p) {
       $b = body();
       $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['ok' => false, 'error' => 'id manquant'], 400);
+      $clientGuard($id);
       $corp = !empty($b['corporate']);
       $vat  = strtoupper(preg_replace('/[^A-Za-z0-9+*]/', '', (string) ($b['vat'] ?? '')));
       if ($corp && $vat === '') json_out(['ok' => false, 'error' => 'TVA (VIES) obligatoire pour une personne morale'], 400);
@@ -6031,6 +6094,9 @@ function dispatch($m, $p) {
     }
 
     // ── Stats réseau — agrégats RÉELS 30 jours (toutes boutiques). ──
+    /* PORTÉE RÉSEAU ASSUMÉE — écran « Stats réseau consolidées ». Ces quatre
+       KPI comparent la boutique au réseau : les cloisonner les viderait de leur
+       sens. Seuls des agrégats sortent d'ici, jamais une ligne nominative. */
     if ($m === 'GET' && $p === '/franchisee/fr-net-stats') {
       if (!$hasOrders) json_out([]);
       $d = row("SELECT COALESCE(SUM(total),0) ca, COUNT(*) n, COALESCE(AVG(total),0) pm,
