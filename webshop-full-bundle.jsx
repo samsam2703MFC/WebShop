@@ -263,9 +263,14 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
         <span className="ws-mode__lbl-full">Click &amp; Collect</span>
         {collectCutoffPassed && <span className="ws-mode__cutoff"> · Fermé</span>}
       </button>
+      {/* Pas d'attribut `disabled` : un bouton désactivé n'émet aucun clic, donc
+          le motif du refus ne pouvait jamais s'afficher — on retombait sur le
+          bouton qui « ne fait rien ». L'apparence reste celle d'une option
+          indisponible (is-disabled) et aria-disabled l'annonce aux lecteurs
+          d'écran, mais le clic sert enfin à dire POURQUOI. */}
       <button className={`ws-mode ws-mode--delivery${mode === 'delivery' ? ' is-active' : ''}${deliveryCutoffPassed ? ' is-disabled' : ''}`}
         onClick={() => onChange('delivery')} role="tab" aria-selected={mode === 'delivery'} aria-label="Livraison au bureau"
-        disabled={deliveryCutoffPassed}
+        aria-disabled={deliveryCutoffPassed || undefined}
         title={delivTitle}>
         <Pict d={ICONS.truck} s={14}/>
         <span className="ws-mode__lbl-full">Livraison au bureau</span>
@@ -5416,8 +5421,7 @@ function ShopFrame({ variant }) {
         /* Le motif reste à l'écran jusqu'à ce qu'on le ferme : il porte une
            consigne, et une bulle qui s'efface toute seule se lit rarement en
            entier sur un téléphone. */
-        <div className="ws-toast ws-toast--info" role="alert"
-             style={{ background: 'var(--color-secondary)', color: 'var(--color-on-abricot)' }}>
+        <div className="ws-toast ws-toast--notice" role="alert">
           <div>
             <div className="ws-toast__title">{notice.titre}</div>
             <div className="ws-toast__sub" style={{ opacity: 0.95 }}>{notice.texte}</div>

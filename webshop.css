@@ -3108,6 +3108,28 @@
   color: #fff;
   display: grid; place-items: center;
 }
+/* Message d'explication : POSITION FIXE, pas absolue.
+   .ws-toast est `position: absolute`, donc placé au bas du CONTENEUR — sur une
+   longue liste de produits, il s'affichait bien en dehors du champ visible.
+   Un message que personne ne voit ne vaut pas mieux que pas de message : c'est
+   même pire, puisqu'on croit l'avoir écrit.
+   Il passe aussi au-dessus des modales (compte, connexion), qui s'ouvrent en
+   même temps que lui et le recouvraient. */
+.ws-toast--notice {
+  position: fixed;
+  left: 50%; right: auto;
+  bottom: calc(74px + env(safe-area-inset-bottom));   /* au-dessus de la barre d'onglets */
+  width: min(520px, calc(100vw - 24px));
+  z-index: 300;                                       /* modales : 90–100 */
+  background: var(--color-secondary);
+  color: var(--color-on-abricot);
+  align-items: flex-start;
+}
+.ws-toast--notice .ws-toast__sub { opacity: 0.95; line-height: 1.45; }
+@media (min-width: 721px) {
+  .ws-toast--notice { bottom: 22px; }                 /* pas de barre d'onglets */
+}
+
 .ws-toast__title { font-size: 13px; font-weight: 600; }
 .ws-toast__sub   { font-size: 11px; opacity: 0.78; }
 
