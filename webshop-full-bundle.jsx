@@ -2410,6 +2410,11 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   const [approvedOffices, setApprovedOffices] = useState([]);
   const [approvedOfficeTours, setApprovedOfficeTours] = useState({});
   const [pickedOfficeId, setPickedOfficeId] = useState('');
+  // Recherche du bureau à lier. Une liste déroulante oblige à parcourir
+  // l'inventaire pour retrouver un nom qu'on connaît déjà ; on tape ce qu'on
+  // cherche. La saisie NE CRÉE RIEN : seule une société déjà validée par
+  // l'Atelier peut être liée. Absente de la liste → demande d'ajout ci-dessous.
+  const [officeQuery, setOfficeQuery] = useState('');
   const [newOffice, setNewOffice] = useState({
     name: '', vat: '', address: '', postalCode: '', city: '',
     contact: '', email: '', phone: '', preferredShopId: '',
@@ -3144,14 +3149,48 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             {!officeBusy && approvedOffices.length === 0 && (
               <p className="ws-acc__hint">Aucun bureau validé pour cette boutique. Vous pouvez demander l'ajout du vôtre ci-dessous.</p>
             )}
-            {!officeBusy && approvedOffices.length > 0 && (
-              <select className="ws-acc__input" value={pickedOfficeId} onChange={(e) => { setPickedOfficeId(e.target.value); setOfficeErr(''); }}>
-                <option value="">— Sélectionnez un bureau —</option>
-                {approvedOffices.map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}{o.address ? ` · ${o.address}` : ''}</option>
-                ))}
-              </select>
-            )}
+            {!officeBusy && approvedOffices.length > 0 && (() => {
+              // Comparaison insensible à la casse ET aux accents : « Sarl Chênes »
+              // doit sortir sur « chenes ». Recherche sur le nom ET l'adresse —
+              // un bureau se retrouve souvent par sa rue.
+              const norm = (v) => String(v || '').toLowerCase()
+                .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+              const q = norm(officeQuery).trim();
+              const hits = q === '' ? approvedOffices
+                : approvedOffices.filter((o) => norm(o.name).includes(q) || norm(o.address).includes(q));
+              return (
+                <div className="ws-acc__pick">
+                  <input
+                    type="search" className="ws-acc__input" value={officeQuery}
+                    onChange={(e) => { setOfficeQuery(e.target.value); setOfficeErr(''); }}
+                    placeholder="Rechercher une société ou une adresse…"
+                    aria-label="Rechercher un bureau" autoComplete="off"/>
+                  {hits.length === 0 ? (
+                    <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>
+                      Aucune société ne correspond à « {officeQuery.trim()} » parmi les {approvedOffices.length} validées
+                      pour cette boutique. Si c'est la vôtre, demandez son ajout ci-dessous.
+                    </p>
+                  ) : (
+                    <ul className="ws-acc__pick-list" role="listbox" aria-label="Bureaux validés">
+                      {hits.map((o) => (
+                        <li key={o.id}>
+                          <button type="button" role="option"
+                            aria-selected={String(pickedOfficeId) === String(o.id)}
+                            className={'ws-acc__pick-item' + (String(pickedOfficeId) === String(o.id) ? ' is-picked' : '')}
+                            onClick={() => { setPickedOfficeId(String(o.id)); setOfficeErr(''); }}>
+                            <span className="ws-acc__pick-name">{o.name}</span>
+                            {o.address ? <span className="ws-acc__pick-addr">{o.address}</span> : null}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {q !== '' && hits.length > 0 && (
+                    <p className="ws-acc__pick-count">{hits.length} résultat{hits.length > 1 ? 's' : ''} sur {approvedOffices.length}</p>
+                  )}
+                </div>
+              );
+            })()}
             {officeErr && <p className="ws-form__err">{officeErr}</p>}
             <button type="button" className="ws-acc__addlink" onClick={() => { setOfficeErr(''); setOfficeStep('add'); }}>Mon bureau n'est pas dans la liste</button>
             <div className="ws-acc__row-foot">
