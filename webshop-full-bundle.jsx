@@ -4917,6 +4917,8 @@ function ShopFrame({ variant }) {
   //  • retirer UNE ligne relâchait TOUT le panier (release sans productId).
   const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const [stockErr, setStockErr] = React.useState('');
+  // Motif du refus de la livraison au bureau — affiché, jamais deviné.
+  const [deliveryNotice, setDeliveryNotice] = React.useState(null);
   function refreshStock() {
     return window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {}));
   }
@@ -5084,16 +5086,56 @@ function ShopFrame({ variant }) {
   }, [deliveryCutoffPassed, mode]);
 
   // Design system rule: changing mode OR date clears the basket instantly.
+  /* POURQUOI la livraison au bureau est refusée. Cinq situations distinctes
+     menaient au même geste muet — ouverture du panneau compte, ou rien du tout
+     dans le cas de l'heure limite. Le client voyait son écran changer sans
+     comprendre, et n'avait aucun moyen de savoir quoi corriger.
+     Chaque cas dit donc CE QUI MANQUE et CE QU'IL FAUT FAIRE. Aucun n'est
+     inventé : ils découlent de userCanDeliver = bureau lié ET validé ET
+     rattaché à une tournée. */
+  function deliveryBlockReason() {
+    if (!user) return {
+      titre: 'Connectez-vous pour la livraison au bureau',
+      texte: 'Ce mode est réservé aux comptes rattachés à un bureau livré. Connectez-vous ou créez un compte.',
+    };
+    if (!userOffice) return {
+      titre: 'Aucun bureau lié à votre compte',
+      texte: 'Choisissez votre société dans « Livraison au bureau », ou demandez son ajout si elle n’y figure pas.',
+    };
+    if (userOffice.status !== 'validated') return {
+      titre: 'Votre bureau attend la validation de l’Atelier',
+      texte: 'La demande pour « ' + (userOffice.name || 'votre bureau') + ' » est enregistrée. Vous serez livrable dès qu’elle sera acceptée ; en attendant, commandez en Click & Collect.',
+    };
+    if (!userTour) return {
+      titre: 'Votre bureau n’est pas encore sur une tournée',
+      texte: '« ' + (userOffice.name || 'Votre bureau') + ' » est validé, mais votre Atelier doit encore le rattacher à une tournée de livraison. Cela ne dépend pas de vous.',
+    };
+    return null;
+  }
+
   function handleMode(next) {
     if (next === mode) return;
-    // Gating: Livraison only if logged in & office linked & tour set
+    // Livraison : compte connecté, bureau lié, validé, et rattaché à une tournée.
     if (next === 'delivery' && !userCanDeliver) {
-      if (!user) { setAuthOpen(true); return; }
-      setAccountOpen(true);
+      const why = deliveryBlockReason();
+      setDeliveryNotice(why);
+      // On ouvre l'écran où l'action se fait — mais seulement quand il y a une
+      // action possible. Attendre une validation ou une tournée ne se règle pas
+      // depuis le compte : y renvoyer ferait chercher un réglage inexistant.
+      if (!user) setAuthOpen(true);
+      else if (!userOffice) setAccountOpen(true);
       return;
     }
-    // Gating: no same-day delivery after 10:00
-    if (next === 'delivery' && deliveryCutoffPassed) return;
+    // Livraison le jour même : refusée passé l'heure limite. Ce cas ne faisait
+    // RIEN — le bouton semblait cassé.
+    if (next === 'delivery' && deliveryCutoffPassed) {
+      setDeliveryNotice({
+        titre: 'Livraison du jour clôturée',
+        texte: 'Les commandes en livraison au bureau se prennent avant ' + (deliveryCutoffLabel || '11h00')
+             + '. Choisissez une date ultérieure, ou passez en Click & Collect.',
+      });
+      return;
+    }
     stockReleaseAll();
     setMode(next);
     setBasket([]);
@@ -5321,6 +5363,21 @@ function ShopFrame({ variant }) {
               setPrefNudge(null);
             }}>Définir comme préférée</button>
           </div>
+        </div>
+      )}
+      {deliveryNotice && (
+        /* Le motif reste à l'écran jusqu'à ce qu'on le ferme : il porte une
+           consigne, et une bulle qui s'efface toute seule se lit rarement en
+           entier sur un téléphone. */
+        <div className="ws-toast ws-toast--info" role="alert"
+             style={{ background: 'var(--color-secondary)', color: 'var(--color-on-abricot)' }}>
+          <div>
+            <div className="ws-toast__title">{deliveryNotice.titre}</div>
+            <div className="ws-toast__sub" style={{ opacity: 0.95 }}>{deliveryNotice.texte}</div>
+          </div>
+          <button type="button" onClick={() => setDeliveryNotice(null)}
+            style={{ marginLeft: 'auto', background: 'transparent', border: 0, color: 'inherit',
+                     cursor: 'pointer', font: '600 13px var(--font-ui)' }}>Fermer</button>
         </div>
       )}
       {stockErr && (
