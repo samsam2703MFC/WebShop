@@ -152,7 +152,12 @@ jobs:
           }
           verifie "$CSS" 'ws-acc__pick-item'  'recherche de societe (liste deroulante remplacee)'
           verifie "$CSS" 'ws-mode__lbl-full'  'libelles du selecteur de mode en mobile'
-          verifie "$JS"  'Rechercher une '    'placeholder de la recherche de societe'
+          # Marqueur choisi sur le COMPORTEMENT, pas sur une tournure de phrase :
+          # « Rechercher une… » était un placeholder, il a été reformulé et le
+          # controle a bloqué un deploiement pourtant correct. Cette phrase-ci
+          # décrit la règle (seuls les bureaux desservis sont proposés) : elle ne
+          # bougera que si la règle change — et alors le controle DOIT alerter.
+          verifie "$JS"  'bureaux desservis'  'recherche cote serveur, bureaux desservis uniquement'
           absent  "$JS"  'lectionner un bureau' 'plus aucune liste deroulante de bureaux'
           absent  "$JS"  'lectionnez un bureau —' 'plus aucun libelle de deroulante residuel'
           # Sans Cache-Control, le navigateur applique sa fraicheur heuristique et
@@ -178,6 +183,8 @@ jobs:
           fi
           if [ "$fail" != "0" ]; then
             echo "La page servie ne porte pas le build qui vient d etre deploye."
+            echo "Si le libelle a simplement ete reformule, c est le MARQUEUR qu il faut"
+            echo "mettre a jour dans ce workflow — pas le code."
             exit 1
           fi
 
