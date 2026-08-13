@@ -51,8 +51,9 @@ function pdf_image($nom, $x, $y, $w, $h, $rgb = [0, 0, 0]) {
                  $rgb[0], $rgb[1], $rgb[2], $w, $h, $x, $y, $nom);
 }
 
-/* Assemble le document. $images : ['Im0' => ['bits' => données 1bpp, 'n' => côté]].
-   Une seule page, format donné en points (A4 = 595 × 842). */
+/* Assemble le document. $images : ['Im0' => ['bits' => données 1bpp, 'w' => …,
+   'h' => …]] — 'n' accepté pour une image carrée (le QR). Une seule page,
+   format donné en points (A4 = 595 × 842). */
 function pdf_document($contenu, array $images = [], $largeur = 595.28, $hauteur = 841.89) {
   $obj = [];                       // les objets, indexés à partir de 1
   $police = function ($nom) { return "<< /Type /Font /Subtype /Type1 /BaseFont /$nom /Encoding /WinAnsiEncoding >>"; };
@@ -66,7 +67,9 @@ function pdf_document($contenu, array $images = [], $largeur = 595.28, $hauteur 
   foreach ($images as $nom => $img) {
     $ressImg .= "/$nom $n 0 R ";
     $data = gzcompress($img['bits'], 9);
-    $obj[$n] = "<< /Type /XObject /Subtype /Image /Width {$img['n']} /Height {$img['n']}"
+    $iw = (int) ($img['w'] ?? $img['n'] ?? 0);
+    $ih = (int) ($img['h'] ?? $img['n'] ?? 0);
+    $obj[$n] = "<< /Type /XObject /Subtype /Image /Width $iw /Height $ih"
              . " /ImageMask true /Decode [1 0] /BitsPerComponent 1 /Filter /FlateDecode"
              . " /Length " . strlen($data) . " >>\nstream\n" . $data . "\nendstream";
     $n++;

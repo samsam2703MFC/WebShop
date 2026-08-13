@@ -155,13 +155,30 @@ function invite_pdf(array $r, $url, $expire = null) {
   $noir = [0.13, 0.13, 0.13];
   $bord = [0.85, 0.83, 0.80];
 
-  $c  = pdf_rect(0, $H - 118, $L, 118, $ruby);
-  $c .= pdf_texte(48, $H - 52, 'F2', 11, 'L\'ATELIER BY', [1, 1, 1]);
-  $c .= pdf_texte(48, $H - 82, 'F2', 24, 'Commandez au bureau', [1, 1, 1]);
-  $c .= pdf_texte(48, $H - 104, 'F1', 12,
+  /* Bandeau : le LOGO, pas son nom en lettres. Il est posé en masque 1 bit
+     peint en blanc (php-api/logo_mask.php, généré depuis le PNG) — la seule
+     forme d'image que l'écrivain PDF sait poser, et celle qui ne dépend
+     d'aucune extension du serveur. Si le masque manque, le nom en toutes
+     lettres reprend sa place : une affiche sans logo vaut mieux qu'une affiche
+     sans en-tête. */
+  $c  = pdf_rect(0, $H - 140, $L, 140, $ruby);
+  $logo = @include __DIR__ . '/logo_mask.php';
+  $imgs = [];
+  if (is_array($logo) && !empty($logo['bits'])) {
+    // Le logo porte DEUX lignes (le nom et sa signature) : il lui faut sa
+    // propre hauteur, sinon le titre vient mordre dessus.
+    $lh = 30;                                  // hauteur imprimée, en points
+    $lw = $lh * ($logo['w'] / max(1, $logo['h']));
+    $c .= pdf_image('Lg0', 48, $H - 38 - $lh, $lw, $lh, [1, 1, 1]);
+    $imgs['Lg0'] = ['bits' => $logo['bits'], 'w' => $logo['w'], 'h' => $logo['h']];
+  } else {
+    $c .= pdf_texte(48, $H - 52, 'F2', 11, 'L\'ATELIER BY', [1, 1, 1]);
+  }
+  $c .= pdf_texte(48, $H - 98, 'F2', 24, 'Commandez au bureau', [1, 1, 1]);
+  $c .= pdf_texte(48, $H - 120, 'F1', 12,
         'Votre entreprise a ouvert un compte — créez le vôtre en une minute.', [1, 1, 1]);
 
-  $y = $H - 152;
+  $y = $H - 174;
   if ($r['raison']) { $c .= pdf_texte(48, $y, 'F2', 15, $r['raison'], $noir); $y -= 20; }
   $c .= pdf_texte(48, $y, 'F1', 11, 'Scannez ce code avec l\'appareil photo de votre téléphone.', $gris);
   $y -= 26;
@@ -208,7 +225,8 @@ function invite_pdf(array $r, $url, $expire = null) {
   $c .= pdf_texte(48, 54, 'F1', 9,
         'Votre compte est transmis à votre boutique livreuse pour validation. Besoin d\'aide : aide@latelierby.be', $gris);
 
-  return pdf_document($c, ['Im0' => ['bits' => $bits, 'n' => $n]], $L, $H);
+  $imgs['Im0'] = ['bits' => $bits, 'n' => $n];
+  return pdf_document($c, $imgs, $L, $H);
 }
 
 /* ── L'E-MAIL ─────────────────────────────────────────────────────────────── */

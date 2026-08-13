@@ -5276,6 +5276,88 @@ function dispatch($m, $p) {
                       WHERE c.$clientShopCol = ? LIMIT 500", [(int) $shopId]));
     }
 
+    /* ── UN département : créer, renommer, supprimer ──────────────────────────
+       L'écriture des départements passait par /franchisee/save, qui remplace
+       une table ENTIÈRE. Sur une table ERP rattachée par id_client (entier),
+       depuis un écran qui ne connaît que la RAISON SOCIALE, c'était intenable :
+       la route la refuse (409) — à raison, un DELETE intégral y a déjà vidé la
+       table une fois — et l'écran continuait pourtant de la demander. Le
+       bandeau annonçait donc un refus à chaque enregistrement. Un bandeau
+       permanent n'est plus lu : c'est ainsi qu'une vraie panne passe inaperçue.
+
+       On écrit donc UNE LIGNE à la fois, rattachée au client RÉEL résolu depuis
+       sa raison sociale, et bornée à la boutique. Rien d'inventé : sans client
+       correspondant, on refuse en le disant, au lieu de fabriquer un code. ── */
+    if ($m === 'POST' && $p === '/franchisee/b2b-department') {
+      if (!$tblExists('b2b_client_company_department'))
+        json_out(['ok' => false, 'error' => 'Table b2b_client_company_department absente de cette base.'], 501);
+      $DT   = 'b2b_client_company_department';
+      $b    = body();
+      $dKey = col_exists($DT, 'id_client') ? 'id_client' : (col_exists($DT, 'client_id') ? 'client_id' : null);
+      $dNam = col_exists($DT, 'name') ? 'name' : (col_exists($DT, 'dept') ? 'dept' : null);
+      if (!$dKey || !$dNam)
+        json_out(['ok' => false, 'error' => 'Schéma inattendu : ni colonne de rattachement client, ni colonne de nom.'], 501);
+
+      // Portée : le département suit son client, et le client suit la boutique.
+      $scopeSql  = ($shopId && $clientShopCol) ? " AND c.$clientShopCol = " . (int) $shopId : "";
+      $ligneAMoi = function ($id) use ($DT, $dKey, $scopeSql) {
+        return row("SELECT d.id FROM $DT d JOIN client c ON CAST(c.id AS CHAR) = CAST(d.$dKey AS CHAR)
+                     WHERE d.id = ?$scopeSql", [(int) $id]);
+      };
+
+      if (!empty($b['delete'])) {
+        $id = (int) ($b['id'] ?? 0);
+        if (!$id) json_out(['ok' => false, 'error' => 'Département à supprimer non précisé.'], 400);
+        if (!$ligneAMoi($id)) json_out(['ok' => false, 'error' => 'Département inconnu, ou rattaché à un client d’une autre boutique.'], 404);
+        q("DELETE FROM $DT WHERE id = ?", [$id]);
+        json_out(['ok' => true, 'deleted' => $id]);
+      }
+
+      $nom = trim((string) ($b['dept'] ?? ($b['name'] ?? '')));
+      if ($nom === '') json_out(['ok' => false, 'error' => 'Nom du département requis.'], 400);
+
+      // Client porteur : par id s'il est fourni, sinon par raison sociale —
+      // c'est ce que l'écran connaît. La recherche reste bornée à la boutique.
+      $cid = (int) ($b['clientId'] ?? 0);
+      $soc = trim((string) ($b['company'] ?? ''));
+      if (!$cid && $soc !== '') {
+        $c = row("SELECT id FROM client WHERE company_name = ?"
+               . (($shopId && $clientShopCol) ? " AND $clientShopCol = " . (int) $shopId : "")
+               . " ORDER BY id LIMIT 1", [$soc]);
+        $cid = (int) ($c['id'] ?? 0);
+      }
+      if (!$cid)
+        json_out(['ok' => false, 'error' => $soc === ''
+          ? 'Aucune société indiquée — un département se rattache à un client B2B.'
+          : 'Aucun client B2B « ' . $soc . ' » dans votre boutique — créez la société avant son département.'], 409);
+      if ($shopId && $clientShopCol && !row("SELECT 1 x FROM client WHERE id = ? AND $clientShopCol = " . (int) $shopId, [$cid]))
+        json_out(['ok' => false, 'error' => 'Ce client appartient à une autre boutique.'], 403);
+
+      // Colonnes annexes : écrites SEULEMENT si elles existent (schéma ERP variable).
+      $opt = [];
+      foreach (['company' => $soc, 'site' => (string) ($b['site'] ?? ''),
+                'office' => (string) ($b['office'] ?? ''),
+                'contact' => (string) ($b['contact'] ?? '')] as $c2 => $v2)
+        if (col_exists($DT, $c2)) $opt[$c2] = $v2;
+      $hasEff = col_exists($DT, 'effectif');
+
+      $id = (int) ($b['id'] ?? 0);
+      if ($id) {
+        if (!$ligneAMoi($id)) json_out(['ok' => false, 'error' => 'Département inconnu, ou rattaché à un client d’une autre boutique.'], 404);
+        $sets = ["$dKey = ?", "$dNam = ?"]; $vals = [$cid, $nom];
+        foreach ($opt as $c2 => $v2) { $sets[] = "$c2 = ?"; $vals[] = $v2; }
+        if ($hasEff) { $sets[] = "effectif = ?"; $vals[] = (int) ($b['effectif'] ?? 1); }
+        $vals[] = $id;
+        q("UPDATE $DT SET " . implode(', ', $sets) . " WHERE id = ?", $vals);
+        json_out(['ok' => true, 'id' => $id, 'clientId' => $cid]);
+      }
+      $cols = array_merge([$dKey, $dNam], array_keys($opt), $hasEff ? ['effectif'] : []);
+      $vals = array_merge([$cid, $nom], array_values($opt), $hasEff ? [(int) ($b['effectif'] ?? 1)] : []);
+      q("INSERT INTO $DT (" . implode(', ', $cols) . ") VALUES ("
+        . implode(', ', array_fill(0, count($cols), '?')) . ")", $vals);
+      json_out(['ok' => true, 'id' => (int) db()->lastInsertId(), 'clientId' => $cid], 201);
+    }
+
     // ── Menu « Clients » — clients (table ERP client) rattachés aux bureaux. ──
     //    Une ligne par client, avec les signaux de badges : commandes/récurrence
     //    (ws_orders.customer_id), voucher nominatif (ws_vouchers.client_id),
@@ -9520,7 +9602,8 @@ function bo_endpoint_section($name) {
     'ws-offices' => 'offices', 'onboard-office' => 'offices', 'route-office' => 'offices',
     'office-invite' => 'offices', 'invite-revoke' => 'offices',
     'office-invite-pdf' => 'offices', 'office-invite-send' => 'offices',
-    'b2b-clients' => 'b2bClients', 'b2b-departments' => 'b2bClients', 'fr-clients' => 'b2bClients',
+    'b2b-clients' => 'b2bClients', 'b2b-departments' => 'b2bClients', 'b2b-department' => 'b2bClients',
+    'fr-clients' => 'b2bClients',
     'client-active' => 'b2bClients', 'client-attach' => 'b2bClients', 'client-billing' => 'b2bClients',
     'client-block' => 'b2bClients', 'client-office-delivery' => 'b2bClients', 'client-zip' => 'b2bClients',
     'client-orders' => 'b2bClients', 'vies-check' => 'b2bClients',
