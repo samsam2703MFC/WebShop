@@ -256,52 +256,90 @@ function OfficeSearchPicker({ items, value, onPick, label }) {
   // Insensible à la casse ET aux accents : « chenes » doit sortir « Chênes ».
   const norm = (v) => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const qq = norm(q).trim();
-  // Recherche sur le nom ET l'adresse : un bureau se retrouve souvent par sa rue.
-  const hits = qq === '' ? items
-    : items.filter((o) => norm(o.name).includes(qq) || norm(o.address).includes(qq)
-                       || norm(o.officeName).includes(qq));   // la société porte le nom qu'on cherche
+
+  /* On REGROUPE par société. Les entrées servies par /office-sites sont des
+     POINTS de livraison ; une même société en a souvent plusieurs (réception,
+     étage, annexe). Les aligner à plat répétait le nom de la société autant de
+     fois qu'elle a de points, et noyait ce que le client cherche : son
+     employeur d'abord, l'entrée précise ensuite.
+     La sélection reste le POINT — c'est lui que le serveur rattache — mais il
+     se lit désormais sous le bureau auquel il appartient. */
+  const groupes = [];
+  const parCle = new Map();
+  (items || []).forEach((o) => {
+    const cle = o.officeName ? 'o:' + (o.officeId || o.officeName) : 'sans';
+    if (!parCle.has(cle)) {
+      const g = { cle, bureau: o.officeName || null, motif: o.livrable === false ? o.motif : null, sites: [] };
+      parCle.set(cle, g); groupes.push(g);
+    }
+    const g = parCle.get(cle);
+    if (o.livrable === false && !g.motif) g.motif = o.motif;
+    g.sites.push(o);
+  });
+
+  // Un mot qui vise la SOCIÉTÉ garde tous ses points ; sinon on filtre point
+  // par point, sur le nom et l'adresse — un bureau se retrouve par sa rue.
+  const vus = groupes
+    .map((g) => {
+      if (qq === '') return g;
+      if (norm(g.bureau).includes(qq)) return g;
+      const sites = g.sites.filter((o) => norm(o.name).includes(qq) || norm(o.address).includes(qq));
+      return sites.length ? { ...g, sites } : null;
+    })
+    .filter(Boolean);
+  const total = (items || []).length;
+  const restants = vus.reduce((n, g) => n + g.sites.length, 0);
+
   return (
     <div className="ws-acc__pick">
       <input type="search" className="ws-acc__input" value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="Rechercher une société ou une adresse…"
         aria-label={label || 'Rechercher un bureau'} autoComplete="off"/>
-      {hits.length === 0 ? (
+      {vus.length === 0 ? (
         <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>
-          Aucune société ne correspond à «&nbsp;{q.trim()}&nbsp;» parmi les {items.length} validées
-          pour cette boutique. Si c'est la vôtre, demandez son ajout ci-dessous.
+          Aucune société ne correspond à «&nbsp;{q.trim()}&nbsp;» parmi les {total} entrées
+          de cette boutique. Si c'est la vôtre, demandez son ajout ci-dessous.
         </p>
       ) : (
-        <ul className="ws-acc__pick-list" role="listbox" aria-label={label || 'Bureaux validés'}>
-          {hits.map((o) => {
-            /* `livrable === false` : le serveur a établi que ce point ne peut
-               PAS activer la livraison — pas de société rattachée, société non
-               validée, ou sans tournée. On le montre quand même, avec son
-               motif : le masquer ferait chercher un bureau qui semble absent
-               alors qu'il existe et attend l'Atelier. */
-            const ko = o.livrable === false;
-            return (
-              <li key={o.id}>
-                <button type="button" role="option"
-                  aria-selected={String(value) === String(o.id)}
-                  aria-disabled={ko || undefined}
-                  className={'ws-acc__pick-item'
-                    + (String(value) === String(o.id) ? ' is-picked' : '')
-                    + (ko ? ' is-ko' : '')}
-                  onClick={() => { if (!ko) onPick(String(o.id)); }}>
-                  <span className="ws-acc__pick-name">{o.officeName || o.name}</span>
-                  {o.officeName && o.name !== o.officeName
-                    ? <span className="ws-acc__pick-addr">{o.name}{o.address ? ' · ' + o.address : ''}</span>
-                    : (o.address ? <span className="ws-acc__pick-addr">{o.address}</span> : null)}
-                  {ko && o.motif ? <span className="ws-acc__pick-ko">{o.motif}</span> : null}
-                </button>
-              </li>
-            );
-          })}
+        <ul className="ws-acc__pick-list" role="listbox" aria-label={label || 'Bureaux'}>
+          {vus.map((g) => (
+            <li key={g.cle} className="ws-acc__pick-grp">
+              <div className="ws-acc__pick-office">
+                <span className="ws-acc__pick-office-name">
+                  {g.bureau || 'Points sans société rattachée'}
+                </span>
+                {/* Le motif est porté par la SOCIÉTÉ (non validée, sans tournée,
+                    inexistante) : il se dit une fois, en tête du groupe. */}
+                {g.motif ? <span className="ws-acc__pick-ko">{g.motif}</span> : null}
+              </div>
+              <ul className="ws-acc__pick-sites">
+                {g.sites.map((o) => {
+                  const ko = o.livrable === false;
+                  return (
+                    <li key={o.id}>
+                      <button type="button" role="option"
+                        aria-selected={String(value) === String(o.id)}
+                        aria-disabled={ko || undefined}
+                        className={'ws-acc__pick-item'
+                          + (String(value) === String(o.id) ? ' is-picked' : '')
+                          + (ko ? ' is-ko' : '')}
+                        onClick={() => { if (!ko) onPick(String(o.id)); }}>
+                        <span className="ws-acc__pick-name">{o.name}</span>
+                        {o.address ? <span className="ws-acc__pick-addr">{o.address}</span> : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </li>
+          ))}
         </ul>
       )}
-      {qq !== '' && hits.length > 0 && (
-        <p className="ws-acc__pick-count">{hits.length} résultat{hits.length > 1 ? 's' : ''} sur {items.length}</p>
+      {qq !== '' && restants > 0 && (
+        <p className="ws-acc__pick-count">
+          {restants} entrée{restants > 1 ? 's' : ''} sur {total} · {vus.length} société{vus.length > 1 ? 's' : ''}
+        </p>
       )}
     </div>
   );
