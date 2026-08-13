@@ -107,38 +107,45 @@ jobs:
             -e "ssh -p ${{ vars.SSH_PORT || '22' }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
             dist/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ vars.WEB_ROOT || '/var/www/html' }}/"
 
-      # Le front est bâti puis rsyncé, et Vite compile les sources dans un
-      # bundle HACHÉ : rien ne garantit que le navigateur recevra ce build-là.
-      # Un rsync partiel ou un ancien asset resté en place donnent une page qui
-      # « a l'air » déployée. On cherche donc, DANS LES FICHIERS DÉPOSÉS, des
-      # marqueurs propres aux derniers changements. Absents = le serveur ne
-      # porte pas ce build, et on le sait ici plutôt que devant un écran qui ne
-      # correspond pas au code.
-      - name: Vérifier que le front déposé porte bien les derniers changements
+      # Le front est bâti par Vite dans un bundle HACHÉ, puis rsyncé. Vérifier
+      # que le marqueur existe quelque part sous assets/ ne suffit pas : encore
+      # faut-il que la PAGE SERVIE pointe vers CE fichier-là. Un index.html
+      # resté en place référencerait les anciens hachages, et le navigateur
+      # recevrait l'ancien design alors que le nouveau dort à côté.
+      # On refait donc le chemin du navigateur : page → assets référencés →
+      # marqueurs. Les en-têtes de cache sont affichés, parce qu'ils décident
+      # de la vitesse à laquelle l'appareil verra le changement.
+      - name: Vérifier que la page servie porte bien les derniers changements
         env:
           SSHPASS: ${{ secrets.SSH_PASSWORD }}
-          ROOT: ${{ vars.WEB_ROOT || '/var/www/html' }}
           SSH_PORT: ${{ vars.SSH_PORT || '22' }}
           SSH_TARGET: ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}
         run: |
-          fail=0
-          verifie() {   # $1 = marqueur, $2 = extension, $3 = ce qu'il prouve
-            n=$(sshpass -e ssh -p "$SSH_PORT" \
-                  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                  "$SSH_TARGET" \
-                  "grep -rlF -- \"$1\" \"$ROOT\"/assets/*.$2 2>/dev/null | wc -l" 2>/dev/null | tr -d ' \r')
-            if [ "${n:-0}" -ge 1 ] 2>/dev/null; then
-              echo "OK       $3"
-            else
-              echo "ABSENT   $3   (marqueur introuvable dans \$ROOT/assets/*.$2)"
-              fail=1
-            fi
+          distant() {
+            sshpass -e ssh -p "$SSH_PORT" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "$SSH_TARGET" "$1" 2>/dev/null
           }
-          verifie 'ws-acc__pick-item'   css 'recherche de societe (liste deroulante remplacee)'
-          verifie 'ws-mode__lbl-full'   css 'libelles du selecteur de mode en mobile'
-          verifie 'Rechercher une '     js  'placeholder de la recherche de societe'
+          URL=http://localhost/webshop/
+          HTML=$(distant "curl -sf '$URL'")
+          if [ -z "$HTML" ]; then echo "La page $URL n a pas repondu."; exit 1; fi
+          CSS=$(printf '%s' "$HTML" | grep -o 'assets/index-[A-Za-z0-9_-]*\.css' | head -1)
+          JS=$(printf '%s' "$HTML"  | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'  | head -1)
+          echo "page servie -> CSS: ${CSS:-<aucun>}   JS: ${JS:-<aucun>}"
+          fail=0
+          verifie() {   # $1 = asset, $2 = marqueur, $3 = ce qu il prouve
+            if [ -z "$1" ]; then echo "ABSENT   $3 (asset non reference par la page)"; fail=1; return; fi
+            n=$(distant "curl -sf 'http://localhost/webshop/$1' | grep -cF -- '$2'" | tr -d ' \r')
+            if [ "${n:-0}" -ge 1 ] 2>/dev/null; then echo "OK       $3"
+            else echo "ABSENT   $3   (marqueur absent de $1)"; fail=1; fi
+          }
+          verifie "$CSS" 'ws-acc__pick-item'  'recherche de societe (liste deroulante remplacee)'
+          verifie "$CSS" 'ws-mode__lbl-full'  'libelles du selecteur de mode en mobile'
+          verifie "$JS"  'Rechercher une '    'placeholder de la recherche de societe'
+          echo "en-tetes de la page (delai avant que l appareil voie le changement) :"
+          distant "curl -sI '$URL'" | grep -i '^\(cache-control\|etag\|last-modified\|expires\)' | sed 's/^/  /'
           if [ "$fail" != "0" ]; then
-            echo "Le serveur ne porte pas le build qui vient d etre deploye."
+            echo "La page servie ne porte pas le build qui vient d etre deploye."
             exit 1
           fi
 
