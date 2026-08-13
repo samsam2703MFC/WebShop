@@ -6098,24 +6098,105 @@ function dispatch($m, $p) {
         'db' => in_array($mm, $comp, true)], $all));
     }
 
-    // ── Config livraison par bureau (ws_office_delivery_settings) — dérivée. ──
+    /* ── Config livraison par bureau ────────────────────────────────────────
+       DEUX SOURCES, ET ON DIT LAQUELLE PARLE. Sans ligne dans
+       ws_office_delivery_settings, un bureau suit sa TOURNÉE — c'est déjà ce
+       que fait le checkout. Avec une ligne, elle DÉROGE.
+
+       Avant, cet écran ne lisait que la tournée et recollait « J-1 » derrière
+       l'heure, en dur. La dérogation existait en base et n'était jamais
+       montrée ; le cut-off saisi dans la console, lui, partait dans l'overlay
+       ws_bo_store et n'atteignait personne. La console affichait donc une
+       valeur que le webshop n'appliquait pas.
+
+       `herite` dit à l'écran laquelle des deux il regarde : sans ça, une
+       dérogation et un héritage se ressemblent, et on ne sait pas si modifier
+       ce champ touchera un bureau ou toute la tournée. */
     if ($m === 'GET' && $p === '/franchisee/ws-office-delivery-settings') {
       if (!$tblExists('ws_offices') || !$tblExists('ws_tours')) json_out([]);
-      $hasAv = $tblExists('ws_tour_availability');
-      $rs = rows("SELECT f.name, f.deferred_billing_enabled, f.drop_minutes, f.tour_id, t.name AS tour
+      $hasAv  = $tblExists('ws_tour_availability');
+      $hasSet = $tblExists('ws_office_delivery_settings');
+      $hasOff = $hasSet && col_exists('ws_office_delivery_settings', 'cutoff_offset');
+      $rs = rows("SELECT f.id, f.name, f.deferred_billing_enabled, f.drop_minutes, f.tour_id, t.name AS tour
                     FROM ws_offices f JOIN ws_tours t ON t.id = f.tour_id
                    WHERE " . $scope('t.shop_id') . " AND f.active=1 ORDER BY f.name LIMIT 200");
-      json_out(array_map(function ($f) use ($hasAv) {
-        $daysArr = []; $cut = '—';
+      json_out(array_map(function ($f) use ($hasAv, $hasSet, $hasOff) {
+        $daysArr = []; $heure = null; $decal = 1;
         if ($hasAv) {
           $av = rows("SELECT DISTINCT delivery_day, TIME_FORMAT(MIN(cutoff_time),'%H:%i') AS cut
                         FROM ws_tour_availability WHERE tour_id=? AND active=1 GROUP BY delivery_day", [(int) $f['tour_id']]);
-          foreach ($av as $a) { $daysArr[] = (int) $a['delivery_day']; $cut = $a['cut'] . ' J-1'; }
+          foreach ($av as $a) { $daysArr[] = (int) $a['delivery_day']; $heure = $a['cut']; }
         }
-        return ['bureau' => $f['name'], 'tour' => $f['tour'],
+        // La dérogation du bureau l'emporte, quand elle existe.
+        $herite = true;
+        if ($hasSet) {
+          $d = row("SELECT TIME_FORMAT(delivery_cutoff,'%H:%i') AS cut"
+                 . ($hasOff ? ", cutoff_offset" : "")
+                 . " FROM ws_office_delivery_settings WHERE office_id=? AND active=1 LIMIT 1", [(int) $f['id']]);
+          if ($d && $d['cut'] !== null) {
+            $heure = $d['cut']; $herite = false;
+            if ($hasOff && $d['cutoff_offset'] !== null) $decal = (int) $d['cutoff_offset'];
+          }
+        }
+        // Pas d'heure connue ⇒ on n'en invente pas : le champ reste vide et
+        // l'écran affiche « — », comme partout ailleurs dans cette console.
+        return ['officeId' => (int) $f['id'], 'bureau' => $f['name'], 'tour' => $f['tour'],
                 'contrat' => $f['deferred_billing_enabled'] ? 'Facturation différée' : 'Comptant',
-                'daysArr' => $daysArr, 'cut' => $cut, 'drop' => (float) $f['drop_minutes']];
+                'daysArr' => $daysArr,
+                'cutHeure' => $heure, 'cutDecal' => $decal, 'cutHerite' => $herite,
+                'cut' => $heure === null ? '—' : ($heure . ($decal > 0 ? ' J-' . $decal : ' le jour même')),
+                'drop' => (float) $f['drop_minutes']];
       }, $rs));
+    }
+
+    /* Écriture d'UNE ligne de config bureau — jamais le remplacement de la
+       table. /franchisee/save remplace une table entière, ce qui n'a aucun sens
+       pour une dérogation rattachée à un bureau, et a déjà vidé une table ERP.
+
+       L'heure arrive en HH:MM et le décalage en NOMBRE de jours : le format
+       « 17:00 J-1 » d'avant n'était analysable par personne, et se saisissait
+       à la main dans un champ texte. */
+    if ($m === 'POST' && $p === '/franchisee/office-delivery-setting') {
+      if (!$tblExists('ws_office_delivery_settings'))
+        json_out(['ok' => false, 'error' => 'Table ws_office_delivery_settings absente — migration 0066 non appliquée.'], 501);
+      if (!col_exists('ws_office_delivery_settings', 'cutoff_offset'))
+        json_out(['ok' => false, 'error' => 'Colonne « cutoff_offset » absente — migration 0066 non appliquée.'], 501);
+      $b   = body();
+      $oid = (int) ($b['officeId'] ?? 0);
+      if (!$oid) json_out(['ok' => false, 'error' => 'Bureau non précisé.'], 400);
+      // PORTÉE SERVEUR : le bureau doit appartenir à la boutique de la session.
+      // Se fier à l'id reçu laisserait un franchisé régler le cut-off d'un
+      // bureau qui n'est pas le sien.
+      $oSc = ($shopId && col_exists('ws_offices', 'shop_id')) ? " AND (shop_id IS NULL OR shop_id=" . (int) $shopId . ")" : "";
+      if (!row("SELECT 1 x FROM ws_offices WHERE id=?$oSc", [$oid]))
+        json_out(['ok' => false, 'error' => 'Bureau inconnu, ou hors de votre boutique.'], 404);
+
+      $heure = trim((string) ($b['cutHeure'] ?? ''));
+      $decal = (int) ($b['cutDecal'] ?? 1);
+      if ($decal < 0 || $decal > 7) json_out(['ok' => false, 'error' => 'Décalage hors de 0 à 7 jours.'], 400);
+      // Heure vide = RETOUR À LA TOURNÉE. C'est un geste utile — « ce bureau
+      // n'a finalement pas d'horaire à lui » — et il doit être possible sans
+      // supprimer la ligne à la main en base.
+      if ($heure !== '' && !preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $heure))
+        json_out(['ok' => false, 'error' => 'Heure attendue au format HH:MM.'], 400);
+
+      $sc  = $shopId ? (int) $shopId : null;
+      $dej = row("SELECT id FROM ws_office_delivery_settings WHERE office_id=? LIMIT 1", [$oid]);
+      if ($dej) {
+        q("UPDATE ws_office_delivery_settings SET delivery_cutoff=?, cutoff_offset=?, shop_id=COALESCE(shop_id,?), active=1 WHERE id=?",
+          [$heure === '' ? null : $heure, $decal, $sc, (int) $dej['id']]);
+      } else {
+        q("INSERT INTO ws_office_delivery_settings (office_id, shop_id, delivery_cutoff, cutoff_offset, active) VALUES (?,?,?,?,1)",
+          [$oid, $sc, $heure === '' ? null : $heure, $decal]);
+      }
+      // Le temps de dépôt, lui, vit sur la fiche du bureau : c'est une
+      // propriété du LIEU (quai, étage, badge), pas de son horaire.
+      if (array_key_exists('drop', $b) && col_exists('ws_offices', 'drop_minutes')) {
+        $dp = $b['drop'];
+        q("UPDATE ws_offices SET drop_minutes=? WHERE id=?",
+          [($dp === '' || $dp === null) ? null : (float) $dp, $oid]);
+      }
+      json_out(['ok' => true, 'herite' => $heure === '']);
     }
 
     // ── Paramètres (ws_param clé/valeur) — '0'/'1' exposés en bool (toggles UI). ──
@@ -9759,6 +9840,7 @@ function bo_endpoint_section($name) {
     'office-invite' => 'offices', 'invite-revoke' => 'offices',
     'office-invite-pdf' => 'offices', 'office-invite-send' => 'offices',
     'office-invite-poster' => 'offices',
+    'office-delivery-setting' => 'bureauParams',
     'b2b-clients' => 'b2bClients', 'b2b-departments' => 'b2bClients', 'b2b-department' => 'b2bClients',
     'fr-clients' => 'b2bClients',
     'client-active' => 'b2bClients', 'client-attach' => 'b2bClients', 'client-billing' => 'b2bClients',
