@@ -11,6 +11,10 @@ import '../webshop-i18n.css';
 import '../webshop-profile-extras.css';
 import '../webshop-allergens.css';
 
+// Bandeau d'erreur — EN PREMIER : il doit pouvoir signaler l'échec de
+// n'importe quel import qui suit, y compris celui qui monte l'application.
+import '../webshop-bug-banner.jsx';
+
 // API stubs — must run before the components (they expose window.WSXxx).
 import '../webshop-vouchers.jsx';
 import '../webshop-promo-api.jsx';

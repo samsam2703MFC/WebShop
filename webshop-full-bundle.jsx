@@ -1444,7 +1444,7 @@ function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
       .then((list) => { if (alive) setItems(Array.isArray(list) ? list : []); })
       // Une panne de suggestions ne doit RIEN casser du panier — mais elle se
       // trace, sinon « aucune suggestion » et « serveur muet » se ressemblent.
-      .catch((e) => { if (alive) { setItems([]); console.error('[cross-sell] suggestions indisponibles', e); } });
+      .catch((e) => { if (alive) { setItems([]); bug('cross-sell', 'suggestions indisponibles', e); } });
     return () => { alive = false; };
   }, [key, shopId, placement]);
 
@@ -4412,6 +4412,17 @@ function ReadRow({ k, v }) {
 // =========================================================================
 // SHOP SWITCHER MODAL
 // =========================================================================
+/* bug() — un échec d'API se DIT à l'écran, il ne se range pas dans la console.
+   Le webshop n'avait que des console.error : dix appels échouaient en silence
+   pour qui ne garde pas l'inspecteur ouvert, et une grille vide ressemblait
+   exactement à une boutique sans produit. Le bandeau (webshop-bug-banner)
+   l'annonce ; la console garde l'objet d'erreur complet, qui sert au débogage
+   mais n'a rien à faire sous les yeux d'un client. */
+function bug(source, quoi, e) {
+  try { if (window.WSBug) window.WSBug.note(source, quoi + (e && e.message ? ' — ' + e.message : '')); } catch (_) {}
+  console.error('[' + source + '] ' + quoi, e || '');
+}
+
 function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
   const swPanelRef = useSwipeDownToClose(onClose);
   if (!open) return null;
@@ -4590,7 +4601,7 @@ function ShopFrame({ variant }) {
     if (hasHandoff || !window.WSAuth || typeof window.WSAuth.me !== 'function') return;
     Promise.resolve(window.WSAuth.me())
       .then((u) => { if (alive && u && u.id) setUser(u); })
-      .catch((e) => console.error('[auth] session non restaurée', e));
+      .catch((e) => bug('session', 'session non restaurée', e));
     return () => { alive = false; };
   }, []);
   const [officeSlots, setOfficeSlots] = React.useState([]);
@@ -4707,19 +4718,21 @@ function ShopFrame({ variant }) {
     const m = shops.find((s) => String(s.id) === String(shopId) || s.slug === shopId);
     if (m) { if (m.id !== shopId) setShopId(m.id); }
     else {
-      /* AUCUNE BOUTIQUE CONNUE → la première de l'annuaire, qui est trié PAR NOM
-         (/shops : ORDER BY name). Ce n'est donc pas « la boutique par défaut »,
-         c'est la première par ordre alphabétique — et ça se choisissait en
-         silence. Un visiteur sans ?shop=, ou dont la mémoire a été vidée,
-         atterrissait sur une boutique qu'il n'avait pas demandée sans qu'il ou
-         quiconque puisse le voir : le catalogue affiché n'était alors pas celui
-         qu'on croyait comparer. Le choix reste (une vitrine doit montrer
-         quelque chose) mais il s'inscrit dans l'URL par l'effet ci-dessus, et
-         se dit dans la console du navigateur. */
+      /* AUCUN REPLI. On ne choisit PAS de boutique à la place du visiteur.
+         Le code prenait shops[0] — et /shops trie PAR NOM, donc ce n'était même
+         pas « la boutique par défaut » mais la première par ordre alphabétique.
+         Relevé en production : un visiteur sans ?shop= atterrissait sur
+         « Atelier by - Halle » (id 4) pendant que la console franchisé montrait
+         « Atelier by Berlo - Corbais » (id 2). Deux catalogues différents, et
+         rien à l'écran pour le dire — on a cherché une heure un produit
+         manquant qui n'a jamais manqué.
+
+         Une boutique servie à la place d'une autre est une donnée fausse, pas
+         un moindre mal. On rend donc la main : shopId reste nul, et l'écran
+         demande de choisir. */
       if (shopId != null) console.warn('[webshop] boutique « ' + shopId +
-        ' » inconnue de /shops — repli sur la première par ordre alphabetique : ' +
-        shops[0].name + ' (id ' + shops[0].id + ')');
-      setShopId(shops[0].id);
+        ' » inconnue de /shops — aucun repli : le visiteur choisit.');
+      setShopId(null);
     }
   }, [shops]);
 
@@ -4737,7 +4750,7 @@ function ShopFrame({ variant }) {
         : (date || '');
       window.WSCatalog.listCategories({ shopId, date: dIso })
         .then((c) => { if (alive && Array.isArray(c)) setCategories(c); })
-        .catch((e) => console.error('[catalogue] catégories indisponibles', e));
+        .catch((e) => bug('catalogue', 'catégories indisponibles — la barre restera vide', e));
     }
     return () => { alive = false; };
   }, [shopId, date]);
@@ -4749,7 +4762,7 @@ function ShopFrame({ variant }) {
     if (window.WSCatalog) {
       window.WSCatalog.listAssortments({ shopId })
         .then((a) => { if (alive) setAssortments(a || []); })
-        .catch((e) => console.error('[catalogue] assortiments indisponibles', e));
+        .catch((e) => bug('catalogue', 'assortiments indisponibles', e));
     }
     return () => { alive = false; };
   }, [shopId]);
@@ -4764,7 +4777,7 @@ function ShopFrame({ variant }) {
       // Serveur uniquement : sans WSOffices/WSTours, pas de bureau — l'écran
       // « Mon bureau » affichera l'absence, jamais un bureau fabriqué.
       const office = window.WSOffices
-        ? await window.WSOffices.get(user.officeId).catch((e) => { console.error('[bureau]', e); return null; })
+        ? await window.WSOffices.get(user.officeId).catch((e) => { bug('bureau', 'fiche bureau indisponible', e); return null; })
         : null;
       if (!alive || !office) { setUserOffice(null); setUserTour(null); return; }
       setUserOffice(office);
@@ -4824,7 +4837,7 @@ function ShopFrame({ variant }) {
       shopId:          shop ? shop.id : shopId,
       subtotal:        subtotalForFee,
     }).then((r) => { if (!alive) return; setDeliveryFeeResult(r); setDeliveryFeeErr(r ? '' : 'Frais de livraison indisponibles — please debug.'); })
-      .catch((e) => { if (!alive) return; setDeliveryFeeResult(null); console.error('[frais livraison]', e);
+      .catch((e) => { if (!alive) return; setDeliveryFeeResult(null); bug('frais de livraison', 'calcul indisponible — aucun montant affiché', e);
                       setDeliveryFeeErr('Frais de livraison indisponibles — commande impossible. ' + (e && e.message ? e.message : '')); });
     return () => { alive = false; };
   }, [mode, userOffice?.id, selectedSite?.id, subtotalForFee, shopId]);
@@ -4861,7 +4874,10 @@ function ShopFrame({ variant }) {
   }
 
   // Deep-link peut passer un id numérique (en string) OU un slug → match souple.
-  const shop = shops.find((s) => String(s.id) === String(shopId) || s.slug === shopId) || shops[0] || null;
+  // `|| shops[0]` retiré : le meme repli, une seconde fois. Il rattrapait un
+  // shopId nul en servant la premiere boutique par ordre alphabetique — donc
+  // meme sans repli dans la resolution ci-dessus, l'ecran en aurait affiche une.
+  const shop = shops.find((s) => String(s.id) === String(shopId) || s.slug === shopId) || null;
   const isAssortment = typeof cat === 'string' && cat.startsWith('season:');
   const assortmentId = isAssortment ? cat.slice('season:'.length) : null;
   const assortment = assortmentId ? assortments.find((a) => a.id === assortmentId) : null;
@@ -5104,7 +5120,7 @@ function ShopFrame({ variant }) {
         setStockErr(r && r.ok === false ? (r.error || 'Stock non tenu — please debug.') : '');
         return refreshStock();
       })
-      .catch((e) => { console.error('[stock] réservation refusée', e);
+      .catch((e) => { bug('stock', 'réservation refusée', e);
                       setStockErr('Stock non tenu : ' + (e && e.message ? e.message : 'erreur serveur') + ' — la disponibilité sera revérifiée au paiement.');
                       refreshStock().catch(() => {}); });
   }
@@ -5118,7 +5134,7 @@ function ShopFrame({ variant }) {
     // chaîne était tracé.
     if (!user) { console.info('[stock] pas de libération : client non connecté — le maintien expirera seul'); return; }
     if (!window.WSCatalog || !window.WSCatalog.release) {
-      console.error('[stock] pas de libération : module catalogue absent'); return;
+      bug('stock', 'pas de libération : module catalogue absent'); return;
     }
     window.WSCatalog.release(reservationId
         ? { customerId: user.id, reservationIds: [reservationId] }
@@ -5129,7 +5145,7 @@ function ShopFrame({ variant }) {
         }
         return refreshStock();
       })
-      .catch((e) => console.error('[stock] libération', e));
+      .catch((e) => bug('stock', 'libération du stock', e));
   }
   function stockReleaseAll() {
     if (!user) { console.info('[stock] pas de libération globale : client non connecté'); return; }
@@ -5376,16 +5392,39 @@ function ShopFrame({ variant }) {
 
   // Go-live : sans boutique resolue (API /shops en echec ou vide), on affiche
   // un etat explicite - jamais de boutique de demonstration.
+  /* TROIS ÉTATS SANS BOUTIQUE, ET ILS NE SE CONFONDENT PAS. L'écran n'en
+     connaissait que deux — « chargement » et « API injoignable » — parce que le
+     troisième n'existait pas : un repli choisissait une boutique en silence.
+     Sans repli, il faut le dire et laisser choisir, sinon le visiteur attend un
+     chargement qui ne viendra jamais. */
   if (!shop) {
+    const aChoisir = !shopsFailed && shops && shops.length > 0;
     return (
       <div className={`ws ws--${variant}`} style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', textAlign: 'center' }}>
-        <div>
-          <h2 style={{ marginBottom: '.5rem' }}>{shopsFailed ? 'Boutiques indisponibles' : 'Chargement de la boutique…'}</h2>
+        <div style={{ maxWidth: '30rem' }}>
+          <h2 style={{ marginBottom: '.5rem' }}>
+            {shopsFailed ? 'Boutiques indisponibles'
+                         : (aChoisir ? 'Choisissez votre boutique' : 'Chargement de la boutique…')}
+          </h2>
           <p style={{ opacity: .7 }}>
             {shopsFailed
               ? 'Impossible de charger la liste des boutiques (API injoignable). Veuillez réessayer plus tard.'
-              : 'Connexion en cours…'}
+              : (aChoisir
+                  ? 'Chaque Atelier a sa carte. Aucune n’est choisie à votre place.'
+                  : 'Connexion en cours…')}
           </p>
+          {aChoisir && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem', marginTop: '1.25rem' }}>
+              {shops.map((s) => (
+                <button key={s.id} className="ws-btn ws-btn--primary"
+                        onClick={() => setShopId(s.id)}
+                        style={{ width: '100%', justifyContent: 'space-between' }}>
+                  <span>{s.name}</span>
+                  {s.city ? <span style={{ opacity: .7, fontWeight: 400 }}>{s.city}</span> : null}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );
