@@ -40,53 +40,88 @@ if ('serviceWorker' in navigator) {
    fenêtre). opts.stop : n'alimente pas les gestionnaires des ancêtres (les
    boutons imbriqués dans une carte elle-même tappable). */
 let __wsOpenedAt = 0;
+let __wsPressTarget = null;
+let __wsPressAt = 0;
+function wsShield() { __wsOpenedAt = performance.now(); }
+/* BOUCLIER GLOBAL. Quand une action change la mise en page SOUS le doigt
+   (dépliage, fermeture de la fiche, panier → checkout, commande passée), le
+   click synthétisé du même tap atterrit sur ce qui vient d'apparaître à cet
+   endroit — constaté : « Commander » posait le clic sur « Se connecter » du
+   checkout, d'où une demande de connexion à chaque validation. Signature
+   infaillible d'un fantôme : sa cible n'a reçu AUCUN appui (pointerdown) de
+   ce geste. Un vrai tap suivant a toujours son propre appui : il passe. */
+document.addEventListener('pointerdown', (e) => {
+  __wsPressTarget = e.target; __wsPressAt = performance.now();
+}, { capture: true, passive: true });
+document.addEventListener('click', (e) => {
+  if (performance.now() - __wsOpenedAt > 400) return;
+  const t = __wsPressTarget;
+  if (t && __wsPressAt <= performance.now() && t.isConnected
+      && (t === e.target || t.contains(e.target) || e.target.contains(t))) return;
+  e.stopPropagation(); e.preventDefault();
+}, { capture: true });
 function wsTap(fn, opts) {
-  const doOpen = !!(opts && opts.open);
-  const doStop = !!(opts && opts.stop);
-  const st = (e) => { if (doStop) e.stopPropagation(); };
-  const fire = (el) => {
-    const p = el.__wsTap || (el.__wsTap = {});
-    p.handled = performance.now();
-    if (doOpen) __wsOpenedAt = p.handled;
-    fn();
-  };
+  /* ÉCOUTEURS NATIFS, PAS SYNTHÉTIQUES. Diagnostic au doigt sur la fiche
+     produit : les événements natifs d'un tap ATTEIGNENT l'élément et
+     remontent jusqu'à la racine (sondes posées à chaque étage), mais la
+     délégation synthétique de React n'invoquait AUCUN gestionnaire de la
+     carte tapée — alors qu'un click dispatché par script passait. Plutôt que
+     de dépendre de cette dispatche défaillante, chaque élément reçoit ses
+     écouteurs natifs via ref. La closure du DERNIER rendu est rejouée
+     (el.__wsTapConf.fn), les écouteurs ne sont posés qu'une fois par nœud,
+     et meurent avec lui. */
+  const conf = { fn, doOpen: !!(opts && (opts.open || opts.shield)), doStop: !!(opts && opts.stop) };
   return {
-    onPointerDown: (e) => {
-      st(e);
-      e.currentTarget.__wsTap = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, handled: 0 };
-    },
-    onPointerUp: (e) => {
-      st(e);
-      const p = e.currentTarget.__wsTap;
-      if (!p || p.id !== e.pointerId || !p.t) return;
-      const moved = Math.abs(e.clientX - p.x) > 14 || Math.abs(e.clientY - p.y) > 14;
-      if (!moved && performance.now() - p.t < 600 && !(p.handled && performance.now() - p.handled < 350)) fire(e.currentTarget);
-    },
-    onTouchStart: (e) => {
-      st(e);
-      const t = e.touches[0]; if (!t) return;
-      const p = e.currentTarget.__wsTap || (e.currentTarget.__wsTap = {});
-      p.tx = t.clientX; p.ty = t.clientY; p.tt = performance.now();
-    },
-    onTouchEnd: (e) => {
-      st(e);
-      const p = e.currentTarget.__wsTap; const t = e.changedTouches && e.changedTouches[0];
-      if (!p || !t || !p.tt) return;
-      if (p.handled && performance.now() - p.handled < 350) return;
-      const moved = Math.abs(t.clientX - p.tx) > 12 || Math.abs(t.clientY - p.ty) > 12;
-      if (!moved && performance.now() - p.tt < 600) fire(e.currentTarget);
-    },
-    onClick: (e) => {
-      st(e);
-      const p = e.currentTarget.__wsTap || {};
-      const now = performance.now();
-      if (p.handled && now - p.handled < 400) return;
-      const sawPress = (p.t && now - p.t < 600) || (p.tt && now - p.tt < 600);
-      if (!sawPress && now - __wsOpenedAt < 250) return;
-      fire(e.currentTarget);
+    ref: (el) => {
+      if (!el) return;
+      el.__wsTapConf = conf;
+      if (el.__wsTapBound) return;
+      el.__wsTapBound = true;
+      const st = (e) => { if (el.__wsTapConf.doStop) e.stopPropagation(); };
+      const fire = () => {
+        const p = el.__wsTap || (el.__wsTap = {});
+        p.handled = performance.now();
+        if (el.__wsTapConf.doOpen) wsShield();
+        el.__wsTapConf.fn();
+      };
+      el.addEventListener('pointerdown', (e) => {
+        st(e);
+        el.__wsTap = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, handled: 0 };
+      });
+      el.addEventListener('pointerup', (e) => {
+        st(e);
+        const p = el.__wsTap;
+        if (!p || p.id !== e.pointerId || !p.t) return;
+        const moved = Math.abs(e.clientX - p.x) > 14 || Math.abs(e.clientY - p.y) > 14;
+        if (!moved && performance.now() - p.t < 600 && !(p.handled && performance.now() - p.handled < 350)) fire();
+      });
+      el.addEventListener('touchstart', (e) => {
+        st(e);
+        const t = e.touches[0]; if (!t) return;
+        const p = el.__wsTap || (el.__wsTap = {});
+        p.tx = t.clientX; p.ty = t.clientY; p.tt = performance.now();
+      }, { passive: true });
+      el.addEventListener('touchend', (e) => {
+        st(e);
+        const p = el.__wsTap; const t = e.changedTouches && e.changedTouches[0];
+        if (!p || !t || !p.tt) return;
+        if (p.handled && performance.now() - p.handled < 350) return;
+        const moved = Math.abs(t.clientX - p.tx) > 12 || Math.abs(t.clientY - p.ty) > 12;
+        if (!moved && performance.now() - p.tt < 600) fire();
+      });
+      el.addEventListener('click', (e) => {
+        st(e);
+        const p = el.__wsTap || {};
+        const now = performance.now();
+        if (p.handled && now - p.handled < 400) return;
+        const sawPress = (p.t && now - p.t < 600) || (p.tt && now - p.tt < 600);
+        if (!sawPress && now - __wsOpenedAt < 250) return;
+        fire();
+      });
     },
   };
 }
+
 
 // Diagnostic terrain : ?tapdebug=1 affiche les derniers événements tactiles
 // (type + cible) dans un coin de l'écran — pour voir ce que LE téléphone fait
@@ -429,10 +464,10 @@ function OfficeSearchPicker({ chercher, value, onPick, label }) {
 function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel }) {
   const [hover, setHover] = React.useState(false);
   const delivTitle = deliveryCutoffPassed
-    ? `Livraison non disponible après ${deliveryCutoffLabel || '11h00'}`
+    ? `Livraison non disponible après ${deliveryCutoffLabel}`
     : undefined;
   const collTitle = collectCutoffPassed
-    ? `Collecte non disponible après ${collectCutoffLabel || '16h00'}`
+    ? `Collecte non disponible après ${collectCutoffLabel}`
     : undefined;
   const effMode = deliveryCutoffPassed && mode === 'delivery' ? 'collect' : mode;
   return (
@@ -523,9 +558,9 @@ function computeOffer(offer, qty, unit, ctx = {}) {
     const effectiveQty = isPortion
       ? qty * portionUnitsFor(ctx.portion)
       : qty;
-    const freebieValue = isPortion
-      ? ctx.basePrice * 0.27   // a free quarter
-      : unit;
+    // La pièce offerte vaut le prix RÉEL de la ligne — le ×0.27 (« un quart »)
+    // était un facteur qui n'existe nulle part côté serveur ni en base.
+    const freebieValue = unit;
 
     const cycles = Math.floor(effectiveQty / groupSize);
     const freebies = cycles * (offer.y || 0);
@@ -931,9 +966,6 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     sc.scrollTo({ top: Math.max(0, computeTarget(elRect, scRect)), behavior: IS_TOUCH ? 'auto' : 'smooth' });
   }
   function pickBundle(bid) {
-    // Re-tap (ou tap remonté depuis l'intérieur) sur la formule DÉJÀ choisie :
-    // ne rien faire. L'ancien passage remettait bundleSlots à zéro — avec deux
-    // rubriques, remplir la seconde effaçait la première.
     if (bid === bundleId) return;
     setBundleId(bid);
     setBundleSlots({});
@@ -1057,7 +1089,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     <div className="pdm-scrim" role="dialog" aria-modal="true" onClick={onClose} style={{ '--accent': accentVar }}>
       <div ref={pdmPanelRef} className="pdm" onClick={(e) => e.stopPropagation()}>
         <span className="ws-modal__handle pdm-handle" aria-hidden="true"/>
-        <button className="pdm-close" aria-label="Fermer" {...wsTap(onClose)}><Pict d={ICONS.close} s={13}/></button>
+        <button className="pdm-close" aria-label="Fermer" {...wsTap(onClose, { shield: true })}><Pict d={ICONS.close} s={13}/></button>
 
         {/* HERO */}
         <div className="pdm-hero">
@@ -1075,7 +1107,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
             <div className="pdm-head">
               <p className="pdm-eyebrow">{product.cat === 'sandwiches' ? 'Sandwich' : product.cat === 'plats' ? 'Plat du jour' : 'Notre sélection'}</p>
               <h2 className="pdm-title">{product.name}</h2>
-              <p className="pdm-desc">{product.description || 'Préparé chaque matin par nos artisans, avec des ingrédients sélectionnés au plus près de leur saison.'}</p>
+              {product.description ? <p className="pdm-desc">{product.description}</p> : null}
               {/* Allergènes — 3 états distincts (sécurité alimentaire) :
                   liste = connus · [] = recette évaluée, aucun · null = NON
                   RENSEIGNÉ (on le dit, on ne laisse jamais croire « aucun »). */}
@@ -1295,7 +1327,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
               <span className="pdm-qty__val">{qty}</span>
               <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.min(q + 1, deliveryStockLeft ?? 99)))} aria-label="Augmenter" disabled={deliveryStockLeft !== null && qty >= deliveryStockLeft}>+</button>
             </div>
-            <button className="pdm-cta" disabled={!valid || deliveryBlocked || (deliveryStockLeft !== null && deliveryStockLeft === 0)} {...wsTap(handleConfirm)}>
+            <button className="pdm-cta" disabled={!valid || deliveryBlocked || (deliveryStockLeft !== null && deliveryStockLeft === 0)} {...wsTap(handleConfirm, { shield: true })}>
               <span>{deliveryBlocked ? 'Non disponible en livraison' : (deliveryStockLeft === 0 ? 'Stock épuisé' : (valid ? 'Ajouter au panier' : 'Choisissez vos options'))}</span>
               <span className="pdm-cta__total" key={pulse}>
                 {offerDiscount > 0 && (
@@ -1672,7 +1704,7 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
                     <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
                   </svg>
                   <input
-                    className="ws-line__note" type="text" defaultValue={l.note || ''}
+                    className="ws-line__note" type="text" defaultValue={l.note || ''} maxLength={255}
                     placeholder="Note (ex : sans oignon)"
                     onBlur={(e) => onNote(l.line, e.target.value)}
                   />
@@ -1747,7 +1779,7 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
         </div>
       </div>
 
-      <button className="ws-cta" style={{ background: 'var(--color-primary)' }} onClick={onCheckout} disabled={!basket.length}>
+      <button className="ws-cta" style={{ background: 'var(--color-primary)' }} {...wsTap(onCheckout, { shield: true })} disabled={!basket.length}>
         Passer au paiement
         <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>
       </button>
@@ -2296,7 +2328,7 @@ function CpField({ cp, locality, onCp, onLocality, onOpts, variant }) {
   );
 }
 
-function LoginModal({ open, onClose, onLogin, onRegister }) {
+function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
   const [tab, setTab] = useState('login');
   const [form, setForm] = useState({ identifier: '', email: '', phone: '', phonePrefix: '+32', password: '', firstName: '', lastName: '', postalCode: '', locality: '', authMethod: 'email' });
   const [err, setErr] = useState('');
@@ -2324,13 +2356,17 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
         onLogin(r.user); onClose();
       } else {
         if (!form.firstName || !form.lastName) { setErr('Prénom et nom requis.'); return; }
-        if (!form.email && !form.phone) { setErr('Email ou téléphone requis.'); return; }
+        // L'inscription se fait par email (le téléphone est optionnel) — le
+        // serveur n'a jamais accepté l'inscription par téléphone seul, le
+        // formulaire ne doit pas la promettre.
+        if (!form.email) { setErr('Email requis.'); return; }
+        if ((form.password || '').length < 8) { setErr('Mot de passe requis (8 caractères minimum).'); return; }
         // Code postal OBLIGATOIRE (collecte réseau) + localité confirmée quand
         // le code couvre plusieurs localités.
         if (!CP_RE.test(String(form.postalCode).trim())) { setErr('Code postal requis (4 chiffres).'); return; }
         if (cpOpts.length > 1 && !form.locality) { setErr('Choisissez votre localité.'); return; }
         const r = window.WSAuth
-          ? await window.WSAuth.register(form)
+          ? await window.WSAuth.register({ ...form, shopId })
           : SRV_REQUIRED("d'inscription");
         if (!r.ok) {
           if (r.exists) { setPwStep(true); return; }   // compte déjà présent -> set-password
@@ -2389,7 +2425,8 @@ function LoginModal({ open, onClose, onLogin, onRegister }) {
               <label className="ws-field"><span>Nom</span><input value={form.lastName} onChange={(e) => set('lastName', e.target.value)} autoComplete="family-name"/></label>
             </div>
             <label className="ws-field"><span>Email</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
-            <label className="ws-field"><span>Téléphone</span>
+            <label className="ws-field"><span>Mot de passe</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="new-password" minLength={8} placeholder="8 caractères minimum"/></label>
+            <label className="ws-field"><span>Téléphone <em style={{ fontStyle: 'normal', fontWeight: 400, opacity: .6 }}>(optionnel)</em></span>
               <span className="ws-phone">
                 <select className="ws-phone__pfx" value={form.phonePrefix} onChange={(e) => set('phonePrefix', e.target.value)} aria-label="Indicatif">
                   {PHONE_PREFIXES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -3100,8 +3137,12 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           </label>
           <label className="ws-acc__field ws-acc__field--full">
             <span className="ws-acc__field-label">E-mail</span>
-            <input type="email" className="ws-acc__input" value={form.email}
-              onChange={(e) => setField('email', e.target.value)} placeholder="vous@exemple.com" required />
+            {/* LECTURE SEULE, honnêtement : le champ était éditable mais la
+                sauvegarde ne l'envoyait jamais — « ✓ Enregistré » mentait, et
+                l'email sert d'identifiant (connexion, rattachement bureau). */}
+            <input type="email" className="ws-acc__input" value={form.email} readOnly disabled
+              title="L'adresse e-mail sert d'identifiant de connexion et ne se modifie pas ici." />
+            <span style={{ font: '400 10.5px var(--font-ui, sans-serif)', color: 'var(--color-text-muted, #8a7c6e)' }}>Identifiant de connexion — non modifiable ici.</span>
           </label>
           <label className="ws-acc__field">
             <span className="ws-acc__field-label">Téléphone</span>
@@ -3955,7 +3996,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
 
             <label className="ws-field ws-b2b__field">
               <span>Remarque (facultatif)</span>
-              <textarea value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2}
+              <textarea value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2} maxLength={1000}
                         placeholder="Remarque à faire figurer sur la facture, instructions…" />
             </label>
             <label className="ws-field ws-b2b__field">
@@ -3976,11 +4017,11 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           <span className="ws-checkout__foot-v">€{total.toFixed(2)}</span>
         </div>
         <div className="ws-checkout__foot-actions">
-          {step > 1 && <button className="ws-btn-ghost" onClick={() => setStep((s) => s - 1)} disabled={paying}>Précédent</button>}
+          {step > 1 && <button className="ws-btn-ghost" {...wsTap(() => setStep((s) => s - 1), { shield: true })} disabled={paying}>Précédent</button>}
           <button
             className="ws-cta ws-cta--block"
             disabled={paying || (step === 1 && !step1Valid()) || (step === 2 && !step2Valid()) || (step === 3 && !step3Valid())}
-            onClick={next}
+            {...wsTap(next, { shield: true })}
           >
             {paying ? 'Traitement…' : step === 3 ? `Payer · €${total.toFixed(2)}` : 'Continuer'}
             {!paying && step < 3 && <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>}
@@ -4668,8 +4709,13 @@ function ShopFrame({ variant }) {
   const todayMidnight = React.useMemo(() => { const t = new Date(); t.setHours(0,0,0,0); return t; }, []);
   const isToday = (d) => d && d.toDateString() === todayMidnight.toDateString();
   // Cutoff times loaded from API per shop — defaults until API responds.
-  const [deliveryCutoffMinutes, setDeliveryCutoffMinutes] = React.useState(11 * 60); // 11:00
-  const [collectCutoffMinutes,  setCollectCutoffMinutes]  = React.useState(16 * 60); // 16:00
+  /* Cut-offs : null tant que le serveur n'a pas répondu — JAMAIS une valeur
+     inventée. Les anciens défauts 11h00/16h00 gouvernaient l'écran (blocage
+     « Fermé · commandez pour demain », tooltips) avec des horaires que la
+     boutique n'avait pas fixés, dès que l'appel échouait ou tardait. Tant que
+     le cut-off est inconnu, on ne bloque pas et on n'affiche pas d'heure. */
+  const [deliveryCutoffMinutes, setDeliveryCutoffMinutes] = React.useState(null);
+  const [collectCutoffMinutes,  setCollectCutoffMinutes]  = React.useState(null);
   // Per-product notes are a toggleable feature (enabled/disabled via API/DB).
   // Default off until the shop settings confirm it's on.
   const [lineNotesEnabled, setLineNotesEnabled] = React.useState(false);
@@ -4824,10 +4870,11 @@ function ShopFrame({ variant }) {
       .then((r) => { if (r && typeof r.hour === 'number') setCollectCutoffMinutes(r.hour * 60 + (r.minutes || 0)); })
       .catch(() => {});
   }, [shopId]);
-  const deliveryCutoffPassed = isToday(date) && nowHour >= deliveryCutoffMinutes;
-  const collectCutoffPassed  = isToday(date) && nowHour >= collectCutoffMinutes;
+  const deliveryCutoffPassed = isToday(date) && deliveryCutoffMinutes !== null && nowHour >= deliveryCutoffMinutes;
+  const collectCutoffPassed  = isToday(date) && collectCutoffMinutes !== null && nowHour >= collectCutoffMinutes;
   // Human-readable cutoff labels for tooltips (e.g. "11h00", "16h00")
   function fmtCutoff(mins) {
+    if (mins === null || mins === undefined) return '';
     const h = Math.floor(mins / 60), m = mins % 60;
     return `${h}h${m > 0 ? String(m).padStart(2,'0') : ''}`;
   }
@@ -5425,7 +5472,7 @@ function ShopFrame({ variant }) {
       setMode('collect');
       setNotice({
         titre: 'Passé en Click & Collect',
-        texte: 'L’heure limite de la livraison au bureau (' + (deliveryCutoffLabel || '11h00')
+        texte: 'L’heure limite de la livraison au bureau (' + deliveryCutoffLabel
              + ') vient d’être atteinte. Pour être livré, choisissez une date ultérieure.',
       });
     }
@@ -5481,7 +5528,7 @@ function ShopFrame({ variant }) {
     if (next === 'delivery' && deliveryCutoffPassed) {
       setNotice({
         titre: 'Livraison du jour clôturée',
-        texte: 'Les commandes en livraison au bureau se prennent avant ' + (deliveryCutoffLabel || '11h00')
+        texte: 'Les commandes en livraison au bureau se prennent avant ' + deliveryCutoffLabel
              + '. Choisissez une date ultérieure, ou passez en Click & Collect.',
       });
       return;
@@ -5504,12 +5551,12 @@ function ShopFrame({ variant }) {
     setDate(next);
     setBasket([]);
     // Aujourd'hui + livraison + heure limite dépassée : retour forcé en Collect.
-    if (mode === 'delivery' && isToday(next) && nowHour >= deliveryCutoffMinutes) {
+    if (mode === 'delivery' && isToday(next) && deliveryCutoffMinutes !== null && nowHour >= deliveryCutoffMinutes) {
       setMode('collect');
       setNotice({
         titre: 'Passé en Click & Collect',
         texte: 'La livraison au bureau n’est plus possible aujourd’hui (commandes avant '
-             + (deliveryCutoffLabel || '11h00') + ').'
+             + deliveryCutoffLabel + ').'
              + (avait ? ' Votre panier a été vidé : les prix et les créneaux dépendent du mode.' : ''),
       });
     } else if (avait) {
@@ -5727,7 +5774,7 @@ function ShopFrame({ variant }) {
         }}
         onClose={() => setSwitcherOpen(false)}
       />
-      <LoginModal open={authOpen} onClose={() => setAuthOpen(false)} onLogin={handleLogin} onRegister={handleLogin}/>
+      <LoginModal open={authOpen} onClose={() => setAuthOpen(false)} onLogin={handleLogin} onRegister={handleLogin} shopId={shopId}/>
       {/* Rattrapage CP : s'affiche seule après toute connexion (login, handoff
           PWA, session restaurée) tant que le code postal manque en base. */}
       <PostcodeCatchupModal user={user} onUpdateUser={(u) => setUser(u)}/>

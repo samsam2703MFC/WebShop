@@ -2165,7 +2165,7 @@ function dispatch($m, $p) {
     }
     $mode = $b['mode'] ?? 'collect';
     $dl = is_array($b['delivery'] ?? null) ? $b['delivery'] : [];
-    $note = isset($b['note']) ? mb_substr((string) $b['note'], 0, 500) : null;  // note commande
+    $note = isset($b['note']) ? mb_substr((string) $b['note'], 0, 1000) : null;  // note commande
     // Facturation : « Demander une facture nominative » → invoice:{requested,vat,po}.
     $inv          = is_array($b['invoice'] ?? null) ? $b['invoice'] : null;
     $invRequested = ($inv && !empty($inv['requested'])) ? 1 : 0;
@@ -2173,7 +2173,11 @@ function dispatch($m, $p) {
     $invVat       = ($inv && isset($inv['vat']) && $inv['vat'] !== '') ? mb_substr((string) $inv['vat'], 0, 40) : null;
 
     // Compatibilité avec le payload du front (imbriqué / snake_case) : on normalise.
-    $b['customerId']   = $b['customerId']   ?? ($b['customer']['id']    ?? null);
+    /* L'identité vient de la SESSION (Authorization), JAMAIS du corps — même
+       verrou que les réservations de stock : un customerId déclaré permettait
+       de commander AU NOM d'un autre client (commande dans ses achats, ses
+       bons nominatifs consommés). Sans jeton valide : commande INVITÉ. */
+    $b['customerId']   = auth_uid() ?: null;
     $b['email']        = $b['email']        ?? ($b['customer']['email'] ?? null);
     $b['paymentMethod']= $b['paymentMethod']?? ($b['payment']['method'] ?? null);
     $b['slotId']       = $b['slotId']       ?? ($b['slot']['slotId']    ?? null);
@@ -2448,8 +2452,8 @@ function dispatch($m, $p) {
                 'profile' => $profile, 'allowed' => $allowed], 400);
     }
     // Contact visiteur (guest) — enregistré seulement si pas de compte.
-    $guestEmail = empty($b['customerId']) ? ($b['email'] ?? null) : null;
-    $guestName  = empty($b['customerId']) ? (trim(($b['customer']['firstName'] ?? '') . ' ' . ($b['customer']['lastName'] ?? '')) ?: null) : null;
+    $guestEmail = empty($b['customerId']) ? (isset($b['email']) ? mb_substr((string) $b['email'], 0, 190) : null) : null;
+    $guestName  = empty($b['customerId']) ? (mb_substr(trim(($b['customer']['firstName'] ?? '') . ' ' . ($b['customer']['lastName'] ?? '')), 0, 190) ?: null) : null;
     $guestPfx = '+32'; $guestPhone = null;
     if (empty($b['customerId'])) {
       [$guestPfx, $guestPhone] = norm_phone($b['customer']['phonePrefix'] ?? ($b['phonePrefix'] ?? '+32'), $b['customer']['phone'] ?? ($b['phone'] ?? ''));
@@ -2812,6 +2816,11 @@ function dispatch($m, $p) {
     if ($authM === 'email' && $mail === '')  json_out(['error' => 'Email requis'], 400);
     if ($authM === 'phone' && $phone === '') json_out(['error' => 'Téléphone requis'], 400);
     if ($mail === '' && $phone === '')       json_out(['error' => 'Email ou téléphone requis'], 400);
+    // Mot de passe OBLIGATOIRE : un compte créé sans hachage restait
+    // revendicable par la première personne passant par /auth/set-password
+    // avec l'email/le téléphone d'autrui.
+    if (strlen((string) ($b['password'] ?? '')) < 8)
+      json_out(['error' => 'Mot de passe requis (8 caractères minimum).'], 400);
     // Code postal OBLIGATOIRE (exigence réseau : collecte partout) + format
     // validé selon le pays (défaut BE : 4 chiffres). La localité confirmée à
     // la saisie est stockée avec le CP (référentiel /geo/postcodes).
@@ -2829,9 +2838,13 @@ function dispatch($m, $p) {
       json_out(['error' => 'Ce compte existe déjà. Connectez-vous ou définissez votre mot de passe.', 'exists' => true], 409);
     }
     {
-      // client.id_main_shop is NOT NULL without a default → caller's shop else modal.
-      $ms = $b['shopId'] ?? null;
-      if (!$ms) { $r = row("SELECT id_main_shop FROM client GROUP BY id_main_shop ORDER BY COUNT(*) DESC LIMIT 1"); $ms = $r['id_main_shop'] ?? 1; }
+      // La boutique du compte vient de la boutique CONSULTÉE, transmise par le
+      // front. Plus de devinette « boutique la plus fréquente en base » : ce
+      // repli affectait chaque nouveau client à la boutique la plus peuplée —
+      // il n'apparaissait jamais dans la console de SA boutique.
+      $ms = is_numeric($b['shopId'] ?? null) ? (int) $b['shopId'] : null;
+      if (!$ms || !row("SELECT 1 AS x FROM shops WHERE id=?", [$ms]))
+        json_out(['error' => 'Boutique requise pour créer le compte.'], 400);
       // `locality` guardée par col_exists : le code peut être déployé une
       // requête avant que migrate.sh n'ait joué 0015 — pas de 500 pendant la fenêtre.
       $hasLoc = col_exists('client', 'locality');
@@ -3325,7 +3338,12 @@ function dispatch($m, $p) {
     foreach ($map as $col => $k) if (array_key_exists($k, $b)) { $sets[] = "$col=?"; $vals[] = $b[$k]; }
     // Téléphone : normalisé en national + E.164 + préfixe.
     if (array_key_exists('phone', $b)) {
-      [$pfx, $nat, $e164] = norm_phone($b['phonePrefix'] ?? '+32', $b['phone']);
+      /* Sans phonePrefix explicite, on repart du préfixe DÉJÀ en base (défaut
+         +32 seulement s'il n'y en a pas) : le profil n'envoie pas d'indicatif,
+         et le défaut aveugle réécrivait phone_prefix/phone_e164 en +32 à
+         chaque sauvegarde — corrompant les numéros non belges. */
+      $curPfx = $b['phonePrefix'] ?? (row("SELECT phone_prefix FROM client WHERE id=?", [$id])['phone_prefix'] ?? '+32');
+      [$pfx, $nat, $e164] = norm_phone($curPfx ?: '+32', $b['phone']);
       $sets[] = 'phone=?';        $vals[] = ($nat ?: null);
       $sets[] = 'phone_prefix=?'; $vals[] = ($nat !== '' ? $pfx : null);
       $sets[] = 'phone_e164=?';   $vals[] = ($e164 ?: null);

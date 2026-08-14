@@ -58,13 +58,13 @@
     },
 
     /* ── Register ──────────────────────────────────────────────────── */
-    async register({ email, phone, phonePrefix, password, firstName, lastName, postalCode, locality, authMethod }) {
+    async register({ email, phone, phonePrefix, password, firstName, lastName, postalCode, locality, authMethod, shopId }) {
       if (api.endpoint) {
         try {
           const r = await fetch(`${api.endpoint}/register`, {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, phone, phonePrefix: phonePrefix || '+32', password, firstName, lastName, postalCode, locality, authMethod }),
+            body: JSON.stringify({ email, phone, phonePrefix: phonePrefix || '+32', password, firstName, lastName, postalCode, locality, authMethod, shopId }),
           });
           const j = await r.json();
           if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }

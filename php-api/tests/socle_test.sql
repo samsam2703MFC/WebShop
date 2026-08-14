@@ -239,3 +239,32 @@ CREATE TABLE IF NOT EXISTS `ws_pricing_rules` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
 ;
+
+-- Production : comptes clients webshop (table partagée avec l'ERP).
+-- Absente du socle, /auth/* et /orders étaient intestables en local.
+CREATE TABLE IF NOT EXISTS `client` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `id_main_shop` int(11) NOT NULL,
+  `preferred_shop_id` int(11) DEFAULT NULL,
+  `office_id` int(11) DEFAULT NULL,
+  `email` varchar(190) DEFAULT NULL,
+  `phone` varchar(30) DEFAULT NULL,
+  `phone_prefix` varchar(6) DEFAULT NULL,
+  `phone_e164` varchar(20) DEFAULT NULL,
+  `name` varchar(120) DEFAULT NULL,
+  `surname` varchar(120) DEFAULT NULL,
+  `zip` varchar(10) DEFAULT NULL,
+  `locality` varchar(120) DEFAULT NULL,
+  `password_hash` varchar(255) DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  `source_channel` varchar(20) DEFAULT NULL,
+  `webshop_user` tinyint(1) NOT NULL DEFAULT 0,
+  `preferred_auth_method` varchar(10) DEFAULT NULL,
+  `company_client_id` int(11) DEFAULT NULL,
+  `is_b2b` tinyint(1) NOT NULL DEFAULT 0,
+  `company_name` varchar(190) DEFAULT NULL,
+  `invoice_name` varchar(190) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+;
