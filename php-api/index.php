@@ -7684,6 +7684,23 @@ function dispatch($m, $p) {
         'heure' => $r['heure'], 'client' => $r['client']], $rs));
     }
 
+    /* QR pour les DOCUMENTS D'IMPRESSION de la console (feuille de tournée →
+       PWA livraison). Même encodeur autonome que l'affiche du lien magique
+       (qr.php) — pas de service tiers : les URL internes ne sortent pas.
+       La console le télécharge AVEC le jeton (fetch + en-têtes, un <img>
+       n'en porte pas) et l'incruste en data: dans le document. */
+    if ($m === 'GET' && $p === '/franchisee/tour-qr') {
+      $d3 = trim((string) qp('d', ''));
+      if ($d3 === '' || strlen($d3) > 512) json_out(['error' => 'd requis — le contenu du QR, 512 caractères max.'], 400);
+      require_once __DIR__ . '/qr.php';
+      $mx3 = qr_matrix($d3, 'M');
+      if (!$mx3) json_out(['error' => 'QR non générable pour ce contenu.'], 422);
+      header('Content-Type: image/png');
+      header('Cache-Control: no-store');
+      echo qr_png($mx3[0], $mx3[1], 8, 4);
+      exit;
+    }
+
     // Résolution PRODUIT robuste — utilisée par tous les toggles/saisies :
     // id (productId) prioritaire quand le front le fournit, sinon nom TRIMé ;
     // inclut les produits OBLIGATOIRES même hors webshop (active=0). Avant :
