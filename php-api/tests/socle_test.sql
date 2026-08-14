@@ -210,3 +210,32 @@ CREATE TABLE IF NOT EXISTS `ws_bundle_slot_choices` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
 ;
+
+-- Production : /catalog/stock et les réservations lisent ws_product_stock ;
+-- les promos croisées lisent ws_pricing_rules. Absentes du socle, ces routes
+-- rendaient 500 en local alors qu'elles fonctionnent en ligne.
+CREATE TABLE IF NOT EXISTS `ws_product_stock` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `product_id` int(11) NOT NULL,
+  `shop_id` int(11) NOT NULL,
+  `date` date NOT NULL,
+  `mode` varchar(16) DEFAULT NULL,
+  `qty_total` int(11) NOT NULL DEFAULT 0,
+  `qty_sold` int(11) NOT NULL DEFAULT 0,
+  `qty_reserved` int(11) NOT NULL DEFAULT 0,
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+;
+CREATE TABLE IF NOT EXISTS `ws_pricing_rules` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `rule_type` varchar(32) NOT NULL,
+  `shop_id` int(11) DEFAULT NULL,
+  `x` int(11) DEFAULT NULL,
+  `y` int(11) DEFAULT NULL,
+  `threshold` int(11) DEFAULT NULL,
+  `label` varchar(190) DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+;
