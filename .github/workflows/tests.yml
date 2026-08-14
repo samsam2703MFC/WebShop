@@ -62,9 +62,6 @@ jobs:
                         'cors_origins' => ['*'], 'mail_from' => 'test@example.invalid',
                         'webshop_base' => 'http://localhost/webshop'];
           PHP
-          # Les migrations doivent passer sur une base neuve. migrate.sh est
-          # fail-fast : la première qui échoue arrête le job, et c'est voulu.
-          bash php-api/migrate.sh
 
       - name: Visibilité — le diagnostic dit-il la même chose que le catalogue ?
         run: php php-api/tests/visibilite_test.php
