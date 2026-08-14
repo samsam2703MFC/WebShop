@@ -7397,29 +7397,47 @@ function dispatch($m, $p) {
                    ORDER BY COALESCE(o.delivery_date, DATE(o.created_at)), o.created_at DESC LIMIT 400", [$today, $today]);
       /* LIGNES DE LA COMMANDE — jointes à chaque commande pour la modale de
          détail de la console (clic sur une ligne de « Liste commandes »).
-         UNE requête pour tout le lot, groupée en PHP — pas de N+1. Même
-         filtre que le compteur de pièces (oline_own : lignes de tête, pas
-         les composants de formule) pour que le détail somme comme lui.
-         Libellé : celui figé sur la ligne (product_name), sinon le nom
-         catalogue actuel — jamais un texte de remplissage. */
+         UNE requête pour tout le lot, groupée en PHP — pas de N+1.
+         LES MENUS Y SONT ENTIERS : la ligne mère porte la formule à son prix
+         de base, et chaque choix est une ligne fille (parent_line_id,
+         unit_price = le SUPPLÉMENT seul, 0 si compris — voir l'écriture de la
+         commande). Ne servir que les mères cachait la composition ET faisait
+         mentir la somme face au total (le supplément vit sur la fille). Les
+         filles partent en `composants` de leur mère, avec `inclus` quand leur
+         prix est 0. Le compteur de pièces, lui, reste mères-seules (compte
+         commercial). Libellé : celui figé sur la ligne (product_name), sinon
+         le nom catalogue actuel — jamais un texte de remplissage. */
       $lignesParCmd = [];
       if ($rs) {
         $ids2 = array_map(fn ($o) => (int) $o['id'], $rs);
         $ph2  = implode(',', array_fill(0, count($ids2), '?'));
-        foreach (rows("SELECT l.order_id, COALESCE(NULLIF(l.product_name,''), p.name) AS produit,
+        $meres = []; $filles = [];
+        foreach (rows("SELECT l.id, l.order_id, " . (col_exists('ws_order_lines', 'parent_line_id') ? "l.parent_line_id" : "NULL AS parent_line_id") . ",
+                              COALESCE(NULLIF(l.product_name,''), p.name) AS produit,
                               l.qty, l.unit_price, l.`portion`, l.note
                          FROM ws_order_lines l
                          LEFT JOIN ws_products p ON p.id = l.product_id
-                        WHERE l.order_id IN ($ph2)" . oline_own() . "
-                        ORDER BY l.order_id, l.id", $ids2) as $l2) {
+                        WHERE l.order_id IN ($ph2)
+                        ORDER BY l.order_id, COALESCE(l.parent_line_id, l.id), l.id", $ids2) as $l2) {
           $lbl2 = (string) ($l2['produit'] ?? '');
           if ((string) ($l2['portion'] ?? '') !== '') $lbl2 .= ($lbl2 !== '' ? ' — ' : '') . $l2['portion'];
-          $lignesParCmd[(int) $l2['order_id']][] = [
+          $e2 = [
             'produit' => $lbl2 !== '' ? $lbl2 : null,
             'qty'     => (int) $l2['qty'],
             'prix'    => $l2['unit_price'] !== null ? number_format((float) $l2['unit_price'], 2, ',', ' ') . ' €' : null,
             'note'    => (string) ($l2['note'] ?? '') !== '' ? $l2['note'] : null,
           ];
+          if (empty($l2['parent_line_id'])) {
+            $e2['id'] = (int) $l2['id'];
+            $meres[(int) $l2['order_id']][] = $e2;
+          } else {
+            $e2['inclus'] = ((float) $l2['unit_price']) == 0.0;
+            $filles[(int) $l2['parent_line_id']][] = $e2;
+          }
+        }
+        foreach ($meres as $oid2 => $ls2) foreach ($ls2 as $e2) {
+          $e2['composants'] = $filles[$e2['id']] ?? []; unset($e2['id']);
+          $lignesParCmd[$oid2][] = $e2;
         }
       }
       json_out(array_map(fn ($o) => [
