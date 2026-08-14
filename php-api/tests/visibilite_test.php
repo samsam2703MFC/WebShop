@@ -76,7 +76,7 @@ $catShop = categorie_shop_where('c', $shop);
 $rs = rows("SELECT p.id FROM ws_products p
               LEFT JOIN ws_categories c ON c.id = p.cat_id
              WHERE p.active = 1$wl$seasonSql$catShop", $seasonArgs);
-$prix = prix_boutique($shop, array_map(fn ($x) => (int) $x['id'], $rs));
+$prix = prix_produits(array_map(fn ($x) => (int) $x['id'], $rs));
 $enLigneCat = array_values(array_filter(array_map(fn ($x) => (int) $x['id'], $rs),
                                         fn ($id) => isset($prix[$id])));
 

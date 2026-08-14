@@ -63,8 +63,8 @@ INSERT INTO ws_products
   (5, 'Non produit par cette boutique',  1, 1, 1, 1, 1, 5.00, 0),
   -- 4. office_delivery = 0 — ne se déclenche qu'en mode livraison bureau
   (6, 'Non eligible livraison bureau',   1, 1, 1, 1, 0, 5.00, 0),
-  -- 6. aucune ligne shop_product → sans prix ERP pour cette boutique
-  (7, 'Sans prix ERP',                   1, 1, 1, 1, 1, 5.00, 0),
+  -- 6. prix mis a 0 plus bas → « prix non fixe », donc hors vente
+  (7, 'Prix non fixe',                   1, 1, 1, 1, 1, 5.00, 0),
   -- Navigation : vendu, mais introuvable par une catégorie.
   (8, 'Categorie orpheline',           999, NULL, 1, 1, 1, 5.00, 0),
   (9, 'Categorie autre boutique',        2, NULL, 1, 1, 1, 5.00, 0);
@@ -73,15 +73,10 @@ INSERT INTO ws_products
 -- Le produit 5 est explicitement retiré de l'assortiment de la boutique 2.
 INSERT INTO ws_product_shops (product_id, shop_id, active, no_delivery) VALUES (5, 2, 0, 0);
 
--- LE PRIX VIENT DE L'ERP (shop_product.portion_price), par boutique. Il s'édite
--- dans l'ERP du magasin, pas dans les consoles.
---
--- TOUS SAUF le produit 7, qui doit tomber sur « Sans prix dans l'ERP pour cette
--- boutique ». Le produit 8 en a un aussi : il est bien EN VENTE, c'est sa
--- NAVIGATION qui manque, et les deux notions ne se confondent pas.
-INSERT INTO shop_product (id_shop, id_product, portion_price) VALUES
-  (2, 1, 5.00), (2, 2, 6.00), (2, 3, 5.00), (2, 4, 5.00),
-  (2, 5, 5.00), (2, 6, 5.00), (2, 8, 5.00), (2, 9, 5.00);
+-- LE PRIX EST DANS ws_products.price, posé plus haut avec chaque produit —
+-- une seule table décide de tout ce qui concerne le webshop. Le produit 7 a
+-- son prix mis à zéro ci-dessous : « prix non fixé », donc hors vente.
+UPDATE ws_products SET price = 0 WHERE id = 7;
 
 -- L'ANOMALIE DE PRODUCTION, REPRODUITE EXPRÈS : l'ERP référence des produits
 -- qui n'existent pas dans ws_products. Ce n'est pas une hypothèse — c'est ce
