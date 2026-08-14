@@ -657,18 +657,22 @@ function dispatch($m, $p) {
        vendaient.
 
        RÈGLE, désormais tenue des deux côtés : ce qui est vendu est joignable. */
+    /* PLUS DE FILTRE PAR BOUTIQUE NON PLUS. Il restait ici, dernier vestige du
+       modèle où une catégorie pouvait appartenir à une boutique. Le test de
+       visibilité l'a attrapé net : les produits d'une catégorie rattachée sont
+       désormais VENDUS (tout est commun) pendant que leur catégorie restait
+       hors de la barre — vendus et introuvables, l'écart qu'on passe la journée
+       à supprimer. La barre dérive des produits servis, un point. */
     $cats = rows("SELECT id, slug, label, img, sort_order FROM ws_categories
-                   WHERE id IN ($in) AND (shop_id = ? OR shop_id IS NULL)
-                   ORDER BY sort_order, label", [$s]);
+                   WHERE id IN ($in)
+                   ORDER BY sort_order, label");
     $subs = [];
     if ($subIds) {
       $inS = implode(',', array_map('intval', $subIds));
       $subs = rows("SELECT sub.id, sub.category_id, sub.slug, sub.label, sub.img, sub.sort_order
                       FROM ws_category_subs sub
-                      JOIN ws_categories c ON c.id = sub.category_id
                      WHERE sub.id IN ($inS)
-                       AND (c.shop_id = ? OR c.shop_id IS NULL)
-                     ORDER BY sub.sort_order, sub.label", [$s]);
+                     ORDER BY sub.sort_order, sub.label");
     }
     $byCat = [];
     foreach ($subs as $x) { $byCat[$x['category_id']][] = $x; }
@@ -9721,40 +9725,56 @@ function invite_check($tok) {
   return [$d, null, $r];
 }
 
-/* AU CATALOGUE RÉSEAU — ws_products.brand_whitelist.
-   Premier barreau de l'échelle marque : au catalogue > obligatoire > webshop >
-   livraison bureau. La colonne existait depuis la migration 0003 et n'était
-   LUE NULLE PART — deux écritures, aucun filtre : la marque croyait retirer un
-   produit du réseau, il restait en vente partout.
-   Fragment SQL partagé pour que la règle n'ait qu'une écriture : le catalogue
-   client, la navigation et l'assortiment franchisé la lisent tous ici. La garde
-   col_exists laisse passer les bases antérieures à 0003 — sans colonne, aucun
-   produit n'est retiré à tort. */
+/* brand_whitelist N'EST PLUS LU — DÉCISION D'EXPLOITATION, PAS UN OUBLI.
+ *
+ * LE MODÈLE A ÉTÉ SIMPLIFIÉ : tous les produits sont communs à tous les
+ * magasins, et la marque ne décide plus que de DEUX choses, une par canal :
+ *   · ws_products.active          → vendu sur le webshop (click & collect)
+ *   · ws_products.office_delivery → vendu en livraison bureau
+ * Une troisième colonne qui retire un produit « du réseau » n'a plus de place :
+ * elle recouvrait les deux autres sans le dire.
+ *
+ * CE QUE ÇA A CHANGÉ, ET ÇA SE COMPTE. En production, 73 produits actifs sur 90
+ * étaient retenus par brand_whitelist = 0 — soit le catalogue Traiteur entier,
+ * 8 sous-catégories. Les boutiques en voyaient 17. Ce n'était donc pas un
+ * réglage d'exception : c'était la frontière entre deux catalogues. Sa levée a
+ * été mesurée AVANT (sonde), puis décidée.
+ *
+ * LA FONCTION SURVIT VIDE, ET C'EST VOULU. Trois requêtes l'appellent ; les
+ * laisser appeler un fragment vide garde la règle à UN endroit. Le jour où une
+ * restriction réseau redevient nécessaire, elle s'écrit ici et vaut partout —
+ * plutôt que d'être recopiée dans trois WHERE qui divergeront.
+ *
+ * LA COLONNE N'EST PAS SUPPRIMÉE. Un DROP est irréversible, l'ERP peut
+ * l'alimenter, et la console marque l'écrit encore. Elle n'est plus lue : c'est
+ * suffisant, et réversible. À SIGNALER À LA CONSOLE MARQUE : sa bascule
+ * « au catalogue réseau » écrit désormais dans une colonne que plus personne ne
+ * lit — un levier sans effet, exactement ce qu'on a passé la journée à retirer.
+ */
 function whitelist_where($alias = 'p') {
-  return col_exists('ws_products', 'brand_whitelist')
-    ? " AND COALESCE($alias.brand_whitelist,1) = 1" : '';
+  return '';
 }
 
-/* ── UNE CATÉGORIE D'UNE AUTRE BOUTIQUE EXCLUT SES PRODUITS, PARTOUT. ───────
- * ws_categories.shop_id NULL = catégorie du réseau ; renseigné = propre à une
- * boutique. La barre de navigation l'appliquait déjà — `shop_id = ? OR shop_id
- * IS NULL` — mais elle SEULE. Ni la grille du webshop, ni l'assortiment du
- * franchisé, ni le catalogue de stock ne la regardaient.
+/* categorie_shop_where() NE FILTRE PLUS — le modèle a changé sous elle.
  *
- * CE QUE ÇA DONNAIT, relevé en production : la console franchisé de la
- * boutique 2 listait dix produits de la boutique 4 — Croissant pur beurre,
- * Baguette tradition, Tarte au riz… — et le webshop ne les écartait que par
- * ACCIDENT, faute de prix ERP pour la boutique 2. Un prix posé, et ils se
- * seraient vendus boutique 2, rangés sous une catégorie que la barre n'affiche
- * pas : visibles sous « Tout », introuvables ailleurs.
+ * Elle a été écrite ce matin, et elle avait raison DU MODÈLE D'ALORS : une
+ * catégorie portant ws_categories.shop_id appartenait à une boutique, et ses
+ * produits n'avaient rien à faire ailleurs. C'est ce qui expliquait « Croissant
+ * pur beurre » visible dans la console marque et absent du webshop de Corbais.
  *
- * La règle est donc écrite une fois et lue partout. Un produit sans catégorie
- * (cat_id NULL, ou orphelin en LEFT JOIN) n'est PAS écarté : son problème est
- * le rattachement manquant, que le diagnostic signale déjà, et l'exclure ici
- * le ferait disparaître sans rien dire. */
+ * LE MODÈLE EST DÉSORMAIS : tous les produits sont communs à tous les magasins.
+ * Un rattachement de catégorie à UNE boutique n'a donc plus de sens, et le
+ * filtre qui l'appliquait retirerait du catalogue des produits que tout le
+ * monde doit vendre. En production : 5 catégories rattachées, 10 produits.
+ *
+ * Vide plutôt que supprimée, pour la même raison que whitelist_where() : la
+ * règle reste à UN endroit, et ses trois appelants ne divergeront pas.
+ * La colonne shop_id continue d'être SERVIE à la console marque (shop_id,
+ * shop_nom) — savoir d'où vient une catégorie reste utile ; ce qui a disparu,
+ * c'est qu'elle décide de ce qui est vendu.
+ */
 function categorie_shop_where($alias = 'c', $shopId = null) {
-  if (!$shopId || !col_exists('ws_categories', 'shop_id')) return '';
-  return " AND ($alias.shop_id IS NULL OR $alias.shop_id = " . (int) $shopId . ")";
+  return '';
 }
 
 /* ── POURQUOI CE PRODUIT N'EST-IL PAS EN LIGNE ? ───────────────────────────
@@ -9822,14 +9842,11 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
     // ORDRE = celui du catalogue. La première condition qui échoue est la
     // raison montrée : en afficher plusieurs ferait chercher laquelle lever.
     if (!(int) $r['actif'])                          $raison = 'Brouillon — non publié au catalogue réseau';
-    elseif (!(int) $r['wl'])                         $raison = 'Retiré du catalogue réseau par la marque';
     elseif ($hasPS && $r['ps_actif'] !== null && !(int) $r['ps_actif'])
                                                      $raison = 'Non produit par cette boutique';
     elseif ($horsBureau && !(int) $r['od'])          $raison = 'Non éligible à la livraison au bureau';
     elseif ($seasonSql !== '' && !isset($okSaison[$pid]))
                                                      $raison = 'Hors saison à la date demandée';
-    elseif ($sc && $r['cat_shop'] !== null && (int) $r['cat_shop'] !== $sc)
-                                                     $raison = 'Catégorie rattachée à une autre boutique';
     elseif ($sc && !isset($prix[$pid]))              $raison = 'Sans prix dans l’ERP pour cette boutique';
     /* JOIGNABLE ≠ EN LIGNE, et les confondre rendrait les deux faux. Un
        produit peut être EN VENTE — il s'affiche sous « Tout » — sans qu'aucune

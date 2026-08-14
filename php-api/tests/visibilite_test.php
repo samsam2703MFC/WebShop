@@ -117,8 +117,7 @@ if ($enLigneCat) {
     rows("SELECT DISTINCT cat_id FROM ws_products WHERE id IN ($inP)"))));
   if ($catIds) {
     $inC = implode(',', array_map('intval', $catIds));
-    foreach (rows("SELECT id FROM ws_categories
-                    WHERE id IN ($inC) AND (shop_id = ? OR shop_id IS NULL)", [$shop]) as $c)
+    foreach (rows("SELECT id FROM ws_categories WHERE id IN ($inC)") as $c)
       $catsBarre[(int) $c['id']] = true;
   }
 }
