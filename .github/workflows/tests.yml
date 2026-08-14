@@ -89,22 +89,10 @@ jobs:
         run: find php-api -name '*.php' -not -path '*/vendor/*' -print0 | xargs -0 -n1 php -l > /dev/null
 
       # TypeScript sert UNIQUEMENT d'analyseur syntaxique JSX : le webshop
-      # compile le JSX dans le navigateur (Babel standalone), il n'y a donc
-      # aucune étape de build qui aurait signalé une parenthèse manquante.
-      # Installé sans être ajouté au projet — ce n'est pas une dépendance.
-      - name: Le bundle du webshop parse
+      # compile son JSX dans le navigateur, il n'y a donc aucune étape de build
+      # entre le commit et le client. Une parenthèse manquante part telle quelle
+      # en production. Installé sans être ajouté au projet — pas une dépendance.
+      - name: Les .jsx du webshop parsent
         run: |
           npm install --no-save --no-audit --no-fund typescript
-          node -e "
-            const ts = require('typescript'), fs = require('fs');
-            let ko = 0;
-            for (const f of fs.readdirSync('.').filter(x => x.endsWith('.jsx'))) {
-              const sf = ts.createSourceFile(f, fs.readFileSync(f, 'utf8'),
-                                             ts.ScriptTarget.ES2020, true, ts.ScriptKind.JSX);
-              const d = sf.parseDiagnostics || [];
-              if (d.length) { ko++; console.log('✕ ' + f + ' : ' +
-                ts.flattenDiagnosticMessageText(d[0].messageText, ' ')); }
-            }
-            if (ko) process.exit(1);
-            console.log('✓ tous les .jsx parsent');
-          "
+          node php-api/tests/jsx_parse_test.cjs
