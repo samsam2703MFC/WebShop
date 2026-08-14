@@ -315,6 +315,13 @@ function ws_voucher_upsert(array $o) {
     // 28 novembre pour le 2 décembre doit voir la gamme de Noël ; c'est la date
     // de remise de la marchandise qui fait foi, pas celle de la commande.
     [$seasonWhere, $seasonArgs] = availability_where('p', $date);
+    // Déclencheurs de menu explicites (0078) : injectés dans has_menu_options
+    // seulement si la table existe (réplica pas encore migré → ancien chemin).
+    $trgSql = tbl_exists('ws_bundle_triggers')
+      ? " OR EXISTS(SELECT 1 FROM ws_bundle_triggers tg
+                     WHERE tg.cat_id = p.cat_id
+                       AND (tg.sub_cat_id IS NULL OR tg.sub_cat_id = p.sub_cat_id))"
+      : '';
     // `badge` (texte) a été migré en FK tag_id -> ws_tags ; on expose le libellé
     // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
     $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id,
@@ -326,9 +333,13 @@ function ws_voucher_upsert(array $o) {
                       -- Menu déclenché par la catégorie (menu_default), surchargé par
                       -- le produit (menu_override 'on'/'off'/NULL=hérite). has_menu_options
                       -- est RÉSOLU serveur : le front et /orders reçoivent la valeur finale.
+                      -- Armé par : surcharge produit, sinon déclencheur
+                      -- EXPLICITE du menu (ws_bundle_triggers 0078 — la
+                      -- sous-catégorie du produit compte comme « catégorie ET
+                      -- sous-catégorie »), sinon l'ancien menu_default.
                       COALESCE(
                         CASE p.menu_override WHEN 'on' THEN 1 WHEN 'off' THEN 0 END,
-                        c.menu_default, 0
+                        IF(COALESCE(c.menu_default,0) = 1$trgSql, 1, 0)
                       ) AS has_menu_options,
                       p.price AS price, ps.no_delivery,
                       COALESCE(p.office_delivery,1) AS office_delivery," .
@@ -3699,8 +3710,17 @@ function dispatch($m, $p) {
                       WHERE p.active = 1
                         AND EXISTS (SELECT 1 FROM ws_bundles b WHERE b.product_id = p.id)
                       ORDER BY p.name");
+      $hasTrg = tbl_exists('ws_bundle_triggers');
       foreach ($prods as $p2) {
         $pid = (string) $p2['id'];
+        // Déclencheurs EXPLICITES du menu (0078) : catégorie, ou catégorie ET
+        // sous-catégorie. Le constructeur les affiche et les édite en
+        // multi-sélection ; ids ET libellés servis, pour ne pas re-joindre côté écran.
+        $trigs = $hasTrg ? rows("SELECT t.cat_id, t.sub_cat_id, c.label AS cat, sub.label AS sub
+                                   FROM ws_bundle_triggers t
+                                   LEFT JOIN ws_categories c ON c.id = t.cat_id
+                                   LEFT JOIN ws_category_subs sub ON sub.id = t.sub_cat_id
+                                  WHERE t.product_id = ? ORDER BY c.label, sub.label", [$p2['id']]) : [];
         $bundles = rows("SELECT id, name, description, price_modifier, sort_order, active
                            FROM ws_bundles WHERE product_id = ? ORDER BY sort_order, id", [$p2['id']]);
         foreach ($bundles as &$b) {
@@ -3762,6 +3782,11 @@ function dispatch($m, $p) {
           'menuOverride' => $p2['menu_override'] !== null ? $p2['menu_override'] : null,
           'basePrice'    => (float) $p2['price'],
           'baseCost'     => (float) $p2['base_cost'],
+          // Multi-sélection de déclencheurs (0078) : cat seule, ou cat ET sous-cat.
+          'triggers'     => array_map(fn ($t) => [
+            'cat_id' => (int) $t['cat_id'], 'sub_cat_id' => $t['sub_cat_id'] !== null ? (int) $t['sub_cat_id'] : null,
+            'cat' => $t['cat'] ?: '', 'sub' => $t['sub'] ?: null,
+          ], $trigs),
           'bundles'      => $bundles,
         ];
       }
@@ -3889,6 +3914,39 @@ function dispatch($m, $p) {
          VALUES (NULL, ?, ?, ?, ?, ?, ?)",
         [$action, $entity, $entityId, $shopId, $payload !== null ? json_encode($payload, JSON_UNESCAPED_UNICODE) : null, $ip]);
     };
+
+    /* Déclencheurs d'un menu (0078) — REMPLACEMENT COMPLET, comme un
+       formulaire : la multi-sélection de l'écran envoie l'état entier, la
+       route efface puis réécrit. Chaque entrée : cat_id, et sub_cat_id pour le
+       « ET catégorie + sous-catégorie ». Une sous-catégorie est toujours
+       validée contre sa catégorie — un couple incohérent est refusé, pas
+       corrigé en silence. */
+    if ($m === 'POST' && $p === '/franchisor/menu-triggers') {
+      if (!tbl_exists('ws_bundle_triggers'))
+        json_out(['ok' => false, 'error' => 'Table ws_bundle_triggers absente — migration 0078 non appliquée sur ce serveur.'], 501);
+      $b = body(); $pid = (int) ($b['product_id'] ?? 0);
+      if (!$pid) json_out(['error' => 'product_id requis'], 400);
+      if (!row("SELECT 1 x FROM ws_bundles WHERE product_id = ? LIMIT 1", [$pid]))
+        json_out(['ok' => false, 'error' => 'Ce produit ne porte aucune formule — créez la formule avant ses déclencheurs.'], 400);
+      $in = is_array($b['triggers'] ?? null) ? $b['triggers'] : [];
+      $rows2 = [];
+      foreach ($in as $t) {
+        $cid = (int) ($t['cat_id'] ?? 0);
+        $sid = isset($t['sub_cat_id']) && $t['sub_cat_id'] !== null && $t['sub_cat_id'] !== '' ? (int) $t['sub_cat_id'] : null;
+        if (!$cid) json_out(['ok' => false, 'error' => 'Déclencheur sans cat_id.'], 400);
+        if (!row("SELECT 1 x FROM ws_categories WHERE id = ?", [$cid]))
+          json_out(['ok' => false, 'error' => "Catégorie #$cid inconnue."], 400);
+        if ($sid !== null && !row("SELECT 1 x FROM ws_category_subs WHERE id = ? AND category_id = ?", [$sid, $cid]))
+          json_out(['ok' => false, 'error' => "Sous-catégorie #$sid absente de la catégorie #$cid."], 400);
+        $rows2[] = [$cid, $sid];
+      }
+      q("DELETE FROM ws_bundle_triggers WHERE product_id = ?", [$pid]);
+      foreach ($rows2 as [$cid, $sid])
+        q("INSERT IGNORE INTO ws_bundle_triggers (product_id, cat_id, sub_cat_id) VALUES (?,?,?)", [$pid, $cid, $sid]);
+      $audit('menu.triggers', 'ws_bundle_triggers', $pid, null, ['n' => count($rows2), 'triggers' => $rows2]);
+      json_out(['ok' => true, 'n' => count($rows2)]);
+    }
+
 
     // Boutique : contrat / toggle Webshop / actif.
     if ($m === 'POST' && $p === '/franchisor/shop') {
@@ -9989,16 +10047,34 @@ function bundle_source_pid($pid) {
   $pid = (int) $pid;
   if ($pid <= 0) return 0;
   if (row("SELECT 1 x FROM ws_bundles WHERE product_id = ? AND active = 1 LIMIT 1", [$pid])) return $pid;
-  $meta = row("SELECT p.cat_id, p.menu_override, COALESCE(c.menu_default, 0) AS menu_default
+  $meta = row("SELECT p.cat_id, p.sub_cat_id, p.menu_override, COALESCE(c.menu_default, 0) AS menu_default
                  FROM ws_products p
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
                 WHERE p.id = ? LIMIT 1", [$pid]);
-  $armed = $meta && $meta['cat_id'] !== null && (
+  if (!$meta || $meta['menu_override'] === 'off') return $pid;
+  /* DÉCLENCHEURS EXPLICITES D'ABORD (ws_bundle_triggers, 0078) : le menu dont
+     un déclencheur correspond au produit — sa SOUS-catégorie prime (le « ET »
+     catégorie+sous-catégorie), sa catégorie sinon. Plusieurs menus peuvent se
+     disputer un produit : le déclencheur le plus précis gagne, puis le plus
+     petit id — déterministe. */
+  if ($meta['cat_id'] !== null && tbl_exists('ws_bundle_triggers')) {
+    $tg = row("SELECT t.product_id
+                 FROM ws_bundle_triggers t
+                 JOIN ws_bundles b ON b.product_id = t.product_id AND b.active = 1
+                 JOIN ws_products tp ON tp.id = t.product_id AND tp.active = 1
+                WHERE t.cat_id = ?
+                  AND (t.sub_cat_id IS NULL OR t.sub_cat_id = ?)
+                ORDER BY (t.sub_cat_id IS NOT NULL) DESC, t.product_id
+                LIMIT 1", [(int) $meta['cat_id'], $meta['sub_cat_id'] !== null ? (int) $meta['sub_cat_id'] : -1]);
+    if ($tg) return (int) $tg['product_id'];
+  }
+  // ANCIEN CHEMIN, conservé : catégorie armée par menu_default → la formule
+  // « modèle » de la catégorie (produit explicitement menu d'abord, puis le
+  // plus petit id — déterministe).
+  $armed = $meta['cat_id'] !== null && (
     $meta['menu_override'] === 'on' ||
     ($meta['menu_override'] === null && (int) $meta['menu_default'] === 1));
   if (!$armed) return $pid;
-  // On privilégie un produit explicitement menu ('on'), puis le plus petit id
-  // — déterministe.
   $tpl = row("SELECT b.product_id
                 FROM ws_bundles b
                 JOIN ws_products tp ON tp.id = b.product_id AND tp.active = 1
@@ -10218,6 +10294,18 @@ function ws_param($key, $default = null) {
  * dépendent d'une colonne non encore migrée (ex. pwa_purchases.to_invoice) se
  * désactivent proprement au lieu d'échouer — et s'activent dès que la colonne
  * est ajoutée en base, sans redéploiement. */
+function tbl_exists($table) {
+  static $cache = [];
+  if (!array_key_exists($table, $cache)) {
+    try {
+      $cache[$table] = (bool) row(
+        "SELECT 1 AS ok FROM information_schema.TABLES
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1", [$table]);
+    } catch (Throwable $e) { $cache[$table] = false; }
+  }
+  return $cache[$table];
+}
+
 function col_exists($table, $col) {
   static $cache = [];
   $k = "$table.$col";

@@ -31,6 +31,17 @@ CREATE TABLE IF NOT EXISTS `shops` (
   `active` tinyint(4) DEFAULT 1,
   `lat` decimal(10,7) DEFAULT NULL,
   `lng` decimal(10,7) DEFAULT NULL,
+  `slug` varchar(190) DEFAULT NULL,
+  `street` varchar(190) DEFAULT NULL,
+  `street_num` varchar(20) DEFAULT NULL,
+  `webshop_enabled` tinyint(1) NOT NULL DEFAULT 1,
+  `email` varchar(190) DEFAULT NULL,
+  `phone` varchar(50) DEFAULT NULL,
+  `accent` varchar(20) DEFAULT NULL,
+  `tint` varchar(20) DEFAULT NULL,
+  `logo_url` varchar(255) DEFAULT NULL,
+  `discount_type` varchar(20) DEFAULT NULL,
+  `discount_value` decimal(10,2) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
 ;
@@ -74,6 +85,7 @@ CREATE TABLE IF NOT EXISTS `ws_products` (
   `portions` tinyint(4) DEFAULT 0,
   `cross_portion` tinyint(4) DEFAULT 0,
   `menu_override` varchar(8) DEFAULT NULL,
+  `base_cost` decimal(10,2) NOT NULL DEFAULT 0.00,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
 ;
@@ -145,6 +157,52 @@ CREATE TABLE IF NOT EXISTS `bo_audit` (
   `payload` text DEFAULT NULL,
   `ip` varchar(64) DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+;
+
+-- Les tables de FORMULES (menus). Créées en production par le schéma initial
+-- du back-office (ws_schema.sql, hors migrations) — comme bo_audit, elles
+-- doivent exister ici pour que les routes de menus soient testables, sinon un
+-- test « passe » en sautant tout l'écran. Colonnes = celles que l'API lit,
+-- enrichies par les 0003/0057/0058/0059 (kind, min/max_select, cost,
+-- product_id, cat_id, sub_cat_id) — le socle est postérieur à ces migrations.
+CREATE TABLE IF NOT EXISTS `ws_bundles` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `product_id` int(11) NOT NULL,
+  `name` varchar(190) DEFAULT NULL,
+  `description` text DEFAULT NULL,
+  `price_modifier` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `sort_order` int(11) NOT NULL DEFAULT 0,
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+;
+CREATE TABLE IF NOT EXISTS `ws_bundle_slots` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `bundle_id` int(11) NOT NULL,
+  `label` varchar(190) DEFAULT NULL,
+  `required` tinyint(1) NOT NULL DEFAULT 0,
+  `kind` varchar(8) NOT NULL DEFAULT 'single',
+  `min_select` int(11) NOT NULL DEFAULT 1,
+  `max_select` int(11) NOT NULL DEFAULT 1,
+  `sort_order` int(11) NOT NULL DEFAULT 0,
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  `cat_id` int(11) DEFAULT NULL,
+  `sub_cat_id` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+;
+CREATE TABLE IF NOT EXISTS `ws_bundle_slot_choices` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `slot_id` int(11) NOT NULL,
+  `label` varchar(190) DEFAULT NULL,
+  `img` varchar(255) DEFAULT NULL,
+  `delta` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `cost` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `sort_order` int(11) NOT NULL DEFAULT 0,
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  `product_id` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
 ;
