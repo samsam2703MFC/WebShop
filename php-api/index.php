@@ -628,11 +628,36 @@ function dispatch($m, $p) {
     if (!$catIds) json_out([]);
 
     $in  = implode(',', array_map('intval', $catIds));
-    // active = 1 reste exigé : une catégorie que la marque a retirée ne
-    // réapparaît pas dans la navigation. Les produits orphelins qu'elle laisse
-    // sont signalés par l'assortiment (champ `navigation`), pas ici.
+    /* PLUS DE FILTRE `active` ICI, ET C'EST LE CŒUR DU CORRECTIF.
+       J'avais gardé `AND active = 1` en écrivant qu'« une catégorie que la
+       marque a retirée ne réapparaît pas dans la navigation ». C'était faux sur
+       le fond : ws_categories.active n'est PAS une décision, c'est un CACHE
+       CALCULÉ. Une seule requête l'écrit, dans /franchisor/product et
+       /franchisor/category :
+
+           SET active = EXISTS(SELECT 1 FROM ws_products p2
+                                WHERE p2.cat_id = ws_categories.id AND p2.active = 1)
+
+       « au moins un produit actif » — et rien d'autre ne le rafraîchit. Un
+       produit activé par un autre chemin (import ERP, migration, écriture
+       directe) laisse le cache tel quel. CONSTATÉ EN PRODUCTION : Biscuiterie
+       porte 6 produits actifs et son cache vaut 0. La console marque affiche sa
+       bascule « webshop » sur ACTIF — elle lit les produits, donc la vérité —
+       pendant que la barre du webshop était vide. Le client voyait les cookies
+       en vente sans aucune catégorie pour y revenir.
+
+       Ce filtre n'apportait donc rien de juste : il ne protégeait aucune
+       intention, il propageait un cache périmé. Et il était REDONDANT — cette
+       liste dérive déjà des produits SERVIS : une catégorie n'y entre que si
+       elle contient un produit réellement vendable ici. Retirer ses produits la
+       fait disparaître d'elle-même, calculé sur l'instant plutôt que mis en
+       cache. Même raisonnement pour les sous-catégories : `sub.active` gardait
+       la sous-catégorie « Cookies » hors du menu alors que ses produits se
+       vendaient.
+
+       RÈGLE, désormais tenue des deux côtés : ce qui est vendu est joignable. */
     $cats = rows("SELECT id, slug, label, img, sort_order FROM ws_categories
-                   WHERE id IN ($in) AND active = 1 AND (shop_id = ? OR shop_id IS NULL)
+                   WHERE id IN ($in) AND (shop_id = ? OR shop_id IS NULL)
                    ORDER BY sort_order, label", [$s]);
     $subs = [];
     if ($subIds) {
@@ -640,7 +665,7 @@ function dispatch($m, $p) {
       $subs = rows("SELECT sub.id, sub.category_id, sub.slug, sub.label, sub.img, sub.sort_order
                       FROM ws_category_subs sub
                       JOIN ws_categories c ON c.id = sub.category_id
-                     WHERE sub.id IN ($inS) AND sub.active = 1
+                     WHERE sub.id IN ($inS)
                        AND (c.shop_id = ? OR c.shop_id IS NULL)
                      ORDER BY sub.sort_order, sub.label", [$s]);
     }
