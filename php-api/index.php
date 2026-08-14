@@ -7760,6 +7760,49 @@ function dispatch($m, $p) {
       exit;
     }
 
+    /* Avis Google de LA boutique — LECTURE seule, via l'API Places (New).
+       Le Place ID vient de la table `shops` (colonne détectée), la clé API de
+       ws_param `google_api_key` : la clé ne vit qu'en base, côté serveur — le
+       dépôt est public et le navigateur n'a pas à la voir, l'appel Google part
+       d'ici. Répondre aux avis exigerait OAuth Business Profile (client id +
+       secret + refresh token) : hors de portée d'une clé API, et l'écran le
+       dit. Au plus 5 avis rendus : limite de l'API Places, pas un choix. */
+    if ($m === 'GET' && $p === '/franchisee/google-reviews') {
+      if (!$shopId) json_out(['error' => 'boutique requise (?shop=)'], 400);
+      $gKey = (string) ws_param('google_api_key', '');
+      if ($gKey === '')
+        json_out(['error' => 'Clé API Google non configurée — poser la clé dans ws_param, clé « google_api_key » (Console marque → Paramètres).'], 501);
+      $gCol = null;
+      foreach (['google_place_id', 'place_id', 'google_place', 'gplace_id'] as $c9)
+        if (col_exists('shops', $c9)) { $gCol = $c9; break; }
+      if (!$gCol)
+        json_out(['error' => 'Aucune colonne Place ID dans « shops » (cherché : google_place_id, place_id, google_place, gplace_id).'], 501);
+      $gPid = trim((string) (row("SELECT `$gCol` v FROM shops WHERE id = ?", [$shopId])['v'] ?? ''));
+      if ($gPid === '') json_out(['error' => "Place ID Google vide pour cette boutique (shops.$gCol)."], 404);
+      $ctx9 = stream_context_create(['http' => ['timeout' => 8, 'ignore_errors' => true]]);
+      $raw9 = @file_get_contents('https://places.googleapis.com/v1/places/' . rawurlencode($gPid)
+        . '?fields=' . rawurlencode('displayName,rating,userRatingCount,googleMapsUri,reviews')
+        . '&languageCode=fr&key=' . rawurlencode($gKey), false, $ctx9);
+      $j9 = ($raw9 !== false) ? json_decode($raw9, true) : null;
+      if (!is_array($j9)) json_out(['error' => 'API Places injoignable depuis le serveur.'], 502);
+      if (isset($j9['error']))
+        json_out(['error' => 'Google : ' . ((string) ($j9['error']['message'] ?? '') ?: 'refus'),
+                  'status' => (string) ($j9['error']['status'] ?? '')], 502);
+      header('Cache-Control: no-store');
+      json_out([
+        'nom'  => (string) ($j9['displayName']['text'] ?? ''),
+        'note' => isset($j9['rating']) ? (float) $j9['rating'] : null,
+        'nb'   => isset($j9['userRatingCount']) ? (int) $j9['userRatingCount'] : null,
+        'url'  => (string) ($j9['googleMapsUri'] ?? ''),
+        'avis' => array_map(fn ($r9) => [
+          'auteur' => (string) ($r9['authorAttribution']['displayName'] ?? '—'),
+          'note'   => isset($r9['rating']) ? (int) $r9['rating'] : null,
+          'quand'  => (string) ($r9['relativePublishTimeDescription'] ?? ''),
+          'texte'  => (string) (($r9['text']['text'] ?? '') ?: ($r9['originalText']['text'] ?? '')),
+        ], array_values((array) ($j9['reviews'] ?? []))),
+      ]);
+    }
+
     // Résolution PRODUIT robuste — utilisée par tous les toggles/saisies :
     // id (productId) prioritaire quand le front le fournit, sinon nom TRIMé ;
     // inclut les produits OBLIGATOIRES même hors webshop (active=0). Avant :
