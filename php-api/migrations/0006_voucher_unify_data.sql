@@ -18,8 +18,16 @@
 
 START TRANSACTION;
 
+-- Garde d'audit go-live : cette migration TRANSPORTE deux bons réels depuis
+-- ws_vouchers. Sur une base NEUVE (sans la table héritée), il n'y a rien à
+-- transporter — sans cette garde, elle FABRIQUAIT deux bons actifs
+-- (BIENVENUE10 −10 %, LIVRAISONOFF livraison offerte) sur toute installation
+-- vierge. @src=0 ⇒ tous les inserts deviennent des no-op.
+SET @src := (SELECT COUNT(*) FROM information_schema.tables
+              WHERE table_schema = DATABASE() AND table_name = 'ws_vouchers');
+
 -- ═══════════════════════ BIENVENUE10 ═══════════════════════
-SET @exists := (SELECT COUNT(*) FROM voucher_code WHERE code='BIENVENUE10');
+SET @exists := IF(@src = 0, 1, (SELECT COUNT(*) FROM voucher_code WHERE code='BIENVENUE10'));
 
 INSERT INTO promotion
   (name, description, promotion_type, status, priority, is_exclusive,
@@ -51,7 +59,7 @@ INSERT INTO voucher_campaign_channel (id_voucher_campaign, channel)
 SELECT @cid, 'WS' FROM DUAL WHERE @exists=0;
 
 -- ═══════════════════════ LIVRAISONOFF ═══════════════════════
-SET @exists := (SELECT COUNT(*) FROM voucher_code WHERE code='LIVRAISONOFF');
+SET @exists := IF(@src = 0, 1, (SELECT COUNT(*) FROM voucher_code WHERE code='LIVRAISONOFF'));
 
 INSERT INTO promotion
   (name, description, promotion_type, status, priority, is_exclusive,

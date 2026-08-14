@@ -2049,6 +2049,60 @@ function dispatch($m, $p) {
     json_out(['ok' => true]);
   }
 
+  /* Demande d'événement B2B — formulaire de la landing publique /landing/b2b.
+     AVANT : le formulaire affichait « demande transmise » sans rien envoyer
+     (résidu de mode démo) — chaque prospect réel était perdu. Même armature
+     que /zone-request : rate-limit par IP, insertion, mail d'alerte. */
+  if ($m === 'POST' && $p === '/b2b/event-request') {
+    if (!row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_b2b_event_requests'"))
+      json_out(['error' => 'Table ws_b2b_event_requests absente (migration 0082).'], 501);
+    $b = body();
+    $email = trim((string) ($b['email'] ?? ''));
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'Email professionnel requis.'], 400);
+    $nom = trim((string) ($b['contactName'] ?? ''));
+    if ($nom === '') json_out(['error' => 'Nom du contact requis.'], 400);
+    if (empty($b['consent'])) json_out(['error' => 'Consentement requis.'], 400);
+    $ipRaw = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '');
+    $ip = trim(explode(',', $ipRaw)[0]);
+    $max = (int) ws_param('b2b_event_rate_per_hour', '5');
+    $rl = row("SELECT COUNT(*) AS n FROM ws_b2b_event_requests
+                WHERE source_ip=? AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)", [$ip]);
+    if ($rl && (int) $rl['n'] >= $max) json_out(['error' => 'Trop de demandes, réessayez plus tard.'], 429);
+    $date = trim((string) ($b['eventDate'] ?? ''));
+    $date = preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) ? $date : null;
+    q("INSERT INTO ws_b2b_event_requests
+         (event_type, event_date, guests, zone_id, shop_id, postal_code, budget, company, vat,
+          contact_name, email, phone, message, consent_at, source_ip)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)",
+      [mb_substr(trim((string) ($b['eventType'] ?? '')), 0, 60) ?: null,
+       $date,
+       is_numeric($b['guests'] ?? null) ? (int) $b['guests'] : null,
+       is_numeric($b['zoneId'] ?? null) ? (int) $b['zoneId'] : null,
+       is_numeric($b['shopId'] ?? null) ? (int) $b['shopId'] : null,
+       mb_substr(trim((string) ($b['postalCode'] ?? '')), 0, 10) ?: null,
+       mb_substr(trim((string) ($b['budget'] ?? '')), 0, 60) ?: null,
+       mb_substr(trim((string) ($b['company'] ?? '')), 0, 190) ?: null,
+       mb_substr(trim((string) ($b['vat'] ?? '')), 0, 40) ?: null,
+       mb_substr($nom, 0, 190),
+       mb_substr($email, 0, 190),
+       mb_substr(trim((string) ($b['phone'] ?? '')), 0, 30) ?: null,
+       mb_substr(trim((string) ($b['message'] ?? '')), 0, 5000) ?: null,
+       $ip ?: null]);
+    $admin = ws_param('zone_request_admin_email', cfg()['mail_from'] ?? '');
+    if ($admin && filter_var($admin, FILTER_VALIDATE_EMAIL)) {
+      $from = cfg()['mail_from'] ?? 'no-reply@atelierby.be';
+      @mail($admin, 'Nouvelle demande événement B2B — landing',
+            "Type: " . ($b['eventType'] ?? '—') . "\nDate: " . ($date ?: '—')
+            . "\nConvives: " . ($b['guests'] ?? '—') . "\nZone: " . ($b['zoneId'] ?? '—')
+            . " (boutique " . ($b['shopId'] ?? '—') . ")\nSociete: " . ($b['company'] ?? '—')
+            . "\nTVA: " . ($b['vat'] ?? '—') . "\nContact: $nom\nEmail: $email\nTel: "
+            . ($b['phone'] ?? '—') . "\nBudget: " . ($b['budget'] ?? '—') . "\nMessage: "
+            . ($b['message'] ?? '—') . "\n",
+            "From: $from\r\nContent-Type: text/plain; charset=utf-8\r\n");
+    }
+    json_out(['ok' => true]);
+  }
+
   /* Créneaux de livraison d'un bureau = les fenêtres de SA tournée (ws_tour_availability).
      window_label 'afternoon' → slot 'soir' (ex. livraison 17:00, cutoff 15:00). Par tournée :
      seules celles ayant une ligne 'afternoon' renvoient le créneau soir. */
