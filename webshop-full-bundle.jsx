@@ -4466,6 +4466,26 @@ function ShopFrame({ variant }) {
     if (window.WSBrand && typeof window.WSBrand.apply === 'function') {
       window.WSBrand.apply(shopId);
     }
+    /* LA BOUTIQUE ACTIVE S'ÉCRIT DANS L'URL. Elle n'y était pas : ?shop= était
+       LU au chargement puis rangé dans localStorage, et jamais réaffiché. Trois
+       conséquences, toutes constatées :
+         · on ne pouvait pas savoir quelle boutique on regardait ;
+         · un lien copié ne portait pas la boutique — le destinataire tombait
+           sur la sienne, ou sur celle que le repli avait choisie ;
+         · comparer le webshop et la console franchisé (qui, elle, affiche
+           ?shop=2) demandait de deviner.
+       replaceState, comme pour la catégorie juste en dessous : l'adresse suit
+       l'état sans ajouter d'entrée à l'historique. */
+    if (shopId == null) return;
+    try {
+      const q = new URLSearchParams(window.location.search);
+      if (q.get('shop') !== String(shopId)) {
+        q.set('shop', String(shopId));
+        q.delete('shopId');   // alias historique : une seule clé dans l'adresse
+        window.history.replaceState(window.history.state, '',
+          window.location.pathname + '?' + q.toString() + window.location.hash);
+      }
+    } catch (_) { /* URL non manipulable : la boutique reste en mémoire */ }
   }, [shopId]);
   const [mode, setMode] = useState(_deep.mode === 'delivery' ? 'collect' : (_deep.mode || 'collect')); // gate delivery via existing flow
   // Niveau + catégorie + sous-catégorie vivent dans l'URL (?category=&sub=),
@@ -4686,7 +4706,21 @@ function ShopFrame({ variant }) {
     if (!shops || !shops.length) return;
     const m = shops.find((s) => String(s.id) === String(shopId) || s.slug === shopId);
     if (m) { if (m.id !== shopId) setShopId(m.id); }
-    else setShopId(shops[0].id); // ref inconnue (vieille memoire demo) -> premiere boutique reelle
+    else {
+      /* AUCUNE BOUTIQUE CONNUE → la première de l'annuaire, qui est trié PAR NOM
+         (/shops : ORDER BY name). Ce n'est donc pas « la boutique par défaut »,
+         c'est la première par ordre alphabétique — et ça se choisissait en
+         silence. Un visiteur sans ?shop=, ou dont la mémoire a été vidée,
+         atterrissait sur une boutique qu'il n'avait pas demandée sans qu'il ou
+         quiconque puisse le voir : le catalogue affiché n'était alors pas celui
+         qu'on croyait comparer. Le choix reste (une vitrine doit montrer
+         quelque chose) mais il s'inscrit dans l'URL par l'effet ci-dessus, et
+         se dit dans la console du navigateur. */
+      if (shopId != null) console.warn('[webshop] boutique « ' + shopId +
+        ' » inconnue de /shops — repli sur la première par ordre alphabetique : ' +
+        shops[0].name + ' (id ' + shops[0].id + ')');
+      setShopId(shops[0].id);
+    }
   }, [shops]);
 
   // Catégories — serveur uniquement (window._CATALOG_SEED n'existe plus).
