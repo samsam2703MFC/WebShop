@@ -4161,7 +4161,16 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/franchisor/subcategory') {
       $b = body(); $id = (int) ($b['id'] ?? ($b['sub_id'] ?? 0));
       if (!$id) json_out(['error' => 'id requis'], 400);
-      if (array_key_exists('active', $b))          q("UPDATE ws_products SET active=? WHERE sub_cat_id=?", [!empty($b['active']) ? 1 : 0, $id]);           // « Webshop »
+      if (array_key_exists('active', $b)) {
+        q("UPDATE ws_products SET active=? WHERE sub_cat_id=?", [!empty($b['active']) ? 1 : 0, $id]);
+        /* RESYNC DU CACHE, comme les routes produit et catégorie. Oubliée ici,
+           elle a laissé Traiteur « INACTIVE » avec 33 produits actifs (14/08) :
+           l'écran Stock du jour du franchisé, qui filtrait sur ce cache, les
+           cachait pendant que le BO marque et le webshop les montraient. */
+        q("UPDATE ws_categories c
+              SET c.active = EXISTS(SELECT 1 FROM ws_products p2 WHERE p2.cat_id = c.id AND p2.active = 1)
+            WHERE c.id IN (SELECT DISTINCT cat_id FROM ws_products WHERE sub_cat_id=? AND cat_id IS NOT NULL)", [$id]);
+      }
       if (array_key_exists('office_delivery', $b)) q("UPDATE ws_products SET office_delivery=? WHERE sub_cat_id=?", [!empty($b['office_delivery']) ? 1 : 0, $id]); // « Bureau »
       if (array_key_exists('click_and_collect', $b) && col_exists('ws_products', 'click_and_collect'))
                                                    q("UPDATE ws_products SET click_and_collect=? WHERE sub_cat_id=?", [!empty($b['click_and_collect']) ? 1 : 0, $id]); // canal C&C, même portée
@@ -7792,7 +7801,15 @@ function dispatch($m, $p) {
                        SUM(CASE WHEN st.id IS NOT NULL AND (st.mode IS NULL OR st.mode<>'delivery') THEN st.qty_total - st.qty_reserved - st.qty_sold END) AS shopq"
                    : " NULL AS online, NULL AS shopq") . "
                     FROM ws_products pr
-                    JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
+                    /* LEFT JOIN, et SANS filtre c.active : le cache
+                       ws_categories.active est resynchronisé par certaines
+                       écritures seulement — la cascade de sous-catégorie l'a
+                       oublié un temps, et 33 produits Traiteur actifs sont
+                       restés INVISIBLES ici pendant qu'ils étaient au BO
+                       marque et sur le webshop (14/08). L'écran Stock du jour
+                       liste ce qui est VENDU (pr.active), pas ce que dit un
+                       cache — même correction que fr-assortiment avant lui. */
+                    LEFT JOIN ws_categories c ON c.id = pr.cat_id" .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") .
                  ($hasStock ? " LEFT JOIN ws_product_stock st ON st.product_id = pr.id AND st.date = ? AND st.active = 1" . ($shopId ? " AND st.shop_id = " . (int) $shopId : "") : "") . "
                    WHERE pr.active = 1
