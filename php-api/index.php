@@ -3561,7 +3561,20 @@ function dispatch($m, $p) {
       // marque ne pouvait alors ni la voir ni la piloter (« je n'ai que 2 catégories »).
       // Le filtre « avec produits » reste géré plus bas (if $rows2) : les catégories
       // réellement vides restent exclues.
-      $cats = rows("SELECT id, label, img, COALESCE(menu_default,0) AS menu_default FROM ws_categories ORDER BY sort_order, label");
+      /* shop_id EST SERVI, et il manquait. Une catégorie peut appartenir à UNE
+         boutique (ws_categories.shop_id) ou au réseau (NULL). La console marque
+         les affichait toutes sans distinction : « Viennoiserie », « Pains »,
+         « Pâtisserie » y côtoyaient les catégories réseau alors qu'elles sont
+         propres à une seule boutique. D'où la question posée — « les produits
+         du BO marque ne correspondent pas au BO franchisé » : c'est exact, et
+         c'était invisible ici. La console franchisé, elle, est cloisonnée.
+         Le nom accompagne l'id : « boutique 4 » ne dit rien à personne. */
+      $catShopCol = col_exists('ws_categories', 'shop_id');
+      $cats = rows("SELECT c.id, c.label, c.img, COALESCE(c.menu_default,0) AS menu_default"
+                 . ($catShopCol ? ", c.shop_id, s.name AS shop_nom" : ", NULL AS shop_id, NULL AS shop_nom") . "
+                     FROM ws_categories c"
+                 . ($catShopCol ? " LEFT JOIN $SHOPS s ON s.id = c.shop_id" : "") . "
+                    ORDER BY c.sort_order, c.label");
       /* Sous-catégories : ws_category_subs fait foi. Les déduire des produits
          (ce que faisait le constructeur de menus) ne montrait que celles déjà
          pourvues et masquait les autres — or une étape de formule doit pouvoir
@@ -3627,6 +3640,11 @@ function dispatch($m, $p) {
           ];
         }
         if ($rows2) $out[] = ['id' => (int) $c['id'], 'cat' => $c['label'], 'img' => $c['img'] ?: null,
+                              // NULL = catégorie du réseau. Renseigné = propre à
+                              // cette boutique, donc ABSENTE des autres consoles
+                              // franchisé et de leur webshop.
+                              'shop_id'  => isset($c['shop_id']) && $c['shop_id'] !== null ? (int) $c['shop_id'] : null,
+                              'shop_nom' => $c['shop_nom'] ?? null,
                               'subs' => ($subsByCat[(int) $c['id']] ?? []), 'prods' => $rows2];
       }
       json_out($out);

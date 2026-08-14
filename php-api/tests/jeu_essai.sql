@@ -23,7 +23,12 @@
 -- ils restent donc d'accord, mais sur ce point le test ne prouve rien.
 -- ---------------------------------------------------------------------------
 
-INSERT INTO shops (id, name, city, active) VALUES (2, 'Boutique de test', 'Test', 1);
+-- Deux boutiques : la sondée (2) et une AUTRE (3), dont une catégorie porte
+-- le shop_id. Sans la ligne 3, le LEFT JOIN qui nomme la boutique propriétaire
+-- rendrait NULL et le test passerait sans avoir rien prouvé.
+INSERT INTO shops (id, name, city, active) VALUES
+  (2, 'Boutique de test', 'Test', 1),
+  (3, 'Autre boutique',   'Test', 1);
 
 -- Catégories : une normale, une rattachée à une AUTRE boutique (3).
 INSERT INTO ws_categories (id, label, sort_order, img, active, shop_id, slug) VALUES
