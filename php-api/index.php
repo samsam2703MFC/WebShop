@@ -7802,11 +7802,18 @@ function dispatch($m, $p) {
       // — le franchisé ne peut retirer que des produits NON obligatoires
       // (assortiment-toggle refuse les obligatoires côté serveur).
       $hasSub = $tblExists('ws_category_subs');
+      /* LEFT JOIN, et non JOIN … AND c.active = 1.
+         Avec la jointure stricte, un produit dont la catégorie est désactivée
+         ou dont le cat_id ne pointe sur rien DISPARAISSAIT de cet écran —
+         pendant qu'il restait EN VENTE sur le webshop, dont la grille ne
+         contrôle que le produit. Le franchisé vendait donc des articles qu'il
+         ne pouvait ni voir ni retirer. Un écran d'assortiment doit lister tout
+         ce qui est réellement en vente, quitte à le signaler. */
       $rs = rows("SELECT pr.id AS pid, pr.name, c.label AS cat, pr.brand_mandatory,
                          pr.active AS ws_on, COALESCE(pr.office_delivery,1) AS od_on" .
                  ($hasSub ? ", sc2.label AS sub" : ", NULL AS sub") .
                  ($hasPS ? ", ps.active AS ps_active, ps.no_delivery" : ", NULL AS ps_active, NULL AS no_delivery") . "
-                    FROM ws_products pr JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
+                    FROM ws_products pr LEFT JOIN ws_categories c ON c.id = pr.cat_id" .
                  ($hasSub ? " LEFT JOIN ws_category_subs sc2 ON sc2.id = pr.sub_cat_id" : "") .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") . "
                    WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))" . whitelist_where('pr') . "
@@ -7853,7 +7860,11 @@ function dispatch($m, $p) {
         // null quand aucune boutique n'est en portée : on ne tranche pas sans
         // savoir de quelle boutique on parle.
         'enLigne' => $v ? $v['enLigne'] : null,
-        'raison'  => $v ? $v['raison'] : null];
+        'raison'  => $v ? $v['raison'] : null,
+        // EN VENTE mais INTROUVABLE dans la navigation du site : catégorie
+        // désactivée, ou cat_id qui ne pointe sur rien. Deux faits distincts
+        // du verdict de vente, et qui se corrigent ailleurs.
+        'navigation' => $v ? ($v['navigation'] ?? null) : null];
       }, $rs));
     }
 
@@ -9704,9 +9715,11 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
   $rs = rows("SELECT p.id,
                      p.active AS actif," .
              ($hasWl ? " COALESCE(p.brand_whitelist,1) AS wl," : " 1 AS wl,") . "
-                     COALESCE(p.office_delivery,1) AS od," .
+                     COALESCE(p.office_delivery,1) AS od,
+                     p.cat_id, c.id AS cat_ok, c.active AS cat_actif," .
              ($hasPS ? " ps.active AS ps_actif" : " NULL AS ps_actif") . "
-                FROM ws_products p" .
+                FROM ws_products p
+                LEFT JOIN ws_categories c ON c.id = p.cat_id" .
              ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = $sc" : "") . "
                WHERE p.id IN ($in)");
 
@@ -9734,7 +9747,23 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
     elseif ($seasonSql !== '' && !isset($okSaison[$pid]))
                                                      $raison = 'Hors saison à la date demandée';
     elseif ($sc && !isset($prix[$pid]))              $raison = 'Sans prix dans l’ERP pour cette boutique';
-    $out[$pid] = ['enLigne' => $raison === null, 'raison' => $raison];
+    /* JOIGNABLE ≠ EN LIGNE, et les confondre rendrait les deux faux.
+       La barre de navigation exige ws_categories.active = 1 et la bonne
+       boutique ; la grille de produits, elle, ne contrôle QUE le produit. Un
+       produit dont la catégorie est désactivée ou introuvable est donc bien EN
+       VENTE — il s'affiche sous « Tout » — mais le client ne peut jamais y
+       revenir par une catégorie. C'est un second écart entre deux requêtes qui
+       décrivent une même notion, et il se constate à l'écran : des cookies
+       visibles, et aucune catégorie où les retrouver.
+
+       On le nomme sans le confondre avec le verdict de vente. Retirer ces
+       produits de la vente serait une décision commerciale, pas une correction
+       technique — elle appartient à qui tient la boutique. */
+    $nav = null;
+    if (!$r['cat_ok'])                              $nav = 'Catégorie inconnue (cat_id vide ou orphelin) — introuvable dans la navigation';
+    elseif ($r['cat_actif'] !== null && !(int) $r['cat_actif'])
+                                                    $nav = 'Catégorie désactivée — introuvable dans la navigation';
+    $out[$pid] = ['enLigne' => $raison === null, 'raison' => $raison, 'navigation' => $nav];
   }
   return $out;
 }
