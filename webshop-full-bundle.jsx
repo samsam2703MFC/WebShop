@@ -14,6 +14,19 @@ document.addEventListener('touchstart', function () {}, { passive: true });
 // doivent donc plus attendre la fin d'une animation qui n'existe plus.
 const IS_TOUCH = window.matchMedia && window.matchMedia('(hover: none)').matches;
 
+// Version servie : visible en console et dans l'encadré ?tapdebug=1 — pour
+// distinguer « le correctif ne marche pas » de « le téléphone sert encore
+// l'ancien bundle » (service worker). Et rafraîchissement agressif du SW :
+// vérification de mise à jour au retour d'onglet et toutes les 60 s.
+const WS_BUILD = (typeof __WS_BUILD__ !== 'undefined') ? __WS_BUILD__ : 'dev';
+window.__WS_BUILD = WS_BUILD;
+try { console.info('[ws] build ' + WS_BUILD); } catch (e) {}
+if ('serviceWorker' in navigator) {
+  const ping = () => navigator.serviceWorker.getRegistration().then((r) => r && r.update()).catch(() => {});
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) ping(); });
+  setInterval(ping, 60000);
+}
+
 /* ── TAP FIABLE, GÉNÉRALISÉ ────────────────────────────────────────────────
    L'action part au relâchement (pointerup/touchend) comme en natif, même
    quand le navigateur retient le click (tap qui stoppe l'inertie du scroll,
@@ -82,7 +95,7 @@ if (/[?&]tapdebug=1/.test(location.search)) {
   const box = document.createElement('div');
   box.style.cssText = 'position:fixed;left:4px;bottom:4px;z-index:99999;background:rgba(0,0,0,.78);color:#7CFC90;font:10px/1.4 monospace;padding:6px 8px;border-radius:6px;max-width:72vw;pointer-events:none;white-space:pre;';
   document.body.appendChild(box);
-  const lines = [];
+  const lines = ['build ' + ((typeof __WS_BUILD__ !== 'undefined') ? __WS_BUILD__ : 'dev')];
   const log = (e) => {
     const cls = ((e.target.getAttribute && e.target.getAttribute('class')) || e.target.tagName || '?').split(' ')[0];
     lines.push((e.type + '            ').slice(0, 13) + cls.slice(0, 26));

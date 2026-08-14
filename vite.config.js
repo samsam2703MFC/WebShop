@@ -8,6 +8,9 @@ import { VitePWA } from 'vite-plugin-pwa';
 const base = process.env.SITE_BASE || '/WebShop/';
 export default defineConfig({
   base,
+  // Tampon de build : affiché par ?tapdebug=1 et window.__WS_BUILD pour
+  // savoir QUELLE version un téléphone sert réellement (cache SW vs code).
+  define: { __WS_BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC') },
   esbuild: {
     jsx: 'transform', // classic runtime → React.createElement (React injecté ci-dessous)
     jsxInject: "import React from 'react';import * as ReactDOM from 'react-dom/client';",
