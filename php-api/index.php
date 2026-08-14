@@ -3911,6 +3911,47 @@ function dispatch($m, $p) {
       json_out($out);
     }
 
+    /* ── Avis Google — directives de réponse, par tranche de note (1–5).
+       La marque définit ici le TON et les CONSIGNES ; la console franchisé
+       les applique pour générer un brouillon (jamais publier — la publication
+       reste un geste manuel sur Google). Aucun seed : tout naît sur cet
+       écran, et la génération dit quelle tranche manque. ── */
+    if ($m === 'GET' && $p === '/franchisor/review-guidelines') {
+      if (!$tblExists('ws_review_guidelines'))
+        json_out(['error' => 'table ws_review_guidelines absente — migration 0082 non jouée'], 501);
+      json_out(rows("SELECT id, note_min, note_max, tone, instructions, example_reply,
+                            DATE_FORMAT(updated_at,'%d/%m %H:%i') AS maj
+                       FROM ws_review_guidelines ORDER BY note_min, note_max, id"));
+    }
+    if ($m === 'POST' && $p === '/franchisor/review-guideline') {
+      if (!$tblExists('ws_review_guidelines'))
+        json_out(['ok' => false, 'error' => 'table ws_review_guidelines absente — migration 0082 non jouée'], 501);
+      $b = body();
+      if (!empty($b['delete'])) {
+        q("DELETE FROM ws_review_guidelines WHERE id = ?", [(int) ($b['id'] ?? 0)]);
+        json_out(['ok' => true]);
+      }
+      $nMin = (int) ($b['note_min'] ?? 0);
+      $nMax = (int) ($b['note_max'] ?? 0);
+      if ($nMin < 1 || $nMax > 5 || $nMin > $nMax)
+        json_out(['ok' => false, 'error' => 'Tranche invalide — note_min ≤ note_max, entre 1 et 5.'], 400);
+      $tone = trim((string) ($b['tone'] ?? ''));
+      if ($tone === '')
+        json_out(['ok' => false, 'error' => 'Le ton est requis — c’est le sens de la réponse.'], 400);
+      $instr = trim((string) ($b['instructions'] ?? ''));
+      $ex    = trim((string) ($b['example_reply'] ?? ''));
+      $gid = (int) ($b['id'] ?? 0);
+      if ($gid) {
+        q("UPDATE ws_review_guidelines SET note_min=?, note_max=?, tone=?, instructions=?, example_reply=? WHERE id=?",
+          [$nMin, $nMax, $tone, ($instr !== '' ? $instr : null), ($ex !== '' ? $ex : null), $gid]);
+      } else {
+        q("INSERT INTO ws_review_guidelines (note_min, note_max, tone, instructions, example_reply) VALUES (?,?,?,?,?)",
+          [$nMin, $nMax, $tone, ($instr !== '' ? $instr : null), ($ex !== '' ? $ex : null)]);
+        $gid = (int) db()->lastInsertId();
+      }
+      json_out(['ok' => true, 'id' => $gid]);
+    }
+
     // Modèles d'email (ws_email_templates : tpl_key/lang/subject, marque=1).
     if ($m === 'GET' && $p === '/franchisor/email-templates') {
       json_out(rows("SELECT tpl_key AS cle, lang AS langue, subject AS sujet
@@ -7819,6 +7860,71 @@ function dispatch($m, $p) {
           'texte'  => (string) (($r9['text']['text'] ?? '') ?: ($r9['originalText']['text'] ?? '')),
         ], array_values((array) ($j9['reviews'] ?? []))),
       ]);
+    }
+
+    /* Brouillon de réponse à un avis Google — au nom de la boutique, selon la
+       directive que la marque a définie pour cette note (ws_review_guidelines,
+       console marque). PUBLICATION TOUJOURS MANUELLE : sans OAuth Business
+       Profile personne ne peut poster ; le franchisé copie le texte et le
+       colle sur Google — c'est le garde-fou, valable pour toutes les notes.
+       La clé Anthropic vit en ws_param `anthropic_api_key`, côté serveur
+       seulement (dépôt public, navigateur jamais). L'appel suit le motif
+       sortant du fichier (contexte HTTP + file_get_contents, comme VIES). */
+    if ($m === 'POST' && $p === '/franchisee/google-review-reply') {
+      if (!$shopId) json_out(['error' => 'boutique requise (?shop=)'], 400);
+      rate_limit('gravis', 20, 300);
+      $b9 = body();
+      $rNote  = (int) ($b9['note'] ?? 0);
+      $rTexte = trim((string) ($b9['texte'] ?? ''));
+      $rAut   = trim((string) ($b9['auteur'] ?? ''));
+      if ($rNote < 1 || $rNote > 5) json_out(['error' => 'note de l’avis requise (1 à 5)'], 400);
+      $aKey = (string) ws_param('anthropic_api_key', '');
+      if ($aKey === '')
+        json_out(['error' => 'Clé API Anthropic non configurée — poser la clé dans ws_param, clé « anthropic_api_key » (Console marque → Paramètres).'], 501);
+      if (!$tblExists('ws_review_guidelines'))
+        json_out(['error' => 'Table des directives absente — migration 0082 non jouée.'], 501);
+      $gd = row("SELECT note_min, note_max, tone, instructions, example_reply FROM ws_review_guidelines
+                  WHERE ? BETWEEN note_min AND note_max ORDER BY (note_max - note_min), id LIMIT 1", [$rNote]);
+      if (!$gd)
+        json_out(['error' => 'Aucune directive pour la note ' . $rNote . ' — à définir dans la console marque (Avis Google — directives).'], 404);
+      $shopN9 = (string) (row("SELECT name FROM shops WHERE id = ?", [$shopId])['name'] ?? '');
+      $sys9 = "Tu rédiges la réponse publique d'un établissement à un avis Google, au nom de « " . ($shopN9 !== '' ? $shopN9 : 'la boutique') . " ».\n"
+        . "Règles absolues : n'invente aucun fait ; n'admets aucune faute que l'avis n'établit pas ; ne promets aucun dédommagement ni geste commercial ; ne divulgue aucune donnée personnelle ; pour tout litige, invite à contacter directement l'établissement (canal privé).\n"
+        . 'Ton imposé par la marque : ' . (string) $gd['tone'] . "\n"
+        . ((string) ($gd['instructions'] ?? '') !== '' ? 'Consignes de la marque : ' . $gd['instructions'] . "\n" : '')
+        . ((string) ($gd['example_reply'] ?? '') !== '' ? 'Exemple du registre attendu (ne pas recopier) : ' . $gd['example_reply'] . "\n" : '')
+        . "Réponds dans la langue de l'avis (français par défaut). Rends UNIQUEMENT le texte de la réponse — sans guillemets, sans préambule, sans signature ajoutée.";
+      $usr9 = 'Avis ' . $rNote . '/5' . ($rAut !== '' ? ' de « ' . $rAut . ' »' : '') . " :\n"
+        . ($rTexte !== '' ? $rTexte : '(avis sans texte — seulement la note)');
+      $req9 = json_encode([
+        'model'      => (string) ws_param('reviews_agent_model', 'claude-opus-5'),
+        'max_tokens' => 16000,
+        'system'     => $sys9,
+        'messages'   => [['role' => 'user', 'content' => $usr9]],
+      ], JSON_UNESCAPED_UNICODE);
+      $ctxA = stream_context_create(['http' => [
+        'method'  => 'POST', 'timeout' => 90, 'ignore_errors' => true,
+        'header'  => "Content-Type: application/json\r\nx-api-key: " . $aKey . "\r\nanthropic-version: 2023-06-01\r\n",
+        'content' => $req9,
+      ]]);
+      $rawA = @file_get_contents('https://api.anthropic.com/v1/messages', false, $ctxA);
+      $jA = ($rawA !== false) ? json_decode($rawA, true) : null;
+      if (!is_array($jA)) json_out(['error' => 'API Anthropic injoignable depuis le serveur.'], 502);
+      if (($jA['type'] ?? '') === 'error')
+        json_out(['error' => 'Anthropic : ' . ((string) ($jA['error']['message'] ?? '') ?: 'refus'),
+                  'code' => (string) ($jA['error']['type'] ?? '')], 502);
+      if (($jA['stop_reason'] ?? '') === 'refusal')
+        json_out(['error' => 'Le modèle a décliné la génération pour cet avis — réponse à rédiger à la main.'], 502);
+      $txt9 = '';
+      foreach ((array) ($jA['content'] ?? []) as $blk9)
+        if (($blk9['type'] ?? '') === 'text') $txt9 .= (string) ($blk9['text'] ?? '');
+      $txt9 = trim($txt9);
+      if ($txt9 === '') json_out(['error' => 'Réponse vide du modèle.'], 502);
+      header('Cache-Control: no-store');
+      json_out(['reponse' => $txt9,
+                'tronque' => (($jA['stop_reason'] ?? '') === 'max_tokens'),
+                'modele'  => (string) ($jA['model'] ?? ''),
+                'directive' => ['tranche' => $gd['note_min'] . '–' . $gd['note_max'], 'ton' => (string) $gd['tone']]]);
     }
 
     // Résolution PRODUIT robuste — utilisée par tous les toggles/saisies :
