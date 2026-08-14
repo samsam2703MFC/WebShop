@@ -89,6 +89,24 @@ function invite_recap($officeId, $voucherCode = null) {
     trim(($o['postal_code'] ?? '') . ' ' . ($o['city'] ?? '')),
   ])));
 
+  /* BONS DISPONIBLES — les vouchers ACTIFS en base pour cette boutique
+     (locaux + réseau), non expirés, non épuisés. C'est ce que l'affiche
+     annonce en tuiles : la liste du moment, relue à chaque impression, pas
+     celle figée à la création du bureau. Huit au plus — une affiche est un
+     A4, au-delà les tuiles poussent les conditions hors page ; les huit
+     retenus sont ceux qui expirent le plus tôt (l'urgence d'abord). */
+  $bonsDispo = [];
+  if (row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_vouchers'")) {
+    $bonsDispo = rows(
+      "SELECT code, type, value, min_order, DATE_FORMAT(expires_at, '%d/%m/%Y') AS fin
+         FROM ws_vouchers
+        WHERE active = 1
+          AND (shop_id IS NULL" . ($shopId ? " OR shop_id = " . (int) $shopId : "") . ")
+          AND (expires_at IS NULL OR expires_at > NOW())
+          AND (max_uses IS NULL OR used_count < max_uses)
+        ORDER BY (expires_at IS NULL), expires_at, code LIMIT 8");
+  }
+
   return [
     'officeId'  => (int) $officeId,
     'raison'    => $o['name'] ?: null,
@@ -122,6 +140,7 @@ function invite_recap($officeId, $voucherCode = null) {
                       },
                       is_array($voucherCode) ? $voucherCode : [$voucherCode])))),
     'voucher'   => $vBons ? implode(' · ', array_column($vBons, 'code')) : null,
+    'bonsDispo' => $bonsDispo,
     'validated' => ((int) ($o['active'] ?? 0) === 1),
   ];
 }
@@ -273,6 +292,25 @@ function invite_affiche_html(array $r, $url, $expire = null, $racine = '') {
   foreach (invite_conditions($r) as [$lbl, $val])
     $lignes .= '<dt>' . $e($lbl) . '</dt><dd>' . $e($val) . '</dd>';
 
+  /* Les TUILES de bons — celles du récap (actifs en base, huit au plus).
+     La valeur s'affiche selon le type ; un bon d'onboarding (add_office,
+     valeur 0) se présente par son rôle. Rien en base ⇒ pas de section. */
+  $tuiles = '';
+  foreach ((array) ($r['bonsDispo'] ?? []) as $b) {
+    $v = (float) ($b['value'] ?? 0);
+    $mnt = null;
+    if ($v > 0) $mnt = ($b['type'] === 'percent' || $b['type'] === 'percentage')
+      ? ('−' . rtrim(rtrim(number_format($v, 2, ',', ' '), '0'), ',') . ' %')
+      : ('−' . rtrim(rtrim(number_format($v, 2, ',', ' '), '0'), ',') . ' €');
+    elseif (($b['type'] ?? '') === 'add_office') $mnt = 'Bon de bienvenue';
+    $min = (float) ($b['min_order'] ?? 0);
+    $tuiles .= '<div class="bon"><div class="bon-code">' . $e($b['code']) . '</div>'
+      . ($mnt !== null ? '<div class="bon-val">' . $e($mnt) . '</div>' : '')
+      . ($min > 0 ? '<div class="bon-min">dès ' . $e(rtrim(rtrim(number_format($min, 2, ',', ' '), '0'), ',')) . ' € d\'achat</div>' : '')
+      . (!empty($b['fin']) ? '<div class="bon-min">jusqu\'au ' . $e($b['fin']) . '</div>' : '')
+      . '</div>';
+  }
+
   /* Les polices sont EMBARQUÉES, pas liées. La console ouvre cette page depuis
      un blob: — même origine qu'elle, donc AUTRE origine que l'API qui sert les
      .otf — et une requête @font-face part toujours en mode anonyme : sans
@@ -337,6 +375,17 @@ function invite_affiche_html(array $r, $url, $expire = null, $racine = '') {
     . 'margin:0;font:400 12.5px/1.35 var(--ui)}'
     . '.cond dt{color:var(--mut)}'
     . '.cond dd{margin:0;overflow-wrap:anywhere}'
+    /* La REMISE en gros et en gras — c'est l'argument de l'affiche, pas une
+       ligne parmi les conditions (où elle reste aussi, pour le récapitulatif). */
+    . '.remise{background:var(--abricot);border-radius:3mm;text-align:center;'
+    . 'padding:4.5mm 5mm;margin:0 0 6mm;font:600 17px/1.3 var(--ui)}'
+    . '.remise b{font:700 26px/1.1 var(--ui);color:var(--ruby);letter-spacing:.01em}'
+    /* Les BONS en tuiles — quatre par ligne, huit au plus (limite du récap). */
+    . '.bons{display:grid;grid-template-columns:repeat(4,1fr);gap:3mm;margin:0 0 2mm}'
+    . '.bon{border:.5mm solid var(--ruby);border-radius:2.5mm;padding:3mm 2.5mm;text-align:center;page-break-inside:avoid}'
+    . '.bon-code{font:700 13px/1.2 var(--ui);letter-spacing:.04em;word-break:break-all}'
+    . '.bon-val{font:700 15px/1.2 var(--ui);color:var(--ruby);margin-top:1mm}'
+    . '.bon-min{font:400 10px/1.35 var(--ui);color:var(--mut);margin-top:1mm}'
     . '.pied{margin-top:auto;padding-top:6mm;font:400 11.5px var(--ui);color:var(--mut)}'
     /* La barre d'action ne s'imprime pas : elle n'existe qu'à l'écran. */
     . '.barre{position:fixed;top:0;left:0;right:0;background:var(--ruby);color:#fff;padding:10px 16px;'
@@ -374,6 +423,10 @@ function invite_affiche_html(array $r, $url, $expire = null, $racine = '') {
     . '<div class="url"><div class="lbl">Ou tapez cette adresse dans votre navigateur :</div>'
     . '<div class="adr">' . $e($url) . '</div>'
     . ($expire ? '<div class="exp">Valable jusqu\'au ' . $e($expire) . '</div>' : '') . '</div>'
+    /* La remise, EN GROS : seulement quand la base en porte une (> 0) —
+       jamais un « 0 % » d'affiche. Le format vient du récap (% ou €). */
+    . ($r['remise'] ? '<div class="remise">Remise : <b>' . $e($r['remise']) . '</b> sur tous vos achats</div>' : '')
+    . ($tuiles ? '<h2>Vos bons de réduction</h2><div class="bons">' . $tuiles . '</div>' : '')
     . ($lignes ? '<h2>Vos conditions</h2><dl class="cond">' . $lignes . '</dl>' : '')
     . '<p class="pied">Votre compte est transmis à votre boutique livreuse pour validation.<br>'
     . 'Besoin d\'aide : aide@latelierby.be</p>'
