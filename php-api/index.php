@@ -7797,12 +7797,12 @@ function dispatch($m, $p) {
       if (!empty($b['product'])) {
         $pr = $findProduct($b, 'id, brand_mandatory' . ($wlCol ? ', COALESCE(brand_whitelist,1) AS wl' : ', 1 AS wl'));
         if (!$pr) $prodKo($b);
-        if ((int) $pr['brand_mandatory'] && !$active) json_out(['ok' => false, 'error' => 'Produit « marque obligatoire » — non désactivable'], 400);
+        if ((int) $pr['brand_mandatory'] && !$active) json_out(['ok' => false, 'error' => 'Produit « marque obligatoire » — sa production ne peut pas être refusée'], 400);
         // Retiré du catalogue réseau par la marque : le franchisé ne peut pas le
         // rouvrir. Il ne le voit plus dans sa liste ; cette garde couvre l'appel
         // direct, et le DIT plutôt que d'ignorer en silence.
         if (!(int) $pr['wl'] && $active)
-          json_out(['ok' => false, 'error' => 'Produit retiré du catalogue réseau par la marque — non réactivable depuis la boutique.'], 400);
+          json_out(['ok' => false, 'error' => 'Produit retiré du catalogue réseau par la marque — l’accès est une décision réseau, elle ne se lève pas depuis une boutique.'], 400);
         $prods[] = $pr;
       } elseif (!empty($b['cat'])) {
         $prods = rows("SELECT pr.id, pr.brand_mandatory FROM ws_products pr
@@ -9773,7 +9773,7 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
     if (!(int) $r['actif'])                          $raison = 'Brouillon — non publié au catalogue réseau';
     elseif (!(int) $r['wl'])                         $raison = 'Retiré du catalogue réseau par la marque';
     elseif ($hasPS && $r['ps_actif'] !== null && !(int) $r['ps_actif'])
-                                                     $raison = 'Exclu de cette boutique';
+                                                     $raison = 'Non produit par cette boutique';
     elseif ($horsBureau && !(int) $r['od'])          $raison = 'Non éligible à la livraison au bureau';
     elseif ($seasonSql !== '' && !isset($okSaison[$pid]))
                                                      $raison = 'Hors saison à la date demandée';
