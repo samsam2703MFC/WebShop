@@ -130,6 +130,10 @@ CREATE TABLE IF NOT EXISTS `ws_season` (
   `slug` varchar(40) DEFAULT NULL,
   `name` varchar(80) DEFAULT NULL,
   `img` varchar(255) DEFAULT NULL,
+  -- Production : /catalog/assortments filtre sur active et trie sur
+  -- sort_order — le socle sans elles rendait la route 500 en local.
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  `sort_order` int(11) NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
 ;

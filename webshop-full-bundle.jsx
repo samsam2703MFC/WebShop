@@ -5,6 +5,11 @@
 
 const { useState, useMemo, useEffect } = React;
 
+// iOS Safari n'applique les états :active au toucher que si un écouteur
+// touch existe : sans lui, tout le retour « pressé » ajouté en CSS resterait
+// invisible sur iPhone. No-op passif, coût nul.
+document.addEventListener('touchstart', function () {}, { passive: true });
+
 // =========================================================================
 // DATA
 // =========================================================================
@@ -682,8 +687,12 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
       setOpenOpts({});
       setActiveOpt(null);
     }
-    // Default-pick recommended bundle if any; otherwise null (À la carte).
-    const rec = product?.available_bundles?.find((b) => b.recommended);
+    // Formule présélectionnée : la recommandée, SINON l'unique formule s'il
+    // n'y en a qu'une — ses étapes s'ouvrent d'emblée. Sur mobile, le tap
+    // « pour rien » qui ne faisait qu'ouvrir la carte passait pour un raté
+    // (constaté : « je dois cliquer plusieurs fois pour que ça s'ouvre »).
+    const rec = product?.available_bundles?.find((b) => b.recommended)
+      || (product?.available_bundles?.length === 1 ? product.available_bundles[0] : null);
     setBundleId(rec ? rec.id : null);
     if (rec) {
       const recIdx = bundleList.findIndex((b) => b.id === rec.id);
@@ -793,16 +802,23 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     // scrolling freely to make further choices.
     setActiveOpt(oid);
     setTimeout(() => {
-      const el = optRefs.current[oid];
       const sc = scrollRef.current;
-      if (!el || !sc) return;
-      const elRect = el.getBoundingClientRect();
-      const scRect = sc.getBoundingClientRect();
-      const target = sc.scrollTop + (elRect.top - scRect.top) - 8; // tiny breathing room at top
-      sc.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+      glideIfHidden(optRefs.current[oid], sc, (elRect, scRect) => sc.scrollTop + (elRect.top - scRect.top) - 8);
     }, 180);
   }
   function setSlot(slotId, choiceId) { setBundleSlots((s) => ({ ...s, [slotId]: choiceId })); }
+  // Ne scrolle que si l'élément déborde de la zone visible. Le glissement
+  // systématique déplaçait le contenu SOUS LE DOIGT juste après un tap : le
+  // tap suivant tombait à côté — la cause des « miss-clicks » constatés sur
+  // téléphone. Une cible déjà visible reste où elle est.
+  function glideIfHidden(el, sc, computeTarget) {
+    if (!el || !sc) return;
+    const elRect = el.getBoundingClientRect();
+    const scRect = sc.getBoundingClientRect();
+    const fullyVisible = elRect.top >= scRect.top && elRect.bottom <= scRect.bottom;
+    if (fullyVisible) return;
+    sc.scrollTo({ top: Math.max(0, computeTarget(elRect, scRect)), behavior: 'smooth' });
+  }
   function pickBundle(bid) {
     setBundleId((cur) => cur === bid ? cur : bid);
     setBundleSlots({});
@@ -815,11 +831,8 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
       if (idx < 0) return;
       const card = el.children[idx]; if (!card) return;
       const sc = scrollRef.current; if (!sc) return;
-      const cardRect = card.getBoundingClientRect();
-      const scRect = sc.getBoundingClientRect();
-      const cardCenter = (cardRect.top - scRect.top) + (card.offsetHeight / 2);
-      const target = sc.scrollTop + cardCenter - (sc.clientHeight / 2);
-      sc.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+      glideIfHidden(card, sc, (cardRect, scRect) =>
+        sc.scrollTop + (cardRect.top - scRect.top) + (card.offsetHeight / 2) - (sc.clientHeight / 2));
     }, 340);
   }
   function toggleUpsell(id)        { setUpsellIds((s) => ({ ...s, [id]: !s[id] })); }
@@ -830,14 +843,10 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
       // of the modal scroll area so the just-revealed options feel balanced.
       if (next[oid]) {
         setTimeout(() => {
-          const el = optRefs.current[oid];
           const sc = scrollRef.current;
-          if (!el || !sc) return;
-          const elRect = el.getBoundingClientRect();
-          const scRect = sc.getBoundingClientRect();
-          const elCenter = (elRect.top - scRect.top) + (el.offsetHeight / 2);
-          const target = sc.scrollTop + elCenter - (sc.clientHeight / 2);
-          sc.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+          const el = optRefs.current[oid];
+          glideIfHidden(el, sc, (elRect, scRect) =>
+            sc.scrollTop + (elRect.top - scRect.top) + (el.offsetHeight / 2) - (sc.clientHeight / 2));
         }, 320);
       }
       return next;
@@ -5183,6 +5192,28 @@ function ShopFrame({ variant }) {
   // available_bundles pour que le composer s'affiche. Sans ça, un menu ne
   // montrait jamais ses étapes côté webshop.
   const bundleCache = React.useRef({});
+  /* BOUTON RETOUR DU TÉLÉPHONE = fermer la fiche, pas quitter le site.
+     Ouvrir la fiche pousse une étape d'historique (même URL) ; « back » la
+     retire et le popstate ferme la fiche. La croix fait la même chose en
+     passant par history.back(), pour ne pas laisser traîner une étape qui
+     ferait « reculer dans le vide » au retour suivant. */
+  const detailOpenRef = React.useRef(false);
+  React.useEffect(() => {
+    const opening = !!detailProduct && !detailOpenRef.current;
+    detailOpenRef.current = !!detailProduct;
+    if (opening) { try { window.history.pushState({ wsDetail: 1 }, ''); } catch (_) {} }
+  }, [detailProduct]);
+  React.useEffect(() => {
+    const onPopDetail = () => { setDetailProduct((cur) => (cur ? null : cur)); };
+    window.addEventListener('popstate', onPopDetail);
+    return () => window.removeEventListener('popstate', onPopDetail);
+  }, []);
+  const closeProductDetail = React.useCallback(() => {
+    try {
+      if (window.history.state && window.history.state.wsDetail) { window.history.back(); return; }
+    } catch (_) {}
+    setDetailProduct(null);
+  }, []);
   const openProductDetail = React.useCallback((p) => {
     if (!p) return;
     if (p.has_menu_options && !p.available_bundles &&
@@ -5575,7 +5606,7 @@ function ShopFrame({ variant }) {
         office={userOffice}
         tour={userTour}
       />
-      <ProductDetail open={!!detailProduct} product={detailProduct} mode={mode} onClose={() => setDetailProduct(null)} onAdd={handleAddConfigured} stock={detailProduct ? (productStock[detailProduct.id] || null) : null}/>
+      <ProductDetail open={!!detailProduct} product={detailProduct} mode={mode} onClose={closeProductDetail} onAdd={handleAddConfigured} stock={detailProduct ? (productStock[detailProduct.id] || null) : null}/>
       {window.AllergensModal && <window.AllergensModal open={allergensOpen} onClose={() => setAllergensOpen(false)}/>}
       <CheckoutWizard open={checkoutOpen} onClose={() => setCheckoutOpen(false)} shop={shop} mode={mode} basket={basket} user={user} onLogin={() => setAuthOpen(true)} onPlaced={handlePlaced}
         voucherInput={voucherInput} setVoucherInput={setVoucherInput}

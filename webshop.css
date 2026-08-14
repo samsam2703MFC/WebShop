@@ -95,9 +95,10 @@
   background: color-mix(in oklab, var(--color-primary) 10%, var(--color-surface));
   border-color: color-mix(in oklab, var(--color-primary) 25%, transparent);
   color: var(--color-primary);
-}
+}@media (hover: hover) {
 .ws[data-mode="collect"] .ws-nav__date:hover {
   background: color-mix(in oklab, var(--color-primary) 16%, var(--color-surface));
+}
 }
 
 /* Delivery mode → abricot tint */
@@ -105,9 +106,10 @@
   background: color-mix(in oklab, var(--color-secondary) 55%, var(--color-surface));
   border-color: var(--color-collection-border);
   color: var(--color-on-abricot);
-}
+}@media (hover: hover) {
 .ws[data-mode="delivery"] .ws-nav__date:hover {
   background: color-mix(in oklab, var(--color-secondary) 70%, var(--color-surface));
+}
 }
 
 /* (legacy reset kept for any non-tinted contexts) */
@@ -255,8 +257,9 @@
 .ws-scrollcue--down { bottom: 18px; animation: ws-cue-bob 2.6s ease-in-out infinite; }
 .ws-scrollcue--up   { bottom: 56px; animation: ws-cue-bob-up 2.6s ease-in-out infinite; }
 .ws-main[data-can-scroll="1"]    ~ .ws-scrollcue--down { pointer-events: auto; opacity: 1; transform: translateY(0); }
-.ws-main[data-can-scroll-up="1"] ~ .ws-scrollcue--up   { pointer-events: auto; opacity: 1; transform: translateY(0); }
+.ws-main[data-can-scroll-up="1"] ~ .ws-scrollcue--up   { pointer-events: auto; opacity: 1; transform: translateY(0); }@media (hover: hover) {
 .ws-scrollcue:hover { background: #fff; }
+}
 .ws-scrollcue:active { transform: translateY(1px) scale(.96); }
 .ws[data-mode="delivery"] .ws-scrollcue { color: var(--color-primary); }
 
@@ -296,8 +299,9 @@
   font-size: 13.5px; font-weight: 600; letter-spacing: .005em;
   cursor: pointer; width: 100%; justify-content: center;
   transition: filter 120ms ease, transform 80ms ease;
-}
+}@media (hover: hover) {
 .ws-slotcta:hover { filter: brightness(0.97); }
+}
 .ws-slotcta:active { transform: translateY(1px); }
 .ws-slotcta__ic { flex: 0 0 auto; display: grid; place-items: center; }
 .ws-slotcta__sub { font-weight: 400; opacity: .85; font-size: 11.5px; }
@@ -362,8 +366,9 @@
   padding: 12px; border: 0; border-radius: 10px;
   background: var(--color-primary); color: #fff;
   font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
-}
+}@media (hover: hover) {
 .ws-slotchange__confirm:hover { filter: brightness(1.06); }
+}
 
 /* Horizontal cue on category strip — tiny chevron right, fades when at end. */
 .ws-cats { position: relative; }
@@ -569,9 +574,10 @@
   color: var(--color-text-muted);
   font-weight: 500;
   letter-spacing: .01em;
-}
+}@media (hover: hover) {
 .ws-subcat:hover .ws-subcat__tile {
   border-color: rgba(40,18,4,0.18);
+}
 }
 .ws-subcat.is-active .ws-subcat__tile {
   background: var(--cat-accent);
@@ -703,8 +709,9 @@
   color: var(--color-text);
   font-size: 12.5px; font-family: inherit; cursor: pointer;
   transition: all 120ms ease;
-}
+}@media (hover: hover) {
 .ws-chip2:hover { border-color: var(--color-text); }
+}
 .ws-chip2.is-on {
   background: var(--accent, var(--color-primary));
   border-color: var(--accent, var(--color-primary));
@@ -731,8 +738,9 @@
   border: 0; background: transparent;
   font-size: 16px; cursor: pointer;
   color: var(--color-text);
-}
+}@media (hover: hover) {
 .ws-detail2__qty-btn:hover { background: var(--color-bg); }
+}
 .ws-detail2__qty-val { font-size: 14px; font-weight: 600; min-width: 16px; text-align: center; }
 .ws-detail2__price {
   font-family: var(--font-display);
@@ -800,8 +808,9 @@
   cursor: pointer;
   transition: all 120ms ease;
   z-index: 2;
-}
+}@media (hover: hover) {
 .ws-car__arrow:hover:not(:disabled) { border-color: var(--color-text); }
+}
 .ws-car__arrow:disabled { opacity: 0.35; cursor: not-allowed; }
 .ws-car__arrow--l { left: 0; }
 .ws-car__arrow--r { right: 0; }
@@ -915,8 +924,9 @@
   font-size: 12px; cursor: pointer;
   font-family: inherit; color: var(--color-text);
   transition: all 120ms ease;
-}
+}@media (hover: hover) {
 .ws-bchip2:hover { border-color: var(--color-text); }
+}
 .ws-bchip2.is-on {
   background: var(--accent, var(--color-primary));
   border-color: var(--accent, var(--color-primary));
@@ -1054,8 +1064,9 @@
   color: var(--color-text);
   cursor: pointer;
   transition: border-color .15s, background .15s;
-}
+}@media (hover: hover) {
 .ws-chip:hover { border-color: rgba(40,18,4,0.30); }
+}
 .ws-chip__radio {
   width: 12px; height: 12px;
   border-radius: 50%;
@@ -1104,8 +1115,9 @@
 .ws-upsell__tile img { width: 26px; height: 26px; object-fit: contain; }
 .ws-upsell__delta {
   font-size: 11px; color: var(--color-text-muted);
-}
+}@media (hover: hover) {
 .ws-upsell:hover { border-color: rgba(40,18,4,0.30); }
+}
 .ws-upsell.is-on {
   border-color: var(--accent, var(--color-primary));
   background: rgba(173,29,29,0.04);
@@ -1204,8 +1216,9 @@
   text-transform: uppercase;
   color: var(--accent, var(--color-primary));
   font-weight: 600;
-}
+}@media (hover: hover) {
 .ws-bchip:hover { border-color: rgba(40,18,4,0.20); }
+}
 .ws-bchip.is-on {
   border-color: var(--accent, var(--color-primary));
   background: #fff;
@@ -1248,8 +1261,9 @@
   letter-spacing: .04em;
   cursor: pointer;
   transition: opacity .15s, transform .1s;
-}
+}@media (hover: hover) {
 .ws-detail__cta:hover { opacity: .92; }
+}
 .ws-detail__cta:active { transform: scale(.99); }
 .ws-detail__cta:disabled {
   opacity: .4;
@@ -1561,7 +1575,11 @@
   color: #fff; border: 0;
   font-size: 16px; font-weight: 500; line-height: 1;
   display: grid; place-items: center; padding: 0;
+  /* Zone de tap ~44px sans grossir le bouton : à 24-26px, une partie des
+     taps tombait à côté et passait pour « ne répond pas ». */
+  position: relative;
 }
+.ws-add::before { content: ''; position: absolute; inset: -10px; border-radius: 50%; }
 
 /* All shops use the brand ruby — no per-shop accent overrides. */
 
@@ -1692,11 +1710,12 @@
   opacity: .55;
   transition: opacity .15s ease, color .15s ease, background .15s ease;
   margin-top: 1px;
-}
+}@media (hover: hover) {
 .ws-line__remove:hover {
   color: #b04040;
   background: rgba(176, 64, 64, .08);
   opacity: 1;
+}
 }
 
 /* CROSS-CATEGORY PORTION OFFER STRIP ------------------------------ */
@@ -1952,8 +1971,9 @@
   display: grid; place-items: center;
   cursor: pointer;
   transition: background 140ms ease, color 140ms ease, opacity 140ms ease;
-}
+}@media (hover: hover) {
 .ws-modal__rail-btn:hover { background: var(--color-bg, #faf7f2); }
+}
 .ws-modal__rail-btn.is-disabled { opacity: .28; pointer-events: none; }
 
 /* Inline fidelity panel inside AccountModal */
@@ -1973,8 +1993,9 @@
   background: transparent; border: 0;
   font-size: 18px; line-height: 1; color: var(--color-text-muted);
   cursor: pointer;
-}
+}@media (hover: hover) {
 .ws-fidpanel__close:hover { background: rgba(20,14,10,.06); }
+}
 
 .ws-fid--inline { gap: 12px; }
 .ws-fid__qrwrap--sm { padding: 10px; }
@@ -2297,8 +2318,9 @@
   font-size: 16px; line-height: 1;
   cursor: pointer;
   display: grid; place-items: center;
-}
+}@media (hover: hover) {
 .ws-datepop__nav:hover { background: var(--dp-accent-soft); color: var(--dp-accent); }
+}
 
 .ws-datepop__dow {
   display: grid; grid-template-columns: repeat(7, 1fr);
@@ -2327,10 +2349,11 @@
   display: grid; place-items: center;
   transition: background 100ms ease, color 100ms ease;
 }
-.ws-datepop__cell--empty { cursor: default; }
+.ws-datepop__cell--empty { cursor: default; }@media (hover: hover) {
 .ws-datepop__cell:hover:not(.is-past):not(.is-sel) {
   background: var(--dp-accent-soft);
   color: var(--dp-accent);
+}
 }
 .ws-datepop__cell.is-past {
   color: var(--color-border-secondary);
@@ -2634,8 +2657,9 @@
   font-size: 12.5px; font-weight: 600;
   cursor: pointer;
   transition: background 140ms ease, color 140ms ease;
-}
+}@media (hover: hover) {
 .ws-acc__unplug:hover { background: var(--color-primary, #8d1d2c); color: #fff; }
+}
 /* ── Choix du bureau à lier : RECHERCHE, pas liste déroulante ────────────
    Une déroulante oblige à parcourir l'inventaire pour retrouver un nom qu'on
    connaît déjà, et se prête mal au pouce. La saisie ne crée rien : seules les
@@ -2676,8 +2700,9 @@
   padding: 9px 12px;
   border: 0; background: transparent; text-align: left; cursor: pointer;
   font-family: inherit; color: var(--color-text);
-}
+}@media (hover: hover) {
 .ws-acc__pick-item:hover { background: var(--color-bg-secondary); }
+}
 .ws-acc__pick-item.is-picked {
   background: color-mix(in oklab, var(--color-primary) 9%, var(--color-surface));
   box-shadow: inset 3px 0 0 var(--color-primary);
@@ -2751,8 +2776,9 @@
   font-size: 12px;
   color: var(--color-text-muted);
   cursor: pointer;
-}
+}@media (hover: hover) {
 .ws-acc__logout:hover { color: var(--color-primary); border-color: var(--color-primary); }
+}
 
 /* Confirmation panel after office request */
 .ws-confirm { text-align: center; padding: 12px 0 4px; }
@@ -2857,8 +2883,9 @@
   border: 0; background: none; padding: 0; cursor: pointer;
   font: inherit; color: var(--color-primary); font-weight: 600;
   text-decoration: underline; text-underline-offset: 2px;
-}
+}@media (hover: hover) {
 .ws-linkbtn:hover { opacity: .8; }
+}
 .ws-co-step__hint  { margin: 4px 0 0; font-size: 11px; color: var(--color-text-muted); }
 .ws-co-step__hint strong { background: var(--color-bg-secondary); padding: 1px 5px; border-radius: 4px; color: var(--color-text); font-weight: 600; }
 .ws-co-step__locknote {
@@ -2929,8 +2956,9 @@
   background: var(--color-surface);
   color: var(--color-text);
   cursor: pointer;
-}
+}@media (hover: hover) {
 .ws-slot:hover { border-color: var(--color-primary); color: var(--color-primary); }
+}
 .ws-slot.is-active {
   background: var(--color-primary); color: #fff; border-color: var(--color-primary);
   font-weight: 500;
@@ -2939,8 +2967,9 @@
   background: var(--color-secondary); color: var(--color-on-abricot); border-color: var(--color-collection-border);
 }
 .ws-slot { display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center; }
-.ws-slot.is-full { opacity: 0.45; cursor: not-allowed; background: var(--color-bg-secondary); }
+.ws-slot.is-full { opacity: 0.45; cursor: not-allowed; background: var(--color-bg-secondary); }@media (hover: hover) {
 .ws-slot.is-full:hover { border-color: var(--color-border-tertiary); color: var(--color-text); }
+}
 .ws-slot__lbl { font-size: 12px; }
 .ws-slot__cap { font-size: 10px; opacity: .7; }
 .ws-slot__cap--full { color: #b00; opacity: 1; }
@@ -3232,8 +3261,9 @@
   border-radius: 8px;
   cursor: pointer;
   transition: opacity .12s;
-}
+}@media (hover: hover) {
 .ws-co-voucher__apply:hover { opacity: 0.85; }
+}
 .ws-co-voucher__apply:disabled { opacity: 0.35; cursor: not-allowed; }
 .ws-co-voucher__row--ok {
   align-items: center;
@@ -3298,8 +3328,9 @@
   padding: 8px 14px; border-radius: 8px; cursor: pointer;
   background: var(--color-primary, #8D1D2C); color: #fff; border: none;
   transition: opacity .12s;
-}
+}@media (hover: hover) {
 .ws-co-avail__apply:hover { opacity: .88; }
+}
 .ws-co-avail__apply:disabled { background: transparent; color: var(--color-text-muted, #9a8d7a); border: 1px solid var(--color-border-secondary, #d9d2c4); cursor: not-allowed; font-weight: 500; }
 .ws-co-voucher__remove {
   font: inherit; font-size: 11px;
@@ -3307,8 +3338,9 @@
   color: #6e655a;
   text-decoration: underline;
   padding: 4px 6px;
-}
+}@media (hover: hover) {
 .ws-co-voucher__remove:hover { color: var(--color-primary, #c96442); }
+}
 .ws-co-voucher__err {
   margin-top: 8px;
   font-size: 11.5px;
@@ -3343,8 +3375,9 @@
   color: rgba(255,255,255,0.55);
   font-size: 18px; line-height: 1;
   padding: 0 2px;
-}
+}@media (hover: hover) {
 .ws-deeplink__x:hover { color: #fff; }
+}
 
 /* =====================================================================
    MOBILE-APP UX POLISH (≤ 720px)  — premium, thumb-friendly, no overflow
@@ -3830,6 +3863,38 @@
   color: var(--color-text); flex: none; }
 .ws-xsell__add { width: 27px; height: 27px; flex: none; border: none; border-radius: 50%;
   background: var(--color-secondary); color: var(--color-on-abricot);
-  font: 700 15px/1 var(--font-ui); display: flex; align-items: center; justify-content: center; }
+  font: 700 15px/1 var(--font-ui); display: flex; align-items: center; justify-content: center; }@media (hover: hover) {
 .ws-xsell__add:hover { filter: brightness(.95); }
+}
 .ws-xsell__add:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+
+/* ── TACTILE : mêmes règles pour tout le shop — un tap = un clic, sans
+   attente du double-tap-zoom (délai inexistant à la souris, d'où des
+   « miss-clicks » signalés uniquement sur téléphone). */
+.ws button, .ws [role="button"], .ws a {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ================================================================== */
+/* RESSENTI TACTILE (14/08) — état pressé à l'appui sur les cibles     */
+/* principales de la boutique (le survol est désormais réservé aux     */
+/* vrais pointeurs via @media (hover: hover) : plus de survol collant  */
+/* après un tap). Transform seule : composité, feedback immédiat.      */
+/* ================================================================== */
+.ws-chip:active,
+.ws-chip2:active,
+.ws-bchip:active,
+.ws-bchip2:active,
+.ws-slot:active:not(.is-full),
+.ws-upsell:active,
+.ws-xsell__add:active,
+.ws-detail2__qty-btn:active,
+.ws-subcat:active .ws-subcat__tile,
+.ws-add:active,
+.ws-linkbtn:active,
+.ws-co-voucher__apply:active,
+.ws-co-avail__apply:active {
+  transform: scale(.965);
+}

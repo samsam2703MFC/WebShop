@@ -3936,6 +3936,35 @@ function dispatch($m, $p) {
         [$action, $entity, $entityId, $shopId, $payload !== null ? json_encode($payload, JSON_UNESCAPED_UNICODE) : null, $ip]);
     };
 
+    /* SUPPRESSION d'un menu — CÔTÉ SERVEUR. L'écran effaçait sa copie locale
+       seulement : au rechargement, le menu revenait de la base (constaté par
+       l'utilisateur — « quand j'efface des menus et que je fais un deep
+       refresh ils reviennent »). Ce n'était pas un cache : l'écriture
+       n'existait pas.
+       Ce qui part : formules (choix, étapes, compositions) et déclencheurs.
+       Le PRODUIT porteur ne part QUE s'il n'est que ça — la signature des
+       porteurs nés à l'écran (cat_id NULL + menu_override='on'). Un vrai
+       produit du catalogue qui portait une formule garde sa fiche : on lui
+       retire seulement son rôle de menu (menu_override remis à NULL). */
+    if ($m === 'POST' && $p === '/franchisor/menu-delete') {
+      $b = body(); $pid = (int) ($b['product_id'] ?? 0);
+      if (!$pid) json_out(['error' => 'product_id requis'], 400);
+      $prod = row("SELECT id, cat_id, menu_override FROM ws_products WHERE id = ?", [$pid]);
+      if (!$prod) json_out(['ok' => false, 'error' => 'Menu inconnu en base.'], 400);
+      q("DELETE c FROM ws_bundle_slot_choices c JOIN ws_bundle_slots s ON s.id=c.slot_id JOIN ws_bundles bu ON bu.id=s.bundle_id WHERE bu.product_id=?", [$pid]);
+      q("DELETE s FROM ws_bundle_slots s JOIN ws_bundles bu ON bu.id=s.bundle_id WHERE bu.product_id=?", [$pid]);
+      q("DELETE FROM ws_bundles WHERE product_id=?", [$pid]);
+      if (tbl_exists('ws_bundle_triggers')) q("DELETE FROM ws_bundle_triggers WHERE product_id=?", [$pid]);
+      /* Porteur = produit SANS catégorie : un vrai article en a toujours une
+         (la sonde le vérifie chaque nuit). menu_override ne suffit pas comme
+         marqueur — il peut avoir été remis à NULL en route. */
+      $porteur = $prod['cat_id'] === null;
+      if ($porteur) q("DELETE FROM ws_products WHERE id=?", [$pid]);
+      else q("UPDATE ws_products SET menu_override=NULL WHERE id=?", [$pid]);
+      $audit('menu.delete', 'ws_bundles', $pid, null, ['porteur_supprime' => $porteur]);
+      json_out(['ok' => true, 'porteur_supprime' => $porteur]);
+    }
+
     /* Déclencheurs d'un menu (0078) — REMPLACEMENT COMPLET, comme un
        formulaire : la multi-sélection de l'écran envoie l'état entier, la
        route efface puis réécrit. Chaque entrée : cat_id, et sub_cat_id pour le

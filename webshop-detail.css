@@ -49,8 +49,9 @@
   z-index: 5;
   box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 12px rgba(0,0,0,.06);
   transition: transform 160ms ease, background 160ms ease;
-}
+}@media (hover: hover) {
 .pdm-close:hover { transform: scale(1.06); background: #fff; }
+}
 
 /* HERO — hidden on desktop, shown as banner on mobile ------------- */
 .pdm-hero {
@@ -299,11 +300,12 @@
   border-radius: 6px;
   cursor: pointer;
   transition: background .15s ease, color .15s ease, border-color .15s ease;
-}
+}@media (hover: hover) {
 .pdm-offer__add:hover {
   background: var(--color-primary);
   color: #fff;
   border-color: var(--color-primary);
+}
 }
 
 /* CTA strikethrough when offer applies */
@@ -360,8 +362,9 @@
 }
 .pdm-bcard:has(.pdm-bcard__badge) {
   padding-top: 30px;
-}
+}@media (hover: hover) {
 .pdm-bcard:hover { border-color: rgba(0,0,0,.12); }
+}
 .pdm-bcard.is-picked {
   background: var(--color-surface, #fff);
   border-color: var(--pdm-accent);
@@ -415,7 +418,7 @@
   border-radius: 999px;
   border: 1.5px solid rgba(0,0,0,.18);
   display: inline-flex; align-items: center; justify-content: center;
-  transition: all 200ms ease;
+  transition: border-color 200ms ease, background 200ms ease;
   background: var(--color-surface, #fff);
 }
 .pdm-bcard.is-picked .pdm-bcard__radio {
@@ -488,8 +491,9 @@
   text-align: center;
   line-height: 1.15;
   box-sizing: border-box;
-}
+}@media (hover: hover) {
 .pdm-seg__btn:hover { background: rgba(0,0,0,.04); }
+}
 .pdm-seg__btn.is-on {
   background: var(--pdm-accent);
   color: #fff;
@@ -549,6 +553,11 @@
 .pdm-opt__body-wrap {
   display: grid; grid-template-rows: 0fr;
   transition: grid-template-rows 280ms cubic-bezier(.2,.8,.2,1);
+  /* SANS ce clip, le contenu d'un groupe REPLIÉ débordait de sa rangée 0fr :
+     invisible sous l'élément suivant mais toujours CLIQUABLE — un tap sur une
+     option touchait en réalité le groupe replié du dessus. Vu au doigt, pas à
+     la souris (le pointeur survole, le doigt tape au jugé). */
+  overflow: hidden;
 }
 .pdm-opt.is-open .pdm-opt__body-wrap { grid-template-rows: 1fr; }
 .pdm-opt__body { min-height: 0; overflow: visible; padding: 0 12px 10px; }
@@ -571,12 +580,13 @@
   font-size: 12px; font-weight: 500;
   text-align: left;
   cursor: pointer;
-  transition: all 160ms cubic-bezier(.2,.8,.2,1);
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 120ms ease;
 }
 .pdm-opt:not(.is-open) .pdm-chip,
-.pdm-chip { background: var(--color-surface, #fff); }
+.pdm-chip { background: var(--color-surface, #fff); }@media (hover: hover) {
 .pdm-chip:hover {
   border-color: var(--color-text);
+}
 }
 .pdm-chip.is-on {
   background: var(--pdm-accent);
@@ -603,10 +613,11 @@
   color: var(--color-text);
   font-size: 12px; font-weight: 500;
   cursor: pointer;
-  transition: all 160ms cubic-bezier(.2,.8,.2,1);
-}
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 120ms ease;
+}@media (hover: hover) {
 .pdm-imgchip:hover {
   border-color: var(--color-text);
+}
 }
 .pdm-imgchip.is-on {
   background: var(--pdm-accent);
@@ -668,8 +679,9 @@
   cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
   transition: background 160ms ease;
-}
+}@media (hover: hover) {
 .pdm-qty__btn:hover:not(:disabled) { background: var(--color-surface, #fff); }
+}
 .pdm-qty__btn:disabled { opacity: .35; cursor: not-allowed; }
 .pdm-qty__val {
   min-width: 20px; text-align: center;
@@ -691,8 +703,9 @@
   cursor: pointer;
   transition: transform 200ms cubic-bezier(.2,.8,.2,1), opacity 200ms ease, box-shadow 200ms ease;
   box-shadow: 0 8px 20px -10px var(--pdm-accent);
-}
+}@media (hover: hover) {
 .pdm-cta:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 12px 24px -10px var(--pdm-accent); }
+}
 .pdm-cta:active:not(:disabled) { transform: translateY(0); }
 .pdm-cta:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 .pdm-cta__total {
@@ -738,4 +751,51 @@
 @media (max-width: 380px) {
   .pdm-hero { height: 140px; }
   .pdm-title { font-size: 17.5px; }
+}
+
+
+/* ── TACTILE : le tap répond au PREMIER coup ─────────────────────────────
+   touch-action: manipulation désarme l'attente du double-tap-zoom : sans
+   elle, le navigateur mobile retient chaque tap le temps de voir si un
+   second arrive — à la souris ce délai n'existe pas, d'où un composeur
+   « qui répond mal uniquement sur téléphone ». Le halo de tap est retiré
+   au passage (le retour visuel est déjà porté par les états .is-on). */
+.pdm button,
+.pdm [role="button"],
+.pdm-opt__head, .pdm-chip, .pdm-imgchip, .pdm-seg__btn,
+.pdm-bcard, .pdm-qty__btn, .pdm-cta {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ================================================================== */
+/* RESSENTI TACTILE (14/08) — le natif répond au poser du doigt, pas   */
+/* au lever. Ici le clic reste au lever (c'est le web), mais l'état    */
+/* PRESSÉ s'affiche à l'appui via :active — seul .pdm-cta l'avait.     */
+/* Uniquement transform (compositée) : le retour ne dépend pas du      */
+/* thread principal, même si React re-rend au même moment.             */
+/* ================================================================== */
+.pdm-opt__head:active,
+.pdm-chip:active,
+.pdm-imgchip:active,
+.pdm-seg__btn:active,
+.pdm-bcard:active,
+.pdm-offer__add:active,
+.pdm-close:active,
+.pdm-qty__btn:active:not(:disabled) {
+  transform: scale(.965);
+}
+/* L'appui doit être INSTANTANÉ, seul le relâchement est adouci :
+   sans ce délai nul sur :active, la transition de 160-200 ms retarde
+   l'apparition de l'état pressé et le tap semble ignoré. */
+.pdm-opt__head:active { transition: none; }
+
+/* Cibles tactiles ≥ 44 px au doigt (36 px et 28 px rataient des taps :
+   « ne répond pas » = le tap est simplement tombé à côté). */
+@media (max-width: 760px) {
+  .pdm-opt__head { min-height: 48px; }
+  .pdm-chip { min-height: 44px; }
+  .pdm-imgchip { min-height: 48px; }
+  .pdm-qty__btn { width: 38px; height: 38px; }
+  .pdm-close { width: 40px; height: 40px; }
 }
