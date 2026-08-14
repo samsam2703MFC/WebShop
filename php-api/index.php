@@ -317,8 +317,17 @@ function ws_voucher_upsert(array $o) {
     // filtrage client ni d'un état résiduel. Sans mode → liste complète (les flags
     // office_delivery/no_delivery restent exposés pour l'UI).
     $mode = strtolower((string) ($mode ?: ''));
+    /* DEUX CANAUX, DEUX FILTRES SYMÉTRIQUES (migration 0071).
+       `active` ne veut plus dire « vendu sur le webshop » : il veut dire
+       « publié au catalogue ». Le canal click & collect a sa colonne, comme le
+       bureau a la sienne. Avant, retirer un produit du webshop le retirait
+       aussi de la livraison bureau — « bureau seulement » était impossible.
+       SANS MODE, aucun filtre de canal : l'appelant veut la liste complète et
+       reçoit les deux drapeaux pour décider lui-même. */
+    $hasCanal = col_exists('ws_products', 'webshop');
     $deliveryWhere = in_array($mode, ['delivery', 'office', 'apricot'], true)
-      ? ' AND COALESCE(p.office_delivery,1) = 1' : '';
+      ? ' AND COALESCE(p.office_delivery,1) = 1'
+      : (($mode === 'collect' && $hasCanal) ? ' AND COALESCE(p.webshop,1) = 1' : '');
     // Gammes saisonnières (product_availability_period) : filtrées sur la DATE
     // DE RETRAIT/LIVRAISON, pas sur aujourd'hui. Un client qui commande le
     // 28 novembre pour le 2 décembre doit voir la gamme de Noël ; c'est la date
@@ -342,7 +351,8 @@ function ws_voucher_upsert(array $o) {
                         c.menu_default, 0
                       ) AS has_menu_options,
                       COALESCE(pp.price, p.price) AS price, ps.no_delivery,
-                      COALESCE(p.office_delivery,1) AS office_delivery,
+                      COALESCE(p.office_delivery,1) AS office_delivery," .
+             ($hasCanal ? " COALESCE(p.webshop,1) AS webshop," : " 1 AS webshop,") . "
                       (SELECT JSON_ARRAYAGG(allergen) FROM ws_product_allergens a WHERE a.product_id = p.id) AS allergens
                  FROM ws_products p
                  LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
@@ -372,6 +382,7 @@ function ws_voucher_upsert(array $o) {
       // indépendante de la visibilité webshop. Le front bloque le produit en
       // mode livraison quand c'est faux (cf. no_delivery).
       $x['office_delivery'] = (bool) $x['office_delivery'];
+      $x['webshop'] = (bool) $x['webshop'];
       $x['price'] = (float) $x['price'];
       // TROIS états d'allergènes, jamais confondus (sécurité alimentaire) :
       //   liste  = allergènes connus ; []  = recette évaluée, réellement aucun ;
@@ -4139,6 +4150,14 @@ function dispatch($m, $p) {
       if (array_key_exists('office_delivery', $b)) {
         if (!empty($b['office_delivery'])) q("UPDATE ws_products SET office_delivery=1 WHERE cat_id=?", [$id]);
         else q("UPDATE ws_products SET office_delivery=0 WHERE cat_id=? AND (brand_mandatory=0 OR active=1)", [$id]);
+      }
+      /* Canal webshop (0071) — la cascade par catégorie, symétrique de celle du
+         bureau juste au-dessus. La console marque peut désormais fermer le
+         webshop SANS mettre les produits en brouillon : c'est tout l'objet de
+         la colonne. Aucun produit obligatoire n'est épargné ici — fermer un
+         canal n'est pas le retirer du catalogue, il reste vendu sur l'autre. */
+      if (array_key_exists('webshop', $b) && col_exists('ws_products', 'webshop')) {
+        q("UPDATE ws_products SET webshop=? WHERE cat_id=?", [!empty($b['webshop']) ? 1 : 0, $id]);
       }
       /* Cascade « au catalogue réseau ». Un produit OBLIGATOIRE en est épargné :
          le retirer du réseau laisserait les boutiques avec un article imposé et
@@ -9863,7 +9882,9 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
   if (!$ids) return [];
   $in = implode(',', $ids);
   $sc = (int) $shopId;
-  $horsBureau = in_array(strtolower((string) $mode), ['delivery', 'office', 'apricot'], true);
+  $md = strtolower((string) $mode);
+  $horsBureau = in_array($md, ['delivery', 'office', 'apricot'], true);
+  $canalWeb   = ($md === 'collect') && col_exists('ws_products', 'webshop');
 
   $hasWl = col_exists('ws_products', 'brand_whitelist');
   $hasPS = (bool) row("SELECT 1 x FROM information_schema.tables
@@ -9876,6 +9897,7 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
                      p.active AS actif," .
              ($hasWl ? " COALESCE(p.brand_whitelist,1) AS wl," : " 1 AS wl,") . "
                      COALESCE(p.office_delivery,1) AS od,
+                     " . (col_exists('ws_products', 'webshop') ? "COALESCE(p.webshop,1)" : "1") . " AS web,
                      p.cat_id, c.id AS cat_ok, c.shop_id AS cat_shop," .
              ($hasPS ? " ps.active AS ps_actif" : " NULL AS ps_actif") . "
                 FROM ws_products p
@@ -9901,6 +9923,10 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
     // raison montrée : en afficher plusieurs ferait chercher laquelle lever.
     if (!(int) $r['actif'])                          $raison = 'Brouillon — non publié au catalogue réseau';
     elseif ($horsBureau && !(int) $r['od'])          $raison = 'Non éligible à la livraison au bureau';
+    // Symétrique du précédent depuis la 0071 : le canal click & collect a sa
+    // propre colonne. Sans elle, « retiré du webshop » se disait « brouillon »
+    // et retirait le produit de la livraison bureau par la même occasion.
+    elseif ($canalWeb && !(int) $r['web'])           $raison = 'Non vendu sur le webshop (click & collect)';
     elseif ($seasonSql !== '' && !isset($okSaison[$pid]))
                                                      $raison = 'Hors saison à la date demandée';
     elseif ($sc && !isset($prix[$pid]))              $raison = 'Prix non fixé pour cette boutique';

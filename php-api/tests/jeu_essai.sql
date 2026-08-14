@@ -55,18 +55,38 @@ INSERT INTO ws_products
   (5, 'Non produit par cette boutique',  1, 1, 1, 1, 1, 5.00, 0),
   -- 4. office_delivery = 0 — ne se déclenche qu'en mode livraison bureau
   (6, 'Non eligible livraison bureau',   1, 1, 1, 1, 0, 5.00, 0),
-  -- 6. aucune ligne shop_product → sans prix ERP
-  (7, 'Sans prix ERP',                   1, 1, 1, 1, 1, 5.00, 0),
+  -- 6. aucune ligne ws_product_prices → prix non fixé pour cette boutique
+  (7, 'Prix non fixe',                   1, 1, 1, 1, 1, 5.00, 0),
   -- Navigation : vendu, mais introuvable par une catégorie.
   (8, 'Categorie orpheline',           999, NULL, 1, 1, 1, 5.00, 0),
   (9, 'Categorie autre boutique',        2, NULL, 1, 1, 1, 5.00, 0);
 
+-- BUREAU SEULEMENT — le cas qui etait IMPOSSIBLE avant la migration 0071.
+-- `active` portait deux sens : retirer un produit du webshop le mettait en
+-- brouillon, donc le retirait AUSSI de la livraison bureau. Ce produit est
+-- publie (active=1), ferme au click & collect (webshop=0), ouvert au bureau.
+-- Si la colonne disparaissait ou cessait d'etre lue, il reapparaitrait sur le
+-- webshop et le troisieme volet du test le dirait.
+UPDATE ws_products SET webshop = 0, office_delivery = 1 WHERE id = 2;
+
 -- Le produit 5 est explicitement retiré de l'assortiment de la boutique 2.
 INSERT INTO ws_product_shops (product_id, shop_id, active, no_delivery) VALUES (5, 2, 0, 0);
 
--- Prix ERP pour la boutique 2 : TOUS SAUF le produit 7, qui doit tomber sur
--- « Sans prix dans l'ERP ». Le produit 8 en a un aussi — il est bien EN VENTE,
--- c'est sa NAVIGATION qui manque, et les deux notions ne se confondent pas.
+-- LE PRIX VIENT DE ws_product_prices, fixé par le franchisé dans sa console.
+-- Il venait de l'ERP (shop_product) jusqu'à la migration 0070 ; c'est cette
+-- table-ci que le catalogue ET la facturation lisent désormais. Le jeu d'essai
+-- a d'ailleurs été pris en défaut par le test au moment de la bascule : il ne
+-- remplissait que l'ERP, et la base de CI rendait zéro produit en ligne.
+--
+-- TOUS SAUF le produit 7, qui doit tomber sur « Prix non fixé pour cette
+-- boutique ». Le produit 8 en a un aussi : il est bien EN VENTE, c'est sa
+-- NAVIGATION qui manque, et les deux notions ne se confondent pas.
+INSERT INTO ws_product_prices (product_id, shop_id, price, active) VALUES
+  (1, 2, 5.00, 1), (2, 2, 6.00, 1), (3, 2, 5.00, 1), (4, 2, 5.00, 1),
+  (5, 2, 5.00, 1), (6, 2, 5.00, 1), (8, 2, 5.00, 1), (9, 2, 5.00, 1);
+
+-- shop_product reste peuplée : les OPTIONS DE PORTION la lisent encore
+-- (erp_portion_options). Seul le prix de vente a changé de source.
 INSERT INTO shop_product (id_shop, id_product, portion_price) VALUES
   (2, 1, 5.00), (2, 2, 6.00), (2, 3, 5.00), (2, 4, 5.00),
   (2, 5, 5.00), (2, 6, 5.00), (2, 8, 5.00), (2, 9, 5.00);

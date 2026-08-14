@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS `ws_products` (
   `active` tinyint(4) DEFAULT 1,
   `brand_whitelist` tinyint(4) DEFAULT 1,
   `office_delivery` tinyint(4) DEFAULT 1,
+  `webshop` tinyint(4) NOT NULL DEFAULT 1,
   `season_id` int(11) DEFAULT NULL,
   `price` decimal(8,2) DEFAULT 0.00,
   `brand_mandatory` tinyint(4) DEFAULT 0,

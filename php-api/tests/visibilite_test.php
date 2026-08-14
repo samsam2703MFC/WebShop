@@ -144,6 +144,45 @@ if ($navFaux) {
 }
 echo "  ✓ navigation : le verdict correspond à la barre de catégories\n";
 
+/* ── TROISIÈME VOLET : LES DEUX CANAUX SONT-ILS INDÉPENDANTS ? ─────────────
+   Depuis la 0071, `webshop` et `office_delivery` sont deux interrupteurs
+   distincts, et `active` ne veut plus dire que « publié ». Avant, fermer le
+   webshop mettait le produit en brouillon et le retirait AUSSI du bureau :
+   « bureau seulement » était impossible. Ce volet le vérifie sur les données —
+   un produit fermé au click & collect doit rester servi en livraison bureau. */
+$webCol = (bool) row("SELECT 1 x FROM information_schema.columns
+                       WHERE table_schema=DATABASE() AND table_name='ws_products'
+                         AND column_name='webshop'");
+if ($webCol) {
+  $bureauSeul = rows("SELECT id, name FROM ws_products
+                       WHERE active = 1 AND COALESCE(webshop,1) = 0
+                         AND COALESCE(office_delivery,1) = 1 LIMIT 20");
+  if (!$bureauSeul) {
+    echo "  — canaux : aucun produit « bureau seulement » en base, rien à vérifier\n";
+  } else {
+    $ko = [];
+    foreach ($bureauSeul as $b2) {
+      $pid = (int) $b2['id'];
+      $vCol = product_visibilite($shop, [$pid], 'collect', null);
+      $vBur = product_visibilite($shop, [$pid], 'delivery', null);
+      // Refusé au webshop, et pour CETTE raison — pas parce qu'il serait brouillon.
+      if (!empty($vCol[$pid]['enLigne']))
+        $ko[] = $b2['name'] . ' : servi en click & collect alors que webshop=0';
+      elseif (strpos((string) $vCol[$pid]['raison'], 'webshop') === false)
+        $ko[] = $b2['name'] . ' : refusé au webshop pour la mauvaise raison — ' . $vCol[$pid]['raison'];
+      // Et TOUJOURS vendable au bureau : c'est tout l'objet de la colonne.
+      if (empty($vBur[$pid]['enLigne']))
+        $ko[] = $b2['name'] . ' : perdu aussi en livraison bureau — ' . $vBur[$pid]['raison'];
+    }
+    if ($ko) {
+      foreach ($ko as $k) printf("  ✕ %s\n", $k);
+      fwrite(STDERR, "CANAUX LIÉS — fermer le webshop ne doit pas fermer la livraison bureau.\n");
+      exit(1);
+    }
+    printf("  ✓ canaux : %d produit(s) « bureau seulement » servis au bureau, pas au webshop\n", count($bureauSeul));
+  }
+}
+
 // Le décompte des raisons : ce que la console doit pouvoir afficher.
 $parRaison = [];
 foreach ($vis as $v) if (!$v['enLigne']) $parRaison[$v['raison']] = ($parRaison[$v['raison']] ?? 0) + 1;
