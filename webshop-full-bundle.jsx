@@ -827,11 +827,12 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
       glideIfHidden(optRefs.current[oid], sc, (elRect, scRect) => sc.scrollTop + (elRect.top - scRect.top) - 8);
     }, IS_TOUCH ? 30 : 180);
   }
-  function setSlot(slotId, choiceId) { setBundleSlots((s) => ({ ...s, [slotId]: choiceId })); }
+  function setSlot(slotId, choiceId) { if (justOpened()) return; setBundleSlots((s) => ({ ...s, [slotId]: choiceId })); }
   // Rubrique multi (« 2 choix ») : le tap AJOUTE ou RETIRE, il ne remplace
   // pas — c'était le blocage constaté : le 2e choix écrasait le 1er et la
   // formule ne se complétait jamais. Plafond = max_select.
   function toggleSlotMulti(slotId, choiceId, maxSel) {
+    if (justOpened()) return;
     setBundleSlots((s) => {
       const cur = Array.isArray(s[slotId]) ? s[slotId] : (s[slotId] ? [s[slotId]] : []);
       if (cur.includes(choiceId)) return { ...s, [slotId]: cur.filter((x) => x !== choiceId) };
@@ -876,7 +877,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
         sc.scrollTop + (cardRect.top - scRect.top) + (card.offsetHeight / 2) - (sc.clientHeight / 2));
     }, IS_TOUCH ? 30 : 340);
   }
-  function toggleUpsell(id)        { setUpsellIds((s) => ({ ...s, [id]: !s[id] })); }
+  function toggleUpsell(id)        { if (justOpened()) return; setUpsellIds((s) => ({ ...s, [id]: !s[id] })); }
   /* OUVERTURE FIABLE AU DOIGT. Sur téléphone, taper pendant que l'inertie du
      scroll court encore ARRÊTE le défilement et le navigateur n'émet aucun
      click : la carte de formule ou l'accordéon ne s'ouvrait « pas » (en fait,
@@ -886,6 +887,8 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
      click reste câblé pour le clavier et les navigateurs sans pointer events,
      avec un verrou pour ne pas rejouer l'action déjà faite au pointerup. */
   const pressRef = React.useRef({ handled: 0 });
+  const openedAtRef = React.useRef(0);
+  function justOpened() { return performance.now() - openedAtRef.current < 180; }
   function tapToOpen(fn) {
     return {
       onPointerDown: (e) => {
@@ -895,7 +898,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
         const p = pressRef.current;
         if (p.id !== e.pointerId || p.t === undefined) return;
         const moved = Math.abs(e.clientX - p.x) > 14 || Math.abs(e.clientY - p.y) > 14;
-        if (!moved && performance.now() - p.t < 600 && !already()) fire(true);
+        if (!moved && performance.now() - p.t < 600 && !already()) fire();
       },
       // Filet : si le navigateur requalifie le geste (pointercancel), pointerup
       // n'arrive JAMAIS — mais touchend, si. Un relâchement quasi immobile
@@ -909,24 +912,16 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
         const t = e.changedTouches && e.changedTouches[0];
         if (!t || p.tt === undefined) return;
         const moved = Math.abs(t.clientX - p.tx) > 12 || Math.abs(t.clientY - p.ty) > 12;
-        if (!moved && performance.now() - p.tt < 600 && !already()) fire(true);
+        if (!moved && performance.now() - p.tt < 600 && !already()) fire();
       },
       onClick: () => {
         if (already()) return;
-        fire(false);
+        fire();
       },
     };
-    function fire(viaPointer) {
+    function fire() {
       pressRef.current.handled = performance.now();
-      // L'ouverture est instantanée : le contenu se déplie ENTRE le
-      // relâchement (qui ouvre) et le click synthétisé du même tap — lequel
-      // atterrit alors sur une chip fraîchement révélée et la sélectionne
-      // toute seule. On avale ce click-là, et uniquement lui.
-      if (viaPointer) {
-        const swallow = (e) => { e.stopPropagation(); e.preventDefault(); };
-        document.addEventListener('click', swallow, { capture: true, once: true });
-        setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 350);
-      }
+      openedAtRef.current = performance.now();
       fn();
     }
     function already() { return performance.now() - (pressRef.current.handled || 0) < 400; }
