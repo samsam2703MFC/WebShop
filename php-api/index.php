@@ -7426,6 +7426,20 @@ function dispatch($m, $p) {
       // payé / non payé (payment_status).
       $hasCli2 = $tblExists('client');
       $hasSrc  = col_exists('ws_orders', 'source');
+      /* RATTACHEMENT B2B de la commande — bureau (société), site, tournée,
+         département — joint quand la base le porte : les étiquettes colis et
+         la modale de détail l'affichent. Une commande « privée » (sans site
+         ni bureau) rend null partout — rien d'inventé, l'étiquette omet la
+         ligne. Le bureau vient de la commande, sinon de son site ; la
+         tournée vient du site ; le département vient du compte client. */
+      $hasSiteC = col_exists('ws_orders', 'office_delivery_site_id') && $tblExists('ws_office_delivery_sites');
+      $hasOffC  = col_exists('ws_orders', 'office_client_id') && $tblExists('ws_offices');
+      $hasOffJ3 = $hasSiteC && $tblExists('ws_offices');
+      $hasTourJ = $hasSiteC && $tblExists('ws_tours');
+      $hasDeptJ = $hasCli2 && col_exists('client', 'department_id') && $tblExists('b2b_client_company_department');
+      $selBureau = $hasOffC
+        ? ($hasOffJ3 ? "COALESCE(bo2.name, bo3.name)" : "bo2.name")
+        : ($hasOffJ3 ? "bo3.name" : "NULL");
       $rs = rows("SELECT o.id, o.order_ref, o.payment_method, o.payment_status, o.payment_type,
                          COALESCE(NULLIF(o.guest_name,'')" .
                          ($hasCli2 ? ", NULLIF(TRIM(CONCAT(COALESCE(cl.name,''),' ',COALESCE(cl.surname,''))),'')" : "") . ",
@@ -7434,9 +7448,18 @@ function dispatch($m, $p) {
                  ($hasSrc ? ", o.source" : ", NULL AS source") . ",
                          DATE_FORMAT(COALESCE(o.delivery_date, DATE(o.created_at)),'%Y-%m-%d') AS jour,
                          DATE_FORMAT(o.created_at,'%H:%i') AS heure,
-                         (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id" . oline_own() . ") AS pieces
+                         (SELECT COALESCE(SUM(l.qty),0) FROM ws_order_lines l WHERE l.order_id=o.id" . oline_own() . ") AS pieces,
+                         " . ($hasSiteC ? "ds.name" : "NULL") . " AS site,
+                         " . $selBureau . " AS bureau,
+                         " . ($hasTourJ ? "tr2.name" : "NULL") . " AS tournee,
+                         " . ($hasDeptJ ? "dp2.name" : "NULL") . " AS departement
                     FROM ws_orders o" .
-                 ($hasCli2 ? " LEFT JOIN client cl ON cl.id = o.customer_id" : "") . "
+                 ($hasCli2 ? " LEFT JOIN client cl ON cl.id = o.customer_id" : "") .
+                 ($hasSiteC ? " LEFT JOIN ws_office_delivery_sites ds ON ds.id = o.office_delivery_site_id" : "") .
+                 ($hasOffC ? " LEFT JOIN ws_offices bo2 ON bo2.id = o.office_client_id" : "") .
+                 ($hasOffJ3 ? " LEFT JOIN ws_offices bo3 ON bo3.id = ds.office_client_id" : "") .
+                 ($hasTourJ ? " LEFT JOIN ws_tours tr2 ON tr2.id = ds.tournee_id" : "") .
+                 ($hasDeptJ ? " LEFT JOIN b2b_client_company_department dp2 ON dp2.id = cl.department_id" : "") . "
                    WHERE " . $scope('o.shop_id') . "
                      AND COALESCE(o.delivery_date, DATE(o.created_at))
                          BETWEEN ? AND DATE_ADD(?, INTERVAL 31 DAY)
@@ -7499,6 +7522,10 @@ function dispatch($m, $p) {
         'montant' => number_format((float) $o['total'], 2, ',', ' ') . ' €',
         'statut' => $o['status'], 'heure' => $o['heure'],
         'creneau' => $o['slot_label'] ?: '—', 'pieces' => (int) $o['pieces'],
+        'bureau' => ($o['bureau'] ?? '') !== '' ? $o['bureau'] : null,
+        'site' => ($o['site'] ?? '') !== '' ? $o['site'] : null,
+        'tournee' => ($o['tournee'] ?? '') !== '' ? $o['tournee'] : null,
+        'departement' => ($o['departement'] ?? '') !== '' ? $o['departement'] : null,
         'lines' => $lignesParCmd[(int) $o['id']] ?? [],
       ], $rs));
     }
