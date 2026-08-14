@@ -323,6 +323,7 @@ function ws_voucher_upsert(array $o) {
     // de remise de la marchandise qui fait foi, pas celle de la commande.
     [$seasonWhere, $seasonArgs] = availability_where('p', $date);
     $whitelistWhere = whitelist_where('p');   // retiré du catalogue réseau = invisible partout
+    $catShopWhere   = categorie_shop_where('c', $s);   // catégorie d'une AUTRE boutique = pas vendu ici
     // `badge` (texte) a été migré en FK tag_id -> ws_tags ; on expose le libellé
     // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
     $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id,
@@ -347,7 +348,7 @@ function ws_voucher_upsert(array $o) {
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
                  LEFT JOIN ws_tags t ON t.id = p.tag_id
                  LEFT JOIN ws_season se ON se.id = p.season_id
-                WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)${whitelistWhere}$deliveryWhere$seasonWhere
+                WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)${whitelistWhere}$deliveryWhere$seasonWhere$catShopWhere
                 ORDER BY c.sort_order, p.name", array_merge([$s, $s], $seasonArgs));
     $photos = product_photo_files();
     foreach ($r as &$x) {
@@ -7757,7 +7758,7 @@ function dispatch($m, $p) {
                     JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") .
                  ($hasStock ? " LEFT JOIN ws_product_stock st ON st.product_id = pr.id AND st.date = ? AND st.active = 1" . ($shopId ? " AND st.shop_id = " . (int) $shopId : "") : "") . "
-                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))" . ($hasPS ? " AND (ps.active IS NULL OR ps.active = 1)" : "") . whitelist_where('pr') . "
+                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))" . ($hasPS ? " AND (ps.active IS NULL OR ps.active = 1)" : "") . whitelist_where('pr') . categorie_shop_where('c', $shopId) . "
                    GROUP BY c.sort_order, c.label, pr.id, pr.name, pr.brand_mandatory
                    ORDER BY c.sort_order, c.label, pr.name LIMIT 400", $hasStock ? [$today] : []);
       // Minimums hebdomadaires du JOUR (1=lundi … 7=dimanche) par produit.
@@ -7839,7 +7840,8 @@ function dispatch($m, $p) {
                     FROM ws_products pr LEFT JOIN ws_categories c ON c.id = pr.cat_id" .
                  ($hasSub ? " LEFT JOIN ws_category_subs sc2 ON sc2.id = pr.sub_cat_id" : "") .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") . "
-                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))" . whitelist_where('pr') . "
+                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))"
+                 . whitelist_where('pr') . categorie_shop_where('c', $shopId) . "
                    ORDER BY c.sort_order, c.label, " . ($hasSub ? "COALESCE(sc2.sort_order, 999), sc2.label, " : "") . "pr.name LIMIT 400");
       // NON TARIFÉ = pas de prix ERP strictement positif pour cette boutique
       // (ligne shop_product absente, ou portion_price à 0 : live, 56 à 108
@@ -9698,6 +9700,28 @@ function whitelist_where($alias = 'p') {
     ? " AND COALESCE($alias.brand_whitelist,1) = 1" : '';
 }
 
+/* ── UNE CATÉGORIE D'UNE AUTRE BOUTIQUE EXCLUT SES PRODUITS, PARTOUT. ───────
+ * ws_categories.shop_id NULL = catégorie du réseau ; renseigné = propre à une
+ * boutique. La barre de navigation l'appliquait déjà — `shop_id = ? OR shop_id
+ * IS NULL` — mais elle SEULE. Ni la grille du webshop, ni l'assortiment du
+ * franchisé, ni le catalogue de stock ne la regardaient.
+ *
+ * CE QUE ÇA DONNAIT, relevé en production : la console franchisé de la
+ * boutique 2 listait dix produits de la boutique 4 — Croissant pur beurre,
+ * Baguette tradition, Tarte au riz… — et le webshop ne les écartait que par
+ * ACCIDENT, faute de prix ERP pour la boutique 2. Un prix posé, et ils se
+ * seraient vendus boutique 2, rangés sous une catégorie que la barre n'affiche
+ * pas : visibles sous « Tout », introuvables ailleurs.
+ *
+ * La règle est donc écrite une fois et lue partout. Un produit sans catégorie
+ * (cat_id NULL, ou orphelin en LEFT JOIN) n'est PAS écarté : son problème est
+ * le rattachement manquant, que le diagnostic signale déjà, et l'exclure ici
+ * le ferait disparaître sans rien dire. */
+function categorie_shop_where($alias = 'c', $shopId = null) {
+  if (!$shopId || !col_exists('ws_categories', 'shop_id')) return '';
+  return " AND ($alias.shop_id IS NULL OR $alias.shop_id = " . (int) $shopId . ")";
+}
+
 /* ── POURQUOI CE PRODUIT N'EST-IL PAS EN LIGNE ? ───────────────────────────
  *
  * SIX conditions décident qu'un produit s'affiche dans une boutique, et elles
@@ -9769,6 +9793,8 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
     elseif ($horsBureau && !(int) $r['od'])          $raison = 'Non éligible à la livraison au bureau';
     elseif ($seasonSql !== '' && !isset($okSaison[$pid]))
                                                      $raison = 'Hors saison à la date demandée';
+    elseif ($sc && $r['cat_shop'] !== null && (int) $r['cat_shop'] !== $sc)
+                                                     $raison = 'Catégorie rattachée à une autre boutique';
     elseif ($sc && !isset($prix[$pid]))              $raison = 'Sans prix dans l’ERP pour cette boutique';
     /* JOIGNABLE ≠ EN LIGNE, et les confondre rendrait les deux faux. Un
        produit peut être EN VENTE — il s'affiche sous « Tout » — sans qu'aucune
@@ -9776,19 +9802,20 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
        verdict de vente : retirer ces produits de la vente serait une décision
        commerciale, pas une correction technique.
 
-       CES DEUX CAS SONT CEUX QUE LA NAVIGATION APPLIQUE VRAIMENT, et ils ont
-       changé. /catalog/categories ne filtrait plus sur ws_categories.active
-       depuis ce matin — ce drapeau est un cache calculé, pas une décision — et
-       ce diagnostic, lui, continuait d'annoncer « Catégorie désactivée —
-       introuvable ». Il aurait déclaré injoignables des produits parfaitement
-       joignables : la divergence exacte que cette fonction existe pour
-       empêcher, réapparue par le haut. Reste ce qui écarte réellement une
-       catégorie de la barre : ne pas exister, ou appartenir à une AUTRE
-       boutique (la requête garde `shop_id = ? OR shop_id IS NULL`). */
+       IL N'EN RESTE QU'UN, et c'est le signe que le reste a été réparé plus
+       haut plutôt que décrit ici. « Catégorie désactivée » a disparu : ce
+       drapeau est un cache calculé, la barre ne le lit plus, et ce diagnostic
+       a continué de l'annoncer un moment — il déclarait injoignables des
+       produits parfaitement joignables. « Catégorie d'une autre boutique » a
+       disparu aussi, mais pour l'autre raison : ce produit n'est désormais
+       PLUS VENDU ici (categorie_shop_where), donc c'est un refus de vente, pas
+       un défaut de navigation. Le confondre avec l'un ou l'autre le rendrait
+       introuvable dans le bon écran.
+
+       Reste le seul cas où un produit est réellement vendu sans catégorie où
+       le retrouver : un cat_id vide, ou qui ne pointe sur rien. */
     $nav = null;
     if (!$r['cat_ok'])                              $nav = 'Catégorie inconnue (cat_id vide ou orphelin) — introuvable dans la navigation';
-    elseif ($sc && $r['cat_shop'] !== null && (int) $r['cat_shop'] !== $sc)
-                                                    $nav = 'Catégorie rattachée à une autre boutique — introuvable dans la navigation';
     $out[$pid] = ['enLigne' => $raison === null, 'raison' => $raison, 'navigation' => $nav];
   }
   return $out;

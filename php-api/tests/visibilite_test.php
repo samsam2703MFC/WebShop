@@ -68,9 +68,11 @@ $enLigneDiag = array_keys(array_filter($vis, fn ($v) => $v['enLigne']));
    de prix — c'est précisément ce que le diagnostic doit refléter. */
 [$seasonSql, $seasonArgs] = availability_where('p', null);
 $wl = whitelist_where('p');
+$catShop = categorie_shop_where('c', $shop);
 $rs = rows("SELECT p.id FROM ws_products p
               LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
-             WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)$wl$seasonSql",
+              LEFT JOIN ws_categories c ON c.id = p.cat_id
+             WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)$wl$seasonSql$catShop",
            array_merge([$shop], $seasonArgs));
 $prix = erp_shop_prices($shop, array_map(fn ($x) => (int) $x['id'], $rs));
 $enLigneCat = array_values(array_filter(array_map(fn ($x) => (int) $x['id'], $rs),
