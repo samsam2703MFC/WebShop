@@ -320,8 +320,10 @@ function ws_voucher_upsert(array $o) {
     $trgSql = tbl_exists('ws_bundle_triggers')
       ? " OR EXISTS(SELECT 1 FROM ws_bundle_triggers tg
                      JOIN ws_bundles tb ON tb.product_id = tg.product_id AND tb.active = 1
-                     WHERE tg.cat_id = p.cat_id
-                       AND (tg.sub_cat_id IS NULL OR tg.sub_cat_id = p.sub_cat_id))"
+                     WHERE " . (col_exists('ws_bundle_triggers', 'article_id')
+                       ? "(tg.article_id = p.id OR (tg.article_id IS NULL AND tg.cat_id = p.cat_id
+                            AND (tg.sub_cat_id IS NULL OR tg.sub_cat_id = p.sub_cat_id)))"
+                       : "(tg.cat_id = p.cat_id AND (tg.sub_cat_id IS NULL OR tg.sub_cat_id = p.sub_cat_id))") . ")"
       : '';
     // `badge` (texte) a été migré en FK tag_id -> ws_tags ; on expose le libellé
     // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
@@ -3730,10 +3732,13 @@ function dispatch($m, $p) {
         // Déclencheurs EXPLICITES du menu (0078) : catégorie, ou catégorie ET
         // sous-catégorie. Le constructeur les affiche et les édite en
         // multi-sélection ; ids ET libellés servis, pour ne pas re-joindre côté écran.
-        $trigs = $hasTrg ? rows("SELECT t.cat_id, t.sub_cat_id, c.label AS cat, sub.label AS sub
+        $hasArt2 = $hasTrg && col_exists('ws_bundle_triggers', 'article_id');
+        $trigs = $hasTrg ? rows("SELECT t.cat_id, t.sub_cat_id, c.label AS cat, sub.label AS sub" .
+                                  ($hasArt2 ? ", t.article_id, a.name AS article" : ", NULL AS article_id, NULL AS article") . "
                                    FROM ws_bundle_triggers t
                                    LEFT JOIN ws_categories c ON c.id = t.cat_id
-                                   LEFT JOIN ws_category_subs sub ON sub.id = t.sub_cat_id
+                                   LEFT JOIN ws_category_subs sub ON sub.id = t.sub_cat_id" .
+                                  ($hasArt2 ? " LEFT JOIN ws_products a ON a.id = t.article_id" : "") . "
                                   WHERE t.product_id = ? ORDER BY c.label, sub.label", [$p2['id']]) : [];
         $bundles = rows("SELECT id, name, description, price_modifier, sort_order, active
                            FROM ws_bundles WHERE product_id = ? ORDER BY sort_order, id", [$p2['id']]);
@@ -3800,6 +3805,8 @@ function dispatch($m, $p) {
           'triggers'     => array_map(fn ($t) => [
             'cat_id' => (int) $t['cat_id'], 'sub_cat_id' => $t['sub_cat_id'] !== null ? (int) $t['sub_cat_id'] : null,
             'cat' => $t['cat'] ?: '', 'sub' => $t['sub'] ?: null,
+            'article_id' => $t['article_id'] !== null ? (int) $t['article_id'] : null,
+            'article' => $t['article'] ?: null,
           ], $trigs),
           'bundles'      => $bundles,
         ];
@@ -3948,20 +3955,30 @@ function dispatch($m, $p) {
       if (!row("SELECT 1 x FROM ws_products WHERE id = ?", [$pid]))
         json_out(['ok' => false, 'error' => 'Menu inconnu en base — enregistrez-le d’abord (il se crée à sa première sauvegarde).'], 400);
       $in = is_array($b['triggers'] ?? null) ? $b['triggers'] : [];
+      $hasArt = col_exists('ws_bundle_triggers', 'article_id');
       $rows2 = [];
       foreach ($in as $t) {
         $cid = (int) ($t['cat_id'] ?? 0);
         $sid = isset($t['sub_cat_id']) && $t['sub_cat_id'] !== null && $t['sub_cat_id'] !== '' ? (int) $t['sub_cat_id'] : null;
+        $aid = $hasArt && isset($t['article_id']) && $t['article_id'] !== null && $t['article_id'] !== '' ? (int) $t['article_id'] : null;
         if (!$cid) json_out(['ok' => false, 'error' => 'Déclencheur sans cat_id.'], 400);
         if (!row("SELECT 1 x FROM ws_categories WHERE id = ?", [$cid]))
           json_out(['ok' => false, 'error' => "Catégorie #$cid inconnue."], 400);
         if ($sid !== null && !row("SELECT 1 x FROM ws_category_subs WHERE id = ? AND category_id = ?", [$sid, $cid]))
           json_out(['ok' => false, 'error' => "Sous-catégorie #$sid absente de la catégorie #$cid."], 400);
-        $rows2[] = [$cid, $sid];
+        // L'ARTICLE (0081) doit appartenir au périmètre qu'il restreint —
+        // hors périmètre, refus explicite, pas de correction silencieuse.
+        if ($aid !== null && !row("SELECT 1 x FROM ws_products WHERE id = ? AND cat_id = ?" .
+              ($sid !== null ? " AND sub_cat_id = ?" : ""),
+              $sid !== null ? [$aid, $cid, $sid] : [$aid, $cid]))
+          json_out(['ok' => false, 'error' => "Article #$aid hors du périmètre du déclencheur."], 400);
+        $rows2[] = [$cid, $sid, $aid];
       }
       q("DELETE FROM ws_bundle_triggers WHERE product_id = ?", [$pid]);
-      foreach ($rows2 as [$cid, $sid])
-        q("INSERT IGNORE INTO ws_bundle_triggers (product_id, cat_id, sub_cat_id) VALUES (?,?,?)", [$pid, $cid, $sid]);
+      foreach ($rows2 as [$cid, $sid, $aid])
+        q("INSERT IGNORE INTO ws_bundle_triggers (product_id, cat_id, sub_cat_id" . ($hasArt ? ", article_id" : "") . ")
+           VALUES (?,?,?" . ($hasArt ? ",?" : "") . ")",
+          $hasArt ? [$pid, $cid, $sid, $aid] : [$pid, $cid, $sid]);
       $audit('menu.triggers', 'ws_bundle_triggers', $pid, null, ['n' => count($rows2), 'triggers' => $rows2]);
       json_out(['ok' => true, 'n' => count($rows2)]);
     }
@@ -10135,14 +10152,21 @@ function bundle_source_pid($pid) {
      petit id — déterministe. */
   if ($meta['cat_id'] !== null && tbl_exists('ws_bundle_triggers')) {
     /* Pas de condition tp.active : le porteur vit hors catalogue (active=0),
-       c'est voulu — seule sa FORMULE doit être active. */
+       c'est voulu — seule sa FORMULE doit être active. L'ARTICLE prime sur la
+       sous-catégorie, qui prime sur la catégorie (0081). */
+    $hasArt = col_exists('ws_bundle_triggers', 'article_id');
     $tg = row("SELECT t.product_id
                  FROM ws_bundle_triggers t
                  JOIN ws_bundles b ON b.product_id = t.product_id AND b.active = 1
-                WHERE t.cat_id = ?
-                  AND (t.sub_cat_id IS NULL OR t.sub_cat_id = ?)
-                ORDER BY (t.sub_cat_id IS NOT NULL) DESC, t.product_id
-                LIMIT 1", [(int) $meta['cat_id'], $meta['sub_cat_id'] !== null ? (int) $meta['sub_cat_id'] : -1]);
+                WHERE " . ($hasArt
+                  ? "(t.article_id = ? OR (t.article_id IS NULL AND t.cat_id = ?
+                       AND (t.sub_cat_id IS NULL OR t.sub_cat_id = ?)))
+                ORDER BY (t.article_id IS NOT NULL) DESC, (t.sub_cat_id IS NOT NULL) DESC, t.product_id"
+                  : "t.cat_id = ? AND (t.sub_cat_id IS NULL OR t.sub_cat_id = ?)
+                ORDER BY (t.sub_cat_id IS NOT NULL) DESC, t.product_id") . "
+                LIMIT 1",
+              $hasArt ? [$pid, (int) $meta['cat_id'], $meta['sub_cat_id'] !== null ? (int) $meta['sub_cat_id'] : -1]
+                      : [(int) $meta['cat_id'], $meta['sub_cat_id'] !== null ? (int) $meta['sub_cat_id'] : -1]);
     if ($tg) return (int) $tg['product_id'];
   }
   // ANCIEN CHEMIN, conservé : catégorie armée par menu_default → la formule
