@@ -37,7 +37,7 @@ function invite_recap($officeId, $voucherCode = null) {
   // Fenêtre de livraison : jours desservis, plage horaire, heure limite de
   // commande. Sans ligne d'availability, la tournée n'a pas d'horaire publié —
   // et on préfère ne rien annoncer qu'annoncer 08:00 « par défaut ».
-  $jours = null; $horaire = null; $cutoff = null;
+  $jours = null; $horaire = null; $cutoff = null; $joursListe = null;
   if ($tourId && col_exists('ws_tour_availability', 'tour_id')) {
     $J  = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
     $av = row("SELECT GROUP_CONCAT(DISTINCT delivery_day ORDER BY delivery_day) AS days,
@@ -46,7 +46,8 @@ function invite_recap($officeId, $voucherCode = null) {
                       TIME_FORMAT(MIN(cutoff_time), '%H:%i')    AS cut
                  FROM ws_tour_availability WHERE tour_id = ? AND active = 1", [$tourId]);
     if ($av && $av['days'] !== null) {
-      $jours   = implode(' · ', array_map(fn ($d) => $J[(((int) $d) + 6) % 7], explode(',', (string) $av['days'])));
+      $joursListe = array_values(array_unique(array_map(fn ($d) => $J[(((int) $d) + 6) % 7], explode(',', (string) $av['days']))));
+      $jours   = implode(' · ', $joursListe);
       $horaire = ($av['dep'] && $av['fin']) ? ($av['dep'] . '–' . $av['fin']) : null;
       $cutoff  = $av['cut'] ? ($av['cut'] . ' la veille') : null;
     }
@@ -119,6 +120,7 @@ function invite_recap($officeId, $voucherCode = null) {
     'etage'     => ($site['floor_room'] ?? '') !== '' ? $site['floor_room'] : null,
     'tournee'   => $tour['name'] ?? null,
     'jours'     => $jours,
+    'joursListe' => $joursListe,
     'horaire'   => $horaire,
     'cutoff'    => $cutoff,
     'franco'    => $franco,
@@ -288,9 +290,33 @@ function invite_affiche_html(array $r, $url, $expire = null, $racine = '') {
      l'affiche sortait sur deux pages — une affiche se punaise, elle ne
      s'agrafe pas. Deux colonnes ramènent la hauteur sous l'A4 avec de la
      marge pour les valeurs qui reviennent à la ligne (une adresse longue). */
+  /* La bande « LIVRAISON AU BUREAU » — jours en pastilles, fenêtre et heure
+     limite en cartes : les trois informations que le personnel lit avant de
+     commander, servies par ws_tour_availability. Elles quittent la grille des
+     conditions (où elles restent pour le PDF et l'e-mail, qui gardent
+     invite_conditions entier) — les afficher deux fois sur la même page
+     ferait douter de laquelle fait foi. Rien de servi ⇒ pas de bande. */
+  $JOURS7 = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+  $servis = (array) ($r['joursListe'] ?? []);
+  $bande  = '';
+  if ($servis || !empty($r['horaire']) || !empty($r['cutoff'])) {
+    $pilules = '';
+    if ($servis) foreach ($JOURS7 as $j7)
+      $pilules .= '<span class="jour' . (in_array($j7, $servis, true) ? ' on' : '') . '">' . $e($j7) . '</span>';
+    $cartes = '';
+    if (!empty($r['horaire'])) $cartes .= '<div class="carte"><div class="carte-l">Fenêtre de livraison</div><div class="carte-v">' . $e($r['horaire']) . '</div></div>';
+    if (!empty($r['cutoff']))  $cartes .= '<div class="carte"><div class="carte-l">Commandez avant</div><div class="carte-v">' . $e($r['cutoff']) . '</div></div>';
+    $bande = '<h2>Livraison au bureau</h2>'
+      . ($pilules ? '<div class="jours">' . $pilules . '</div>' : '')
+      . ($cartes ? '<div class="infos">' . $cartes . '</div>' : '');
+  }
+
   $lignes = '';
-  foreach (invite_conditions($r) as [$lbl, $val])
+  foreach (invite_conditions($r) as [$lbl, $val]) {
+    // Portées par la bande ci-dessus — pas deux fois sur la même affiche.
+    if ($bande !== '' && in_array($lbl, ['Jours desservis', 'Fenêtre', 'Commande jusqu’à'], true)) continue;
     $lignes .= '<dt>' . $e($lbl) . '</dt><dd>' . $e($val) . '</dd>';
+  }
 
   /* Les TUILES de bons — celles du récap (actifs en base, huit au plus).
      La valeur s'affiche selon le type ; un bon d'onboarding (add_office,
@@ -380,6 +406,16 @@ function invite_affiche_html(array $r, $url, $expire = null, $racine = '') {
     . '.remise{background:var(--abricot);border-radius:3mm;text-align:center;'
     . 'padding:4.5mm 5mm;margin:0 0 6mm;font:600 17px/1.3 var(--ui)}'
     . '.remise b{font:700 26px/1.1 var(--ui);color:var(--ruby);letter-spacing:.01em}'
+    /* La bande LIVRAISON — pastilles des 7 jours (desservis en plein), puis
+       fenêtre et heure limite en cartes. */
+    . '.jours{display:flex;gap:2mm;justify-content:center;margin:0 0 3mm}'
+    . '.jour{flex:1;max-width:16mm;text-align:center;padding:2.2mm 0;border-radius:2mm;'
+    . 'font:600 11.5px var(--ui);border:.4mm solid var(--bord);color:var(--mut)}'
+    . '.jour.on{background:var(--ruby);border-color:var(--ruby);color:#fff}'
+    . '.infos{display:grid;grid-template-columns:1fr 1fr;gap:3mm;margin:0 0 2mm}'
+    . '.carte{border:.4mm solid var(--bord);border-radius:2.5mm;padding:3mm;text-align:center}'
+    . '.carte-l{font:600 10px var(--ui);letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin-bottom:1mm}'
+    . '.carte-v{font:700 17px var(--ui);color:var(--ruby)}'
     /* Les BONS en tuiles — quatre par ligne, huit au plus (limite du récap). */
     . '.bons{display:grid;grid-template-columns:repeat(4,1fr);gap:3mm;margin:0 0 2mm}'
     . '.bon{border:.5mm solid var(--ruby);border-radius:2.5mm;padding:3mm 2.5mm;text-align:center;page-break-inside:avoid}'
@@ -426,6 +462,7 @@ function invite_affiche_html(array $r, $url, $expire = null, $racine = '') {
     /* La remise, EN GROS : seulement quand la base en porte une (> 0) —
        jamais un « 0 % » d'affiche. Le format vient du récap (% ou €). */
     . ($r['remise'] ? '<div class="remise">Remise : <b>' . $e($r['remise']) . '</b> sur tous vos achats</div>' : '')
+    . $bande
     . ($tuiles ? '<h2>Vos bons de réduction</h2><div class="bons">' . $tuiles . '</div>' : '')
     . ($lignes ? '<h2>Vos conditions</h2><dl class="cond">' . $lignes . '</dl>' : '')
     . '<p class="pied">Votre compte est transmis à votre boutique livreuse pour validation.<br>'
