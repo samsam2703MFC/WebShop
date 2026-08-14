@@ -80,11 +80,18 @@ CREATE TABLE IF NOT EXISTS `ws_product_shops` (
   PRIMARY KEY (`product_id`,`shop_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
 ;
+-- ws_product_prices porte en PRODUCTION une CLÉ ÉTRANGÈRE vers ws_products,
+-- découverte en la faisant échouer : une migration qui y insérait depuis
+-- shop_product s'est arrêtée sur « foreign key constraint fails » — l'ERP
+-- référence des produits absents de ws_products. Le socle le reproduit, pour
+-- qu'un test ne passe pas ici sur une table plus permissive qu'en vrai.
 CREATE TABLE IF NOT EXISTS `ws_product_prices` (
   `product_id` int(11) DEFAULT NULL,
   `shop_id` int(11) DEFAULT NULL,
   `price` decimal(8,2) DEFAULT NULL,
-  `active` tinyint(4) DEFAULT 1
+  `active` tinyint(4) DEFAULT 1,
+  KEY `idx_wpp_product` (`product_id`),
+  CONSTRAINT `ws_product_prices_ibfk_1` FOREIGN KEY (`product_id`) REFERENCES `ws_products` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
 ;
 CREATE TABLE IF NOT EXISTS `ws_product_allergens` (

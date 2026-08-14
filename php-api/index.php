@@ -90,43 +90,57 @@ function product_img_or_null($img) {
  *
  * shop_product n'a pas d'unicité (id_shop, id_product) → on retient une ligne
  * déterministe (plus petit `id`) par produit. */
-/* PRIX DE VENTE D'UN PRODUIT DANS UNE BOUTIQUE — SOURCE UNIQUE.
+/* PRIX DE VENTE D'UN PRODUIT DANS UNE BOUTIQUE — L'ERP FAIT FOI.
  *
- * ws_product_prices, édité par le FRANCHISÉ dans sa console. Le prix venait de
- * l'ERP (shop_product.portion_price) ; il appartient désormais à la boutique,
- * qui le fixe elle-même.
+ * shop_product.portion_price, par boutique. Le prix s'édite dans l'ERP du
+ * magasin ; ni la console franchisé ni la console marque ne l'écrivent.
  *
- * UNE SEULE FONCTION POUR TOUT LE MONDE, ET C'EST LE POINT CRITIQUE. Le
- * catalogue, le panier, l'aperçu de commande et la facturation appellent tous
- * celle-ci. Changer la source ici les fait basculer ENSEMBLE — afficher un
- * prix et en encaisser un autre serait pire que le problème qu'on résout. Une
- * seconde lecture des prix, ailleurs, serait le début de cet écart.
+ * J'AI TENTÉ L'INVERSE, ET C'ÉTAIT UNE ERREUR — deux fois. D'abord de lecture :
+ * « les prix sont à éditer dans les magasins » veut dire « dans l'ERP de chaque
+ * magasin », pas « saisis dans la console ». Ensuite de méthode : la migration
+ * qui recopiait les prix ERP vers ws_product_prices a échoué en production sur
+ * une CLÉ ÉTRANGÈRE — shop_product référence des produits absents de
+ * ws_products — et comme migrate.sh est fail-fast, elle a bloqué TOUS les
+ * déploiements suivants. Elle est supprimée.
  *
- * PAS DE REPLI SUR L'ERP. Si la boutique n'a pas fixé de prix, le produit n'est
- * pas vendable et le diagnostic le dit — plutôt que d'aller chercher en
- * silence un montant d'une autre source, qui serait faux dès la première
- * édition. La migration 0070 a recopié les prix ERP en vigueur pour que la
- * bascule ne change aucun montant affiché.
+ * ws_product_prices EXISTE ENCORE et reste jointe au catalogue pour d'autres
+ * usages, mais elle NE DÉCIDE PAS du prix de vente ni de la mise en vente :
+ * une seule table fait foi, et c'est celle de l'ERP.
+ *
+ * UNE SEULE FONCTION POUR TOUT LE MONDE. Le catalogue, le panier, l'aperçu de
+ * commande et la facturation appellent tous celle-ci. C'est ce qui interdit
+ * d'afficher un prix et d'en encaisser un autre.
  */
 function prix_boutique($shopId, array $ids) {
+  static $ok = null;
   if (!$ids) return [];
+  if ($ok === null) {
+    $ok = false;
+    try {
+      $c = row("SELECT COUNT(*) n FROM information_schema.columns
+                 WHERE table_schema = DATABASE()
+                   AND table_name = 'shop_product' AND column_name = 'portion_price'");
+      $ok = $c && (int) $c['n'] > 0;
+    } catch (Throwable $e) { $ok = false; }
+  }
+  if (!$ok) return [];
   $in = implode(',', array_map('intval', $ids));
   $out = [];
   try {
-    $rows = rows("SELECT product_id AS pid, price
-                    FROM ws_product_prices
-                   WHERE shop_id = ? AND active = 1 AND product_id IN ($in)", [$shopId]);
+    $rows = rows("SELECT id_product AS pid, portion_price
+                    FROM shop_product
+                   WHERE id_shop = ? AND id_product IN ($in)
+                   ORDER BY id_product, id", [$shopId]);
     foreach ($rows as $r) {
-      // Un prix à 0 ou négatif signifie « prix NON FIXÉ » — pas « gratuit ».
-      // Le produit est alors traité comme non tarifé : masqué du catalogue ET
-      // refusé à la commande, plutôt que facturé 0 €. Règle reprise telle
-      // quelle de l'ancienne lecture ERP, elle n'a pas de raison de changer.
-      $px = (float) $r['price'];
+      // Un prix ERP à 0 (ou négatif) signifie « produit listé, prix NON FIXÉ » —
+      // pas « gratuit ». Il n'est donc pas retenu : le produit est masqué du
+      // catalogue ET refusé à la commande, au lieu d'être facturé 0 €.
+      $px = (float) $r['portion_price'];
       if ($px <= 0) continue;
-      $out[(int) $r['pid']] = $px;
+      if (!array_key_exists($pid = (int) $r['pid'], $out)) $out[$pid] = $px;
     }
   } catch (Throwable $e) {
-    error_log('[ws] prix boutique indisponible: ' . $e->getMessage());
+    error_log('[ws] prix magasin ERP indisponible: ' . $e->getMessage());
     return [];
   }
   return $out;
@@ -454,19 +468,17 @@ function ws_voucher_upsert(array $o) {
         error_log('[ws] allergènes ERP indisponibles: ' . $e->getMessage());
       }
     }
-    // PRIX DE LA BOUTIQUE (ws_product_prices), fixé par le franchisé dans sa
-    // console — SOURCE UNIQUE, sans repli. Il venait de l'ERP ; la migration
-    // 0070 a recopié les montants en vigueur pour que la bascule n'en change
-    // aucun.
-    //   • produit sans prix fixé → prix 0 → écarté par le filtre « price > 0 »
-    //     ci-dessous : non vendable, et le diagnostic le DIT (« Prix non fixé
-    //     pour cette boutique ») au lieu de le laisser deviner ;
+    // PRIX MAGASIN — l'ERP fait foi (shop_product.portion_price par boutique).
+    // Source unique, sans repli : le prix s'édite dans l'ERP du magasin.
+    //   • produit sans prix ERP → prix 0 → écarté par le filtre « price > 0 »
+    //     ci-dessous : non vendable, et le diagnostic le DIT (« Sans prix dans
+    //     l'ERP pour cette boutique ») au lieu de le laisser deviner ;
     //   • aucun prix pour TOUTE la boutique → 503 explicite. On ne publie pas
     //     un catalogue dont on ne connaît aucun montant.
     if ($r) {
       $store = prix_boutique($s, array_map(static fn($p2) => (int) $p2['id'], $r));
       if (!$store) {
-        json_out(['error' => 'Aucun prix fixé pour cette boutique (ws_product_prices) — catalogue non publiable. Les prix se saisissent dans la console du franchisé.'], 503);
+        json_out(['error' => 'Prix magasin (ERP shop_product) indisponibles pour cette boutique — catalogue non publiable.'], 503);
       }
       $sansPrix = [];
       foreach ($r as &$x) {
@@ -7568,57 +7580,6 @@ function dispatch($m, $p) {
     // ── Stock du jour : SAISIE directe (formulaire modale) — pose les
     //    quantités ABSOLUES du jour par mode (webshop=delivery / shop=collect)
     //    dans ws_product_stock. date = jour courant. ──
-    /* PRIX DE VENTE — saisi par le FRANCHISÉ, pour SA boutique.
-       Le prix venait de l'ERP et n'était modifiable nulle part ; il appartient
-       désormais à la boutique. Une route dédiée plutôt que /admin/price, qui
-       existait déjà mais prend le shopId DANS LE CORPS de la requête : un
-       franchisé y aurait tarifé la boutique du voisin. Ici la portée vient du
-       serveur ($shopId, résolu par le jeton), jamais du client — règle du
-       dépôt, et la seule qui tienne quand le jeton est réseau.
-
-       PRIX À 0 = « NON FIXÉ », pas « gratuit » : la ligne est désactivée, le
-       produit redevient non vendable et le diagnostic le dit. Vider le champ
-       est donc le geste pour retirer un produit de la vente, et il est
-       réversible. */
-    if ($m === 'POST' && $p === '/franchisee/product-price') {
-      $b = body();
-      if (!$shopId) json_out(['ok' => false, 'error' => 'Portée boutique requise.'], 400);
-      if (!$tblExists('ws_product_prices') || !$tblExists('ws_products'))
-        json_out(['ok' => false, 'error' => 'Tables prix ou produits absentes.'], 501);
-      $pr = $findProduct($b);
-      if (!$pr) $prodKo($b);
-      $pid = (int) $pr['id'];
-      $sc  = (int) $shopId;
-      // Le champ vide et le zéro disent la même chose : prix non fixé.
-      $brut = $b['prix'] ?? $b['price'] ?? null;
-      $px = ($brut === null || $brut === '') ? 0.0 : (float) str_replace(',', '.', (string) $brut);
-      if ($px < 0) json_out(['ok' => false, 'error' => 'Un prix ne peut pas être négatif.'], 400);
-      if ($px > 0) {
-        /* UPDATE PUIS INSERT, et surtout PAS « ON DUPLICATE KEY UPDATE » :
-           ws_product_prices n'a AUCUN index — constaté en écrivant cette route,
-           un second enregistrement du même produit créait une deuxième ligne au
-           lieu de corriger la première. Deux prix pour un produit, et c'est
-           celui que la base rend en dernier qui est facturé.
-           /admin/price fait cette erreur depuis toujours ; on ne la reproduit
-           pas ici, et on ne dépend pas non plus d'une clé dont on ne peut pas
-           garantir la présence sur chaque installation. */
-        $maj = q("UPDATE ws_product_prices SET price = ?, active = 1
-                   WHERE product_id = ? AND shop_id = ?", [$px, $pid, $sc]);
-        if (!row("SELECT 1 x FROM ws_product_prices WHERE product_id = ? AND shop_id = ?", [$pid, $sc]))
-          q("INSERT INTO ws_product_prices (product_id, shop_id, price, active) VALUES (?,?,?,1)",
-            [$pid, $sc, $px]);
-      } else {
-        // Pas de DELETE : on garde la trace du dernier prix pratiqué.
-        q("UPDATE ws_product_prices SET active = 0 WHERE product_id = ? AND shop_id = ?", [$pid, $sc]);
-      }
-      // Pas d'écriture dans bo_audit : aucune autre route franchisé ne le fait,
-      // la table peut manquer selon l'installation, et son absence ferait
-      // échouer l'enregistrement du prix. Un prix qu'on ne peut pas saisir
-      // serait un problème plus grave que celui qu'on ne trace pas.
-      json_out(['ok' => true, 'produit' => $pr['name'] ?? null, 'prix' => $px,
-                'enVente' => $px > 0]);
-    }
-
     if ($m === 'POST' && $p === '/franchisee/stock-set') {
       $b = body();
       if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
@@ -9929,7 +9890,7 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
     elseif ($canalWeb && !(int) $r['web'])           $raison = 'Non vendu sur le webshop (click & collect)';
     elseif ($seasonSql !== '' && !isset($okSaison[$pid]))
                                                      $raison = 'Hors saison à la date demandée';
-    elseif ($sc && !isset($prix[$pid]))              $raison = 'Prix non fixé pour cette boutique';
+    elseif ($sc && !isset($prix[$pid]))              $raison = 'Sans prix dans l’ERP pour cette boutique';
     /* JOIGNABLE ≠ EN LIGNE, et les confondre rendrait les deux faux. Un
        produit peut être EN VENTE — il s'affiche sous « Tout » — sans qu'aucune
        catégorie ne permette d'y revenir. On le nomme sans le confondre avec le
