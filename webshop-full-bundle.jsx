@@ -40,14 +40,34 @@ if ('serviceWorker' in navigator) {
    fenêtre). opts.stop : n'alimente pas les gestionnaires des ancêtres (les
    boutons imbriqués dans une carte elle-même tappable). */
 let __wsOpenedAt = 0;
+let __wsPressTarget = null;
+let __wsPressAt = 0;
+function wsShield() { __wsOpenedAt = performance.now(); }
+/* BOUCLIER GLOBAL. Quand une action change la mise en page SOUS le doigt
+   (dépliage, fermeture de la fiche, panier → checkout, commande passée), le
+   click synthétisé du même tap atterrit sur ce qui vient d'apparaître à cet
+   endroit — constaté : « Commander » posait le clic sur « Se connecter » du
+   checkout, d'où une demande de connexion à chaque validation. Signature
+   infaillible d'un fantôme : sa cible n'a reçu AUCUN appui (pointerdown) de
+   ce geste. Un vrai tap suivant a toujours son propre appui : il passe. */
+document.addEventListener('pointerdown', (e) => {
+  __wsPressTarget = e.target; __wsPressAt = performance.now();
+}, { capture: true, passive: true });
+document.addEventListener('click', (e) => {
+  if (performance.now() - __wsOpenedAt > 400) return;
+  const t = __wsPressTarget;
+  if (t && __wsPressAt <= performance.now() && t.isConnected
+      && (t === e.target || t.contains(e.target) || e.target.contains(t))) return;
+  e.stopPropagation(); e.preventDefault();
+}, { capture: true });
 function wsTap(fn, opts) {
-  const doOpen = !!(opts && opts.open);
+  const doOpen = !!(opts && (opts.open || opts.shield));
   const doStop = !!(opts && opts.stop);
   const st = (e) => { if (doStop) e.stopPropagation(); };
   const fire = (el) => {
     const p = el.__wsTap || (el.__wsTap = {});
     p.handled = performance.now();
-    if (doOpen) __wsOpenedAt = p.handled;
+    if (doOpen) wsShield();
     fn();
   };
   return {
@@ -1057,7 +1077,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     <div className="pdm-scrim" role="dialog" aria-modal="true" onClick={onClose} style={{ '--accent': accentVar }}>
       <div ref={pdmPanelRef} className="pdm" onClick={(e) => e.stopPropagation()}>
         <span className="ws-modal__handle pdm-handle" aria-hidden="true"/>
-        <button className="pdm-close" aria-label="Fermer" {...wsTap(onClose)}><Pict d={ICONS.close} s={13}/></button>
+        <button className="pdm-close" aria-label="Fermer" {...wsTap(onClose, { shield: true })}><Pict d={ICONS.close} s={13}/></button>
 
         {/* HERO */}
         <div className="pdm-hero">
@@ -1295,7 +1315,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
               <span className="pdm-qty__val">{qty}</span>
               <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.min(q + 1, deliveryStockLeft ?? 99)))} aria-label="Augmenter" disabled={deliveryStockLeft !== null && qty >= deliveryStockLeft}>+</button>
             </div>
-            <button className="pdm-cta" disabled={!valid || deliveryBlocked || (deliveryStockLeft !== null && deliveryStockLeft === 0)} {...wsTap(handleConfirm)}>
+            <button className="pdm-cta" disabled={!valid || deliveryBlocked || (deliveryStockLeft !== null && deliveryStockLeft === 0)} {...wsTap(handleConfirm, { shield: true })}>
               <span>{deliveryBlocked ? 'Non disponible en livraison' : (deliveryStockLeft === 0 ? 'Stock épuisé' : (valid ? 'Ajouter au panier' : 'Choisissez vos options'))}</span>
               <span className="pdm-cta__total" key={pulse}>
                 {offerDiscount > 0 && (
@@ -1747,7 +1767,7 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
         </div>
       </div>
 
-      <button className="ws-cta" style={{ background: 'var(--color-primary)' }} onClick={onCheckout} disabled={!basket.length}>
+      <button className="ws-cta" style={{ background: 'var(--color-primary)' }} {...wsTap(onCheckout, { shield: true })} disabled={!basket.length}>
         Passer au paiement
         <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>
       </button>
@@ -3976,11 +3996,11 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           <span className="ws-checkout__foot-v">€{total.toFixed(2)}</span>
         </div>
         <div className="ws-checkout__foot-actions">
-          {step > 1 && <button className="ws-btn-ghost" onClick={() => setStep((s) => s - 1)} disabled={paying}>Précédent</button>}
+          {step > 1 && <button className="ws-btn-ghost" {...wsTap(() => setStep((s) => s - 1), { shield: true })} disabled={paying}>Précédent</button>}
           <button
             className="ws-cta ws-cta--block"
             disabled={paying || (step === 1 && !step1Valid()) || (step === 2 && !step2Valid()) || (step === 3 && !step3Valid())}
-            onClick={next}
+            {...wsTap(next, { shield: true })}
           >
             {paying ? 'Traitement…' : step === 3 ? `Payer · €${total.toFixed(2)}` : 'Continuer'}
             {!paying && step < 3 && <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>}
