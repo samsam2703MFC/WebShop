@@ -3494,6 +3494,9 @@ function dispatch($m, $p) {
     // Catalogue — arbre catégories › produits (réel) avec gouvernance marque.
     if ($m === 'GET' && $p === '/franchisor/catalog') {
       $totalShops = (int) (row("SELECT COUNT(*) n FROM $SHOPS WHERE active=1")['n'] ?? 0);
+      // Boutique de référence du diagnostic « en ligne » (voir plus bas).
+      $shopRef = (int) (qp('shop', 0) ?: 0);
+      if (!$shopRef) $shopRef = (int) (row("SELECT id FROM $SHOPS WHERE active=1 ORDER BY id LIMIT 1")['id'] ?? 0);
       $hasPS = $tblExists('ws_product_shops');
       // Console marque (gestion de l'assortiment) : renvoyer TOUTES les catégories,
       // pas seulement les actives. Une catégorie dont tous les produits sont en
@@ -3536,7 +3539,16 @@ function dispatch($m, $p) {
                          LEFT JOIN ws_season se ON se.id = p.season_id
                         WHERE p.cat_id = ? ORDER BY sub.sort_order, sub.label, p.name", [$c['id']]);
         $photos = product_photo_files();
+        /* EN LIGNE OÙ ? La console marque est réseau : « en ligne » n'a de sens
+           que rapporté à une boutique. On diagnostique donc sur une boutique de
+           RÉFÉRENCE (?shop=, sinon la première active) et on le DIT — sans quoi
+           un chiffre réseau laisserait croire à une vérité unique là où chaque
+           boutique a son prix ERP et ses exclusions.
+           Avant, la colonne « Webshop » portait ws_products.active seul : un
+           produit publié mais sans prix ERP s'y affichait allumé et n'était
+           nulle part en vente. C'est l'écart « 39 produits · 1 en ligne ». */
         $rows2 = [];
+        $visRef = $shopRef ? product_visibilite($shopRef, array_map(fn ($x2) => (int) $x2['id'], $prods), '', null) : [];
         foreach ($prods as $p2) {
           // Adoption = % boutiques qui ne l'excluent PAS explicitement (ws_product_shops.active=0).
           $ad = 0;
@@ -3552,6 +3564,9 @@ function dispatch($m, $p) {
             'sub' => $p2['sub'] ?: null, 'sub_id' => $p2['sub_id'] !== null ? (int) $p2['sub_id'] : null,
             'photo' => (!empty($p2['img']) || isset($photos[$p2['id']])), // a une photo produit
             'ad' => $ad, 'saison' => $p2['saison'] ?: null,
+            // Verdict RÉEL pour la boutique de référence, et sa raison.
+            'enLigne' => isset($visRef[(int) $p2['id']]) ? $visRef[(int) $p2['id']]['enLigne'] : null,
+            'raison'  => isset($visRef[(int) $p2['id']]) ? $visRef[(int) $p2['id']]['raison'] : null,
           ];
         }
         if ($rows2) $out[] = ['id' => (int) $c['id'], 'cat' => $c['label'], 'img' => $c['img'] ?: null,
@@ -7813,9 +7828,18 @@ function dispatch($m, $p) {
                           GROUP BY id_product", [$shopId]) as $t) { $tarife[(int) $t['pid']] = true; }
         } catch (Throwable $e) { $tarife = []; error_log('[ws] tarifs ERP indisponibles (assortiment): ' . $e->getMessage()); }
       }
-      json_out(array_map(function ($r) use ($tarife, $shopId) {
+      /* LE VERDICT, pas seulement les ingrédients. L'écran montrait déjà
+         « non tarifé » et le canal, mais jamais la réponse à la seule question
+         qu'on se pose devant lui : ce produit est-il EN LIGNE, et sinon
+         pourquoi ? Six conditions décident, et les compter de tête devant un
+         tableau de 400 lignes n'est pas un travail. product_visibilite() les
+         énumère en un seul endroit ; le test visibilite_test.php vérifie
+         qu'elle dit la même chose que le catalogue servi. */
+      $vis = $shopId ? product_visibilite($shopId, array_map(fn ($r) => (int) $r['pid'], $rs), '', null) : [];
+      json_out(array_map(function ($r) use ($tarife, $shopId, $vis) {
         $pid = (int) $r['pid'];
         $nonTarife = $shopId ? !isset($tarife[$pid]) : false;
+        $v = $vis[$pid] ?? null;
         return ['id' => $pid, 'nom' => $r['name'], 'cat' => $r['cat'] ?: '—',
         'sub' => $r['sub'] ?: null,
         'locked' => (bool) $r['brand_mandatory'],
@@ -7825,7 +7849,11 @@ function dispatch($m, $p) {
         'defA' => (bool) $r['brand_mandatory'] ? true : ($r['ps_active'] !== null ? (bool) $r['ps_active'] : true),
         'defND' => $r['no_delivery'] !== null ? (bool) $r['no_delivery'] : false,
         'nonTarife' => $nonTarife,
-        'etatVente' => $nonTarife ? 'Non tarifé — hors vente' : 'Tarifé'];
+        'etatVente' => $nonTarife ? 'Non tarifé — hors vente' : 'Tarifé',
+        // null quand aucune boutique n'est en portée : on ne tranche pas sans
+        // savoir de quelle boutique on parle.
+        'enLigne' => $v ? $v['enLigne'] : null,
+        'raison'  => $v ? $v['raison'] : null];
       }, $rs));
     }
 
@@ -9634,6 +9662,81 @@ function invite_check($tok) {
 function whitelist_where($alias = 'p') {
   return col_exists('ws_products', 'brand_whitelist')
     ? " AND COALESCE($alias.brand_whitelist,1) = 1" : '';
+}
+
+/* ── POURQUOI CE PRODUIT N'EST-IL PAS EN LIGNE ? ───────────────────────────
+ *
+ * SIX conditions décident qu'un produit s'affiche dans une boutique, et elles
+ * vivaient éparpillées : le WHERE de /catalog/products, un filtre PHP après
+ * coup pour le prix, et deux consoles qui en réimplémentaient chacune une
+ * partie. D'où l'écart constaté — la console marque annonçait « 39 produits »
+ * là où le site en montrait 1, sans que rien n'explique les 38 autres.
+ *
+ * Le toggle « Webshop » de la console marque ne porte QUE la première
+ * condition. Les cinq autres sont invisibles, dont la plus fréquente : un
+ * produit sans prix dans l'ERP pour cette boutique est retiré du catalogue
+ * (56 à 108 produits par boutique en production, d'après le journal serveur).
+ *
+ * Cette fonction est le SEUL endroit qui énumère les six. Elle rend, par
+ * produit, le verdict ET la raison du refus — la première rencontrée, dans
+ * l'ordre où le catalogue les applique. Les écrans l'affichent au lieu de
+ * laisser deviner, et la sonde la compte.
+ *
+ * Elle ne DÉCIDE pas à la place du catalogue : /catalog/products garde son
+ * WHERE (un filtre SQL est plus rapide qu'un diagnostic ligne à ligne). Le
+ * test php-api/tests/visibilite_test.php vérifie que les deux disent la même
+ * chose — c'est ce test qui empêche la divergence de revenir.
+ */
+function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
+  $ids = array_values(array_unique(array_map('intval', $ids)));
+  if (!$ids) return [];
+  $in = implode(',', $ids);
+  $sc = (int) $shopId;
+  $horsBureau = in_array(strtolower((string) $mode), ['delivery', 'office', 'apricot'], true);
+
+  $hasWl = col_exists('ws_products', 'brand_whitelist');
+  $hasPS = (bool) row("SELECT 1 x FROM information_schema.tables
+                        WHERE table_schema=DATABASE() AND table_name='ws_product_shops'");
+
+  // Les cinq premières conditions se lisent d'une requête ; la sixième (prix
+  // ERP) vient de la table de l'ERP, qui peut être absente d'un réplica.
+  [$seasonSql, $seasonArgs] = availability_where('p', $date);
+  $rs = rows("SELECT p.id,
+                     p.active AS actif," .
+             ($hasWl ? " COALESCE(p.brand_whitelist,1) AS wl," : " 1 AS wl,") . "
+                     COALESCE(p.office_delivery,1) AS od," .
+             ($hasPS ? " ps.active AS ps_actif" : " NULL AS ps_actif") . "
+                FROM ws_products p" .
+             ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = $sc" : "") . "
+               WHERE p.id IN ($in)");
+
+  // Saison : on demande à la MÊME clause que le catalogue quels ids passent,
+  // plutôt que de réécrire la règle des périodes récurrentes une seconde fois.
+  $okSaison = [];
+  if ($seasonSql !== '') {
+    foreach (rows("SELECT p.id FROM ws_products p WHERE p.id IN ($in)$seasonSql", $seasonArgs) as $x)
+      $okSaison[(int) $x['id']] = true;
+  }
+
+  $prix = $sc ? erp_shop_prices($sc, $ids) : [];
+
+  $out = [];
+  foreach ($rs as $r) {
+    $pid = (int) $r['id'];
+    $raison = null;
+    // ORDRE = celui du catalogue. La première condition qui échoue est la
+    // raison montrée : en afficher plusieurs ferait chercher laquelle lever.
+    if (!(int) $r['actif'])                          $raison = 'Brouillon — non publié au catalogue réseau';
+    elseif (!(int) $r['wl'])                         $raison = 'Retiré du catalogue réseau par la marque';
+    elseif ($hasPS && $r['ps_actif'] !== null && !(int) $r['ps_actif'])
+                                                     $raison = 'Exclu de cette boutique';
+    elseif ($horsBureau && !(int) $r['od'])          $raison = 'Non éligible à la livraison au bureau';
+    elseif ($seasonSql !== '' && !isset($okSaison[$pid]))
+                                                     $raison = 'Hors saison à la date demandée';
+    elseif ($sc && !isset($prix[$pid]))              $raison = 'Sans prix dans l’ERP pour cette boutique';
+    $out[$pid] = ['enLigne' => $raison === null, 'raison' => $raison];
+  }
+  return $out;
 }
 
 /* Centroïde d'un code postal belge (data/zipcodes_be.json) — le même
