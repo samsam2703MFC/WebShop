@@ -14,6 +14,80 @@ document.addEventListener('touchstart', function () {}, { passive: true });
 // doivent donc plus attendre la fin d'une animation qui n'existe plus.
 const IS_TOUCH = window.matchMedia && window.matchMedia('(hover: none)').matches;
 
+// Version servie : visible en console et dans l'encadré ?tapdebug=1 — pour
+// distinguer « le correctif ne marche pas » de « le téléphone sert encore
+// l'ancien bundle » (service worker). Et rafraîchissement agressif du SW :
+// vérification de mise à jour au retour d'onglet et toutes les 60 s.
+const WS_BUILD = (typeof __WS_BUILD__ !== 'undefined') ? __WS_BUILD__ : 'dev';
+window.__WS_BUILD = WS_BUILD;
+try { console.info('[ws] build ' + WS_BUILD); } catch (e) {}
+if ('serviceWorker' in navigator) {
+  const ping = () => navigator.serviceWorker.getRegistration().then((r) => r && r.update()).catch(() => {});
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) ping(); });
+  setInterval(ping, 60000);
+}
+
+/* ── TAP FIABLE, GÉNÉRALISÉ ────────────────────────────────────────────────
+   L'action part au relâchement (pointerup/touchend) comme en natif, même
+   quand le navigateur retient le click (tap qui stoppe l'inertie du scroll,
+   geste requalifié). L'état vit SUR LE NŒUD DOM : chaque élément a le sien —
+   un tap sur B ne peut jamais être mangé par la dédup d'un tap sur A (le
+   verrou partagé de l'ancienne version mangeait le 2e tap < 400 ms).
+   opts.open : marque un dépliage/une ouverture — arme la fenêtre anti-clic-
+   fantôme (le click synthétisé du MÊME tap atterrit sur le contenu qui vient
+   d'apparaître : il arrive en « orphelin », sans appui vu sur sa cible, et
+   la fenêtre le neutralise ; un clic clavier, orphelin aussi, passe hors
+   fenêtre). opts.stop : n'alimente pas les gestionnaires des ancêtres (les
+   boutons imbriqués dans une carte elle-même tappable). */
+let __wsOpenedAt = 0;
+function wsTap(fn, opts) {
+  const doOpen = !!(opts && opts.open);
+  const doStop = !!(opts && opts.stop);
+  const st = (e) => { if (doStop) e.stopPropagation(); };
+  const fire = (el) => {
+    const p = el.__wsTap || (el.__wsTap = {});
+    p.handled = performance.now();
+    if (doOpen) __wsOpenedAt = p.handled;
+    fn();
+  };
+  return {
+    onPointerDown: (e) => {
+      st(e);
+      e.currentTarget.__wsTap = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, handled: 0 };
+    },
+    onPointerUp: (e) => {
+      st(e);
+      const p = e.currentTarget.__wsTap;
+      if (!p || p.id !== e.pointerId || !p.t) return;
+      const moved = Math.abs(e.clientX - p.x) > 14 || Math.abs(e.clientY - p.y) > 14;
+      if (!moved && performance.now() - p.t < 600 && !(p.handled && performance.now() - p.handled < 350)) fire(e.currentTarget);
+    },
+    onTouchStart: (e) => {
+      st(e);
+      const t = e.touches[0]; if (!t) return;
+      const p = e.currentTarget.__wsTap || (e.currentTarget.__wsTap = {});
+      p.tx = t.clientX; p.ty = t.clientY; p.tt = performance.now();
+    },
+    onTouchEnd: (e) => {
+      st(e);
+      const p = e.currentTarget.__wsTap; const t = e.changedTouches && e.changedTouches[0];
+      if (!p || !t || !p.tt) return;
+      if (p.handled && performance.now() - p.handled < 350) return;
+      const moved = Math.abs(t.clientX - p.tx) > 12 || Math.abs(t.clientY - p.ty) > 12;
+      if (!moved && performance.now() - p.tt < 600) fire(e.currentTarget);
+    },
+    onClick: (e) => {
+      st(e);
+      const p = e.currentTarget.__wsTap || {};
+      const now = performance.now();
+      if (p.handled && now - p.handled < 400) return;
+      const sawPress = (p.t && now - p.t < 600) || (p.tt && now - p.tt < 600);
+      if (!sawPress && now - __wsOpenedAt < 250) return;
+      fire(e.currentTarget);
+    },
+  };
+}
+
 // Diagnostic terrain : ?tapdebug=1 affiche les derniers événements tactiles
 // (type + cible) dans un coin de l'écran — pour voir ce que LE téléphone fait
 // réellement d'un tap qui « ne marche pas », sans outillage branché.
@@ -21,7 +95,7 @@ if (/[?&]tapdebug=1/.test(location.search)) {
   const box = document.createElement('div');
   box.style.cssText = 'position:fixed;left:4px;bottom:4px;z-index:99999;background:rgba(0,0,0,.78);color:#7CFC90;font:10px/1.4 monospace;padding:6px 8px;border-radius:6px;max-width:72vw;pointer-events:none;white-space:pre;';
   document.body.appendChild(box);
-  const lines = [];
+  const lines = ['build ' + ((typeof __WS_BUILD__ !== 'undefined') ? __WS_BUILD__ : 'dev')];
   const log = (e) => {
     const cls = ((e.target.getAttribute && e.target.getAttribute('class')) || e.target.tagName || '?').split(' ')[0];
     lines.push((e.type + '            ').slice(0, 13) + cls.slice(0, 26));
@@ -565,7 +639,7 @@ function OfferStrip({ offer, qty, unit, calc, onAddOne }) {
         {progressNodes}
       </div>
       {showAdd && (
-        <button type="button" className="pdm-offer__add" onClick={onAddOne}>
+        <button type="button" className="pdm-offer__add" {...wsTap(onAddOne)}>
           +1
         </button>
       )}
@@ -640,7 +714,7 @@ function PortionOptions({ value, onChange, product }) {
               role="radio"
               aria-checked={on}
               className={'pdm-seg__btn pdm-seg__btn--portion' + (on ? ' is-on' : '')}
-              onClick={() => onChange(o.v)}>
+              {...wsTap(() => onChange(o.v))}>
               <span className="pdm-seg__pico" aria-hidden="true">
                 <svg viewBox="0 0 24 24" width="14" height="14">{o.d}</svg>
               </span>
@@ -827,12 +901,11 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
       glideIfHidden(optRefs.current[oid], sc, (elRect, scRect) => sc.scrollTop + (elRect.top - scRect.top) - 8);
     }, IS_TOUCH ? 30 : 180);
   }
-  function setSlot(slotId, choiceId) { if (justOpened()) return; setBundleSlots((s) => ({ ...s, [slotId]: choiceId })); }
+  function setSlot(slotId, choiceId) { setBundleSlots((s) => ({ ...s, [slotId]: choiceId })); }
   // Rubrique multi (« 2 choix ») : le tap AJOUTE ou RETIRE, il ne remplace
   // pas — c'était le blocage constaté : le 2e choix écrasait le 1er et la
   // formule ne se complétait jamais. Plafond = max_select.
   function toggleSlotMulti(slotId, choiceId, maxSel) {
-    if (justOpened()) return;
     setBundleSlots((s) => {
       const cur = Array.isArray(s[slotId]) ? s[slotId] : (s[slotId] ? [s[slotId]] : []);
       if (cur.includes(choiceId)) return { ...s, [slotId]: cur.filter((x) => x !== choiceId) };
@@ -855,7 +928,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     const scRect = sc.getBoundingClientRect();
     const fullyVisible = elRect.top >= scRect.top && elRect.bottom <= scRect.bottom;
     if (fullyVisible) return;
-    sc.scrollTo({ top: Math.max(0, computeTarget(elRect, scRect)), behavior: 'smooth' });
+    sc.scrollTo({ top: Math.max(0, computeTarget(elRect, scRect)), behavior: IS_TOUCH ? 'auto' : 'smooth' });
   }
   function pickBundle(bid) {
     // Re-tap (ou tap remonté depuis l'intérieur) sur la formule DÉJÀ choisie :
@@ -877,55 +950,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
         sc.scrollTop + (cardRect.top - scRect.top) + (card.offsetHeight / 2) - (sc.clientHeight / 2));
     }, IS_TOUCH ? 30 : 340);
   }
-  function toggleUpsell(id)        { if (justOpened()) return; setUpsellIds((s) => ({ ...s, [id]: !s[id] })); }
-  /* OUVERTURE FIABLE AU DOIGT. Sur téléphone, taper pendant que l'inertie du
-     scroll court encore ARRÊTE le défilement et le navigateur n'émet aucun
-     click : la carte de formule ou l'accordéon ne s'ouvrait « pas » (en fait,
-     jamais tapé aux yeux du DOM). pointerup, lui, est émis même dans ce cas.
-     On déclenche donc l'ouverture au pointerup — avec garde de mouvement :
-     un vrai glissement (doigt qui bouge, pointercancel) n'ouvre rien. Le
-     click reste câblé pour le clavier et les navigateurs sans pointer events,
-     avec un verrou pour ne pas rejouer l'action déjà faite au pointerup. */
-  const pressRef = React.useRef({ handled: 0 });
-  const openedAtRef = React.useRef(0);
-  function justOpened() { return performance.now() - openedAtRef.current < 180; }
-  function tapToOpen(fn) {
-    return {
-      onPointerDown: (e) => {
-        pressRef.current = { handled: pressRef.current.handled, x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId };
-      },
-      onPointerUp: (e) => {
-        const p = pressRef.current;
-        if (p.id !== e.pointerId || p.t === undefined) return;
-        const moved = Math.abs(e.clientX - p.x) > 14 || Math.abs(e.clientY - p.y) > 14;
-        if (!moved && performance.now() - p.t < 600 && !already()) fire();
-      },
-      // Filet : si le navigateur requalifie le geste (pointercancel), pointerup
-      // n'arrive JAMAIS — mais touchend, si. Un relâchement quasi immobile
-      // ouvre quand même. Dédup par horodatage commun avec pointerup/click.
-      onTouchStart: (e) => {
-        const t = e.touches[0];
-        if (t) Object.assign(pressRef.current, { tx: t.clientX, ty: t.clientY, tt: performance.now() });
-      },
-      onTouchEnd: (e) => {
-        const p = pressRef.current;
-        const t = e.changedTouches && e.changedTouches[0];
-        if (!t || p.tt === undefined) return;
-        const moved = Math.abs(t.clientX - p.tx) > 12 || Math.abs(t.clientY - p.ty) > 12;
-        if (!moved && performance.now() - p.tt < 600 && !already()) fire();
-      },
-      onClick: () => {
-        if (already()) return;
-        fire();
-      },
-    };
-    function fire() {
-      pressRef.current.handled = performance.now();
-      openedAtRef.current = performance.now();
-      fn();
-    }
-    function already() { return performance.now() - (pressRef.current.handled || 0) < 400; }
-  }
+  function toggleUpsell(id)        { setUpsellIds((s) => ({ ...s, [id]: !s[id] })); }
   // Un accordéon qui vient de s'ouvrir (animation ~300 ms) ne doit pas se
   // REFERMER sur un re-tap réflexe « ça n'a pas marché » : anti-rebond.
   const lastToggle = React.useRef({});
@@ -999,8 +1024,8 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   }
 
   // ── Hooks must run unconditionally (called BEFORE any early return) ─
-  const pdmPanelRef = useSwipeDownToClose(onClose);
   const scrollRef = React.useRef(null);
+  const pdmPanelRef = useSwipeDownToClose(onClose, scrollRef);
   const [swipeHint, setSwipeHint] = React.useState(false);
   // Show the in-place swipe hint when content overflows; hide once user
   // has interacted (scrolled) or reached the bottom.
@@ -1032,7 +1057,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     <div className="pdm-scrim" role="dialog" aria-modal="true" onClick={onClose} style={{ '--accent': accentVar }}>
       <div ref={pdmPanelRef} className="pdm" onClick={(e) => e.stopPropagation()}>
         <span className="ws-modal__handle pdm-handle" aria-hidden="true"/>
-        <button className="pdm-close" aria-label="Fermer" onClick={onClose}><Pict d={ICONS.close} s={13}/></button>
+        <button className="pdm-close" aria-label="Fermer" {...wsTap(onClose)}><Pict d={ICONS.close} s={13}/></button>
 
         {/* HERO */}
         <div className="pdm-hero">
@@ -1106,7 +1131,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                               role="radio"
                               aria-checked={on}
                               className={'pdm-seg__btn' + (on ? ' is-on' : '')}
-                              onClick={() => setOpt(o.id, c.id)}>
+                              {...wsTap(() => setOpt(o.id, c.id))}>
                               <span className="pdm-seg__lbl">{c.label}</span>
                               {c.delta > 0 && <span className="pdm-seg__delta">+{c.delta.toFixed(2)} €</span>}
                             </button>
@@ -1125,7 +1150,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                     <div key={id}
                          ref={(el) => { if (el) optRefs.current[id] = el; }}
                          className={'pdm-opt' + (isOpen ? ' is-open' : '') + (activeOpt === id ? ' is-active' : '')}>
-                      <button className="pdm-opt__head" {...tapToOpen(() => toggleOpt(id))} aria-expanded={isOpen}>
+                      <button className="pdm-opt__head" {...wsTap(() => toggleOpt(id), { open: true })} aria-expanded={isOpen}>
                         <span className="pdm-opt__head-l">
                           <span className="pdm-opt__label">Pour accompagner</span>
                           {!isOpen && count > 0 && <span className="pdm-opt__sub">{count} ajout{count>1?'s':''}</span>}
@@ -1143,7 +1168,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                               return (
                                 <button key={u.id}
                                   className={'pdm-imgchip' + (on ? ' is-on' : '')}
-                                  onClick={() => toggleUpsell(u.id)}>
+                                  {...wsTap(() => toggleUpsell(u.id))}>
                                   {u.img && <span className="pdm-imgchip__tile"><img src={u.img} alt=""/></span>}
                                   <span>{u.label}</span>
                                   <span className="pdm-imgchip__delta">+{u.delta.toFixed(2)}</span>
@@ -1166,12 +1191,12 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                   <span className="pdm-section-title">Formule</span>
                   {bundleList.length > 1 && (
                     <button type="button" className="pdm-section-arrow" aria-label="Suivant"
-                      onClick={() => {
+                      {...wsTap(() => {
                         const cur = bundleList.findIndex((b) => b.id === bundleId);
                         const next = cur + 1 >= bundleList.length ? 0 : cur + 1;
                         const nextBundle = bundleList[next];
                         if (nextBundle) pickBundle(nextBundle.id);
-                      }}>
+                      }, { open: true })}>
                       <Pict d={ICONS.chev} s={10}/>
                     </button>
                   )}
@@ -1183,7 +1208,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                       <div key={b.id || 'alc'}
                            className={'pdm-bcard' + (picked ? ' is-picked' : '')}
                            role="button"
-                           {...tapToOpen(() => pickBundle(b.id))}>
+                           {...wsTap(() => pickBundle(b.id), { open: true })}>
                         {b.recommended && <span className="pdm-bcard__badge">Best option</span>}
                         <div className="pdm-bcard__top">
                           <span className="pdm-bcard__name">{b.name}</span>
@@ -1223,7 +1248,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                                       return (
                                         <button key={c.id}
                                           className={klass + (cOn ? ' is-on' : '')}
-                                          onClick={() => multi ? toggleSlotMulti(slot.id, c.id, slot.max_select) : setSlot(slot.id, c.id)}>
+                                          {...wsTap(() => multi ? toggleSlotMulti(slot.id, c.id, slot.max_select) : setSlot(slot.id, c.id))}>
                                           {c.img && <span className="pdm-imgchip__tile"><img src={c.img} alt=""/></span>}
                                           <span>{c.label}</span>
                                           {c.delta > 0 && <span className={c.img ? 'pdm-imgchip__delta' : 'pdm-chip__delta'}>+{c.delta.toFixed(2)}</span>}
@@ -1266,11 +1291,11 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
               </div>
             )}
             <div className="pdm-qty">
-              <button className="pdm-qty__btn" onClick={() => setQty((q) => Math.max(1, q - 1))} disabled={qty <= 1} aria-label="Diminuer">−</button>
+              <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.max(1, q - 1)))} disabled={qty <= 1} aria-label="Diminuer">−</button>
               <span className="pdm-qty__val">{qty}</span>
-              <button className="pdm-qty__btn" onClick={() => setQty((q) => Math.min(q + 1, deliveryStockLeft ?? 99))} aria-label="Augmenter" disabled={deliveryStockLeft !== null && qty >= deliveryStockLeft}>+</button>
+              <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.min(q + 1, deliveryStockLeft ?? 99)))} aria-label="Augmenter" disabled={deliveryStockLeft !== null && qty >= deliveryStockLeft}>+</button>
             </div>
-            <button className="pdm-cta" disabled={!valid || deliveryBlocked || (deliveryStockLeft !== null && deliveryStockLeft === 0)} onClick={handleConfirm}>
+            <button className="pdm-cta" disabled={!valid || deliveryBlocked || (deliveryStockLeft !== null && deliveryStockLeft === 0)} {...wsTap(handleConfirm)}>
               <span>{deliveryBlocked ? 'Non disponible en livraison' : (deliveryStockLeft === 0 ? 'Stock épuisé' : (valid ? 'Ajouter au panier' : 'Choisissez vos options'))}</span>
               <span className="pdm-cta__total" key={pulse}>
                 {offerDiscount > 0 && (
@@ -1308,12 +1333,8 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
   const addDisabled = deliveryBlocked || stockExhausted;
 
   function handleCardClick() { if (!deliveryBlocked) onOpen(p); }
-  function handleAddClick(e) {
-    e.stopPropagation();
-    if (!addDisabled) onOpen(p);
-  }
   return (
-    <article className={`ws-card${addDisabled ? ' ws-card--unavail' : ''}`} onClick={handleCardClick} role="button" tabIndex={0}>
+    <article className={`ws-card${addDisabled ? ' ws-card--unavail' : ''}`} {...wsTap(handleCardClick, { open: true })} role="button" tabIndex={0}>
       <div className="ws-card__photo">
         {deliveryBlocked
           ? <span className="ws-card__badge ws-card__badge--nodeliv">Retrait seulement</span>
@@ -1338,17 +1359,17 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
         />
       </div>
       {/* Meta strip BELOW the (1:1) photo — allergens, info, add */}
-      <div className="ws-card__metaStrip" onClick={(e) => e.stopPropagation()}>
+      <div className="ws-card__metaStrip">
         <Allergens list={p.allergens}/>
         <div className="ws-card__icons">
-          <button className="ws-iconcircle" aria-label="Infos" onClick={(e) => { e.stopPropagation(); onOpen(p); }}><Pict d={ICONS.info} s={11}/></button>
-          <button className="ws-add" onClick={handleAddClick} aria-label="Ajouter au panier"
+          <button className="ws-iconcircle" aria-label="Infos" {...wsTap(() => onOpen(p), { stop: true, open: true })}><Pict d={ICONS.info} s={11}/></button>
+          <button className="ws-add" {...wsTap(() => { if (!addDisabled) onOpen(p); }, { stop: true, open: true })} aria-label="Ajouter au panier"
             disabled={addDisabled} title={deliveryBlocked ? 'Non disponible en livraison' : stockExhausted ? 'Stock épuisé pour la livraison' : undefined}>
             {stockExhausted ? '✕' : '+'}
           </button>
         </div>
       </div>
-      <div className="ws-card__body" onClick={(e) => e.stopPropagation()}>
+      <div className="ws-card__body">
         {p.portions && (
           <div className="ws-card__portions" aria-label="Disponible en portions"
                title={'Portions : ' + portionOptionList(p).map((o) => o.name).join(' · ')}>
@@ -1812,14 +1833,14 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
           <>
             {/* Première position — état « Tout » (icône ws_param, libellé i18n) */}
             <button key="all" className={`ws-cat${active === 'all' ? ' is-active' : ''}`}
-                    onClick={() => onSelect('all')} style={active === 'all' ? activeStyle : {}}>
+                    {...wsTap(() => onSelect('all'))} style={active === 'all' ? activeStyle : {}}>
               <span className="ws-cat__tile">{icons.all ? <img src={icons.all} alt=""/> : null}</span>
               <span className="ws-cat__lbl">{t('nav.category.all')}</span>
             </button>
             {cats.map((c) => {
               const isOn = String(active) === String(c.id);
               return (
-                <button key={c.id} className={`ws-cat${isOn ? ' is-active' : ''}`} onClick={() => onSelect(c.id)} style={isOn ? activeStyle : {}}>
+                <button key={c.id} className={`ws-cat${isOn ? ' is-active' : ''}`} {...wsTap(() => onSelect(c.id))} style={isOn ? activeStyle : {}}>
                   {/* Garde identique aux tuiles voisines (icons.all / icons.back) :
                       une src vide fait recharger la PAGE comme image, échoue au
                       décodage et log une erreur console par tuile et par rendu. */}
@@ -1833,7 +1854,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
             {assorts.map((a) => {
               const isOn = active === `season:${a.id}`;
               return (
-                <button key={a.id} className={`ws-cat ws-cat--season${isOn ? ' is-active' : ''}`} onClick={() => onSelect(`season:${a.id}`)} style={isOn ? activeStyle : {}}>
+                <button key={a.id} className={`ws-cat ws-cat--season${isOn ? ' is-active' : ''}`} {...wsTap(() => onSelect(`season:${a.id}`))} style={isOn ? activeStyle : {}}>
                   <span className="ws-cat__tile">
                     {a.img ? <img src={a.img} alt=""/> : null}
                   </span>
@@ -1857,14 +1878,14 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
               return (
                 <button key={s.id} className={`ws-subcat${isOn ? ' is-active' : ''}`}
                         aria-pressed={isOn}
-                        onClick={() => onSelectSub(isOn ? null : s.id)} style={isOn ? activeStyle : {}}>
+                        {...wsTap(() => onSelectSub(isOn ? null : s.id))} style={isOn ? activeStyle : {}}>
                   <span className="ws-subcat__tile">{s.img ? <img src={s.img} alt=""/> : null}</span>
                   <span className="ws-subcat__lbl">{s.label}</span>
                 </button>
               );
             })}
             {hiddenCount > 0 && !showAllSubs && (
-              <button className="ws-subcat ws-subcat--more" onClick={() => setShowAllSubs(true)}>
+              <button className="ws-subcat ws-subcat--more" {...wsTap(() => setShowAllSubs(true))}>
                 <span className="ws-subcat__tile"><span className="ws-subcat__more-num">+{hiddenCount}</span></span>
                 <span className="ws-subcat__lbl">Voir plus</span>
               </button>
@@ -2099,35 +2120,50 @@ function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
 // =========================================================================
 // AUTH MODALS — login / register, account, office request
 // =========================================================================
-function useSwipeDownToClose(onClose) {
-  const ref = React.useRef(null);
-  const state = React.useRef({ y0: 0, dy: 0, dragging: false, atTop: true });
-  React.useEffect(() => {
-    const el = ref.current; if (!el) return;
+function useSwipeDownToClose(onClose, scrollEl) {
+  /* Ref-CALLBACK, pas effet : les panneaux qui utilisent ce hook rendent null
+     tant qu'ils sont fermés. L'ancien useEffect (deps [onClose]) tournait au
+     premier montage — panneau absent, rien à écouter — et ne se rejouait à
+     l'ouverture QUE si l'identité d'onClose changeait : le geste de fermeture
+     n'était branché qu'au gré des re-rendus du parent. Le ref-callback, lui,
+     s'exécute précisément quand le nœud apparaît/disparaît. */
+  const onCloseRef = React.useRef(onClose);
+  onCloseRef.current = onClose;
+  const cleanupRef = React.useRef(null);
+  return React.useCallback((el) => {
+    if (cleanupRef.current) { cleanupRef.current(); cleanupRef.current = null; }
+    if (!el) return;
+    const state = { y0: 0, dy: 0, dragging: false, atTop: true };
     function onStart(e) {
       const t = e.touches ? e.touches[0] : e;
-      state.current.atTop = el.scrollTop <= 0;
+      // Le panneau porteur du geste n'est pas forcément le scroller (fiche
+      // produit : .pdm est overflow:hidden, c'est .pdm-scroll qui défile).
+      // Lire scrollTop sur le panneau armait le drag À CHAQUE toucher :
+      // remonter dans la fiche tirait la bottom-sheet au lieu de défiler, et
+      // au-delà de 110 px la fermait — configuration perdue.
+      const sc = (scrollEl && scrollEl.current) || el;
+      state.atTop = sc.scrollTop <= 0;
       // Allow dragging when starting at scroll-top OR on the handle itself
       const onHandle = e.target.closest && e.target.closest('.ws-modal__handle');
-      if (!state.current.atTop && !onHandle) return;
-      state.current.y0 = t.clientY; state.current.dy = 0; state.current.dragging = true;
+      if (!state.atTop && !onHandle) return;
+      state.y0 = t.clientY; state.dy = 0; state.dragging = true;
       el.style.transition = 'none';
     }
     function onMove(e) {
-      if (!state.current.dragging) return;
+      if (!state.dragging) return;
       const t = e.touches ? e.touches[0] : e;
-      const dy = Math.max(0, t.clientY - state.current.y0);
-      state.current.dy = dy;
+      const dy = Math.max(0, t.clientY - state.y0);
+      state.dy = dy;
       el.style.transform = `translateY(${dy}px)`;
       if (dy > 4 && e.cancelable) e.preventDefault();
     }
     function onEnd() {
-      if (!state.current.dragging) return;
-      state.current.dragging = false;
+      if (!state.dragging) return;
+      state.dragging = false;
       el.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1)';
-      if (state.current.dy > 110) {
+      if (state.dy > 110) {
         el.style.transform = 'translateY(100%)';
-        setTimeout(() => onClose && onClose(), 200);
+        setTimeout(() => onCloseRef.current && onCloseRef.current(), 200);
       } else {
         el.style.transform = '';
       }
@@ -2136,14 +2172,14 @@ function useSwipeDownToClose(onClose) {
     el.addEventListener('touchmove', onMove, { passive: false });
     el.addEventListener('touchend', onEnd);
     el.addEventListener('touchcancel', onEnd);
-    return () => {
+    cleanupRef.current = () => {
       el.removeEventListener('touchstart', onStart);
       el.removeEventListener('touchmove', onMove);
       el.removeEventListener('touchend', onEnd);
       el.removeEventListener('touchcancel', onEnd);
     };
-  }, [onClose]);
-  return ref;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 }
 
 function ModalShell({ onClose, children, narrow }) {

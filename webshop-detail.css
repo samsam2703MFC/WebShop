@@ -779,7 +779,7 @@
 .pdm-chip:active,
 .pdm-imgchip:active,
 .pdm-seg__btn:active,
-.pdm-bcard:active,
+.pdm-bcard:not(.is-picked):active,
 .pdm-offer__add:active,
 .pdm-close:active,
 .pdm-qty__btn:active:not(:disabled) {
@@ -796,8 +796,10 @@
   .pdm-opt__head { min-height: 48px; }
   .pdm-chip { min-height: 44px; }
   .pdm-imgchip { min-height: 48px; }
-  .pdm-qty__btn { width: 38px; height: 38px; }
-  .pdm-close { width: 40px; height: 40px; }
+  .pdm-qty__btn { width: 38px; height: 38px; position: relative; }
+  /* zone de tap réelle ~46px sans grossir le visuel */
+  .pdm-qty__btn::before { content: ''; position: absolute; inset: -4px; border-radius: 999px; }
+  .pdm-close { width: 44px; height: 44px; }
 }
 
 /* ─── TACTILE : la réaction doit être IMMÉDIATE ──────────────────────────

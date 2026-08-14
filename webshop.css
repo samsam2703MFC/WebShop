@@ -3898,3 +3898,15 @@
 .ws-co-avail__apply:active {
   transform: scale(.965);
 }
+
+
+/* ─── TACTILE (suite audit) ────────────────────────────────────────────── */
+/* Le « i » produit faisait 24 px : zone de tap portée à ~44 px. */
+.ws-iconcircle { position: relative; }
+.ws-iconcircle::before { content: ''; position: absolute; inset: -10px; border-radius: 50%; }
+/* Les pastilles de défilement flottaient AU-DESSUS de la colonne droite de
+   la grille et détournaient des taps destinés aux produits. Au doigt, on
+   défile naturellement : elles n'ont de sens qu'à la souris. */
+@media (hover: none) {
+  .ws-scrollcue { display: none; }
+}
