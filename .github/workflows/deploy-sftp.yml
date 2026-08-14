@@ -99,6 +99,47 @@ jobs:
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             "bash '${{ vars.WEB_ROOT || '/var/www/html' }}/api/migrate.sh'"
 
+      # LA VIGIE. Le 14/08, 83 produits sont passés active=0 SANS trace dans
+      # bo_audit : toutes les routes d'écriture de l'API sont journalisées, et
+      # le serveur n'a ni cron ni script hors dépôt qui touche ws_products —
+      # le canal fautif n'a pas pu être identifié après coup. Ce trigger
+      # journalise donc CHAQUE changement de ws_products.active dans bo_audit,
+      # avec CURRENT_USER() : quel que soit le chemin (API, SQL direct, autre
+      # outil), le prochain passage signe son auteur.
+      # HORS migrate.sh, et TOLÉRÉE : CREATE TRIGGER ne passe pas par PREPARE
+      # (la garde d'idempotence des migrations est donc impossible) et exige le
+      # privilège TRIGGER — une migration qui échoue bloquerait TOUS les
+      # déploiements suivants. Ici l'échec s'affiche en ⚠ et le déploiement
+      # continue : une vigie absente se lit dans ce journal-ci.
+      - name: Poser la vigie d'audit sur ws_products.active (tolérée)
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" bash -s <<'EOS' \
+          || echo "⚠ vigie NON posée (privilège TRIGGER manquant ?) — les écritures hors API resteront anonymes."
+          set -eu
+          DIR='${{ vars.WEB_ROOT || '/var/www/html' }}/api'
+          eval "$(php -r '
+            $c = require $argv[1]; $d = $c["db"];
+            foreach (["DBH"=>"host","DBP"=>"port","DBN"=>"name","DBU"=>"user","DBW"=>"pass"] as $k=>$kk)
+              printf("%s=%s\n", $k, escapeshellarg((string)$d[$kk]));
+          ' "$DIR/config.php")"
+          export MYSQL_PWD="$DBW"
+          mysql --host="$DBH" --port="$DBP" --user="$DBU" "$DBN" <<'SQL'
+          DROP TRIGGER IF EXISTS trg_ws_products_vigie_active;
+          CREATE TRIGGER trg_ws_products_vigie_active
+          AFTER UPDATE ON ws_products FOR EACH ROW
+          INSERT INTO bo_audit (user_id, action, entity, entity_id, shop_id, payload, ip)
+          SELECT NULL, 'db.active.vigie', 'ws_products', NEW.id, NULL,
+                 JSON_OBJECT('avant', OLD.active, 'apres', NEW.active, 'par', CURRENT_USER()),
+                 'trigger'
+            FROM DUAL WHERE NEW.active <> OLD.active;
+          SQL
+          echo "vigie posee : tout changement de ws_products.active s inscrit dans bo_audit avec son auteur."
+          EOS
+
       - name: Deploy frontend → ${{ vars.WEB_ROOT || '/var/www/html' }}
         env:
           SSHPASS: ${{ secrets.SSH_PASSWORD }}
