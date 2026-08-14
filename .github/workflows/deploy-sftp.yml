@@ -158,6 +158,14 @@ jobs:
           # décrit la règle (seuls les bureaux desservis sont proposés) : elle ne
           # bougera que si la règle change — et alors le controle DOIT alerter.
           verifie "$JS"  'bureaux desservis'  'recherche cote serveur, bureaux desservis uniquement'
+          # La boutique active doit rester VISIBLE dans la barre d'adresse. Elle
+          # ne l'etait pas : ?shop= etait lu au chargement, range dans
+          # localStorage, et jamais reecrit — on ne pouvait donc pas savoir quel
+          # catalogue on regardait, et un lien copie ne portait pas la boutique.
+          # Le marqueur porte sur le message de repli, qui n'existe que dans ce
+          # bloc : s'il disparait, c'est que la resolution de boutique a ete
+          # reecrite, et il faut re-verifier que l'adresse suit toujours.
+          verifie "$JS"  '[webshop] boutique'  'boutique active inscrite dans l adresse, repli annonce'
           absent  "$JS"  'lectionner un bureau' 'plus aucune liste deroulante de bureaux'
           absent  "$JS"  'lectionnez un bureau —' 'plus aucun libelle de deroulante residuel'
           # Sans Cache-Control, le navigateur applique sa fraicheur heuristique et
