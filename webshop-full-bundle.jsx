@@ -5,6 +5,11 @@
 
 const { useState, useMemo, useEffect } = React;
 
+// iOS Safari n'applique les états :active au toucher que si un écouteur
+// touch existe : sans lui, tout le retour « pressé » ajouté en CSS resterait
+// invisible sur iPhone. No-op passif, coût nul.
+document.addEventListener('touchstart', function () {}, { passive: true });
+
 // =========================================================================
 // DATA
 // =========================================================================
