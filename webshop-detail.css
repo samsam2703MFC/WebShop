@@ -799,3 +799,17 @@
   .pdm-qty__btn { width: 38px; height: 38px; }
   .pdm-close { width: 40px; height: 40px; }
 }
+
+/* ─── TACTILE : la réaction doit être IMMÉDIATE ──────────────────────────
+   Le dépliage animait grid-template-rows : un recalcul de mise en page à
+   CHAQUE image — imperceptible à la souris sur PC, mais long et saccadé sur
+   téléphone (« je touche, je vois l'action, la réaction prend trop de
+   temps »). Au doigt, une liste s'ouvre d'un coup, comme dans une app
+   native : pas d'animation de dépliage sur les appareils sans souris. */
+@media (hover: none) {
+  .pdm-opt__body-wrap,
+  .pdm-bcard__expand,
+  .pdm-opt,
+  .pdm-optrow,
+  .pdm-opt__chev { transition-duration: 0s; }
+}

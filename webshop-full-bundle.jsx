@@ -10,6 +10,10 @@ const { useState, useMemo, useEffect } = React;
 // invisible sur iPhone. No-op passif, coût nul.
 document.addEventListener('touchstart', function () {}, { passive: true });
 
+// Appareil au doigt : le dépliage est instantané (CSS), les recentrages ne
+// doivent donc plus attendre la fin d'une animation qui n'existe plus.
+const IS_TOUCH = window.matchMedia && window.matchMedia('(hover: none)').matches;
+
 // =========================================================================
 // DATA
 // =========================================================================
@@ -804,7 +808,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     setTimeout(() => {
       const sc = scrollRef.current;
       glideIfHidden(optRefs.current[oid], sc, (elRect, scRect) => sc.scrollTop + (elRect.top - scRect.top) - 8);
-    }, 180);
+    }, IS_TOUCH ? 30 : 180);
   }
   function setSlot(slotId, choiceId) { setBundleSlots((s) => ({ ...s, [slotId]: choiceId })); }
   // Ne scrolle que si l'élément déborde de la zone visible. Le glissement
@@ -833,7 +837,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
       const sc = scrollRef.current; if (!sc) return;
       glideIfHidden(card, sc, (cardRect, scRect) =>
         sc.scrollTop + (cardRect.top - scRect.top) + (card.offsetHeight / 2) - (sc.clientHeight / 2));
-    }, 340);
+    }, IS_TOUCH ? 30 : 340);
   }
   function toggleUpsell(id)        { setUpsellIds((s) => ({ ...s, [id]: !s[id] })); }
   /* OUVERTURE FIABLE AU DOIGT. Sur téléphone, taper pendant que l'inertie du
@@ -879,7 +883,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
           const el = optRefs.current[oid];
           glideIfHidden(el, sc, (elRect, scRect) =>
             sc.scrollTop + (elRect.top - scRect.top) + (el.offsetHeight / 2) - (sc.clientHeight / 2));
-        }, 320);
+        }, IS_TOUCH ? 30 : 320);
       }
       return next;
     });
