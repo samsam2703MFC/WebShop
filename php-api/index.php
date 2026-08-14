@@ -10,7 +10,13 @@ $allowed = cfg()['cors_origins'];
 if ($origin && (in_array($origin, $allowed, true) || in_array('*', $allowed, true))) {
   header("Access-Control-Allow-Origin: $origin");
   header('Access-Control-Allow-Credentials: true');
-  header('Access-Control-Allow-Headers: Content-Type, Authorization');
+  // X-Admin-Token / X-Pin-Token : ce sont les en-têtes que les consoles
+  // ENVOIENT réellement. Absents d'ici, le navigateur refusait la requête
+  // au contrôle préalable dès que l'origine différait — ce qui rendait
+  // inutilisable la surcharge « ?api=… » que api-config.js documente pour
+  // les tests. En production les deux sont sur la même origine, d'où un
+  // défaut invisible jusqu'à ce qu'on essaie de tester autrement.
+  header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Admin-Token, X-Pin-Token');
   header('Access-Control-Allow-Methods: GET, POST, PATCH, OPTIONS');
 }
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') { http_response_code(204); exit; }
