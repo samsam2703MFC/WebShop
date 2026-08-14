@@ -15,4 +15,4 @@
 -- publie (active=1), ferme au click & collect (webshop=0), ouvert au bureau.
 -- Si la colonne disparaissait ou cessait d'etre lue, il reapparaitrait sur le
 -- webshop et le troisieme volet du test le dirait.
-UPDATE ws_products SET webshop = 0, office_delivery = 1 WHERE id = 2;
+UPDATE ws_products SET click_and_collect = 0, office_delivery = 1 WHERE id = 2;

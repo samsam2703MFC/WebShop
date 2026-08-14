@@ -67,15 +67,16 @@ $enLigneDiag = array_keys(array_filter($vis, fn ($v) => $v['enLigne']));
    routeur. On rejoue donc sa requête, telle qu'elle est écrite, et son filtre
    de prix — c'est précisément ce que le diagnostic doit refléter. */
 [$seasonSql, $seasonArgs] = availability_where('p', null);
-$wl = whitelist_where('p');
-$catShop = categorie_shop_where('c', $shop);
-/* ws_product_shops a disparu de cette requête AVEC le modèle : tous les
-   produits sont communs à tous les magasins, il n'y a plus d'assortiment par
-   boutique. Le test l'a d'ailleurs signalé lui-même — il annonçait un produit
-   en ligne que le catalogue, resté sur l'ancienne règle, cachait encore. */
+/* CE QUI A DISPARU DE CETTE REQUÊTE, ET POURQUOI ELLE EST SI COURTE :
+   - ws_product_shops : il n'y a plus d'assortiment par boutique, tous les
+     produits sont communs. Le test l'avait signalé lui-même, en annonçant en
+     ligne un produit que le catalogue, resté sur l'ancienne règle, cachait.
+   - whitelist_where() : brand_whitelist n'existe plus (migration 0073).
+   - categorie_shop_where() : une catégorie n'appartient plus à une boutique.
+   Il ne reste QUE ws_products — c'est le modèle : une seule table décide de ce
+   que le webshop montre. Si une jointure revient ici, c'est une régression. */
 $rs = rows("SELECT p.id FROM ws_products p
-              LEFT JOIN ws_categories c ON c.id = p.cat_id
-             WHERE p.active = 1$wl$seasonSql$catShop", $seasonArgs);
+             WHERE p.active = 1$seasonSql", $seasonArgs);
 $prix = prix_produits(array_map(fn ($x) => (int) $x['id'], $rs));
 $enLigneCat = array_values(array_filter(array_map(fn ($x) => (int) $x['id'], $rs),
                                         fn ($id) => isset($prix[$id])));
@@ -98,6 +99,50 @@ if ($manqueDiag || $manqueCat) {
 }
 
 echo "  ✓ vente : les deux disent la même chose\n";
+
+/* ── LE JEU D'ESSAI DIT-IL LA VÉRITÉ ? ──────────────────────────────────────
+   Le volet précédent compare deux énumérations l'une à l'autre. Si les DEUX
+   régressent ensemble — c'est le cas quand on retire un lever du modèle — elles
+   restent d'accord et le test reste vert sur une base devenue fausse. C'est
+   arrivé : trois produits d'essai s'appelaient encore « Retiré du réseau par la
+   marque », « Non produit par cette boutique », « Catégorie autre boutique »
+   alors qu'ils étaient tous les trois servis.
+
+   D'où cette ancre extérieure : dans le jeu d'essai, le NOM est le verdict.
+   Un nom qui commence par « EN LIGNE » doit être en ligne, tout autre nom doit
+   être refusé. La convention devient exécutable au lieu d'être une intention,
+   et un lever retiré du modèle sans que le jeu d'essai suive échoue ici.
+
+   Elle ne s'applique QU'au jeu d'essai (préfixe reconnu ou nom explicite) :
+   sur une vraie base, les noms sont des noms de produits. */
+$attendus = rows("SELECT id, name FROM ws_products
+                   WHERE name LIKE 'EN LIGNE%' OR name LIKE 'Brouillon%'
+                      OR name LIKE 'Prix non fixe%' OR name LIKE 'Non eligible%'
+                      OR name LIKE 'Categorie orpheline%'");
+if ($attendus) {
+  $enLigne = array_flip($enLigneCat);
+  $trahis = [];
+  foreach ($attendus as $a) {
+    $pid = (int) $a['id'];
+    $doitEtreEnLigne = strncmp($a['name'], 'EN LIGNE', 8) === 0;
+    // « Non eligible livraison bureau » et « Categorie orpheline » sont vendus
+    // sans mode : le premier n'est refusé qu'en livraison, le second n'est
+    // qu'introuvable dans la navigation. Ce volet ne juge que la VENTE.
+    if (in_array(substr($a['name'], 0, 12), ['Non eligible', 'Categorie or'], true))
+      $doitEtreEnLigne = true;
+    $estEnLigne = isset($enLigne[$pid]);
+    if ($estEnLigne !== $doitEtreEnLigne)
+      $trahis[] = sprintf('%s (id %d) : %s', $a['name'], $pid,
+        $estEnLigne ? 'servi alors que son nom annonce un refus'
+                    : 'refusé alors que son nom annonce « en ligne » — ' . ($vis[$pid]['raison'] ?? '?'));
+  }
+  if ($trahis) {
+    foreach ($trahis as $t) printf("  ✕ %s\n", $t);
+    fwrite(STDERR, "JEU D'ESSAI MENTEUR — le nom d'un produit d'essai ne correspond plus à son sort.\n");
+    exit(1);
+  }
+  printf("  ✓ jeu d'essai : %d produit(s) dont le nom annonce le verdict, tous conformes\n", count($attendus));
+}
 
 /* ── SECOND VOLET : LA NAVIGATION ───────────────────────────────────────────
    Le premier volet ne compare que « ce produit est-il VENDU ». Or les deux
@@ -152,10 +197,10 @@ echo "  ✓ navigation : le verdict correspond à la barre de catégories\n";
    un produit fermé au click & collect doit rester servi en livraison bureau. */
 $webCol = (bool) row("SELECT 1 x FROM information_schema.columns
                        WHERE table_schema=DATABASE() AND table_name='ws_products'
-                         AND column_name='webshop'");
+                         AND column_name='click_and_collect'");
 if ($webCol) {
   $bureauSeul = rows("SELECT id, name FROM ws_products
-                       WHERE active = 1 AND COALESCE(webshop,1) = 0
+                       WHERE active = 1 AND COALESCE(click_and_collect,1) = 0
                          AND COALESCE(office_delivery,1) = 1 LIMIT 20");
   if (!$bureauSeul) {
     echo "  — canaux : aucun produit « bureau seulement » en base, rien à vérifier\n";

@@ -33,9 +33,15 @@
 
 SET @t := (SELECT COUNT(*) FROM information_schema.tables
             WHERE table_schema = DATABASE() AND table_name = 'ws_products');
+-- @c compte la colonne SOUS SES DEUX NOMS. La 0072 renomme `webshop` en
+-- `click_and_collect` ; sans ce second test, cette migration rejouée après elle
+-- ne trouverait plus `webshop` et la RECRÉERAIT — deux colonnes pour un seul
+-- canal, dont une que plus personne ne lit. Constaté au rejeu double de la CI :
+-- une migration idempotente SEULE ne l'est pas forcément dans sa séquence.
 SET @c := (SELECT COUNT(*) FROM information_schema.columns
             WHERE table_schema = DATABASE()
-              AND table_name = 'ws_products' AND column_name = 'webshop');
+              AND table_name = 'ws_products'
+              AND column_name IN ('webshop', 'click_and_collect'));
 
 SET @s := IF(@t = 0 OR @c > 0, 'DO 0',
   "ALTER TABLE ws_products

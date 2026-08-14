@@ -306,17 +306,15 @@ function ws_voucher_upsert(array $o) {
        aussi de la livraison bureau — « bureau seulement » était impossible.
        SANS MODE, aucun filtre de canal : l'appelant veut la liste complète et
        reçoit les deux drapeaux pour décider lui-même. */
-    $hasCanal = col_exists('ws_products', 'webshop');
+    $hasCanal = col_exists('ws_products', 'click_and_collect');
     $deliveryWhere = in_array($mode, ['delivery', 'office', 'apricot'], true)
       ? ' AND COALESCE(p.office_delivery,1) = 1'
-      : (($mode === 'collect' && $hasCanal) ? ' AND COALESCE(p.webshop,1) = 1' : '');
+      : (($mode === 'collect' && $hasCanal) ? ' AND COALESCE(p.click_and_collect,1) = 1' : '');
     // Gammes saisonnières (product_availability_period) : filtrées sur la DATE
     // DE RETRAIT/LIVRAISON, pas sur aujourd'hui. Un client qui commande le
     // 28 novembre pour le 2 décembre doit voir la gamme de Noël ; c'est la date
     // de remise de la marchandise qui fait foi, pas celle de la commande.
     [$seasonWhere, $seasonArgs] = availability_where('p', $date);
-    $whitelistWhere = whitelist_where('p');   // retiré du catalogue réseau = invisible partout
-    $catShopWhere   = categorie_shop_where('c', $s);   // catégorie d'une AUTRE boutique = pas vendu ici
     // `badge` (texte) a été migré en FK tag_id -> ws_tags ; on expose le libellé
     // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
     $r = rows("SELECT p.id, p.cat_id, p.sub_cat_id,
@@ -334,14 +332,14 @@ function ws_voucher_upsert(array $o) {
                       ) AS has_menu_options,
                       p.price AS price, ps.no_delivery,
                       COALESCE(p.office_delivery,1) AS office_delivery," .
-             ($hasCanal ? " COALESCE(p.webshop,1) AS webshop," : " 1 AS webshop,") . "
+             ($hasCanal ? " COALESCE(p.click_and_collect,1) AS click_and_collect," : " 1 AS click_and_collect,") . "
                       (SELECT JSON_ARRAYAGG(allergen) FROM ws_product_allergens a WHERE a.product_id = p.id) AS allergens
                  FROM ws_products p
                  LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
                  LEFT JOIN ws_tags t ON t.id = p.tag_id
                  LEFT JOIN ws_season se ON se.id = p.season_id
-                WHERE p.active = 1${whitelistWhere}$deliveryWhere$seasonWhere$catShopWhere
+                WHERE p.active = 1$deliveryWhere$seasonWhere
                 ORDER BY c.sort_order, p.name", array_merge([$s], $seasonArgs));
     $photos = product_photo_files();
     foreach ($r as &$x) {
@@ -363,7 +361,7 @@ function ws_voucher_upsert(array $o) {
       // indépendante de la visibilité webshop. Le front bloque le produit en
       // mode livraison quand c'est faux (cf. no_delivery).
       $x['office_delivery'] = (bool) $x['office_delivery'];
-      $x['webshop'] = (bool) $x['webshop'];
+      $x['click_and_collect'] = (bool) $x['click_and_collect'];
       $x['price'] = (float) $x['price'];
       // TROIS états d'allergènes, jamais confondus (sécurité alimentaire) :
       //   liste  = allergènes connus ; []  = recette évaluée, réellement aucun ;
@@ -3613,14 +3611,15 @@ function dispatch($m, $p) {
       foreach ($cats as $c) {
         // Le franchisor gère l'assortiment : on renvoie AUSSI les produits inactifs
         // (le toggle « Webshop » = ws_products.active, il faut pouvoir les réactiver).
-        // `wl` = au catalogue réseau (brand_whitelist). Exposée pour que la
-        // console marque puisse afficher le premier barreau de l'échelle : la
-        // colonne était écrite à l'aveugle, jamais relue ni rendue.
+        /* `wl` (au catalogue réseau) et `bm` (obligatoire) ne sont plus servis :
+           leurs colonnes ont disparu (migration 0073). La console marque affiche
+           encore deux bascules qui s'en nourrissaient — elles liront `undefined`
+           et s'afficheront éteintes. C'est visible et sans danger ; les retirer
+           de l'écran reste à faire dans son dépôt. */
         $prods = rows("SELECT p.id, p.name AS nom, p.price AS prix, p.active, p.img,
-                              COALESCE(p.brand_mandatory,0) AS bm,
-                              COALESCE(p.office_delivery,1) AS od,"
-                              . (col_exists('ws_products', 'brand_whitelist')
-                                 ? " COALESCE(p.brand_whitelist,1) AS wl," : " 1 AS wl,") . "
+                              COALESCE(p.office_delivery,1) AS od,
+                              " . (col_exists('ws_products', 'click_and_collect')
+                                   ? "COALESCE(p.click_and_collect,1)" : "1") . " AS cc,
                               p.sub_cat_id AS sub_id, sub.label AS sub, se.name AS saison
                          FROM ws_products p
                          LEFT JOIN ws_category_subs sub ON sub.id = p.sub_cat_id
@@ -3647,8 +3646,16 @@ function dispatch($m, $p) {
           $rows2[] = [
             'id' => (string) $p2['id'], 'nom' => $p2['nom'], 'prix' => (float) $p2['prix'],
             'statut' => $p2['active'] ? 'Publié' : 'Brouillon',
-            'bw' => (bool) $p2['active'], 'bm' => (bool) $p2['bm'],
-            'od' => (bool) $p2['od'], // disponible en livraison bureau (« apricot »)
+            // TROIS DRAPEAUX, ET PLUS QUE TROIS. `bw` valait déjà `active` —
+            // le même booléen sous deux noms — et `bm` (obligatoire) n'existe
+            // plus. On sert ce que la base porte, sous le nom qu'elle lui donne.
+            'active' => (bool) $p2['active'],   // publié au catalogue
+            'cc' => (bool) $p2['cc'],           // canal click & collect
+            'od' => (bool) $p2['od'],           // canal livraison bureau
+            // `bw` conservé le temps que la console marque bascule sur `cc` :
+            // c'est elle qui pilote le canal, et la couper net éteindrait sa
+            // colonne « Webshop » sans prévenir. À retirer une fois faite.
+            'bw' => (bool) $p2['cc'],
             'sub' => $p2['sub'] ?: null, 'sub_id' => $p2['sub_id'] !== null ? (int) $p2['sub_id'] : null,
             'photo' => (!empty($p2['img']) || isset($photos[$p2['id']])), // a une photo produit
             'ad' => $ad, 'saison' => $p2['saison'] ?: null,
@@ -4052,46 +4059,28 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/franchisor/product') {
       $b = body(); $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['error' => 'id requis'], 400);
-      // RÈGLE MÉTIER : un produit OBLIGATOIRE doit être vendable sur AU MOINS
-      // UN canal — webshop (active) OU livraison bureau (office_delivery),
-      // voire les deux. On évalue l'état RÉSULTANT (payload + valeurs en base) :
-      // s'il fermait les deux canaux → refus ; rendre obligatoire un produit
-      // aux deux canaux fermés ouvre le webshop par défaut.
-      /* ÉCHELLE DE CONTRAINTE, du plus fort au plus faible :
-         au catalogue réseau (brand_whitelist) > obligatoire (brand_mandatory)
-         > webshop (active) > livraison bureau (office_delivery).
-         Chaque barreau ne tient que si celui du dessus tient. On évalue l'état
-         RÉSULTANT — payload + base — plutôt que le seul champ envoyé : sinon
-         deux réglages licites pris l'un après l'autre produisent un état qui ne
-         l'est pas. */
-      $wlCol = col_exists('ws_products', 'brand_whitelist');
-      $curP = row("SELECT active, brand_mandatory, COALESCE(office_delivery,1) AS od"
-                  . ($wlCol ? ", COALESCE(brand_whitelist,1) AS wl" : ", 1 AS wl")
-                  . " FROM ws_products WHERE id=?", [$id]);
-      if (!$curP) json_out(['error' => 'produit introuvable'], 404);
-      $nextWl   = array_key_exists('brand_whitelist', $b)  ? !empty($b['brand_whitelist'])  : !empty($curP['wl']);
-      $nextMand = array_key_exists('brand_mandatory', $b) ? !empty($b['brand_mandatory']) : !empty($curP['brand_mandatory']);
-      $nextAct  = array_key_exists('active', $b)          ? !empty($b['active'])          : !empty($curP['active']);
-      $nextOd   = array_key_exists('office_delivery', $b) ? !empty($b['office_delivery']) : !empty($curP['od']);
-      /* Barreau 1 → 2 : rendre un produit OBLIGATOIRE le remet au catalogue
-         réseau. Imposer aux boutiques un produit qu'on vient d'en retirer n'a
-         pas de sens ; on complète plutôt que de refuser, comme le fait déjà
-         « obligatoire » avec le webshop juste dessous. */
-      if ($nextMand && !$nextWl && !empty($b['brand_mandatory'])) { $b['brand_whitelist'] = 1; $nextWl = true; }
-      /* L'inverse se REFUSE : retirer du réseau un produit encore obligatoire
-         laisserait les boutiques avec un article imposé et invendable. La marque
-         doit lever l'obligation d'abord — deux gestes, mais aucun état bâtard. */
-      if (!$nextWl && $nextMand)
-        json_out(['error' => 'Produit OBLIGATOIRE : retirez d’abord l’obligation avant de le sortir du catalogue réseau.'], 400);
-      if ($nextMand && !$nextAct && !$nextOd) {
-        if (!empty($b['brand_mandatory'])) $b['active'] = 1;
-        else json_out(['error' => 'Produit OBLIGATOIRE : il doit rester vendable sur au moins un canal — webshop ou livraison bureau.'], 400);
-      }
+      /* PLUS DE HIÉRARCHIE DE CONTRAINTES, parce qu'il ne reste plus qu'un
+         seul niveau. Il y avait ici une « échelle » — au catalogue réseau >
+         obligatoire > webshop > livraison bureau — où chaque barreau ne tenait
+         que si celui du dessus tenait, avec ses refus et ses complétions
+         automatiques. Les deux barreaux du haut ont disparu avec leurs
+         colonnes (migration 0073) : brand_whitelist recouvrait les canaux sans
+         le dire, brand_mandatory verrouillait un choix que la boutique ne fait
+         plus.
+
+         Restent DEUX CANAUX INDÉPENDANTS, sans ordre entre eux, et « publié »
+         au-dessus des deux. Fermer les deux canaux est désormais un état
+         licite — le produit reste au catalogue, simplement invendu ; c'est un
+         état que la marque peut vouloir, et le refuser serait décider à sa
+         place.
+
+         Les champs brand_whitelist et brand_mandatory sont IGNORÉS s'ils
+         arrivent encore : la console marque les envoie peut-être toujours, et
+         un 500 sur une colonne disparue serait une panne là où il n'y a qu'un
+         écran à mettre à jour. */
       $sets = []; $vals = [];
       if (array_key_exists('active', $b))          { $sets[] = 'active=?';          $vals[] = !empty($b['active']) ? 1 : 0; }  // « Webshop » = visibilité webshop réelle
       if (array_key_exists('office_delivery', $b)) { $sets[] = 'office_delivery=?'; $vals[] = !empty($b['office_delivery']) ? 1 : 0; }  // canal livraison bureau (« apricot »)
-      if (array_key_exists('brand_whitelist', $b)) { $sets[] = 'brand_whitelist=?'; $vals[] = !empty($b['brand_whitelist']) ? 1 : 0; }
-      if (array_key_exists('brand_mandatory', $b)) { $sets[] = 'brand_mandatory=?'; $vals[] = !empty($b['brand_mandatory']) ? 1 : 0; }
       if (array_key_exists('price', $b))           { $sets[] = 'price=?';           $vals[] = (float) $b['price']; }
       if (array_key_exists('base_cost', $b))       { $sets[] = 'base_cost=?';       $vals[] = (float) $b['base_cost']; }
       if (array_key_exists('menu_override', $b))   { $sets[] = 'menu_override=?';    $vals[] = in_array($b['menu_override'], ['on','off'], true) ? $b['menu_override'] : null; }
@@ -4124,38 +4113,29 @@ function dispatch($m, $p) {
       // son dernier canal l'épargne.
       if (array_key_exists('active', $b)) {
         if (!empty($b['active'])) q("UPDATE ws_products SET active=1 WHERE cat_id=?", [$id]);
-        else q("UPDATE ws_products SET active=0 WHERE cat_id=? AND (brand_mandatory=0 OR COALESCE(office_delivery,1)=1)", [$id]);
+        else q("UPDATE ws_products SET active=0 WHERE cat_id=?", [$id]);
       }
       if (array_key_exists('office_delivery', $b)) {
         if (!empty($b['office_delivery'])) q("UPDATE ws_products SET office_delivery=1 WHERE cat_id=?", [$id]);
-        else q("UPDATE ws_products SET office_delivery=0 WHERE cat_id=? AND (brand_mandatory=0 OR active=1)", [$id]);
+        else q("UPDATE ws_products SET office_delivery=0 WHERE cat_id=?", [$id]);
       }
       /* Canal webshop (0071) — la cascade par catégorie, symétrique de celle du
          bureau juste au-dessus. La console marque peut désormais fermer le
          webshop SANS mettre les produits en brouillon : c'est tout l'objet de
          la colonne. Aucun produit obligatoire n'est épargné ici — fermer un
          canal n'est pas le retirer du catalogue, il reste vendu sur l'autre. */
-      if (array_key_exists('webshop', $b) && col_exists('ws_products', 'webshop')) {
-        q("UPDATE ws_products SET webshop=? WHERE cat_id=?", [!empty($b['webshop']) ? 1 : 0, $id]);
+      if (array_key_exists('click_and_collect', $b) && col_exists('ws_products', 'click_and_collect')) {
+        q("UPDATE ws_products SET click_and_collect=? WHERE cat_id=?", [!empty($b['click_and_collect']) ? 1 : 0, $id]);
       }
       /* Cascade « au catalogue réseau ». Un produit OBLIGATOIRE en est épargné :
          le retirer du réseau laisserait les boutiques avec un article imposé et
          invendable — même règle qu'au niveau produit, où l'opération est
          refusée. La marque lève l'obligation d'abord. */
-      if (array_key_exists('brand_whitelist', $b)) {
-        if (!empty($b['brand_whitelist'])) q("UPDATE ws_products SET brand_whitelist=1 WHERE cat_id=?", [$id]);
-        else q("UPDATE ws_products SET brand_whitelist=0 WHERE cat_id=? AND COALESCE(brand_mandatory,0)=0", [$id]);
-      }
-      // Rendre une catégorie obligatoire : chaque produit aux deux canaux
-      // fermés récupère le webshop par défaut.
-      if (array_key_exists('brand_mandatory', $b)) {
-        if (!empty($b['brand_mandatory'])) q("UPDATE ws_products SET brand_mandatory=1,
-              active = IF(active=0 AND COALESCE(office_delivery,1)=0, 1, active) WHERE cat_id=?", [$id]);
-        else q("UPDATE ws_products SET brand_mandatory=0 WHERE cat_id=?", [$id]);
-      }
-      // CATÉGORIE AUTOMATIQUE : après cascade, l'état de la catégorie suit ses
-      // produits (un obligatoire épargné par la cascade la maintient active).
-      if (array_key_exists('active', $b) || array_key_exists('brand_mandatory', $b)) {
+      /* Les cascades « au catalogue réseau » et « obligatoire » sont parties
+         avec leurs colonnes (0073). Un POST qui envoie encore ces champs est
+         sans effet plutôt qu'en erreur : l'écran de la console marque reste à
+         mettre à jour, ce n'est pas une raison de lui rendre un 500. */
+      if (array_key_exists('active', $b)) {
         q("UPDATE ws_categories
               SET active = EXISTS(SELECT 1 FROM ws_products p2 WHERE p2.cat_id = ws_categories.id AND p2.active = 1)
             WHERE id=?", [$id]);
@@ -4171,7 +4151,6 @@ function dispatch($m, $p) {
       if (!$id) json_out(['error' => 'id requis'], 400);
       if (array_key_exists('active', $b))          q("UPDATE ws_products SET active=? WHERE sub_cat_id=?", [!empty($b['active']) ? 1 : 0, $id]);           // « Webshop »
       if (array_key_exists('office_delivery', $b)) q("UPDATE ws_products SET office_delivery=? WHERE sub_cat_id=?", [!empty($b['office_delivery']) ? 1 : 0, $id]); // « Bureau »
-      if (array_key_exists('brand_mandatory', $b)) q("UPDATE ws_products SET brand_mandatory=? WHERE sub_cat_id=?", [!empty($b['brand_mandatory']) ? 1 : 0, $id]);
       if (array_key_exists('menu_override', $b))   q("UPDATE ws_products SET menu_override=? WHERE sub_cat_id=?", [in_array($b['menu_override'], ['on','off'], true) ? $b['menu_override'] : null, $id]);
       $audit('subcategory.update', 'ws_category_subs', $id, null, $b);
       json_out(['ok' => true]);
@@ -7538,7 +7517,7 @@ function dispatch($m, $p) {
       $n = trim((string) ($src['product'] ?? ''));
       if ($n === '') return null;
       return row("SELECT $cols FROM ws_products
-                   WHERE TRIM(name) = ? AND (active = 1 OR brand_mandatory = 1)
+                   WHERE TRIM(name) = ? AND active = 1
                    ORDER BY active DESC, id LIMIT 1", [$n]);
     };
     $prodKo = fn ($src) => json_out(['ok' => false,
@@ -7793,7 +7772,7 @@ function dispatch($m, $p) {
       $hasPS = $shopId && $tblExists('ws_product_shops');
       // SUM sans ELSE : « aucune ligne du jour pour ce canal » = NULL (et non
       // 0) — on peut alors retomber sur le MINIMUM hebdomadaire du produit.
-      $rs = rows("SELECT c.label AS cat, pr.id AS pid, pr.name, pr.brand_mandatory," .
+      $rs = rows("SELECT c.label AS cat, pr.id AS pid, pr.name," .
                  ($hasStock
                    ? " SUM(CASE WHEN st.mode='delivery' THEN st.qty_total - st.qty_reserved - st.qty_sold END) AS online,
                        SUM(CASE WHEN st.id IS NOT NULL AND (st.mode IS NULL OR st.mode<>'delivery') THEN st.qty_total - st.qty_reserved - st.qty_sold END) AS shopq"
@@ -7802,8 +7781,8 @@ function dispatch($m, $p) {
                     JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") .
                  ($hasStock ? " LEFT JOIN ws_product_stock st ON st.product_id = pr.id AND st.date = ? AND st.active = 1" . ($shopId ? " AND st.shop_id = " . (int) $shopId : "") : "") . "
-                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))" . whitelist_where('pr') . categorie_shop_where('c', $shopId) . "
-                   GROUP BY c.sort_order, c.label, pr.id, pr.name, pr.brand_mandatory
+                   WHERE pr.active = 1
+                   GROUP BY c.sort_order, c.label, pr.id, pr.name
                    ORDER BY c.sort_order, c.label, pr.name LIMIT 400", $hasStock ? [$today] : []);
       // Minimums hebdomadaires du JOUR (1=lundi … 7=dimanche) par produit.
       $defs = [];
@@ -7828,8 +7807,7 @@ function dispatch($m, $p) {
         $cat = $r['cat'] ?: 'Autres';
         $pid = (int) $r['pid'];
         $cats[$cat]['cat'] = $cat;
-        $cats[$cat]['catMand'] = ($cats[$cat]['catMand'] ?? false) || (bool) $r['brand_mandatory'];
-        $cats[$cat]['prods'][] = ['id' => $pid, 'nom' => $r['name'], 'mand' => (bool) $r['brand_mandatory'],
+        $cats[$cat]['prods'][] = ['id' => $pid, 'nom' => $r['name'],
           'online' => $r['online'] !== null ? max(0, (int) $r['online']) : (int) ($defs[$pid]['delivery'] ?? 0),
           'shop' => $r['shopq'] !== null ? max(0, (int) $r['shopq']) : (int) ($defs[$pid]['collect'] ?? 0),
           // Seuil EFFECTIF : celui de la boutique s'il existe, sinon le global.
@@ -7877,15 +7855,14 @@ function dispatch($m, $p) {
          contrôle que le produit. Le franchisé vendait donc des articles qu'il
          ne pouvait ni voir ni retirer. Un écran d'assortiment doit lister tout
          ce qui est réellement en vente, quitte à le signaler. */
-      $rs = rows("SELECT pr.id AS pid, pr.name, c.label AS cat, pr.brand_mandatory,
+      $rs = rows("SELECT pr.id AS pid, pr.name, c.label AS cat,
                          pr.active AS ws_on, COALESCE(pr.office_delivery,1) AS od_on" .
                  ($hasSub ? ", sc2.label AS sub" : ", NULL AS sub") .
                  ($hasPS ? ", ps.active AS ps_active, ps.no_delivery" : ", NULL AS ps_active, NULL AS no_delivery") . "
                     FROM ws_products pr LEFT JOIN ws_categories c ON c.id = pr.cat_id" .
                  ($hasSub ? " LEFT JOIN ws_category_subs sc2 ON sc2.id = pr.sub_cat_id" : "") .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") . "
-                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))"
-                 . whitelist_where('pr') . categorie_shop_where('c', $shopId) . "
+                   WHERE pr.active = 1
                    ORDER BY c.sort_order, c.label, " . ($hasSub ? "COALESCE(sc2.sort_order, 999), sc2.label, " : "") . "pr.name LIMIT 400");
       // NON TARIFÉ = ws_products.price <= 0. Ces produits sont hors vente —
       // masqués du catalogue et refusés à la commande — mais ils
@@ -7916,11 +7893,13 @@ function dispatch($m, $p) {
         $v = $vis[$pid] ?? null;
         return ['id' => $pid, 'nom' => $r['name'], 'cat' => $r['cat'] ?: '—',
         'sub' => $r['sub'] ?: null,
-        'locked' => (bool) $r['brand_mandatory'],
         'canal' => ((int) $r['ws_on'] && (int) $r['od_on']) ? 'Webshop + Livraison'
                  : ((int) $r['ws_on'] ? 'Webshop' : 'Livraison bureau'),
         // Un obligatoire est TOUJOURS actif chez le franchisé (verrou marque).
-        'defA' => (bool) $r['brand_mandatory'] ? true : ($r['ps_active'] !== null ? (bool) $r['ps_active'] : true),
+        // « Actif » à l'écran de l'assortiment : la colonne est en lecture
+        // seule depuis que la marque décide seule, et brand_mandatory n'existe
+        // plus. Reste ce que dit ws_product_shops, ou vrai par défaut.
+        'defA' => $r['ps_active'] !== null ? (bool) $r['ps_active'] : true,
         'defND' => $r['no_delivery'] !== null ? (bool) $r['no_delivery'] : false,
         'nonTarife' => $nonTarife,
         'etatVente' => $nonTarife ? 'Non tarifé — hors vente' : 'Tarifé',
@@ -9728,75 +9707,42 @@ function invite_check($tok) {
   return [$d, null, $r];
 }
 
-/* brand_whitelist N'EST PLUS LU — DÉCISION D'EXPLOITATION, PAS UN OUBLI.
+/* DEUX FONCTIONS ONT DISPARU D'ICI, ET C'EST LE BUT.
  *
- * LE MODÈLE A ÉTÉ SIMPLIFIÉ : tous les produits sont communs à tous les
- * magasins, et la marque ne décide plus que de DEUX choses, une par canal :
- *   · ws_products.active          → vendu sur le webshop (click & collect)
- *   · ws_products.office_delivery → vendu en livraison bureau
- * Une troisième colonne qui retire un produit « du réseau » n'a plus de place :
- * elle recouvrait les deux autres sans le dire.
+ * whitelist_where() filtrait sur brand_whitelist ; categorie_shop_where() sur
+ * ws_categories.shop_id. Les deux ont été vidées quand le modèle a été
+ * simplifié, puis gardées un temps « pour que la règle reste à un endroit ».
+ * Une fonction qui rend systématiquement une chaîne vide n'est plus une règle :
+ * c'est un appel que le lecteur doit aller vérifier pour découvrir qu'il ne
+ * fait rien. La colonne brand_whitelist n'existe même plus (migration 0073).
  *
- * CE QUE ÇA A CHANGÉ, ET ÇA SE COMPTE. En production, 73 produits actifs sur 90
- * étaient retenus par brand_whitelist = 0 — soit le catalogue Traiteur entier,
- * 8 sous-catégories. Les boutiques en voyaient 17. Ce n'était donc pas un
- * réglage d'exception : c'était la frontière entre deux catalogues. Sa levée a
- * été mesurée AVANT (sonde), puis décidée.
- *
- * LA FONCTION SURVIT VIDE, ET C'EST VOULU. Trois requêtes l'appellent ; les
- * laisser appeler un fragment vide garde la règle à UN endroit. Le jour où une
- * restriction réseau redevient nécessaire, elle s'écrit ici et vaut partout —
- * plutôt que d'être recopiée dans trois WHERE qui divergeront.
- *
- * LA COLONNE N'EST PAS SUPPRIMÉE. Un DROP est irréversible, l'ERP peut
- * l'alimenter, et la console marque l'écrit encore. Elle n'est plus lue : c'est
- * suffisant, et réversible. À SIGNALER À LA CONSOLE MARQUE : sa bascule
- * « au catalogue réseau » écrit désormais dans une colonne que plus personne ne
- * lit — un levier sans effet, exactement ce qu'on a passé la journée à retirer.
+ * CE QUI DÉCIDE, DÉSORMAIS, TIENT DANS UNE SEULE TABLE :
+ *     ws_products.active            → publié au catalogue
+ *     ws_products.click_and_collect → canal click & collect
+ *     ws_products.office_delivery   → canal livraison bureau
+ *     ws_products.price             → prix (<= 0 = non fixé, hors vente)
  */
-function whitelist_where($alias = 'p') {
-  return '';
-}
-
-/* categorie_shop_where() NE FILTRE PLUS — le modèle a changé sous elle.
- *
- * Elle a été écrite ce matin, et elle avait raison DU MODÈLE D'ALORS : une
- * catégorie portant ws_categories.shop_id appartenait à une boutique, et ses
- * produits n'avaient rien à faire ailleurs. C'est ce qui expliquait « Croissant
- * pur beurre » visible dans la console marque et absent du webshop de Corbais.
- *
- * LE MODÈLE EST DÉSORMAIS : tous les produits sont communs à tous les magasins.
- * Un rattachement de catégorie à UNE boutique n'a donc plus de sens, et le
- * filtre qui l'appliquait retirerait du catalogue des produits que tout le
- * monde doit vendre. En production : 5 catégories rattachées, 10 produits.
- *
- * Vide plutôt que supprimée, pour la même raison que whitelist_where() : la
- * règle reste à UN endroit, et ses trois appelants ne divergeront pas.
- * La colonne shop_id continue d'être SERVIE à la console marque (shop_id,
- * shop_nom) — savoir d'où vient une catégorie reste utile ; ce qui a disparu,
- * c'est qu'elle décide de ce qui est vendu.
- */
-function categorie_shop_where($alias = 'c', $shopId = null) {
-  return '';
-}
 
 /* ── POURQUOI CE PRODUIT N'EST-IL PAS EN LIGNE ? ───────────────────────────
  *
- * SIX conditions décident qu'un produit s'affiche dans une boutique, et elles
- * vivaient éparpillées : le WHERE de /catalog/products, un filtre PHP après
- * coup pour le prix, et deux consoles qui en réimplémentaient chacune une
- * partie. D'où l'écart constaté — la console marque annonçait « 39 produits »
- * là où le site en montrait 1, sans que rien n'explique les 38 autres.
+ * Les conditions qui décident qu'un produit s'affiche vivaient éparpillées :
+ * le WHERE de /catalog/products, un filtre PHP après coup pour le prix, et deux
+ * consoles qui en réimplémentaient chacune une partie. D'où l'écart constaté —
+ * la console marque annonçait « 39 produits » là où le site en montrait 1, sans
+ * que rien n'explique les 38 autres.
  *
- * Le toggle « Webshop » de la console marque ne porte QUE la première
- * condition. Les cinq autres sont invisibles, dont la plus fréquente : un
- * produit sans prix dans l'ERP pour cette boutique est retiré du catalogue
- * (56 à 108 produits par boutique en production, d'après le journal serveur).
+ * IL N'EN RESTE QUE QUATRE, toutes dans ws_products, et c'est le modèle :
+ *     active = 0            → brouillon, nulle part
+ *     office_delivery = 0   → refusé, mais seulement en mode livraison bureau
+ *     click_and_collect = 0 → refusé, mais seulement en mode click & collect
+ *     price <= 0            → prix non fixé, hors vente
+ * (plus la saison, quand les tables de gammes de l'ERP sont présentes).
  *
- * Cette fonction est le SEUL endroit qui énumère les six. Elle rend, par
- * produit, le verdict ET la raison du refus — la première rencontrée, dans
- * l'ordre où le catalogue les applique. Les écrans l'affichent au lieu de
- * laisser deviner, et la sonde la compte.
+ * Le toggle « Webshop » de la console marque ne porte que la première. Les
+ * autres sont invisibles à l'écran — d'où cette fonction, SEUL endroit qui les
+ * énumère. Elle rend, par produit, le verdict ET la raison du refus : la
+ * première rencontrée, dans l'ordre où le catalogue les applique. Les écrans
+ * l'affichent au lieu de laisser deviner, et la sonde la compte.
  *
  * Elle ne DÉCIDE pas à la place du catalogue : /catalog/products garde son
  * WHERE (un filtre SQL est plus rapide qu'un diagnostic ligne à ligne). Le
@@ -9807,28 +9753,25 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
   $ids = array_values(array_unique(array_map('intval', $ids)));
   if (!$ids) return [];
   $in = implode(',', $ids);
-  $sc = (int) $shopId;
   $md = strtolower((string) $mode);
   $horsBureau = in_array($md, ['delivery', 'office', 'apricot'], true);
-  $canalWeb   = ($md === 'collect') && col_exists('ws_products', 'webshop');
+  $canalWeb   = ($md === 'collect') && col_exists('ws_products', 'click_and_collect');
 
-  $hasWl = col_exists('ws_products', 'brand_whitelist');
-  $hasPS = (bool) row("SELECT 1 x FROM information_schema.tables
-                        WHERE table_schema=DATABASE() AND table_name='ws_product_shops'");
-
-  // Les cinq premières conditions se lisent d'une requête ; la sixième (prix
-  // ERP) vient de la table de l'ERP, qui peut être absente d'un réplica.
+  /* $shopId ne filtre plus rien, et la signature le garde exprès : tous les
+     appelants le passent, et il redeviendra utile si une règle par boutique
+     revient. Ce qui a disparu de cette requête : la jointure ws_product_shops
+     (plus d'assortiment par boutique) et ws_categories.shop_id (une catégorie
+     n'appartient plus à une boutique). Le LEFT JOIN sur ws_categories reste
+     pour une seule chose — savoir si cat_id pointe sur une catégorie qui
+     existe, ce qui est un défaut de NAVIGATION, pas un refus de vente. */
   [$seasonSql, $seasonArgs] = availability_where('p', $date);
   $rs = rows("SELECT p.id,
-                     p.active AS actif," .
-             ($hasWl ? " COALESCE(p.brand_whitelist,1) AS wl," : " 1 AS wl,") . "
+                     p.active AS actif,
                      COALESCE(p.office_delivery,1) AS od,
-                     " . (col_exists('ws_products', 'webshop') ? "COALESCE(p.webshop,1)" : "1") . " AS web,
-                     p.cat_id, c.id AS cat_ok, c.shop_id AS cat_shop," .
-             ($hasPS ? " ps.active AS ps_actif" : " NULL AS ps_actif") . "
+                     " . (col_exists('ws_products', 'click_and_collect') ? "COALESCE(p.click_and_collect,1)" : "1") . " AS web,
+                     p.cat_id, c.id AS cat_ok
                 FROM ws_products p
-                LEFT JOIN ws_categories c ON c.id = p.cat_id" .
-             ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = $sc" : "") . "
+                LEFT JOIN ws_categories c ON c.id = p.cat_id
                WHERE p.id IN ($in)");
 
   // Saison : on demande à la MÊME clause que le catalogue quels ids passent,
@@ -9867,10 +9810,8 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
        drapeau est un cache calculé, la barre ne le lit plus, et ce diagnostic
        a continué de l'annoncer un moment — il déclarait injoignables des
        produits parfaitement joignables. « Catégorie d'une autre boutique » a
-       disparu aussi, mais pour l'autre raison : ce produit n'est désormais
-       PLUS VENDU ici (categorie_shop_where), donc c'est un refus de vente, pas
-       un défaut de navigation. Le confondre avec l'un ou l'autre le rendrait
-       introuvable dans le bon écran.
+       disparu aussi : une catégorie n'appartient plus à une boutique, le
+       filtre comme la colonne lue ont été retirés du modèle.
 
        Reste le seul cas où un produit est réellement vendu sans catégorie où
        le retrouver : un cat_id vide, ou qui ne pointe sur rien. */

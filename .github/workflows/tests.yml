@@ -18,14 +18,22 @@ name: Tests
 # le minimum — dumpé APRÈS migrations, il porte déjà les colonnes qu'elles
 # ajoutent — et jeu_essai.sql un produit par raison de refus.
 #
-# LES MIGRATIONS NE SONT PAS REJOUÉES ICI, et le premier essai l'a montré : la
-# 0003 référence ws_shops, table d'avant l'unification vers shops, et s'arrête
-# sur « Table citest.ws_shops doesn't exist ». Les migrations anciennes
-# supposent des états de l'ERP qui n'existent plus : les rejouer depuis zéro
-# testerait l'HISTORIQUE du schéma, pas le code d'aujourd'hui — et fabriquer
-# une ws_shops morte pour satisfaire la 0003 donnerait un vert qui ne veut rien
-# dire. CE QUE ÇA LAISSE NON COUVERT : qu'une NOUVELLE migration passe. Le
-# déploiement reste le premier endroit où on l'apprend.
+# LES MIGRATIONS RÉCENTES SONT REJOUÉES, LES ANCIENNES NON. La 0003 référence
+# ws_shops, table d'avant l'unification vers shops, et s'arrête sur « Table
+# citest.ws_shops doesn't exist » : les anciennes supposent des états de l'ERP
+# qui n'existent plus, et les rejouer depuis zéro testerait l'HISTORIQUE du
+# schéma, pas le code d'aujourd'hui.
+#
+# CET EN-TÊTE A LONGTEMPS DIT L'INVERSE — « les migrations ne sont pas rejouées
+# ici » — en concluant lui-même : « CE QUE ÇA LAISSE NON COUVERT : qu'une
+# NOUVELLE migration passe. » Le trou était écrit en toutes lettres, et il a
+# fini par coûter ce qu'il annonçait : la 0070 est partie en production, s'est
+# arrêtée sur une clé étrangère, et migrate.sh étant fail-fast, elle a bloqué
+# TOUS les déploiements derrière elle. D'où l'étape plus bas, qui rejoue les
+# migrations POSTÉRIEURES au niveau du socle (php-api/tests/socle_niveau.txt) —
+# deux fois, pour vérifier qu'elles sont idempotentes EN SÉQUENCE et pas
+# seulement isolément. Ce second passage a trouvé aussitôt une 0071 qui
+# recréait la colonne que la 0072 venait de renommer.
 
 on:
   push:

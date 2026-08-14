@@ -1,15 +1,23 @@
 -- ---------------------------------------------------------------------------
 -- jeu_essai.sql — un produit par raison de refus, et le nom le dit.
 --
--- CE QU'IL VÉRIFIE. Six conditions décident qu'un produit s'affiche dans une
--- boutique. Une base de test vide les satisfait toutes trivialement : zéro
--- produit d'un côté, zéro de l'autre, le test passe sans rien prouver. Il faut
--- donc au moins un produit PAR condition, sinon la comparaison entre le
--- catalogue servi et le diagnostic ne porte sur rien.
+-- CE QU'IL VÉRIFIE. Quelques conditions décident qu'un produit s'affiche, et
+-- elles tiennent toutes dans ws_products. Une base de test vide les satisfait
+-- toutes trivialement : zéro produit d'un côté, zéro de l'autre, le test passe
+-- sans rien prouver. Il faut donc au moins un produit PAR condition, sinon la
+-- comparaison entre le catalogue servi et le diagnostic ne porte sur rien.
 --
 -- Les noms sont les verdicts attendus. Quand le test échoue, la ligne fautive
 -- se lit sans ouvrir ce fichier — c'est tout l'intérêt de ne pas les appeler
 -- « Produit 1 », « Produit 2 ».
+--
+-- ET LES NOMS DOIVENT SUIVRE LE MODÈLE. Trois d'entre eux ont menti pendant un
+-- temps : « Retiré du réseau par la marque », « Non produit par cette
+-- boutique », « Catégorie autre boutique » nommaient des refus qui n'existent
+-- plus depuis que le modèle a été simplifié. Le test restait vert — il compare
+-- le catalogue au diagnostic, pas au nom — mais la ligne à l'écran racontait
+-- l'inverse de ce qu'elle prouvait. Un jeu d'essai qui ment coûte plus cher
+-- qu'un jeu d'essai absent : on le croit.
 --
 -- CE N'EST PAS UN SEED. Ces lignes n'existent que dans la base éphémère de
 -- l'intégration continue, jamais servies à personne. La règle du dépôt — aucune
@@ -57,20 +65,32 @@ INSERT INTO ws_products
   (2, 'EN LIGNE bis',                    1, 2, 1, 1, 1, 6.00, 0),
   -- 1. p.active = 0
   (3, 'Brouillon',                       1, 1, 0, 1, 1, 5.00, 0),
-  -- 2. brand_whitelist = 0
-  (4, 'Retire du reseau par la marque',  1, 1, 1, 0, 1, 5.00, 0),
-  -- 3. ws_product_shops.active = 0 (ligne ci-dessous)
-  (5, 'Non produit par cette boutique',  1, 1, 1, 1, 1, 5.00, 0),
-  -- 4. office_delivery = 0 — ne se déclenche qu'en mode livraison bureau
+  -- L'ANCIEN VERROU, DÉSARMÉ. brand_whitelist = 0 retenait 73 produits actifs
+  -- sur 90 ; la migration 0073 fait tomber la colonne. Ce produit la porte
+  -- encore ici (le socle est la production AVANT migrations) et doit ressortir
+  -- EN LIGNE : si la purge était incomplète — une requête qui lirait encore la
+  -- colonne, une migration non rejouée — il resterait caché et le test le dirait.
+  (4, 'EN LIGNE malgre ancienne whitelist', 1, 1, 1, 0, 1, 5.00, 0),
+  -- L'AUTRE VERROU DÉSARMÉ. La ligne ws_product_shops plus bas retire ce
+  -- produit de l'assortiment de la boutique 2. Il n'y a plus d'assortiment par
+  -- boutique — tous les produits sont communs — donc cette ligne ne doit plus
+  -- rien refuser. Elle reste ici EXPRÈS : c'est ce qui prouve que la table
+  -- n'est plus lue, plutôt que de le supposer parce qu'on a retiré la jointure.
+  (5, 'EN LIGNE malgre ws_product_shops', 1, 1, 1, 1, 1, 5.00, 0),
+  -- 2. office_delivery = 0 — ne se déclenche qu'en mode livraison bureau
   (6, 'Non eligible livraison bureau',   1, 1, 1, 1, 0, 5.00, 0),
-  -- 6. prix mis a 0 plus bas → « prix non fixe », donc hors vente
+  -- 3. prix mis a 0 plus bas → « prix non fixe », donc hors vente
   (7, 'Prix non fixe',                   1, 1, 1, 1, 1, 5.00, 0),
   -- Navigation : vendu, mais introuvable par une catégorie.
   (8, 'Categorie orpheline',           999, NULL, 1, 1, 1, 5.00, 0),
-  (9, 'Categorie autre boutique',        2, NULL, 1, 1, 1, 5.00, 0);
+  -- Sa catégorie porte shop_id = 3, une AUTRE boutique. C'était un refus de
+  -- vente ; ça n'en est plus un — une catégorie n'appartient plus à personne.
+  -- En ligne ET joignable, donc, et le second volet du test le vérifie.
+  (9, 'EN LIGNE malgre categorie shop_id', 2, NULL, 1, 1, 1, 5.00, 0);
 
 
--- Le produit 5 est explicitement retiré de l'assortiment de la boutique 2.
+-- Produit 5 : retiré de l'assortiment de la boutique 2. Ne refuse plus rien
+-- (voir plus haut) — la ligne est le témoin, pas la condition.
 INSERT INTO ws_product_shops (product_id, shop_id, active, no_delivery) VALUES (5, 2, 0, 0);
 
 -- LE PRIX EST DANS ws_products.price, posé plus haut avec chaque produit —

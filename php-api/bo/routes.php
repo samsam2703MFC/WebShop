@@ -96,20 +96,25 @@ function bo_resource_route($m, $bo, $rest) {
       $out = [];
       foreach ($cats as $c) {
         $prods = rows(
-          "SELECT p.id, p.name, p.brand_mandatory,
+          "SELECT p.id, p.name,
                   COALESCE(SUM(CASE WHEN st.mode='delivery' THEN st.qty_total END),0) AS online,
                   COALESCE(SUM(CASE WHEN st.mode='collect'  THEN st.qty_total END),0) AS shop
              FROM ws_products p
              LEFT JOIN ws_product_stock st
                     ON st.product_id = p.id AND st.date = ? AND st.active = 1 AND $sw
             WHERE p.cat_id = ? AND p.active = 1
-            GROUP BY p.id, p.name, p.brand_mandatory ORDER BY p.name",
+            GROUP BY p.id, p.name ORDER BY p.name",
           array_merge([$date], $sp, [$c['id']]));
+        /* `mand` et `catMand` sont partis avec brand_mandatory (migration
+           0073). Ils signalaient un produit qu'une boutique ne pouvait pas
+           retirer de son assortiment — il n'y a plus d'assortiment par
+           boutique, donc plus rien à verrouiller. La clé est RETIRÉE, pas mise
+           à false : false dirait « non obligatoire », alors que la notion
+           elle-même n'existe plus. */
         $out[] = [
-          'cat'     => $c['label'],
-          'catMand' => (bool) array_filter($prods, fn($p) => (int) $p['brand_mandatory']),
-          'prods'   => array_map(fn($p) => [
-            'nom' => $p['name'], 'mand' => (bool) $p['brand_mandatory'],
+          'cat'   => $c['label'],
+          'prods' => array_map(fn($p) => [
+            'nom' => $p['name'],
             'online' => (int) $p['online'], 'shop' => (int) $p['shop'], 'min' => 0,
           ], $prods),
         ];
@@ -266,12 +271,15 @@ function bo_resource_route($m, $bo, $rest) {
                            COALESCE(SUM(CASE WHEN delivery_mode='collect'  THEN total END),0) ca_shop,
                            COALESCE(SUM(CASE WHEN delivery_mode='delivery' THEN total END),0) ca_office
                       FROM ws_orders WHERE delivery_date >= ?", [$from]);
-      $ad = row("SELECT
-          (SELECT COUNT(*) FROM ws_product_shops ps JOIN ws_products p ON p.id = ps.product_id
-             WHERE ps.active=1 AND p.brand_mandatory=1 AND p.active=1) AS carried,
-          (SELECT COUNT(*) FROM ws_products WHERE brand_mandatory=1 AND active=1)
-            * (SELECT COUNT(*) FROM shops WHERE active=1 AND webshop_enabled=1) AS tot");
-      $tot = (int) ($ad['tot'] ?? 0);
+      /* `adoption` a disparu de cette réponse. Elle mesurait la part des
+         produits OBLIGATOIRES effectivement portés par chaque boutique — deux
+         notions supprimées d'un coup : l'obligation (brand_mandatory) et
+         l'assortiment par boutique (ws_product_shops). Le chiffre serait
+         désormais 100 % par construction, tous les produits étant communs à
+         toutes les boutiques : l'afficher ferait croire à une mesure là où il
+         n'y a plus que la définition. La clé est retirée, pas figée à 100.
+         À FAIRE DANS LA CONSOLE MARQUE (autre dépôt) : sa tuile « adoption »
+         n'a plus de source. */
       json_out([
         'date'          => $date,
         'shops'         => (int) ($shops['n'] ?? 0),
@@ -281,29 +289,36 @@ function bo_resource_route($m, $bo, $rest) {
         'caMonth'       => (float) ($mon['ca'] ?? 0),
         'caShopMonth'   => (float) ($mon['ca_shop'] ?? 0),
         'caOfficeMonth' => (float) ($mon['ca_office'] ?? 0),
-        'adoption'      => $tot > 0 ? (int) round(((int) $ad['carried']) / $tot * 100) : 0,
       ]);
     }
-    if ($rest === 'shops') {                     // réseau : CA agrégé depuis ws_orders + adoption
+    if ($rest === 'shops') {                     // réseau : CA agrégé depuis ws_orders
       $from = qp('from', date('Y-m-01'));        // CA mois-à-date par défaut
+      // mand_total / mand_carried sont partis pour la même raison qu'`adoption`
+      // ci-dessus : plus de produit obligatoire, plus d'assortiment par boutique.
       json_out(rows(
         "SELECT s.id, s.slug, s.name, s.city, s.active,
                 (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o
                    WHERE o.shop_id = s.id AND o.delivery_mode = 'collect'  AND o.delivery_date >= ?) AS ca_shop,
                 (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o
-                   WHERE o.shop_id = s.id AND o.delivery_mode = 'delivery' AND o.delivery_date >= ?) AS ca_office,
-                (SELECT COUNT(*) FROM ws_products p WHERE p.brand_mandatory = 1 AND p.active = 1) AS mand_total,
-                (SELECT COUNT(*) FROM ws_product_shops ps
-                   JOIN ws_products p ON p.id = ps.product_id
-                  WHERE ps.shop_id = s.id AND ps.active = 1 AND p.brand_mandatory = 1 AND p.active = 1) AS mand_carried
+                   WHERE o.shop_id = s.id AND o.delivery_mode = 'delivery' AND o.delivery_date >= ?) AS ca_office
            FROM shops s WHERE s.webshop_enabled = 1 ORDER BY s.name", [$from, $from]));
     }
     if ($rest === 'catalog') {
+      /* CETTE ROUTE ÉTAIT DÉJÀ CASSÉE AVANT LA PURGE, et personne ne l'avait
+         vu : elle lisait p.badge — migrée en FK tag_id il y a longtemps — et
+         p.brand_webshop, une colonne qui n'a jamais existé dans ce schéma.
+         Toute requête ici rendait donc une erreur SQL. Ce qu'elle sert
+         maintenant, ce sont les colonnes qui décident réellement, et elles
+         seules. */
       json_out([
         'categories' => rows("SELECT id, slug, label, sort_order, active FROM ws_categories ORDER BY sort_order, label"),
-        'products'   => rows("SELECT p.id, p.cat_id, c.label AS category, p.name, p.price, p.badge, p.active,
-                                     p.brand_webshop, p.brand_mandatory
-                                FROM ws_products p LEFT JOIN ws_categories c ON c.id = p.cat_id
+        'products'   => rows("SELECT p.id, p.cat_id, c.label AS category, p.name, p.price, p.active,
+                                     t.tag AS badge,
+                                     COALESCE(p.click_and_collect,1) AS click_and_collect,
+                                     COALESCE(p.office_delivery,1)   AS office_delivery
+                                FROM ws_products p
+                                LEFT JOIN ws_categories c ON c.id = p.cat_id
+                                LEFT JOIN ws_tags t       ON t.id = p.tag_id
                                ORDER BY c.label, p.name"),
       ]);
     }
