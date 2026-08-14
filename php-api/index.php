@@ -1785,7 +1785,11 @@ function dispatch($m, $p) {
                               'floor' => $site['floor_room'] ?: null] : null,
       'shop'      => $shop ? ['id' => (int) $shop['id'], 'name' => $shop['name'] ?: null] : null,
       'depts'     => array_map(fn ($x) => ['id' => (int) $x['id'], 'name' => $x['name']], $depts),
-      'domain'    => $d['domain'] ?: null,
+      // Exigence de domaine retirée (14/08/2026) : jamais ré-annoncée, même
+      // sur un ancien jeton qui en porte un — POST /inscription ne la
+      // contrôle plus, l'afficher ferait refuser au formulaire ce que le
+      // serveur accepte.
+      'domain'    => null,
       'cp'        => $d['cp'] ?: null,
       'expiresAt' => $row['expires_at'] ?? null]);
   }
@@ -1806,22 +1810,29 @@ function dispatch($m, $p) {
     $mail  = strtolower(trim((string) ($b['email'] ?? '')));
     if ($first === '' || $last === '') json_out(['ok' => false, 'error' => 'Prénom et nom requis.'], 400);
     if (!filter_var($mail, FILTER_VALIDATE_EMAIL)) json_out(['ok' => false, 'error' => 'Adresse e-mail invalide.'], 400);
-    // Domaine imposé : contrôlé ICI, pas seulement dans le navigateur. Le
-    // contrôle du formulaire est un confort ; celui-ci est la règle.
-    $dom = strtolower(trim((string) ($d['domain'] ?? '')));
-    if ($dom !== '' && !str_ends_with($mail, '@' . $dom))
-      json_out(['ok' => false, 'error' => 'Cette invitation est réservée aux adresses @' . $dom . '.'], 403);
+    /* EXIGENCE DE DOMAINE RETIRÉE (14/08/2026, demande explicite) : toute
+       adresse e-mail valide passe, y compris sur les anciens jetons qui
+       portent encore un domaine en base. Le garde-fou est ailleurs et il
+       reste : le compte naît « pending » et la livraison bureau ne s'ouvre
+       qu'après validation du franchisé (Demandes de rattachement bureau). */
     [$pfx, $phone, $e164] = norm_phone($b['phonePrefix'] ?? '+32', $b['phone'] ?? '');
     $zip = trim((string) ($b['postalCode'] ?? ($d['cp'] ?? '')));
     if ($zip === '') json_out(['ok' => false, 'error' => 'Code postal requis.'], 400);
     $zip = zip_validate($zip, 'BE');
     if ($zip === null) json_out(['ok' => false, 'error' => 'Code postal invalide.'], 400);
     $loc  = zip_locality($zip, $b['locality'] ?? '');
-    $pass = (string) ($b['password'] ?? '');
-    // 12 caractères, un chiffre, une majuscule — la règle annoncée sous le
-    // champ. Annoncée et non appliquée, elle ne serait qu'un texte.
-    if (strlen($pass) < 12 || !preg_match('/[0-9]/', $pass) || !preg_match('/[A-Z]/', $pass))
-      json_out(['ok' => false, 'error' => 'Mot de passe : 12 caractères minimum, dont un chiffre et une majuscule.'], 400);
+    /* CODE PIN À 4 CHIFFRES (14/08/2026) — remplace le mot de passe de
+       12 caractères : le personnel s'inscrit depuis un téléphone, sur un lien
+       transféré, et la règle longue faisait échouer les inscriptions. Même
+       stockage que le mot de passe (password_hash) : le compte se connecte
+       ensuite par e-mail + PIN sur /auth/login, inchangé et rate-limité.
+       10 000 combinaisons, c'est court — les protections restantes sont le
+       rate limit par IP (inscription 10/10 min, login 10/5 min) et le compte
+       « pending » tant que le franchisé n'a pas validé. La règle est
+       appliquée ICI ; le champ du formulaire n'est qu'un confort. */
+    $pin = preg_replace('/\D/', '', (string) (($b['pin'] ?? '') !== '' ? $b['pin'] : ($b['password'] ?? '')));
+    if (strlen($pin) !== 4)
+      json_out(['ok' => false, 'error' => 'Code PIN : exactement 4 chiffres.'], 400);
 
     // Compte déjà là : on ne fusionne pas et on n'écrase aucun mot de passe —
     // la page propose de se connecter (même contrat que /auth/register).
@@ -1848,7 +1859,7 @@ function dispatch($m, $p) {
       array_merge([$shopI], $hasPref ? [$shopI] : [],
         [$mail, ($phone ?: null), ($phone !== '' ? $pfx : null), ($e164 ?: null), $first, $last, $zip],
         $hasLoc ? [$loc] : [], $hasDept ? [$deptId] : [],
-        [password_hash($pass, PASSWORD_BCRYPT)]));
+        [password_hash($pin, PASSWORD_BCRYPT)]));
     $uid = (int) db()->lastInsertId();
 
     // Demande de rattachement — le bureau est CONNU (il vient du jeton), donc
@@ -5267,14 +5278,9 @@ function dispatch($m, $p) {
         if ($dk) $deps = array_map(fn ($x) => (int) $x['id'],
           rows("SELECT id FROM b2b_client_company_department WHERE $dk=? ORDER BY id", [$cid]));
       }
+      // Exigence de domaine RETIRÉE (14/08/2026) — lien ouvert à toute
+      // adresse ; le compte reste « pending » jusqu'à validation.
       $dom = null;
-      $om  = trim((string) ($o['email'] ?? ''));
-      if (filter_var($om, FILTER_VALIDATE_EMAIL)) {
-        $dm = strtolower(substr(strrchr($om, '@'), 1));
-        if (!in_array($dm, ['gmail.com', 'hotmail.com', 'hotmail.be', 'outlook.com', 'outlook.be',
-                            'live.be', 'live.com', 'yahoo.com', 'yahoo.fr', 'icloud.com',
-                            'proximus.be', 'skynet.be', 'telenet.be', 'voo.be'], true)) $dom = $dm;
-      }
       $inv = invite_issue(['shop' => (int) ($o['shop_id'] ?: $shopId), 'office' => $oid,
         'client' => $cid ?: null, 'site' => $site ? (int) $site['id'] : null,
         'depts' => $deps, 'domain' => $dom, 'cp' => $o['postal_code'] ?: null,
@@ -7374,7 +7380,7 @@ function dispatch($m, $p) {
       // payé / non payé (payment_status).
       $hasCli2 = $tblExists('client');
       $hasSrc  = col_exists('ws_orders', 'source');
-      $rs = rows("SELECT o.order_ref, o.payment_method, o.payment_status, o.payment_type,
+      $rs = rows("SELECT o.id, o.order_ref, o.payment_method, o.payment_status, o.payment_type,
                          COALESCE(NULLIF(o.guest_name,'')" .
                          ($hasCli2 ? ", NULLIF(TRIM(CONCAT(COALESCE(cl.name,''),' ',COALESCE(cl.surname,''))),'')" : "") . ",
                                   'Client webshop') AS client,
@@ -7389,6 +7395,33 @@ function dispatch($m, $p) {
                      AND COALESCE(o.delivery_date, DATE(o.created_at))
                          BETWEEN ? AND DATE_ADD(?, INTERVAL 31 DAY)
                    ORDER BY COALESCE(o.delivery_date, DATE(o.created_at)), o.created_at DESC LIMIT 400", [$today, $today]);
+      /* LIGNES DE LA COMMANDE — jointes à chaque commande pour la modale de
+         détail de la console (clic sur une ligne de « Liste commandes »).
+         UNE requête pour tout le lot, groupée en PHP — pas de N+1. Même
+         filtre que le compteur de pièces (oline_own : lignes de tête, pas
+         les composants de formule) pour que le détail somme comme lui.
+         Libellé : celui figé sur la ligne (product_name), sinon le nom
+         catalogue actuel — jamais un texte de remplissage. */
+      $lignesParCmd = [];
+      if ($rs) {
+        $ids2 = array_map(fn ($o) => (int) $o['id'], $rs);
+        $ph2  = implode(',', array_fill(0, count($ids2), '?'));
+        foreach (rows("SELECT l.order_id, COALESCE(NULLIF(l.product_name,''), p.name) AS produit,
+                              l.qty, l.unit_price, l.`portion`, l.note
+                         FROM ws_order_lines l
+                         LEFT JOIN ws_products p ON p.id = l.product_id
+                        WHERE l.order_id IN ($ph2)" . oline_own() . "
+                        ORDER BY l.order_id, l.id", $ids2) as $l2) {
+          $lbl2 = (string) ($l2['produit'] ?? '');
+          if ((string) ($l2['portion'] ?? '') !== '') $lbl2 .= ($lbl2 !== '' ? ' — ' : '') . $l2['portion'];
+          $lignesParCmd[(int) $l2['order_id']][] = [
+            'produit' => $lbl2 !== '' ? $lbl2 : null,
+            'qty'     => (int) $l2['qty'],
+            'prix'    => $l2['unit_price'] !== null ? number_format((float) $l2['unit_price'], 2, ',', ' ') . ' €' : null,
+            'note'    => (string) ($l2['note'] ?? '') !== '' ? $l2['note'] : null,
+          ];
+        }
+      }
       json_out(array_map(fn ($o) => [
         'ref' => '#' . $o['order_ref'],
         'client' => $o['client'],
@@ -7402,6 +7435,7 @@ function dispatch($m, $p) {
         'montant' => number_format((float) $o['total'], 2, ',', ' ') . ' €',
         'statut' => $o['status'], 'heure' => $o['heure'],
         'creneau' => $o['slot_label'] ?: '—', 'pieces' => (int) $o['pieces'],
+        'lines' => $lignesParCmd[(int) $o['id']] ?? [],
       ], $rs));
     }
 
@@ -8912,22 +8946,17 @@ function dispatch($m, $p) {
       /* LIEN MAGIQUE « Créer mon compte ». Le bureau reçoit UN lien et le
          transfère à son personnel : chaque collaborateur arrive avec sa
          boutique, son bureau, son site et ses départements déjà rattachés.
-         Le domaine e-mail est déduit de l'adresse du CONTACT — c'est le
-         domaine de l'entreprise, pas une valeur inventée — sauf s'il s'agit
-         d'une messagerie grand public : imposer « @gmail.com » n'écarterait
-         personne et donnerait l'illusion d'un filtre.
+         Le lien est ouvert à TOUTE adresse e-mail (exigence de domaine
+         retirée le 14/08/2026) : chaque compte créé reste « pending »
+         jusqu'à validation par le franchisé, c'est ce contrôle-là qui
+         protège la facturation différée.
          Émettre le lien ne peut pas faire échouer la création du bureau :
          invite_issue() renvoie null (table 0062 absente, par exemple) et la
          console l'annonce au lieu d'afficher un lien qui n'existe pas. */
+      // Exigence de domaine RETIRÉE (14/08/2026) : le lien est ouvert à toute
+      // adresse — plus de déduction depuis l'e-mail du contact, plus de liste
+      // « grand public ». Garde-fou restant : chaque compte naît « pending ».
       $emailDom = null;
-      $ctMail   = trim((string) ($b['contactEmail'] ?? ''));
-      if (filter_var($ctMail, FILTER_VALIDATE_EMAIL)) {
-        $dm = strtolower(substr(strrchr($ctMail, '@'), 1));
-        $grandPublic = ['gmail.com', 'hotmail.com', 'hotmail.be', 'outlook.com', 'outlook.be',
-                        'live.be', 'live.com', 'yahoo.com', 'yahoo.fr', 'icloud.com',
-                        'proximus.be', 'skynet.be', 'telenet.be', 'voo.be'];
-        if ($dm !== '' && !in_array($dm, $grandPublic, true)) $emailDom = $dm;
-      }
       $inv = invite_issue([
         'shop' => (int) ($obShop ?: $shopId), 'office' => $officeId,
         'client' => $newClientId, 'site' => $newSiteId, 'depts' => $newDeptIds,

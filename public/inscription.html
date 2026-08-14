@@ -21,7 +21,7 @@
      SON entreprise — un libellé de remplissage y passerait pour une donnée.
   2. LE FORMULAIRE NE DÉCIDE DE RIEN. Boutique, bureau, site et départements
      viennent du jeton, relu et vérifié par le serveur à chaque appel. Les
-     contrôles ci-dessous (domaine e-mail, mot de passe) sont un confort de
+     contrôles ci-dessous (forme de l'e-mail, code PIN) sont un confort de
      saisie ; la règle, elle, est appliquée par POST /inscription.
 
   Page AUTONOME : aucun script, style ni police externes — elle s'ouvre depuis
@@ -79,8 +79,6 @@
   .aide b{color:var(--txt);font-weight:500}
   .err{margin-top:6px;font-size:11.5px;line-height:1.45;color:var(--primary)}
   .err a{color:var(--primary);font-weight:500}
-  .force{display:flex;gap:5px;margin-top:8px}
-  .force i{height:4px;flex:1;border-radius:3px;background:var(--bd3)}
   .cgv{display:flex;gap:11px;align-items:flex-start;font-size:12.5px;line-height:1.45;color:var(--mut)}
   .cgv input{width:auto;flex:none;margin:3px 0 0;accent-color:var(--primary)}
   button{width:100%;padding:15px;border:none;border-radius:var(--r-md);background:var(--primary);
@@ -159,17 +157,20 @@
       <select id="dept"></select>
     </div>
 
+    <!-- CODE PIN à 4 chiffres (14/08/2026) — remplace le mot de passe de
+         12 caractères. type="password" pour le masquer, inputmode="numeric"
+         pour le pavé numérique sur téléphone ; la règle reste appliquée par
+         POST /inscription, ces attributs ne sont qu'un confort. -->
     <div>
-      <label for="mdp">Mot de passe</label>
-      <input id="mdp" type="password" autocomplete="new-password" aria-describedby="aideMdp">
-      <div class="force" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-      <div class="aide" id="aideMdp">12 caractères minimum, dont un chiffre et une majuscule.</div>
+      <label for="mdp">Code PIN</label>
+      <input id="mdp" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="new-password" aria-describedby="aideMdp">
+      <div class="aide" id="aideMdp">Exactement 4 chiffres — avec votre e-mail, il vous servira à vous connecter.</div>
     </div>
 
     <div>
-      <label for="mdp2">Confirmer le mot de passe</label>
-      <input id="mdp2" type="password" autocomplete="new-password" aria-describedby="errMdp2">
-      <div class="err" id="errMdp2" role="alert" hidden>Les deux mots de passe ne correspondent pas.</div>
+      <label for="mdp2">Confirmer le code PIN</label>
+      <input id="mdp2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="new-password" aria-describedby="errMdp2">
+      <div class="err" id="errMdp2" role="alert" hidden>Les deux codes ne correspondent pas.</div>
     </div>
 
     <div class="cgv">
@@ -297,11 +298,10 @@
       });
     }   // un seul département : déjà affiché dans le bandeau par lignesPrelie()
 
-    if (d.domain) $('aideEmail').innerHTML =
-      'Doit se terminer par <b>@' + d.domain + '</b> — le domaine de votre entreprise.';
-    else txt($('aideEmail'), 'Utilisez votre adresse professionnelle : c’est elle qui identifie votre compte.');
+    // Exigence de domaine retirée (14/08/2026) : le serveur renvoie domain
+    // null et POST /inscription ne la contrôle plus — toute adresse passe.
+    txt($('aideEmail'), 'Utilisez votre adresse professionnelle : c’est elle qui identifie votre compte.');
     if (d.cp) $('cp').value = d.cp;
-    if (d.domain) $('email').placeholder = 'prenom.nom@' + d.domain;
 
     var boutique = (d.shop && d.shop.name) || '';
     $('apres').innerHTML = boutique
@@ -326,37 +326,20 @@
   }
 
   /* ── Validation de saisie (confort ; la règle est côté serveur) ──────────── */
-  function forceMdp(m) {
-    var n = 0;
-    if (m.length >= 12) n++;
-    if (/[0-9]/.test(m)) n++;
-    if (/[A-Z]/.test(m)) n++;
-    if (m.length >= 16 || /[^A-Za-z0-9]/.test(m)) n++;
-    return m ? Math.max(1, n) : 0;
-  }
-
   function valider() {
     var mail = $('email').value.trim().toLowerCase();
-    var dom  = inv && inv.domain;
     var formeOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail);
-    var domOk   = !dom || mail.slice(-(dom.length + 1)) === '@' + dom;
 
     var eMail = '';
-    if (vu.email && mail) {
-      if (!formeOk)     eMail = 'Adresse e-mail incomplète.';
-      else if (!domOk)  eMail = 'Cette adresse doit se terminer par @' + dom + '.';
-    }
+    if (vu.email && mail && !formeOk) eMail = 'Adresse e-mail incomplète.';
     $('errEmail').hidden = !eMail;
     if (eMail) $('errEmail').textContent = eMail;
     $('aideEmail').hidden = !!eMail;
     $('email').setAttribute('aria-invalid', eMail ? 'true' : 'false');
 
+    // Code PIN : exactement 4 chiffres — même règle que POST /inscription.
     var mdp = $('mdp').value, mdp2 = $('mdp2').value;
-    var mdpOk = mdp.length >= 12 && /[0-9]/.test(mdp) && /[A-Z]/.test(mdp);
-    var f = forceMdp(mdp);
-    var segs = document.querySelectorAll('.force i');
-    for (var i = 0; i < segs.length; i++)
-      segs[i].style.background = f >= i + 1 ? (f >= 3 ? 'var(--vert)' : 'var(--secondary)') : 'var(--bd3)';
+    var mdpOk = /^[0-9]{4}$/.test(mdp);
     var mdpKo = vu.mdp && mdp.length > 0 && !mdpOk;
     $('mdp').setAttribute('aria-invalid', mdpKo ? 'true' : 'false');
     $('aideMdp').style.color = mdpKo ? 'var(--primary)' : 'var(--mut)';
@@ -364,7 +347,7 @@
     $('errMdp2').hidden = !mdp2Ko;
     $('mdp2').setAttribute('aria-invalid', mdp2Ko ? 'true' : 'false');
 
-    var ok = $('prenom').value.trim() && $('nom').value.trim() && formeOk && domOk
+    var ok = $('prenom').value.trim() && $('nom').value.trim() && formeOk
           && $('tel').value.trim() && $('cp').value.trim() && mdpOk && mdp2 === mdp && $('cgv').checked;
     $('envoyer').disabled = !ok;
     return !!ok;
@@ -392,7 +375,7 @@
         email: $('email').value.trim(), phone: $('tel').value.trim(),
         postalCode: $('cp').value.trim(),
         deptId: $('blocDept').hidden ? ((inv.depts && inv.depts[0]) ? inv.depts[0].id : 0) : Number($('dept').value),
-        password: $('mdp').value
+        pin: $('mdp').value
       })
     }).then(function (r) {
       return r.json().catch(function () { return { error: 'Réponse illisible du serveur (HTTP ' + r.status + ').' }; });
