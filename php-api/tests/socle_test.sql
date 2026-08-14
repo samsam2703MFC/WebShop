@@ -16,6 +16,12 @@
 --
 -- Aucune donnée n'y figure : le jeu d'essai vit dans jeu_essai.sql, séparé,
 -- pour qu'on ne confonde jamais une table avec ce qu'on y a mis.
+--
+-- IL DÉCRIT LA PRODUCTION **AVANT** LES MIGRATIONS NON ENCORE APPLIQUÉES, et
+-- c'est essentiel : la CI rejoue par-dessus toutes les migrations postérieures
+-- au numéro inscrit dans socle_niveau.txt. Y ajouter à la main une colonne
+-- qu'une migration doit créer ferait passer la CI sans jamais exécuter cette
+-- migration — exactement le trou par lequel la 0070 est arrivée en production.
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS `shops` (
@@ -58,7 +64,6 @@ CREATE TABLE IF NOT EXISTS `ws_products` (
   `active` tinyint(4) DEFAULT 1,
   `brand_whitelist` tinyint(4) DEFAULT 1,
   `office_delivery` tinyint(4) DEFAULT 1,
-  `webshop` tinyint(4) NOT NULL DEFAULT 1,
   `season_id` int(11) DEFAULT NULL,
   `price` decimal(8,2) DEFAULT 0.00,
   `brand_mandatory` tinyint(4) DEFAULT 0,

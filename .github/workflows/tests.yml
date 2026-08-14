@@ -56,7 +56,17 @@ jobs:
           php-version: '8.3'        # même version majeure que le serveur
           extensions: pdo_mysql, mbstring, gd
 
-      - name: Base de test — socle et jeu d'essai
+      # ORDRE : socle → jeu d'essai → migrations → jeu d'essai post.
+      # Il n'est pas interchangeable, et les deux contraintes se contredisent en
+      # apparence :
+      #   · les migrations doivent s'appliquer à une base PEUPLÉE, sinon une
+      #     migration qui recopie des données ne révèle jamais ses violations de
+      #     contrainte — sur une base vide elle passe, et c'est ainsi que la
+      #     0070 est arrivée en production ;
+      #   · mais une donnée qui s'appuie sur une colonne créée par une migration
+      #     ne peut pas la précéder.
+      # D'où deux fichiers de données, avant et après.
+      - name: Base de test — socle puis jeu d'essai (base PEUPLÉE)
         run: |
           set -euo pipefail
           M="mysql -h 127.0.0.1 -P 3306 -u root -proot citest"
@@ -69,6 +79,49 @@ jobs:
                         'cors_origins' => ['*'], 'mail_from' => 'test@example.invalid',
                         'webshop_base' => 'http://localhost/webshop'];
           PHP
+
+      # LE TROU PAR LEQUEL LA PRODUCTION A ÉTÉ BLOQUÉE, DEUX FOIS DANS LA MÊME
+      # JOURNÉE. migrate.sh est FAIL-FAST : une migration qui échoue empêche
+      # tous les déploiements suivants, pas seulement le sien. Et rien ne les
+      # essayait avant la production — c'était écrit dans cet en-tête, en toutes
+      # lettres, sans être corrigé :
+      #   « CE QUE ÇA LAISSE NON COUVERT : qu'une NOUVELLE migration passe. »
+      # La 0070 y est passée et a tout bloqué sur une clé étrangère.
+      #
+      # On ne rejoue PAS les anciennes (la 0003 suppose un schéma disparu) : on
+      # rejoue celles qui SUIVENT le niveau du socle. C'est exactement la
+      # question qui compte — « cette nouvelle migration s'applique-t-elle sur
+      # la production d'aujourd'hui ? » — et elle se pose ici, pas après le
+      # rsync.
+      - name: Les nouvelles migrations s'appliquent sur le socle
+        run: |
+          set -euo pipefail
+          NIV=$(tr -dc '0-9' < php-api/tests/socle_niveau.txt)
+          echo "socle à jour jusqu'à la migration $NIV — on rejoue les suivantes"
+          M="mysql -h 127.0.0.1 -P 3306 -u root -proot citest"
+          n=0
+          for f in php-api/migrations/*.sql; do
+            v=$(basename "$f"); num=$(printf '%s' "$v" | cut -c1-4)
+            case "$num" in ''|*[!0-9]*) continue ;; esac
+            [ "$num" -le "$NIV" ] 2>/dev/null && continue
+            echo "→ $v"
+            $M < "$f"                      # set -e : la première qui échoue arrête le job
+            n=$((n+1))
+          done
+          [ "$n" = "0" ] && echo "(aucune migration postérieure au socle)" || echo "$n migration(s) appliquée(s) sans erreur"
+          # REJOUÉES UNE SECONDE FOIS : la convention du dépôt veut qu'une
+          # migration soit idempotente. Si la seconde passe échoue, elle ne
+          # l'est pas — et elle casserait un redéploiement.
+          for f in php-api/migrations/*.sql; do
+            v=$(basename "$f"); num=$(printf '%s' "$v" | cut -c1-4)
+            case "$num" in ''|*[!0-9]*) continue ;; esac
+            [ "$num" -le "$NIV" ] 2>/dev/null && continue
+            $M < "$f"
+          done
+          echo "rejouées une seconde fois : idempotentes"
+
+      - name: Jeu d'essai — ce qui dépend des colonnes créées par les migrations
+        run: mysql -h 127.0.0.1 -P 3306 -u root -proot citest < php-api/tests/jeu_essai_post.sql
 
       - name: Visibilité — le diagnostic dit-il la même chose que le catalogue ?
         run: php php-api/tests/visibilite_test.php

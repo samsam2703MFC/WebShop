@@ -21,6 +21,14 @@
 -- du socle. availability_where() se neutralise quand elles manquent : la
 -- condition ne se déclenche pas, ni dans le catalogue ni dans le diagnostic —
 -- ils restent donc d'accord, mais sur ce point le test ne prouve rien.
+-- ORDRE DE CHARGEMENT, ET IL COMPTE : socle → CE FICHIER → migrations →
+-- jeu_essai_post.sql. Les migrations doivent s'appliquer à une base PEUPLÉE,
+-- comme en production : une migration qui recopie des données ne révèle ses
+-- violations de contrainte que s'il y a des données à recopier. Sur une base
+-- vide, elle passe — et c'est exactement ce qui a laissé la 0070 arriver en
+-- production et bloquer tous les déploiements.
+-- Ce fichier n'utilise donc QUE le schéma du socle. Ce qui dépend d'une colonne
+-- créée par une migration vit dans jeu_essai_post.sql.
 -- ---------------------------------------------------------------------------
 
 -- Deux boutiques : la sondée (2) et une AUTRE (3), dont une catégorie porte
@@ -61,13 +69,6 @@ INSERT INTO ws_products
   (8, 'Categorie orpheline',           999, NULL, 1, 1, 1, 5.00, 0),
   (9, 'Categorie autre boutique',        2, NULL, 1, 1, 1, 5.00, 0);
 
--- BUREAU SEULEMENT — le cas qui etait IMPOSSIBLE avant la migration 0071.
--- `active` portait deux sens : retirer un produit du webshop le mettait en
--- brouillon, donc le retirait AUSSI de la livraison bureau. Ce produit est
--- publie (active=1), ferme au click & collect (webshop=0), ouvert au bureau.
--- Si la colonne disparaissait ou cessait d'etre lue, il reapparaitrait sur le
--- webshop et le troisieme volet du test le dirait.
-UPDATE ws_products SET webshop = 0, office_delivery = 1 WHERE id = 2;
 
 -- Le produit 5 est explicitement retiré de l'assortiment de la boutique 2.
 INSERT INTO ws_product_shops (product_id, shop_id, active, no_delivery) VALUES (5, 2, 0, 0);
@@ -81,3 +82,18 @@ INSERT INTO ws_product_shops (product_id, shop_id, active, no_delivery) VALUES (
 INSERT INTO shop_product (id_shop, id_product, portion_price) VALUES
   (2, 1, 5.00), (2, 2, 6.00), (2, 3, 5.00), (2, 4, 5.00),
   (2, 5, 5.00), (2, 6, 5.00), (2, 8, 5.00), (2, 9, 5.00);
+
+-- L'ANOMALIE DE PRODUCTION, REPRODUITE EXPRÈS : l'ERP référence des produits
+-- qui n'existent pas dans ws_products. Ce n'est pas une hypothèse — c'est ce
+-- qu'une clé étrangère a révélé en faisant échouer une migration en
+-- production, et en bloquant tous les déploiements derrière elle
+-- (migrate.sh est fail-fast).
+--
+-- La ligne ci-dessous vaut avertissement permanent : toute migration qui
+-- recopie shop_product vers une table contrainte échouera ICI, en intégration
+-- continue, au lieu d'être découverte après le rsync. Ne pas la retirer parce
+-- qu'elle « salit » le jeu d'essai : c'est précisément son rôle.
+--
+-- shop_product n'a pas de clé étrangère (table de l'ERP), l'insertion passe.
+INSERT INTO shop_product (id_shop, id_product, portion_price) VALUES
+  (2, 424242, 9.99);
