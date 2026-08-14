@@ -3833,3 +3833,12 @@
   font: 700 15px/1 var(--font-ui); display: flex; align-items: center; justify-content: center; }
 .ws-xsell__add:hover { filter: brightness(.95); }
 .ws-xsell__add:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+
+/* ── TACTILE : mêmes règles pour tout le shop — un tap = un clic, sans
+   attente du double-tap-zoom (délai inexistant à la souris, d'où des
+   « miss-clicks » signalés uniquement sur téléphone). */
+.ws button, .ws [role="button"], .ws a {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}

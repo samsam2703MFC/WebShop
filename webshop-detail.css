@@ -549,6 +549,11 @@
 .pdm-opt__body-wrap {
   display: grid; grid-template-rows: 0fr;
   transition: grid-template-rows 280ms cubic-bezier(.2,.8,.2,1);
+  /* SANS ce clip, le contenu d'un groupe REPLIÉ débordait de sa rangée 0fr :
+     invisible sous l'élément suivant mais toujours CLIQUABLE — un tap sur une
+     option touchait en réalité le groupe replié du dessus. Vu au doigt, pas à
+     la souris (le pointeur survole, le doigt tape au jugé). */
+  overflow: hidden;
 }
 .pdm-opt.is-open .pdm-opt__body-wrap { grid-template-rows: 1fr; }
 .pdm-opt__body { min-height: 0; overflow: visible; padding: 0 12px 10px; }
@@ -738,4 +743,19 @@
 @media (max-width: 380px) {
   .pdm-hero { height: 140px; }
   .pdm-title { font-size: 17.5px; }
+}
+
+
+/* ── TACTILE : le tap répond au PREMIER coup ─────────────────────────────
+   touch-action: manipulation désarme l'attente du double-tap-zoom : sans
+   elle, le navigateur mobile retient chaque tap le temps de voir si un
+   second arrive — à la souris ce délai n'existe pas, d'où un composeur
+   « qui répond mal uniquement sur téléphone ». Le halo de tap est retiré
+   au passage (le retour visuel est déjà porté par les états .is-on). */
+.pdm button,
+.pdm [role="button"],
+.pdm-opt__head, .pdm-chip, .pdm-imgchip, .pdm-seg__btn,
+.pdm-bcard, .pdm-qty__btn, .pdm-cta {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
