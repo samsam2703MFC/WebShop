@@ -3551,9 +3551,26 @@ function dispatch($m, $p) {
     // Catalogue — arbre catégories › produits (réel) avec gouvernance marque.
     if ($m === 'GET' && $p === '/franchisor/catalog') {
       $totalShops = (int) (row("SELECT COUNT(*) n FROM $SHOPS WHERE active=1")['n'] ?? 0);
-      // Boutique de référence du diagnostic « en ligne » (voir plus bas).
+      /* BOUTIQUE DE RÉFÉRENCE — SANS REPLI.
+         « En ligne » n'a de sens que rapporté à UNE boutique : chacune a son
+         prix ERP et ses exclusions. Faute de ?shop=, cette route prenait « la
+         première boutique active par id » et rendait des verdicts calculés sur
+         elle — une boutique que personne n'avait demandée, et que la réponse ne
+         nommait pas. Le chiffre avait l'air d'une vérité réseau ; c'était celui
+         d'une boutique tirée au sort par son id.
+
+         Plus de repli : sans portée, il n'y a pas de verdict. `enLigne` et
+         `raison` valent null — ils le pouvaient déjà, la structure ne change
+         pas — et l'en-tête X-Boutique-Reference dit ce qui a été pris, ou
+         pourquoi rien ne l'a été. Un en-tête parce que cette route rend un
+         TABLEAU : y ajouter une racine casserait la console marque. */
       $shopRef = (int) (qp('shop', 0) ?: 0);
-      if (!$shopRef) $shopRef = (int) (row("SELECT id FROM $SHOPS WHERE active=1 ORDER BY id LIMIT 1")['id'] ?? 0);
+      if ($shopRef) {
+        $sRef = row("SELECT name FROM $SHOPS WHERE id = ?", [$shopRef]);
+        header('X-Boutique-Reference: ' . $shopRef . ($sRef ? ' ' . $sRef['name'] : ''));
+      } else {
+        header('X-Boutique-Reference: aucune — verdicts « en ligne » non calcules (passer ?shop=<id>)');
+      }
       $hasPS = $tblExists('ws_product_shops');
       // Console marque (gestion de l'assortiment) : renvoyer TOUTES les catégories,
       // pas seulement les actives. Une catégorie dont tous les produits sont en
