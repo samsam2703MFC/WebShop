@@ -93,13 +93,66 @@ if ($manqueDiag || $manqueCat) {
   exit(1);
 }
 
+echo "  ✓ vente : les deux disent la même chose\n";
+
+/* ── SECOND VOLET : LA NAVIGATION ───────────────────────────────────────────
+   Le premier volet ne compare que « ce produit est-il VENDU ». Or les deux
+   pannes vécues portaient sur « ce produit est-il JOIGNABLE » : des cookies en
+   vente sans aucune catégorie où les retrouver, puis une sous-catégorie unique
+   masquée. Le champ `navigation` du diagnostic annonce cet écart — encore
+   faut-il qu'il dise la vérité, et il a déjà cessé de la dire : il a continué
+   d'annoncer « Catégorie désactivée » après que la barre eut cessé de filtrer
+   sur ce drapeau.
+
+   On rejoue donc la requête de /catalog/categories et on confronte : tout
+   produit VENDU dont la catégorie est absente de la barre doit être signalé
+   par `navigation`, et réciproquement. */
+$catsBarre = [];
+if ($enLigneCat) {
+  $inP = implode(',', array_map('intval', $enLigneCat));
+  $catIds = array_values(array_filter(array_map(
+    fn ($x) => $x['cat_id'] !== null ? (int) $x['cat_id'] : null,
+    rows("SELECT DISTINCT cat_id FROM ws_products WHERE id IN ($inP)"))));
+  if ($catIds) {
+    $inC = implode(',', array_map('intval', $catIds));
+    foreach (rows("SELECT id FROM ws_categories
+                    WHERE id IN ($inC) AND (shop_id = ? OR shop_id IS NULL)", [$shop]) as $c)
+      $catsBarre[(int) $c['id']] = true;
+  }
+}
+$catDe = [];
+foreach (rows("SELECT id, cat_id FROM ws_products WHERE id IN (" . implode(',', array_map('intval', $ids)) . ")") as $x)
+  $catDe[(int) $x['id']] = $x['cat_id'] !== null ? (int) $x['cat_id'] : null;
+
+$navFaux = [];
+foreach ($enLigneCat as $pid) {
+  $cid        = $catDe[$pid] ?? null;
+  $joignable  = $cid !== null && isset($catsBarre[$cid]);
+  $annonce    = ($vis[$pid]['navigation'] ?? null) !== null;   // le diag le dit injoignable
+  if ($joignable === $annonce)                                  // les deux se contredisent
+    $navFaux[] = $pid . ($joignable ? ' (joignable, annoncé introuvable)'
+                                    : ' (introuvable, annoncé joignable)');
+}
+if ($navFaux) {
+  printf("  ✕ %d produit(s) dont le verdict de NAVIGATION est faux : %s\n",
+    count($navFaux), implode(' · ', array_slice($navFaux, 0, 20)));
+  fwrite(STDERR, "DIVERGENCE — le champ `navigation` ne correspond pas à la barre de catégories.\n");
+  exit(1);
+}
+echo "  ✓ navigation : le verdict correspond à la barre de catégories\n";
+
 // Le décompte des raisons : ce que la console doit pouvoir afficher.
 $parRaison = [];
 foreach ($vis as $v) if (!$v['enLigne']) $parRaison[$v['raison']] = ($parRaison[$v['raison']] ?? 0) + 1;
 arsort($parRaison);
-echo "  ✓ les deux disent la même chose\n";
+$parNav = [];
+foreach ($vis as $v) if ($v['navigation']) $parNav[$v['navigation']] = ($parNav[$v['navigation']] ?? 0) + 1;
 if ($parRaison) {
   echo "  hors ligne, par raison :\n";
   foreach ($parRaison as $r2 => $n) printf("    %4d  %s\n", $n, $r2);
+}
+if ($parNav) {
+  echo "  en vente mais introuvables dans la navigation :\n";
+  foreach ($parNav as $r2 => $n) printf("    %4d  %s\n", $n, $r2);
 }
 exit(0);

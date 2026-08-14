@@ -9739,7 +9739,7 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
                      p.active AS actif," .
              ($hasWl ? " COALESCE(p.brand_whitelist,1) AS wl," : " 1 AS wl,") . "
                      COALESCE(p.office_delivery,1) AS od,
-                     p.cat_id, c.id AS cat_ok, c.active AS cat_actif," .
+                     p.cat_id, c.id AS cat_ok, c.shop_id AS cat_shop," .
              ($hasPS ? " ps.active AS ps_actif" : " NULL AS ps_actif") . "
                 FROM ws_products p
                 LEFT JOIN ws_categories c ON c.id = p.cat_id" .
@@ -9770,22 +9770,25 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
     elseif ($seasonSql !== '' && !isset($okSaison[$pid]))
                                                      $raison = 'Hors saison à la date demandée';
     elseif ($sc && !isset($prix[$pid]))              $raison = 'Sans prix dans l’ERP pour cette boutique';
-    /* JOIGNABLE ≠ EN LIGNE, et les confondre rendrait les deux faux.
-       La barre de navigation exige ws_categories.active = 1 et la bonne
-       boutique ; la grille de produits, elle, ne contrôle QUE le produit. Un
-       produit dont la catégorie est désactivée ou introuvable est donc bien EN
-       VENTE — il s'affiche sous « Tout » — mais le client ne peut jamais y
-       revenir par une catégorie. C'est un second écart entre deux requêtes qui
-       décrivent une même notion, et il se constate à l'écran : des cookies
-       visibles, et aucune catégorie où les retrouver.
+    /* JOIGNABLE ≠ EN LIGNE, et les confondre rendrait les deux faux. Un
+       produit peut être EN VENTE — il s'affiche sous « Tout » — sans qu'aucune
+       catégorie ne permette d'y revenir. On le nomme sans le confondre avec le
+       verdict de vente : retirer ces produits de la vente serait une décision
+       commerciale, pas une correction technique.
 
-       On le nomme sans le confondre avec le verdict de vente. Retirer ces
-       produits de la vente serait une décision commerciale, pas une correction
-       technique — elle appartient à qui tient la boutique. */
+       CES DEUX CAS SONT CEUX QUE LA NAVIGATION APPLIQUE VRAIMENT, et ils ont
+       changé. /catalog/categories ne filtrait plus sur ws_categories.active
+       depuis ce matin — ce drapeau est un cache calculé, pas une décision — et
+       ce diagnostic, lui, continuait d'annoncer « Catégorie désactivée —
+       introuvable ». Il aurait déclaré injoignables des produits parfaitement
+       joignables : la divergence exacte que cette fonction existe pour
+       empêcher, réapparue par le haut. Reste ce qui écarte réellement une
+       catégorie de la barre : ne pas exister, ou appartenir à une AUTRE
+       boutique (la requête garde `shop_id = ? OR shop_id IS NULL`). */
     $nav = null;
     if (!$r['cat_ok'])                              $nav = 'Catégorie inconnue (cat_id vide ou orphelin) — introuvable dans la navigation';
-    elseif ($r['cat_actif'] !== null && !(int) $r['cat_actif'])
-                                                    $nav = 'Catégorie désactivée — introuvable dans la navigation';
+    elseif ($sc && $r['cat_shop'] !== null && (int) $r['cat_shop'] !== $sc)
+                                                    $nav = 'Catégorie rattachée à une autre boutique — introuvable dans la navigation';
     $out[$pid] = ['enLigne' => $raison === null, 'raison' => $raison, 'navigation' => $nav];
   }
   return $out;
