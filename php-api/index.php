@@ -90,41 +90,43 @@ function product_img_or_null($img) {
  *
  * shop_product n'a pas d'unicité (id_shop, id_product) → on retient une ligne
  * déterministe (plus petit `id`) par produit. */
-function erp_shop_prices($shopId, array $ids) {
-  static $ok = null;
+/* PRIX DE VENTE D'UN PRODUIT DANS UNE BOUTIQUE — SOURCE UNIQUE.
+ *
+ * ws_product_prices, édité par le FRANCHISÉ dans sa console. Le prix venait de
+ * l'ERP (shop_product.portion_price) ; il appartient désormais à la boutique,
+ * qui le fixe elle-même.
+ *
+ * UNE SEULE FONCTION POUR TOUT LE MONDE, ET C'EST LE POINT CRITIQUE. Le
+ * catalogue, le panier, l'aperçu de commande et la facturation appellent tous
+ * celle-ci. Changer la source ici les fait basculer ENSEMBLE — afficher un
+ * prix et en encaisser un autre serait pire que le problème qu'on résout. Une
+ * seconde lecture des prix, ailleurs, serait le début de cet écart.
+ *
+ * PAS DE REPLI SUR L'ERP. Si la boutique n'a pas fixé de prix, le produit n'est
+ * pas vendable et le diagnostic le dit — plutôt que d'aller chercher en
+ * silence un montant d'une autre source, qui serait faux dès la première
+ * édition. La migration 0070 a recopié les prix ERP en vigueur pour que la
+ * bascule ne change aucun montant affiché.
+ */
+function prix_boutique($shopId, array $ids) {
   if (!$ids) return [];
-  if ($ok === null) {
-    $ok = false;
-    try {
-      $c = row("SELECT COUNT(*) n FROM information_schema.columns
-                 WHERE table_schema = DATABASE()
-                   AND table_name = 'shop_product' AND column_name = 'portion_price'");
-      $ok = $c && (int) $c['n'] > 0;
-    } catch (Throwable $e) {
-      $ok = false;
-    }
-  }
-  if (!$ok) return [];
   $in = implode(',', array_map('intval', $ids));
   $out = [];
   try {
-    $rows = rows("SELECT id_product AS pid, portion_price
-                    FROM shop_product
-                   WHERE id_shop = ? AND id_product IN ($in)
-                   ORDER BY id_product, id", [$shopId]);
+    $rows = rows("SELECT product_id AS pid, price
+                    FROM ws_product_prices
+                   WHERE shop_id = ? AND active = 1 AND product_id IN ($in)", [$shopId]);
     foreach ($rows as $r) {
-      $pid = (int) $r['pid'];
-      // Un prix ERP à 0 (ou négatif) signifie « produit listé, prix NON FIXÉ » —
-      // pas « gratuit ». Live : 56 à 108 lignes par boutique dans ce cas. On ne
-      // le retient donc PAS : le produit est traité comme non tarifé, donc
-      // masqué du catalogue ET refusé à la commande (au lieu d'être facturé
-      // 0 €, ce que faisait isset() sur une valeur nulle).
-      $px = (float) $r['portion_price'];
+      // Un prix à 0 ou négatif signifie « prix NON FIXÉ » — pas « gratuit ».
+      // Le produit est alors traité comme non tarifé : masqué du catalogue ET
+      // refusé à la commande, plutôt que facturé 0 €. Règle reprise telle
+      // quelle de l'ancienne lecture ERP, elle n'a pas de raison de changer.
+      $px = (float) $r['price'];
       if ($px <= 0) continue;
-      if (!array_key_exists($pid, $out)) $out[$pid] = $px;
+      $out[(int) $r['pid']] = $px;
     }
   } catch (Throwable $e) {
-    error_log('[ws] prix magasin ERP indisponible: ' . $e->getMessage());
+    error_log('[ws] prix boutique indisponible: ' . $e->getMessage());
     return [];
   }
   return $out;
@@ -168,7 +170,7 @@ function erp_portion_options($shopId, array $ids) {
     foreach ($rows2 as $r) {
       $v = $MAP[mb_strtolower(trim((string) $r['portion_type']))] ?? null;
       if (!$v) continue;
-      // Même règle que erp_shop_prices() : un prix de portion à 0 = NON FIXÉ,
+      // Même règle que prix_boutique() : un prix de portion à 0 = NON FIXÉ,
       // pas gratuit. Sans prix strictement positif, la portion n'est pas
       // proposable (et ne peut donc pas être facturée 0 €).
       $pxS = $r['px_shop'] !== null ? (float) $r['px_shop'] : null;
@@ -348,7 +350,7 @@ function ws_voucher_upsert(array $o) {
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
                  LEFT JOIN ws_tags t ON t.id = p.tag_id
                  LEFT JOIN ws_season se ON se.id = p.season_id
-                WHERE p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1)${whitelistWhere}$deliveryWhere$seasonWhere$catShopWhere
+                WHERE p.active = 1${whitelistWhere}$deliveryWhere$seasonWhere$catShopWhere
                 ORDER BY c.sort_order, p.name", array_merge([$s, $s], $seasonArgs));
     $photos = product_photo_files();
     foreach ($r as &$x) {
@@ -441,20 +443,19 @@ function ws_voucher_upsert(array $o) {
         error_log('[ws] allergènes ERP indisponibles: ' . $e->getMessage());
       }
     }
-    // Prix magasin RÉEL (ERP shop_product.portion_price par boutique) — SOURCE
-    // UNIQUE. Règle go-live « vraies données ou bug » : le repli sur le prix
-    // répliqué ws_ (COALESCE ws_product_prices/ws_products.price) est SUPPRIMÉ —
-    // il a servi des prix de test (1,00 €) comme s'ils étaient réels.
-    //   • produit sans ligne shop_product → prix 0 → écarté par le filtre
-    //     « price > 0 » ci-dessous (non vendable tant que l'ERP n'a pas son
-    //     prix ; il revient AUTOMATIQUEMENT dès l'import) ;
-    //   • aucune ligne shop_product pour toute la boutique (source prix
-    //     indisponible) → erreur 503 explicite, on ne publie pas un catalogue
-    //     tarifé sur le réplica.
+    // PRIX DE LA BOUTIQUE (ws_product_prices), fixé par le franchisé dans sa
+    // console — SOURCE UNIQUE, sans repli. Il venait de l'ERP ; la migration
+    // 0070 a recopié les montants en vigueur pour que la bascule n'en change
+    // aucun.
+    //   • produit sans prix fixé → prix 0 → écarté par le filtre « price > 0 »
+    //     ci-dessous : non vendable, et le diagnostic le DIT (« Prix non fixé
+    //     pour cette boutique ») au lieu de le laisser deviner ;
+    //   • aucun prix pour TOUTE la boutique → 503 explicite. On ne publie pas
+    //     un catalogue dont on ne connaît aucun montant.
     if ($r) {
-      $store = erp_shop_prices($s, array_map(static fn($p2) => (int) $p2['id'], $r));
+      $store = prix_boutique($s, array_map(static fn($p2) => (int) $p2['id'], $r));
       if (!$store) {
-        json_out(['error' => 'Prix magasin (ERP shop_product) indisponibles pour cette boutique — catalogue non publiable.'], 503);
+        json_out(['error' => 'Aucun prix fixé pour cette boutique (ws_product_prices) — catalogue non publiable. Les prix se saisissent dans la console du franchisé.'], 503);
       }
       $sansPrix = [];
       foreach ($r as &$x) {
@@ -760,13 +761,13 @@ function dispatch($m, $p) {
         $prod = row("SELECT p.id, p.name, p.img, p.price, COALESCE(p.office_delivery,1) AS od
                        FROM ws_products p
                        LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
-                      WHERE p.id = ? AND p.active = 1 AND (ps.product_id IS NULL OR ps.active = 1) LIMIT 1",
+                      WHERE p.id = ? AND p.active = 1 LIMIT 1",
                     [$shopX, $tp]);
         if (!$prod) continue;
         if ($modeX === 'delivery' && !(int) $prod['od']) continue;
         if (!product_available_on($tp, $dateX)) continue;        // gamme saisonnière
         if (!xsell_in_stock($tp, $shopX, $dateX, $modeX)) continue;
-        $px    = erp_shop_prices($shopX, [$tp]);
+        $px    = prix_boutique($shopX, [$tp]);
         $price = $px[$tp] ?? (float) $prod['price'];
         if ($price <= 0) continue;                                // sans prix magasin : non vendable
         $seen[$tp] = true; $kept++;
@@ -841,7 +842,7 @@ function dispatch($m, $p) {
           : (((int) $ps2['active'] === 1) ? 'OK — activé pour la boutique ' . $s
              : 'ECHEC — RETIRÉ de l\'assortiment de la boutique ' . $s . ' (BO franchisé → Assortiment)');
         $pw = row("SELECT price FROM ws_product_prices WHERE product_id=? AND shop_id=? AND active=1", [$id, $s]);
-        $erpx = erp_shop_prices($s, [$id]);
+        $erpx = prix_boutique($s, [$id]);
         $final = isset($erpx[$id]) ? $erpx[$id] : (float) ($pw['price'] ?? $p2['price']);
         $chk['5_prix_final'] = ($final > 0)
           ? ('OK — ' . number_format($final, 2, ',', ' ') . ' € (source : ' . (isset($erpx[$id]) ? 'ERP shop_product' : 'ws_') . ')')
@@ -1077,14 +1078,20 @@ function dispatch($m, $p) {
     // été supprimée (doublon). chip.id = slug -> matché à product.season côté
     // front, donc le filtre saison fonctionne. On n'expose qu'une saison ayant
     // >=1 produit disponible dans la boutique (même règle que les catégories).
+    /* Le JOIN sur ws_product_shops EXIGEAIT une ligne : une saison n'apparaissait
+       que pour les produits explicitement inscrits à l'assortiment d'une
+       boutique. Or la grille traite l'ABSENCE de ligne comme « vendu » — la
+       plupart des produits n'en ont aucune. Les deux requêtes décrivaient la
+       même notion et n'en tiraient pas la même conclusion : des produits
+       saisonniers en vente, dont la saison ne s'affichait pas dans le filtre.
+       Le modèle tranche : tous les produits sont communs, l'assortiment par
+       boutique n'existe plus. */
     json_out(rows("SELECT se.slug AS id, se.name AS label, se.img
                      FROM ws_season se
                     WHERE se.active = 1
                       AND EXISTS (SELECT 1 FROM ws_products p
-                                    JOIN ws_product_shops ps ON ps.product_id = p.id
-                                                            AND ps.shop_id = ? AND ps.active = 1
                                    WHERE p.season_id = se.id AND p.active = 1)
-                    ORDER BY se.sort_order", [$s]));
+                    ORDER BY se.sort_order"));
   }
 
   /* ── Promos / Vouchers ── */
@@ -1219,13 +1226,13 @@ function dispatch($m, $p) {
     if ($sc && $sc['scope_id_product'] !== null && $v['type'] !== 'free_delivery') {
       // Remise limitée aux pièces de CE produit (les moins chères d'abord).
       // Le prix unitaire vient de l'ERP, PAS du panier envoyé par le client :
-      // la facturation le résout ainsi (erp_shop_prices / erp_portion_options),
+      // la facturation le résout ainsi (prix_boutique / erp_portion_options),
       // et un aperçu calculé sur un autre prix aurait annoncé une remise
       // différente de celle réellement appliquée. Sans prix ERP, on ne devine
       // pas : la pièce ne compte pas dans l'assiette.
       $units = [];
       $scPid  = (int) $sc['scope_id_product'];
-      $scPx   = $vShop ? erp_shop_prices($vShop, [$scPid]) : [];
+      $scPx   = $vShop ? prix_boutique($vShop, [$scPid]) : [];
       $scPort = $vShop ? erp_portion_options($vShop, [$scPid]) : [];
       foreach ((is_array($b['basket'] ?? null) ? $b['basket'] : []) as $l2) {
         if ((int) ($l2['productId'] ?? 0) !== $scPid) continue;
@@ -2171,7 +2178,7 @@ function dispatch($m, $p) {
     //    portion sans prix ERP de portion → idem. Le client ne paie jamais un
     //    montant que la boutique n'a pas réellement fixé.
     $subtotal = 0; $lines = [];
-    $storePrices = erp_shop_prices($shop, array_map(static fn($it) => (int) ($it['productId'] ?? 0), $basket));
+    $storePrices = prix_boutique($shop, array_map(static fn($it) => (int) ($it['productId'] ?? 0), $basket));
     $portPx = erp_portion_options($shop, array_map(static fn ($it2) => (int) ($it2['productId'] ?? 0), $basket));
     foreach ($basket as $it) {
       $p2 = row("SELECT p.id, p.name, p.cross_portion
@@ -5998,7 +6005,7 @@ function dispatch($m, $p) {
                          WHERE p.active=1 ORDER BY p.name LIMIT 500", [$shopId ?: 0]);
       // Prix ERP boutique (shop_product) fait autorité s'il existe.
       if ($shopId && $products) {
-        $erpP = erp_shop_prices($shopId, array_map(static fn ($x2) => (int) $x2['id'], $products));
+        $erpP = prix_boutique($shopId, array_map(static fn ($x2) => (int) $x2['id'], $products));
         foreach ($products as &$pp3) { if (isset($erpP[(int) $pp3['id']])) $pp3['price'] = $erpP[(int) $pp3['id']]; $pp3['price'] = (float) $pp3['price']; }
         unset($pp3);
       }
@@ -7542,6 +7549,57 @@ function dispatch($m, $p) {
     // ── Stock du jour : SAISIE directe (formulaire modale) — pose les
     //    quantités ABSOLUES du jour par mode (webshop=delivery / shop=collect)
     //    dans ws_product_stock. date = jour courant. ──
+    /* PRIX DE VENTE — saisi par le FRANCHISÉ, pour SA boutique.
+       Le prix venait de l'ERP et n'était modifiable nulle part ; il appartient
+       désormais à la boutique. Une route dédiée plutôt que /admin/price, qui
+       existait déjà mais prend le shopId DANS LE CORPS de la requête : un
+       franchisé y aurait tarifé la boutique du voisin. Ici la portée vient du
+       serveur ($shopId, résolu par le jeton), jamais du client — règle du
+       dépôt, et la seule qui tienne quand le jeton est réseau.
+
+       PRIX À 0 = « NON FIXÉ », pas « gratuit » : la ligne est désactivée, le
+       produit redevient non vendable et le diagnostic le dit. Vider le champ
+       est donc le geste pour retirer un produit de la vente, et il est
+       réversible. */
+    if ($m === 'POST' && $p === '/franchisee/product-price') {
+      $b = body();
+      if (!$shopId) json_out(['ok' => false, 'error' => 'Portée boutique requise.'], 400);
+      if (!$tblExists('ws_product_prices') || !$tblExists('ws_products'))
+        json_out(['ok' => false, 'error' => 'Tables prix ou produits absentes.'], 501);
+      $pr = $findProduct($b);
+      if (!$pr) $prodKo($b);
+      $pid = (int) $pr['id'];
+      $sc  = (int) $shopId;
+      // Le champ vide et le zéro disent la même chose : prix non fixé.
+      $brut = $b['prix'] ?? $b['price'] ?? null;
+      $px = ($brut === null || $brut === '') ? 0.0 : (float) str_replace(',', '.', (string) $brut);
+      if ($px < 0) json_out(['ok' => false, 'error' => 'Un prix ne peut pas être négatif.'], 400);
+      if ($px > 0) {
+        /* UPDATE PUIS INSERT, et surtout PAS « ON DUPLICATE KEY UPDATE » :
+           ws_product_prices n'a AUCUN index — constaté en écrivant cette route,
+           un second enregistrement du même produit créait une deuxième ligne au
+           lieu de corriger la première. Deux prix pour un produit, et c'est
+           celui que la base rend en dernier qui est facturé.
+           /admin/price fait cette erreur depuis toujours ; on ne la reproduit
+           pas ici, et on ne dépend pas non plus d'une clé dont on ne peut pas
+           garantir la présence sur chaque installation. */
+        $maj = q("UPDATE ws_product_prices SET price = ?, active = 1
+                   WHERE product_id = ? AND shop_id = ?", [$px, $pid, $sc]);
+        if (!row("SELECT 1 x FROM ws_product_prices WHERE product_id = ? AND shop_id = ?", [$pid, $sc]))
+          q("INSERT INTO ws_product_prices (product_id, shop_id, price, active) VALUES (?,?,?,1)",
+            [$pid, $sc, $px]);
+      } else {
+        // Pas de DELETE : on garde la trace du dernier prix pratiqué.
+        q("UPDATE ws_product_prices SET active = 0 WHERE product_id = ? AND shop_id = ?", [$pid, $sc]);
+      }
+      // Pas d'écriture dans bo_audit : aucune autre route franchisé ne le fait,
+      // la table peut manquer selon l'installation, et son absence ferait
+      // échouer l'enregistrement du prix. Un prix qu'on ne peut pas saisir
+      // serait un problème plus grave que celui qu'on ne trace pas.
+      json_out(['ok' => true, 'produit' => $pr['name'] ?? null, 'prix' => $px,
+                'enVente' => $px > 0]);
+    }
+
     if ($m === 'POST' && $p === '/franchisee/stock-set') {
       $b = body();
       if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
@@ -7715,7 +7773,7 @@ function dispatch($m, $p) {
         // priorité) ; prix magasin ERP pour la pièce entière.
         $ids3 = array_map(fn ($r) => (int) $r['pid'], $rs);
         $popts2 = $shopId ? erp_portion_options((int) $shopId, $ids3) : [];
-        $erpPx = $shopId ? erp_shop_prices((int) $shopId, $ids3) : [];
+        $erpPx = $shopId ? prix_boutique((int) $shopId, $ids3) : [];
         $eur = fn ($v) => number_format((float) $v, 2, ',', ' ') . ' €';
         json_out(array_map(function ($r) use ($popts2, $erpPx, $eur) {
           $base = isset($erpPx[(int) $r['pid']]) ? $erpPx[(int) $r['pid']] : (float) $r['prix_base'];
@@ -7797,7 +7855,7 @@ function dispatch($m, $p) {
                     JOIN ws_categories c ON c.id = pr.cat_id AND c.active = 1" .
                  ($hasPS ? " LEFT JOIN ws_product_shops ps ON ps.product_id = pr.id AND ps.shop_id = " . (int) $shopId : "") .
                  ($hasStock ? " LEFT JOIN ws_product_stock st ON st.product_id = pr.id AND st.date = ? AND st.active = 1" . ($shopId ? " AND st.shop_id = " . (int) $shopId : "") : "") . "
-                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))" . ($hasPS ? " AND (ps.active IS NULL OR ps.active = 1)" : "") . whitelist_where('pr') . categorie_shop_where('c', $shopId) . "
+                   WHERE (pr.active = 1 OR (pr.brand_mandatory = 1 AND COALESCE(pr.office_delivery,1) = 1))" . whitelist_where('pr') . categorie_shop_where('c', $shopId) . "
                    GROUP BY c.sort_order, c.label, pr.id, pr.name, pr.brand_mandatory
                    ORDER BY c.sort_order, c.label, pr.name LIMIT 400", $hasStock ? [$today] : []);
       // Minimums hebdomadaires du JOUR (1=lundi … 7=dimanche) par produit.
@@ -9833,7 +9891,7 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
       $okSaison[(int) $x['id']] = true;
   }
 
-  $prix = $sc ? erp_shop_prices($sc, $ids) : [];
+  $prix = $sc ? prix_boutique($sc, $ids) : [];
 
   $out = [];
   foreach ($rs as $r) {
@@ -9842,12 +9900,10 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
     // ORDRE = celui du catalogue. La première condition qui échoue est la
     // raison montrée : en afficher plusieurs ferait chercher laquelle lever.
     if (!(int) $r['actif'])                          $raison = 'Brouillon — non publié au catalogue réseau';
-    elseif ($hasPS && $r['ps_actif'] !== null && !(int) $r['ps_actif'])
-                                                     $raison = 'Non produit par cette boutique';
     elseif ($horsBureau && !(int) $r['od'])          $raison = 'Non éligible à la livraison au bureau';
     elseif ($seasonSql !== '' && !isset($okSaison[$pid]))
                                                      $raison = 'Hors saison à la date demandée';
-    elseif ($sc && !isset($prix[$pid]))              $raison = 'Sans prix dans l’ERP pour cette boutique';
+    elseif ($sc && !isset($prix[$pid]))              $raison = 'Prix non fixé pour cette boutique';
     /* JOIGNABLE ≠ EN LIGNE, et les confondre rendrait les deux faux. Un
        produit peut être EN VENTE — il s'affiche sous « Tout » — sans qu'aucune
        catégorie ne permette d'y revenir. On le nomme sans le confondre avec le
