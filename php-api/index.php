@@ -6690,41 +6690,26 @@ function dispatch($m, $p) {
       json_out($out);
     }
 
-    /* Écriture de la disponibilité d'un produit DANS CETTE BOUTIQUE.
-       L'écran « Exception produit » écrivait dans l'overlay sous le nom
-       ws_product_availability — une table qui n'existe nulle part. L'exception
-       saisie n'a donc jamais rien produit ; le vrai levier est
-       ws_product_shops (active, no_delivery), et il est ici.
-
-       Les quatre « exceptions » que proposait le formulaire (Sur devis,
-       Saisonnier, Non livrable, Délai spécifique) n'étaient pas stockables :
-       la base ne sait dire que « vendu ici », « pas vendu ici » et « pas
-       livrable ». On s'en tient à ce qu'elle sait. */
+    /* Disponibilité d'un produit dans cette boutique — ROUTE FERMÉE.
+       Elle a eu deux vies, fausses toutes les deux. L'écran « Exception
+       produit » écrivait d'abord dans l'overlay sous le nom
+       ws_product_availability, une table qui n'existe nulle part : rien n'était
+       enregistré. La route a ensuite écrit pour de bon dans ws_product_shops —
+       mais en donnant à la boutique un choix qui n'est pas le sien. */
     if ($m === 'POST' && $p === '/franchisee/product-availability') {
-      if (!$tblExists('ws_product_shops') || !$tblExists('ws_products'))
-        json_out(['ok' => false, 'error' => 'Tables produits absentes.'], 501);
-      if (!$shopId) json_out(['ok' => false, 'error' => 'Portée boutique requise.'], 400);
-      $b   = body();
-      $sc  = (int) $shopId;
-      $nom = trim((string) ($b['produit'] ?? ''));
-      if ($nom === '') json_out(['ok' => false, 'error' => 'Produit non précisé.'], 400);
-      $pr = row("SELECT id, active FROM ws_products WHERE name=?", [$nom]);
-      if (!$pr) json_out(['ok' => false, 'error' => "Produit « $nom » inconnu au catalogue."], 404);
-      if ((int) $pr['active'] === 0)
-        json_out(['ok' => false, 'error' => "« $nom » est désactivé par la marque — cela ne se lève pas depuis une boutique."], 403);
-      $pid = (int) $pr['id'];
+      /* QUI DÉCIDE — RÈGLE MÉTIER, PAS UN DÉTAIL D'ÉCRAN.
+         La MARQUE choisit l'assortiment : quels produits sont disponibles et
+         vendus, dans chaque boutique. Le FRANCHISÉ ne saisit que les QUANTITÉS
+         produites (ws_product_stock, routes /franchisee/stock-*).
 
-      $st = (string) ($b['statut'] ?? '');
-      $map = ['Disponible' => [1, 0], 'Désactivé en boutique' => [0, 0], 'Sans livraison' => [1, 1]];
-      if (!isset($map[$st]))
-        json_out(['ok' => false, 'error' => 'Statut attendu : Disponible, Désactivé en boutique, ou Sans livraison.'], 400);
-      [$act, $nd] = $map[$st];
-
-      if (row("SELECT product_id FROM ws_product_shops WHERE product_id=? AND shop_id=?", [$pid, $sc]))
-        q("UPDATE ws_product_shops SET active=?, no_delivery=? WHERE product_id=? AND shop_id=?", [$act, $nd, $pid, $sc]);
-      else
-        q("INSERT INTO ws_product_shops (product_id, shop_id, active, no_delivery) VALUES (?,?,?,?)", [$pid, $sc, $act, $nd]);
-      json_out(['ok' => true, 'statut' => $st]);
+         Cette route donnait au franchisé la main sur la disponibilité. Elle est
+         fermée, et elle DIT pourquoi plutôt que de rendre 404 : retirer la
+         bascule de l'écran sans fermer la route aurait laissé le levier ouvert
+         à qui appelle l'API directement — un onglet resté ouvert sur l'ancienne
+         version suffisait. */
+      json_out(['ok' => false, 'error' =>
+        'L’assortiment est décidé par la marque. Une boutique ne choisit pas ce qu’elle vend ; '
+        . 'elle saisit les quantités produites (Stock du jour).'], 403);
     }
 
     /* ── Écrans TDB / prep / suivi / validations / stock / assortiment ──
@@ -7784,41 +7769,23 @@ function dispatch($m, $p) {
       json_out(array_values($cats));
     }
 
-    // ── Assortiment par boutique : BASCULE RÉELLE ws_product_shops. ──
-    //    {product, active} = un produit ; {cat, active} = toute la catégorie.
-    //    Les produits « marque obligatoire » ne sont jamais désactivés.
+    // ── Assortiment par boutique : ROUTE FERMÉE. ──
+    //    Elle basculait ws_product_shops.active, par produit ou par catégorie.
+    //    La lecture reste ouverte : GET /franchisee/fr-assortiment, juste après.
     if ($m === 'POST' && $p === '/franchisee/assortiment-toggle') {
-      $b = body();
-      if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
-      if (!$tblExists('ws_product_shops') || !$tblExists('ws_products')) json_out(['ok' => false, 'error' => 'tables produits absentes'], 501);
-      $active = !empty($b['active']) ? 1 : 0;
-      $prods = [];
-      $wlCol = col_exists('ws_products', 'brand_whitelist');
-      if (!empty($b['product'])) {
-        $pr = $findProduct($b, 'id, brand_mandatory' . ($wlCol ? ', COALESCE(brand_whitelist,1) AS wl' : ', 1 AS wl'));
-        if (!$pr) $prodKo($b);
-        if ((int) $pr['brand_mandatory'] && !$active) json_out(['ok' => false, 'error' => 'Produit « marque obligatoire » — sa production ne peut pas être refusée'], 400);
-        // Retiré du catalogue réseau par la marque : le franchisé ne peut pas le
-        // rouvrir. Il ne le voit plus dans sa liste ; cette garde couvre l'appel
-        // direct, et le DIT plutôt que d'ignorer en silence.
-        if (!(int) $pr['wl'] && $active)
-          json_out(['ok' => false, 'error' => 'Produit retiré du catalogue réseau par la marque — l’accès est une décision réseau, elle ne se lève pas depuis une boutique.'], 400);
-        $prods[] = $pr;
-      } elseif (!empty($b['cat'])) {
-        $prods = rows("SELECT pr.id, pr.brand_mandatory FROM ws_products pr
-                        LEFT JOIN ws_categories c ON c.id = pr.cat_id
-                       WHERE pr.active=1 AND TRIM(c.label)=?" . whitelist_where('pr'), [trim((string) $b['cat'])]);
-        if (!$prods) json_out(['ok' => false, 'error' => 'catégorie inconnue'], 400);
-      } else json_out(['ok' => false, 'error' => 'product ou cat requis'], 400);
-      $n = 0;
-      foreach ($prods as $pr) {
-        if ((int) $pr['brand_mandatory'] && !$active) continue; // verrou marque
-        q("INSERT INTO ws_product_shops (product_id, shop_id, active, no_delivery)
-             VALUES (?,?,?,0)
-             ON DUPLICATE KEY UPDATE active=VALUES(active)", [(int) $pr['id'], (int) $shopId, $active]);
-        $n++;
-      }
-      json_out(['ok' => true, 'n' => $n, 'active' => (bool) $active]);
+      /* QUI DÉCIDE — RÈGLE MÉTIER, PAS UN DÉTAIL D'ÉCRAN.
+         La MARQUE choisit l'assortiment : quels produits sont disponibles et
+         vendus, dans chaque boutique. Le FRANCHISÉ ne saisit que les QUANTITÉS
+         produites (ws_product_stock, routes /franchisee/stock-*).
+
+         Cette route donnait au franchisé la main sur la disponibilité. Elle est
+         fermée, et elle DIT pourquoi plutôt que de rendre 404 : retirer la
+         bascule de l'écran sans fermer la route aurait laissé le levier ouvert
+         à qui appelle l'API directement — un onglet resté ouvert sur l'ancienne
+         version suffisait. */
+      json_out(['ok' => false, 'error' =>
+        'L’assortiment est décidé par la marque. Une boutique ne choisit pas ce qu’elle vend ; '
+        . 'elle saisit les quantités produites (Stock du jour).'], 403);
     }
 
     // Assortiment — ws_products × ws_product_shops (actif / sans livraison / verrou marque).
