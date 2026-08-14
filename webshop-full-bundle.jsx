@@ -61,52 +61,67 @@ document.addEventListener('click', (e) => {
   e.stopPropagation(); e.preventDefault();
 }, { capture: true });
 function wsTap(fn, opts) {
-  const doOpen = !!(opts && (opts.open || opts.shield));
-  const doStop = !!(opts && opts.stop);
-  const st = (e) => { if (doStop) e.stopPropagation(); };
-  const fire = (el) => {
-    const p = el.__wsTap || (el.__wsTap = {});
-    p.handled = performance.now();
-    if (doOpen) wsShield();
-    fn();
-  };
+  /* ÉCOUTEURS NATIFS, PAS SYNTHÉTIQUES. Diagnostic au doigt sur la fiche
+     produit : les événements natifs d'un tap ATTEIGNENT l'élément et
+     remontent jusqu'à la racine (sondes posées à chaque étage), mais la
+     délégation synthétique de React n'invoquait AUCUN gestionnaire de la
+     carte tapée — alors qu'un click dispatché par script passait. Plutôt que
+     de dépendre de cette dispatche défaillante, chaque élément reçoit ses
+     écouteurs natifs via ref. La closure du DERNIER rendu est rejouée
+     (el.__wsTapConf.fn), les écouteurs ne sont posés qu'une fois par nœud,
+     et meurent avec lui. */
+  const conf = { fn, doOpen: !!(opts && (opts.open || opts.shield)), doStop: !!(opts && opts.stop) };
   return {
-    onPointerDown: (e) => {
-      st(e);
-      e.currentTarget.__wsTap = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, handled: 0 };
-    },
-    onPointerUp: (e) => {
-      st(e);
-      const p = e.currentTarget.__wsTap;
-      if (!p || p.id !== e.pointerId || !p.t) return;
-      const moved = Math.abs(e.clientX - p.x) > 14 || Math.abs(e.clientY - p.y) > 14;
-      if (!moved && performance.now() - p.t < 600 && !(p.handled && performance.now() - p.handled < 350)) fire(e.currentTarget);
-    },
-    onTouchStart: (e) => {
-      st(e);
-      const t = e.touches[0]; if (!t) return;
-      const p = e.currentTarget.__wsTap || (e.currentTarget.__wsTap = {});
-      p.tx = t.clientX; p.ty = t.clientY; p.tt = performance.now();
-    },
-    onTouchEnd: (e) => {
-      st(e);
-      const p = e.currentTarget.__wsTap; const t = e.changedTouches && e.changedTouches[0];
-      if (!p || !t || !p.tt) return;
-      if (p.handled && performance.now() - p.handled < 350) return;
-      const moved = Math.abs(t.clientX - p.tx) > 12 || Math.abs(t.clientY - p.ty) > 12;
-      if (!moved && performance.now() - p.tt < 600) fire(e.currentTarget);
-    },
-    onClick: (e) => {
-      st(e);
-      const p = e.currentTarget.__wsTap || {};
-      const now = performance.now();
-      if (p.handled && now - p.handled < 400) return;
-      const sawPress = (p.t && now - p.t < 600) || (p.tt && now - p.tt < 600);
-      if (!sawPress && now - __wsOpenedAt < 250) return;
-      fire(e.currentTarget);
+    ref: (el) => {
+      if (!el) return;
+      el.__wsTapConf = conf;
+      if (el.__wsTapBound) return;
+      el.__wsTapBound = true;
+      const st = (e) => { if (el.__wsTapConf.doStop) e.stopPropagation(); };
+      const fire = () => {
+        const p = el.__wsTap || (el.__wsTap = {});
+        p.handled = performance.now();
+        if (el.__wsTapConf.doOpen) wsShield();
+        el.__wsTapConf.fn();
+      };
+      el.addEventListener('pointerdown', (e) => {
+        st(e);
+        el.__wsTap = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, handled: 0 };
+      });
+      el.addEventListener('pointerup', (e) => {
+        st(e);
+        const p = el.__wsTap;
+        if (!p || p.id !== e.pointerId || !p.t) return;
+        const moved = Math.abs(e.clientX - p.x) > 14 || Math.abs(e.clientY - p.y) > 14;
+        if (!moved && performance.now() - p.t < 600 && !(p.handled && performance.now() - p.handled < 350)) fire();
+      });
+      el.addEventListener('touchstart', (e) => {
+        st(e);
+        const t = e.touches[0]; if (!t) return;
+        const p = el.__wsTap || (el.__wsTap = {});
+        p.tx = t.clientX; p.ty = t.clientY; p.tt = performance.now();
+      }, { passive: true });
+      el.addEventListener('touchend', (e) => {
+        st(e);
+        const p = el.__wsTap; const t = e.changedTouches && e.changedTouches[0];
+        if (!p || !t || !p.tt) return;
+        if (p.handled && performance.now() - p.handled < 350) return;
+        const moved = Math.abs(t.clientX - p.tx) > 12 || Math.abs(t.clientY - p.ty) > 12;
+        if (!moved && performance.now() - p.tt < 600) fire();
+      });
+      el.addEventListener('click', (e) => {
+        st(e);
+        const p = el.__wsTap || {};
+        const now = performance.now();
+        if (p.handled && now - p.handled < 400) return;
+        const sawPress = (p.t && now - p.t < 600) || (p.tt && now - p.tt < 600);
+        if (!sawPress && now - __wsOpenedAt < 250) return;
+        fire();
+      });
     },
   };
 }
+
 
 // Diagnostic terrain : ?tapdebug=1 affiche les derniers événements tactiles
 // (type + cible) dans un coin de l'écran — pour voir ce que LE téléphone fait
@@ -951,9 +966,6 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     sc.scrollTo({ top: Math.max(0, computeTarget(elRect, scRect)), behavior: IS_TOUCH ? 'auto' : 'smooth' });
   }
   function pickBundle(bid) {
-    // Re-tap (ou tap remonté depuis l'intérieur) sur la formule DÉJÀ choisie :
-    // ne rien faire. L'ancien passage remettait bundleSlots à zéro — avec deux
-    // rubriques, remplir la seconde effaçait la première.
     if (bid === bundleId) return;
     setBundleId(bid);
     setBundleSlots({});
