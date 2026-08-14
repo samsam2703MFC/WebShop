@@ -1853,11 +1853,14 @@ function dispatch($m, $p) {
     $hasDept = col_exists('client', 'department_id') && $deptId;
     /* office_id N'EST PAS ÉCRIT ICI. C'est la clé de la livraison au bureau :
        la poser à l'inscription reviendrait à laisser le porteur du lien
-       commander sur le compte de l'entreprise avant toute validation. */
+       commander sur le compte de l'entreprise avant toute validation.
+       source_channel : 'webshop' obligatoirement — la colonne est un ENUM en
+       prod qui ne connaît pas 'invite' (erreur 1265 → 500 sur tout le flux).
+       L'origine « invitation » reste tracée par la demande de rattachement. */
     q("INSERT INTO client (id_main_shop, " . ($hasPref ? "preferred_shop_id, " : "") . "email, phone, phone_prefix, phone_e164,
                            name, surname, zip, " . ($hasLoc ? "locality, " : "") . ($hasDept ? "department_id, " : "") . "password_hash,
                            active, source_channel, webshop_user, preferred_auth_method)
-       VALUES (?," . ($hasPref ? "?," : "") . "?,?,?,?,?,?,?," . ($hasLoc ? "?," : "") . ($hasDept ? "?," : "") . "?,1,'invite',1,'email')",
+       VALUES (?," . ($hasPref ? "?," : "") . "?,?,?,?,?,?,?," . ($hasLoc ? "?," : "") . ($hasDept ? "?," : "") . "?,1,'webshop',1,'email')",
       array_merge([$shopI], $hasPref ? [$shopI] : [],
         [$mail, ($phone ?: null), ($phone !== '' ? $pfx : null), ($e164 ?: null), $first, $last, $zip],
         $hasLoc ? [$loc] : [], $hasDept ? [$deptId] : [],
@@ -6137,7 +6140,7 @@ function dispatch($m, $p) {
                 (col_exists('ws_offices', 'shop_id') && $shopId ? " AND o.shop_id = " . (int) $shopId : "") . "
                  ORDER BY o.name LIMIT 200")
         : [];
-      $products = rows("SELECT p.id, p.name AS nom, c.label AS sub, COALESCE(pp.price, p.price) AS price
+      $products = rows("SELECT p.id, p.name AS nom, c.label AS sub, p.price AS price
                           FROM ws_products p
                           LEFT JOIN ws_categories c ON c.id = p.cat_id
                          WHERE p.active=1 ORDER BY p.name LIMIT 500");
