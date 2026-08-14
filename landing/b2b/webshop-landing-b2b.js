@@ -147,22 +147,60 @@
       var D = this.content();
       var t = function (fr, nl) { return self.state.lang === 'nl' ? nl : fr; };
       var shopId = this.resolveShop(this.state.zoneVal);
-      var body;
-      if (shopId === 0) {
-        body = t(
-          'Un événement de cette ampleur hors zone couverte est une décision réseau : votre demande part directement à notre direction événements, qui vous recontacte.',
-          'Een evenement van deze omvang buiten de dekkingszone is een netwerkbeslissing: uw aanvraag gaat rechtstreeks naar onze evenementendirectie, die contact opneemt.'
-        );
-      } else {
-        var z = D.zones.find(function (x) { return String(x.id) === String(self.state.zoneVal); });
-        var shop = z ? z.shop : '';
-        body = t(
-          'Votre demande a été transmise à la boutique de ' + shop + ', qui couvre votre zone. Un interlocuteur dédié vous recontacte pour le devis et la dégustation.',
-          'Uw aanvraag is doorgestuurd naar de winkel van ' + shop + ', die uw zone dekt. Een toegewijd contact neemt contact op voor de offerte en de proeverij.'
-        );
-      }
-      this.setState({ modalOpen: true, routedName: body, zoneVal: '', eventType: '', cpVisible: false });
-      try { form.reset(); } catch (er) {}
+      /* ENVOI RÉEL. L'ancien code affichait « demande transmise » puis vidait
+         le formulaire SANS RIEN ENVOYER (résidu de mode démo) : chaque
+         prospect réel était perdu en silence. La demande part désormais à
+         l'API (table ws_b2b_event_requests + mail d'alerte) ; le succès ne
+         s'affiche que si le serveur a accepté, l'échec est dit tel quel. */
+      var payload = {
+        eventType: form.type_evenement ? form.type_evenement.value : '',
+        eventDate: form.date_evenement ? form.date_evenement.value : '',
+        guests: form.nombre_convives ? form.nombre_convives.value : '',
+        zoneId: this.state.zoneVal,
+        shopId: shopId || null,
+        postalCode: form.code_postal ? form.code_postal.value : '',
+        budget: form.budget_indicatif ? form.budget_indicatif.value : '',
+        company: form.societe ? form.societe.value : '',
+        vat: form.numero_tva ? form.numero_tva.value : '',
+        contactName: form.contact_nom ? form.contact_nom.value : '',
+        email: form.email_pro ? form.email_pro.value : '',
+        phone: form.telephone ? form.telephone.value : '',
+        message: form.besoins_specifiques ? form.besoins_specifiques.value : '',
+        consent: !!(form.consentement && form.consentement.checked),
+      };
+      // La landing vit sous /landing/b2b/ (alias Apache) ; l'API du site vit
+      // sous /webshop/api — même origine.
+      var API = location.origin + '/webshop/api';
+      fetch(API + '/b2b/event-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          if (!res.ok) throw new Error(res.j && res.j.error ? res.j.error : 'Erreur serveur');
+          var body;
+          if (shopId === 0) {
+            body = t(
+              'Votre demande est enregistrée : hors zone couverte, elle part directement à notre direction événements, qui vous recontacte.',
+              'Uw aanvraag is geregistreerd: buiten de dekkingszone gaat ze rechtstreeks naar onze evenementendirectie, die contact opneemt.'
+            );
+          } else {
+            var z = D.zones.find(function (x) { return String(x.id) === String(self.state.zoneVal); });
+            var shop = z ? z.shop : '';
+            body = t(
+              'Votre demande est enregistrée pour la boutique de ' + shop + ', qui couvre votre zone. Un interlocuteur dédié vous recontacte pour le devis et la dégustation.',
+              'Uw aanvraag is geregistreerd voor de winkel van ' + shop + ', die uw zone dekt. Een toegewijd contact neemt contact op voor de offerte en de proeverij.'
+            );
+          }
+          self.setState({ modalOpen: true, routedName: body, zoneVal: '', eventType: '', cpVisible: false });
+          try { form.reset(); } catch (er) {}
+        })
+        .catch(function (err) {
+          self.setState({ modalOpen: true, routedName: t(
+            'Votre demande n\'a PAS pu être enregistrée (' + err.message + '). Réessayez, ou écrivez-nous : vos informations saisies sont conservées à l\'écran.',
+            'Uw aanvraag kon NIET worden geregistreerd (' + err.message + '). Probeer opnieuw of schrijf ons: uw gegevens blijven op het scherm staan.'
+          ) });
+        });
     }
 
     cards() {
@@ -330,11 +368,10 @@
           { photoId: 'ev-photo-2', logoId: 'ev-logo-2', tag: t('Mariage', 'Huwelijk'), caption: t('Réception de mariage — pièce montée et assortiment de mignardises pour la salle.', 'Huwelijksreceptie — pièce montée en assortiment zoetigheden voor de zaal.'), photoPh: t('Photo de l’événement', 'Foto van het evenement'), logoPh: t('Logo client', 'Klantlogo') },
           { photoId: 'ev-photo-3', logoId: 'ev-logo-3', tag: t('Traiteur', 'Traiteur'), caption: t('Buffet traiteur — livraison coordonnée et coffee breaks tout au long de la journée.', 'Cateringbuffet — gecoördineerde levering en coffee breaks doorheen de dag.'), photoPh: t('Photo de l’événement', 'Foto van het evenement'), logoPh: t('Logo client', 'Klantlogo') }
         ],
-        testimonials: [
-          { quote: t('« 000 pièces sur 0 jours, sans une livraison en retard. »', '« 000 stuks over 0 dagen, zonder één late levering. »'), author: '—', company: t('Événement corporate', 'Corporate evenement') },
-          { quote: t('« 000 convives servis sur 0 sites en simultané. »', '« 000 gasten bediend op 0 locaties tegelijk. »'), author: '—', company: t('Traiteur partenaire', 'Partner-traiteur') },
-          { quote: t('« Réactivité et discrétion, à chaque fois. »', '« Reactiviteit en discretie, elke keer. »'), author: '—', company: t('Salle de réception', 'Feestzaal') }
-        ],
+        // Témoignages : VIDES tant qu'il n'y a pas de références réelles à
+        // citer — les citations fabriquées (« 000 pièces sur 0 jours ») se
+        // présentaient comme des témoignages clients authentiques.
+        testimonials: [],
         faq: this.faq(),
         zones: [
           { id: 1, shopId: 1, shop: 'Halle', name: t('Halle & environs', 'Halle & omgeving') },
@@ -537,7 +574,8 @@
           )
         ),
 
-        /* ============ RÉFÉRENCES ============ */
+        /* ============ RÉFÉRENCES (masquée tant que vide) ============ */
+        D.testimonials.length === 0 ? null :
         React.createElement('section', { id: 'references', style: css('scroll-margin-top:88px;padding:clamp(64px,9vw,110px) clamp(20px,5vw,56px);') },
           React.createElement('div', { style: css('max-width:1180px;margin:0 auto;') },
             React.createElement('div', { 'data-rev': true, style: css('max-width:760px;') },

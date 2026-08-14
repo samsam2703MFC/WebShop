@@ -28,15 +28,10 @@ CREATE TABLE IF NOT EXISTS shop_product_portion_price (
   KEY idx_shop_product_portion_price_portion (id_product_portion)
 );
 
--- Données de test fournies (produits 6700237 et 6700230 ; prix boutique 2).
-INSERT IGNORE INTO product_portion (id, id_product, portion_type, is_active, display_order) VALUES
-(1, 6700237, 'ONE_HALF', 1, 1),
-(2, 6700237, 'ONE_QUARTER', 1, 2),
-(3, 6700237, 'ONE_EIGHTH', 1, 3),
-(4, 6700230, 'ONE_HALF', 1, 1),
-(5, 6700230, 'ONE_QUARTER', 1, 2),
-(6, 6700230, 'ONE_EIGHTH', 1, 3);
-
-INSERT IGNORE INTO shop_product_portion_price (id, id_shop, id_product_portion, price) VALUES
-(1, 2, 4, 14.90),
-(2, 2, 5, 8.90);
+-- Les « données de test fournies » (portions actives des produits 6700237 et
+-- 6700230 + deux PRIX boutique 2 : 14,90 € et 8,90 €) ont été RETIRÉES de ce
+-- fichier à l'audit d'avant go-live : ces tables appartiennent à l'ERP, une
+-- migration webshop n'y invente rien. NOTE PRODUCTION : la version précédente
+-- de cette migration a pu insérer ces lignes (product_portion id 1-6,
+-- shop_product_portion_price id 1-2) — à vérifier/purger côté ERP si elles ne
+-- correspondent pas à une configuration réelle.
