@@ -4578,6 +4578,21 @@ function dispatch($m, $p) {
     // d'ids : le front édite en local, on réécrit l'arbre en base à chaque save.
     if ($m === 'POST' && $p === '/franchisor/menu') {
       $b = body(); $pid = (int) ($b['productId'] ?? 0);
+      $creation = false;
+      /* MENU CRÉÉ À L'ÉCRAN : « + Créer un menu » forge un identifiant local
+         (menu-xxx) que le cast (int) transformait en 0 → 400. Un tel menu ne
+         pouvait DONC JAMAIS être enregistré — ni ses formules ni, depuis la
+         0078, ses déclencheurs (constaté par l'utilisateur : « Enregistrez
+         d'abord une formule… » en boucle). À la première sauvegarde, on crée
+         ici le produit-menu réel et on REND SON IDENTIFIANT : l'écran bascule
+         dessus et tout le reste (formules, déclencheurs, commandes) suit. */
+      if (!$pid && ($b['productName'] ?? '') !== '' && !is_numeric($b['productId'] ?? null)) {
+        q("INSERT INTO ws_products (name, price, base_cost, active, menu_override)
+           VALUES (?, ?, ?, 1, 'on')",
+          [(string) $b['productName'], (float) ($b['basePrice'] ?? 0), (float) ($b['baseCost'] ?? 0)]);
+        $pid = (int) db()->lastInsertId();
+        $creation = true;
+      }
       if (!$pid) json_out(['error' => 'productId requis'], 400);
       $ov = isset($b['menuOverride']) && in_array($b['menuOverride'], ['on','off'], true) ? $b['menuOverride'] : null;
       $bundles = is_array($b['bundles'] ?? null) ? $b['bundles'] : [];
@@ -4633,8 +4648,10 @@ function dispatch($m, $p) {
         }
         $pdo->commit();
       } catch (Throwable $e) { $pdo->rollBack(); json_out(['error' => 'échec sauvegarde menu'], 500); }
-      $audit('menu.save', 'ws_bundles', $pid, null, ['bundles' => count($bundles)]);
-      json_out(['ok' => true]);
+      $audit('menu.save', 'ws_bundles', $pid, null, ['bundles' => count($bundles), 'creation' => $creation]);
+      // productId TOUJOURS rendu : à la création, c'est lui qui permet à
+      // l'écran de remplacer son identifiant local par le vrai.
+      json_out(['ok' => true, 'productId' => $pid]);
     }
 
     json_out(['error' => 'Not found', 'path' => $p], 404);
