@@ -14,6 +14,24 @@ document.addEventListener('touchstart', function () {}, { passive: true });
 // doivent donc plus attendre la fin d'une animation qui n'existe plus.
 const IS_TOUCH = window.matchMedia && window.matchMedia('(hover: none)').matches;
 
+// Diagnostic terrain : ?tapdebug=1 affiche les derniers événements tactiles
+// (type + cible) dans un coin de l'écran — pour voir ce que LE téléphone fait
+// réellement d'un tap qui « ne marche pas », sans outillage branché.
+if (/[?&]tapdebug=1/.test(location.search)) {
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;left:4px;bottom:4px;z-index:99999;background:rgba(0,0,0,.78);color:#7CFC90;font:10px/1.4 monospace;padding:6px 8px;border-radius:6px;max-width:72vw;pointer-events:none;white-space:pre;';
+  document.body.appendChild(box);
+  const lines = [];
+  const log = (e) => {
+    const cls = ((e.target.getAttribute && e.target.getAttribute('class')) || e.target.tagName || '?').split(' ')[0];
+    lines.push((e.type + '            ').slice(0, 13) + cls.slice(0, 26));
+    if (lines.length > 9) lines.shift();
+    box.textContent = lines.join('\n');
+  };
+  for (const t of ['pointerdown', 'pointerup', 'pointercancel', 'touchstart', 'touchend', 'touchcancel', 'click'])
+    document.addEventListener(t, log, { capture: true, passive: true });
+}
+
 // =========================================================================
 // DATA
 // =========================================================================
@@ -858,13 +876,29 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
         const p = pressRef.current;
         if (p.id !== e.pointerId || p.t === undefined) return;
         const moved = Math.abs(e.clientX - p.x) > 14 || Math.abs(e.clientY - p.y) > 14;
-        if (!moved && performance.now() - p.t < 600) { p.handled = performance.now(); fn(); }
+        if (!moved && performance.now() - p.t < 600 && !already()) fire();
+      },
+      // Filet : si le navigateur requalifie le geste (pointercancel), pointerup
+      // n'arrive JAMAIS — mais touchend, si. Un relâchement quasi immobile
+      // ouvre quand même. Dédup par horodatage commun avec pointerup/click.
+      onTouchStart: (e) => {
+        const t = e.touches[0];
+        if (t) Object.assign(pressRef.current, { tx: t.clientX, ty: t.clientY, tt: performance.now() });
+      },
+      onTouchEnd: (e) => {
+        const p = pressRef.current;
+        const t = e.changedTouches && e.changedTouches[0];
+        if (!t || p.tt === undefined) return;
+        const moved = Math.abs(t.clientX - p.tx) > 12 || Math.abs(t.clientY - p.ty) > 12;
+        if (!moved && performance.now() - p.tt < 600 && !already()) fire();
       },
       onClick: () => {
-        if (performance.now() - pressRef.current.handled < 400) return;
-        fn();
+        if (already()) return;
+        fire();
       },
     };
+    function fire() { pressRef.current.handled = performance.now(); fn(); }
+    function already() { return performance.now() - (pressRef.current.handled || 0) < 400; }
   }
   // Un accordéon qui vient de s'ouvrir (animation ~300 ms) ne doit pas se
   // REFERMER sur un re-tap réflexe « ça n'a pas marché » : anti-rebond.
