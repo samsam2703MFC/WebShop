@@ -1640,8 +1640,12 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
 // The back key carries the current category NAME on purpose: once the line
 // switches to subcategories, that name would otherwise vanish from screen —
 // the key both says where you are and lets you leave.
-// A category with 0 or 1 subcategory never switches level (a single choice
-// is not a choice): the click just filters the grid.
+// A category with NO subcategory never switches level: there is nothing to
+// switch to. A category with ONE does switch — its subcategory carries a
+// label and an illustration of its own, and hiding it made the second level
+// vanish for a whole shop. "A single choice is not a choice" was reasoning
+// about a filter; a subcategory is also a signpost, and a shop whose entire
+// catalogue sits under one of them showed no second level at all.
 // =========================================================================
 function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint, categories, assortments, navIcons }) {
   // i18n : hook global (webshop-i18n-react, chargé avant ce bundle) — un
@@ -1653,8 +1657,14 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
   const assorts = assortments || W_ASSORTMENTS;
   const activeCat = cats.find((c) => String(c.id) === String(active)) || null;
   const subs = activeCat?.subs || [];
-  // Niveau sous-catégories seulement si la catégorie propose un vrai choix.
-  const subLevel = !!activeCat && subs.length >= 2;
+  /* Niveau sous-catégories dès qu'il y en a UNE. Le seuil était à deux, au
+     motif qu'« un choix unique n'est pas un choix » : vrai d'un filtre, faux
+     d'un repère. Relevé en production — Biscuiterie, Boulangerie et
+     Pâtisserie n'ont qu'une sous-catégorie peuplée chacune, et une boutique
+     dont tout le catalogue tient dans l'une d'elles n'avait aucun second
+     niveau. Les sous-catégories vides, elles, sont déjà écartées en amont
+     (navCats ne garde que celles qui contiennent un produit du créneau). */
+  const subLevel = !!activeCat && subs.length >= 1;
   const catName = activeCat ? tCategory(activeCat.id, activeCat.label) : '';
 
   const visibleCount = 5;
@@ -4943,14 +4953,17 @@ function ShopFrame({ variant }) {
       else window.history.replaceState(window.history.state, '', url);
     } catch (_) {}
   }, []);
+  // MÊME SEUIL QUE CategoryRow, obligatoirement : celui-ci décide de l'étape
+  // d'historique, celui-là de l'affichage. Deux valeurs différentes et le
+  // bouton Retour du navigateur ne correspond plus à ce qu'on voit.
   const catHasSubLevel = React.useCallback((cid) => {
     const c = (navCats || []).find((x) => String(x.id) === String(cid));
-    return !!c && (c.subs || []).length >= 2;
+    return !!c && (c.subs || []).length >= 1;
   }, [navCats]);
   const selectCat = React.useCallback((cid) => {
     setCat(cid); setSubCat(null);
     // Entrer au niveau sous-catégories = étape d'historique ; une catégorie
-    // sans (vrai) choix de sous-catégories filtre sans changer de niveau.
+    // sans aucune sous-catégorie peuplée filtre sans changer de niveau.
     syncCatUrl(cid, null, cid !== 'all' && catHasSubLevel(cid));
   }, [syncCatUrl, catHasSubLevel]);
   const backToCats = React.useCallback(() => {
