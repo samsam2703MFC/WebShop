@@ -836,7 +836,39 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     }, 340);
   }
   function toggleUpsell(id)        { setUpsellIds((s) => ({ ...s, [id]: !s[id] })); }
+  /* OUVERTURE FIABLE AU DOIGT. Sur téléphone, taper pendant que l'inertie du
+     scroll court encore ARRÊTE le défilement et le navigateur n'émet aucun
+     click : la carte de formule ou l'accordéon ne s'ouvrait « pas » (en fait,
+     jamais tapé aux yeux du DOM). pointerup, lui, est émis même dans ce cas.
+     On déclenche donc l'ouverture au pointerup — avec garde de mouvement :
+     un vrai glissement (doigt qui bouge, pointercancel) n'ouvre rien. Le
+     click reste câblé pour le clavier et les navigateurs sans pointer events,
+     avec un verrou pour ne pas rejouer l'action déjà faite au pointerup. */
+  const pressRef = React.useRef({ handled: 0 });
+  function tapToOpen(fn) {
+    return {
+      onPointerDown: (e) => {
+        pressRef.current = { handled: pressRef.current.handled, x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId };
+      },
+      onPointerUp: (e) => {
+        const p = pressRef.current;
+        if (p.id !== e.pointerId || p.t === undefined) return;
+        const moved = Math.abs(e.clientX - p.x) > 14 || Math.abs(e.clientY - p.y) > 14;
+        if (!moved && performance.now() - p.t < 600) { p.handled = performance.now(); fn(); }
+      },
+      onClick: () => {
+        if (performance.now() - pressRef.current.handled < 400) return;
+        fn();
+      },
+    };
+  }
+  // Un accordéon qui vient de s'ouvrir (animation ~300 ms) ne doit pas se
+  // REFERMER sur un re-tap réflexe « ça n'a pas marché » : anti-rebond.
+  const lastToggle = React.useRef({});
   function toggleOpt(oid)          {
+    const now = performance.now();
+    if (lastToggle.current[oid] && now - lastToggle.current[oid] < 350) return;
+    lastToggle.current[oid] = now;
     setOpenOpts((s) => {
       const next = { ...s, [oid]: !s[oid] };
       // After the accordion finishes opening, glide its body to vertical center
@@ -1030,7 +1062,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                     <div key={id}
                          ref={(el) => { if (el) optRefs.current[id] = el; }}
                          className={'pdm-opt' + (isOpen ? ' is-open' : '') + (activeOpt === id ? ' is-active' : '')}>
-                      <button className="pdm-opt__head" onClick={() => toggleOpt(id)} aria-expanded={isOpen}>
+                      <button className="pdm-opt__head" {...tapToOpen(() => toggleOpt(id))} aria-expanded={isOpen}>
                         <span className="pdm-opt__head-l">
                           <span className="pdm-opt__label">Pour accompagner</span>
                           {!isOpen && count > 0 && <span className="pdm-opt__sub">{count} ajout{count>1?'s':''}</span>}
@@ -1087,7 +1119,8 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                     return (
                       <div key={b.id || 'alc'}
                            className={'pdm-bcard' + (picked ? ' is-picked' : '')}
-                           onClick={() => pickBundle(b.id)}>
+                           role="button"
+                           {...tapToOpen(() => pickBundle(b.id))}>
                         {b.recommended && <span className="pdm-bcard__badge">Best option</span>}
                         <div className="pdm-bcard__top">
                           <span className="pdm-bcard__name">{b.name}</span>
@@ -1105,7 +1138,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                         )}
                         {/* progressive disclosure: bundle slots open softly when picked */}
                         <div className={'pdm-bcard__expand' + (picked && b.id !== null && b.slots?.length > 0 ? ' is-open' : '')}>
-                          <div className="pdm-bcard__expand-inner" onClick={(e) => e.stopPropagation()}>
+                          <div className="pdm-bcard__expand-inner" onClick={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
                             {b.slots?.map((slot) => (
                               <div key={slot.id} className="pdm-opt is-open" style={{ background: 'transparent', boxShadow: 'none' }}>
                                 <div style={{ padding: '4px 0 0' }}>
