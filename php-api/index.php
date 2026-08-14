@@ -319,6 +319,7 @@ function ws_voucher_upsert(array $o) {
     // seulement si la table existe (réplica pas encore migré → ancien chemin).
     $trgSql = tbl_exists('ws_bundle_triggers')
       ? " OR EXISTS(SELECT 1 FROM ws_bundle_triggers tg
+                     JOIN ws_bundles tb ON tb.product_id = tg.product_id AND tb.active = 1
                      WHERE tg.cat_id = p.cat_id
                        AND (tg.sub_cat_id IS NULL OR tg.sub_cat_id = p.sub_cat_id))"
       : '';
@@ -3926,8 +3927,13 @@ function dispatch($m, $p) {
         json_out(['ok' => false, 'error' => 'Table ws_bundle_triggers absente — migration 0078 non appliquée sur ce serveur.'], 501);
       $b = body(); $pid = (int) ($b['product_id'] ?? 0);
       if (!$pid) json_out(['error' => 'product_id requis'], 400);
-      if (!row("SELECT 1 x FROM ws_bundles WHERE product_id = ? LIMIT 1", [$pid]))
-        json_out(['ok' => false, 'error' => 'Ce produit ne porte aucune formule — créez la formule avant ses déclencheurs.'], 400);
+      /* L'ORDRE VOULU : déclencheurs D'ABORD, formules ensuite (retour
+         utilisateur — l'étape 2 précède l'étape 3 à l'écran aussi). On exige
+         donc seulement que le menu EXISTE en produit ; sans formule active,
+         ses déclencheurs sont inertes côté client (has_menu_options ne les
+         compte qu'avec une formule active) et s'animent dès la première. */
+      if (!row("SELECT 1 x FROM ws_products WHERE id = ?", [$pid]))
+        json_out(['ok' => false, 'error' => 'Menu inconnu en base — enregistrez-le d’abord (il se crée à sa première sauvegarde).'], 400);
       $in = is_array($b['triggers'] ?? null) ? $b['triggers'] : [];
       $rows2 = [];
       foreach ($in as $t) {
