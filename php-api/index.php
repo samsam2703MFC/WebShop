@@ -3652,10 +3652,17 @@ function dispatch($m, $p) {
             'active' => (bool) $p2['active'],   // publié au catalogue
             'cc' => (bool) $p2['cc'],           // canal click & collect
             'od' => (bool) $p2['od'],           // canal livraison bureau
-            // `bw` conservé le temps que la console marque bascule sur `cc` :
-            // c'est elle qui pilote le canal, et la couper net éteindrait sa
-            // colonne « Webshop » sans prévenir. À retirer une fois faite.
-            'bw' => (bool) $p2['cc'],
+            /* `bw` DOIT VALOIR `active`, parce que c'est ce que la bascule qui
+               le lit ÉCRIT. La console marque déployée affiche p.bw et poste
+               {active: 0/1} (vérifié dans son code, toggleBw). Servi un temps
+               = cc : pour un produit en brouillon (active=0, cc=1 par défaut),
+               l'interrupteur s'affichait ALLUMÉ — le premier clic « pour le
+               mettre en ligne » écrivait alors active=0 sur un produit déjà
+               éteint, et rien n'apparaissait côté franchisé. Un affichage et
+               une écriture qui ne parlent pas de la même colonne font un
+               interrupteur qui ment. À retirer quand la console lira active/cc
+               directement. */
+            'bw' => (bool) $p2['active'],
             'sub' => $p2['sub'] ?: null, 'sub_id' => $p2['sub_id'] !== null ? (int) $p2['sub_id'] : null,
             'photo' => (!empty($p2['img']) || isset($photos[$p2['id']])), // a une photo produit
             'ad' => $ad, 'saison' => $p2['saison'] ?: null,
@@ -4079,8 +4086,13 @@ function dispatch($m, $p) {
          un 500 sur une colonne disparue serait une panne là où il n'y a qu'un
          écran à mettre à jour. */
       $sets = []; $vals = [];
-      if (array_key_exists('active', $b))          { $sets[] = 'active=?';          $vals[] = !empty($b['active']) ? 1 : 0; }  // « Webshop » = visibilité webshop réelle
+      if (array_key_exists('active', $b))          { $sets[] = 'active=?';          $vals[] = !empty($b['active']) ? 1 : 0; }  // publié au catalogue (la bascule « Webshop » de la console écrit encore ce champ)
       if (array_key_exists('office_delivery', $b)) { $sets[] = 'office_delivery=?'; $vals[] = !empty($b['office_delivery']) ? 1 : 0; }  // canal livraison bureau (« apricot »)
+      // Canal click & collect PAR PRODUIT — la cascade par catégorie l'acceptait
+      // déjà, le produit seul non : la console marque n'aurait pas pu fermer un
+      // seul produit au webshop sans le mettre en brouillon.
+      if (array_key_exists('click_and_collect', $b) && col_exists('ws_products', 'click_and_collect'))
+                                                   { $sets[] = 'click_and_collect=?'; $vals[] = !empty($b['click_and_collect']) ? 1 : 0; }
       if (array_key_exists('price', $b))           { $sets[] = 'price=?';           $vals[] = (float) $b['price']; }
       if (array_key_exists('base_cost', $b))       { $sets[] = 'base_cost=?';       $vals[] = (float) $b['base_cost']; }
       if (array_key_exists('menu_override', $b))   { $sets[] = 'menu_override=?';    $vals[] = in_array($b['menu_override'], ['on','off'], true) ? $b['menu_override'] : null; }
@@ -4151,6 +4163,8 @@ function dispatch($m, $p) {
       if (!$id) json_out(['error' => 'id requis'], 400);
       if (array_key_exists('active', $b))          q("UPDATE ws_products SET active=? WHERE sub_cat_id=?", [!empty($b['active']) ? 1 : 0, $id]);           // « Webshop »
       if (array_key_exists('office_delivery', $b)) q("UPDATE ws_products SET office_delivery=? WHERE sub_cat_id=?", [!empty($b['office_delivery']) ? 1 : 0, $id]); // « Bureau »
+      if (array_key_exists('click_and_collect', $b) && col_exists('ws_products', 'click_and_collect'))
+                                                   q("UPDATE ws_products SET click_and_collect=? WHERE sub_cat_id=?", [!empty($b['click_and_collect']) ? 1 : 0, $id]); // canal C&C, même portée
       if (array_key_exists('menu_override', $b))   q("UPDATE ws_products SET menu_override=? WHERE sub_cat_id=?", [in_array($b['menu_override'], ['on','off'], true) ? $b['menu_override'] : null, $id]);
       $audit('subcategory.update', 'ws_category_subs', $id, null, $b);
       json_out(['ok' => true]);

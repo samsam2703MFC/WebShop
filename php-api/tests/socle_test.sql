@@ -129,3 +129,22 @@ CREATE TABLE IF NOT EXISTS `shop_product` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
 ;
+
+-- bo_audit : créée en production bien avant le socle (schema initial du
+-- back-office). Son absence ici a fait rendre un 500 à POST /franchisor/product
+-- pendant un test E2E local — l'UPDATE passait, puis l'INSERT d'audit tombait.
+-- Le socle doit porter tout ce que les routes écrivent, sinon un test échoue
+-- sur une table que la production a toujours eue.
+CREATE TABLE IF NOT EXISTS `bo_audit` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) DEFAULT NULL,
+  `action` varchar(64) DEFAULT NULL,
+  `entity` varchar(64) DEFAULT NULL,
+  `entity_id` int(11) DEFAULT NULL,
+  `shop_id` int(11) DEFAULT NULL,
+  `payload` text DEFAULT NULL,
+  `ip` varchar(64) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+;
