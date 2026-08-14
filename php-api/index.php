@@ -290,176 +290,32 @@ function ws_voucher_upsert(array $o) {
 }
 
 /* ─────────────────────────── Routes ─────────────────────────── */
-function dispatch($m, $p) {
-  // helper de matching avec :param
-  $match = function ($pat) use ($p) {
-    $rx = '#^' . preg_replace('#:([\w]+)#', '(?<$1>[^/]+)', $pat) . '$#';
-    if (preg_match($rx, $p, $mm)) return $mm;
-    return null;
-  };
+  /* LE CATALOGUE SERVI — SOURCE UNIQUE.
+     Extrait de la route /catalog/products pour que la BARRE DE CATÉGORIES en
+     dérive au lieu de le redéduire. Les deux appliquaient des règles
+     différentes : la barre exigeait ws_categories.active = 1 mais ignorait le
+     prix ERP et le canal bureau, la grille l'inverse. Résultat constaté à
+     l'écran — des cookies vendus sans catégorie où les retrouver, et des
+     catégories menant à une grille vide.
 
-  /* ── Back-offices Franchise Buddy (sessions isolées franchisé / franchiseur) ──
-     Tout « /bo/… » est routé par bo_dispatch() ; chaque route y est protégée par
-     son guard require_bo(). Placé en tête pour ne jamais retomber sur une route
-     publique.
-     EXCEPTION : /bo/pin-* (connexion tablette par PIN). Ces trois routes sont
-     définies plus bas et sont PUBLIQUES par nature — c'est l'écran de connexion
-     lui-même. Sans cette exception, elles n'étaient jamais atteintes : le pavé
-     PIN recevait « Not found » à chaque saisie, quel que soit le code. ── */
-  if (strpos($p, '/bo/') === 0 && strpos($p, '/bo/pin-') !== 0) {
-    bo_dispatch($m, $p);
-    json_out(['error' => 'Not found', 'path' => $p], 404);
-  }
-
-  /* ── Health ── */
-  if ($m === 'GET' && $p === '/health') { db()->query('SELECT 1'); json_out(['ok' => true]); }
-
-  /* ── Config front (clés ws_param en liste blanche — jamais la table entière).
-     Pilote notamment la visibilité de l'onglet Fidélité (masquable en prod sans
-     redéploiement : ws_param.fidelity_tab_enabled = '0') et le délai de demande
-     de facture (invoice_request_deadline : 'end_of_month' par défaut, ou un
-     nombre de jours). ── */
-  if ($m === 'GET' && $p === '/config') {
-    json_out([
-      'fidelityTabEnabled'     => ws_param('fidelity_tab_enabled', '1') !== '0',
-      'invoiceRequestDeadline' => ws_param('invoice_request_deadline', 'end_of_month'),
-      // Nav catégories : icônes des deux touches de première position (Tout /
-      // retour). Ce ne sont PAS des lignes de category — juste des références
-      // média (même bibliothèque que les icônes de catégorie), changeables via
-      // ws_param sans redéploiement.
-      'categoryNavAllIcon'     => ws_param('category_nav_all_icon',  '/webshop/assets/all.png'),
-      'categoryNavBackIcon'    => ws_param('category_nav_back_icon', '/webshop/assets/back.png'),
-    ]);
-  }
-
-  /* ── Shops / Brand ── */
-  if ($m === 'GET' && $p === '/shops') {
-    // La liste des boutiques est la PORTE D'ENTRÉE du webshop : si elle tombe, le
-    // client ne voit AUCUNE boutique. Le handler global renverrait « Erreur interne »
-    // sans dire pourquoi — on remonte donc ici l'erreur RÉELLE (message, ligne et
-    // base connectée), conformément à la règle « soit ça marche avec les vraies
-    // données, soit ça renvoie un bug » : jamais de liste inventée en repli.
-    try {
-      json_out(rows("SELECT id, slug, name, city, email, phone, accent, tint, logo_url,
-                            discount_type AS webshop_discount_type, discount_value AS webshop_discount_value,
-                            TRIM(CONCAT_WS(' ', street, street_num)) AS address
-                       FROM shops WHERE active = 1 AND webshop_enabled = 1 ORDER BY name"));
-    } catch (Throwable $e) {
-      $base = null;
-      try { $base = (row("SELECT DATABASE() d")['d'] ?? null); } catch (Throwable $e2) { $base = 'inconnue'; }
-      json_out(['error' => 'liste des boutiques KO',
-                'detail' => $e->getMessage(),
-                'ligne' => $e->getLine(),
-                'base' => $base], 500);
-    }
-  }
-  if ($m === 'GET' && $p === '/brand') {
-    $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    json_out(row("SELECT id, slug, name, accent, tint, logo_url,
-                         discount_type AS webshop_discount_type, discount_value AS webshop_discount_value
-                    FROM shops WHERE id = ? AND webshop_enabled = 1", [$s]) ?: []);
-  }
-
-  /* ── Lien webshop du client PWA (footer PWA → boutique préférée) ──
-   * GET /webshop-link?clientId=123
-   *   → { url, shopId, slug }
-   * Résout client.preferred_shop_id → shop, et construit l'URL du webshop mobile :
-   *   1) lien absolu shops.landing_config.webshop_url s'il est défini,
-   *   2) sinon <webshop_base>?shop=<slug>,
-   *   3) sinon (pas connecté / pas de shop préféré / colonne absente) → <webshop_base>.
-   * Compatible avant/après unification (shops sinon ws_shops), sans dépendre du
-   * script d'auth : si la colonne preferred_shop_id n'existe pas encore → lien générique.
-   */
-  if ($m === 'GET' && $p === '/webshop-link') {
-    $base = cfg()['webshop_base'] ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html';
-    $cid  = qp('clientId');
-    $shop = null;
-    $hasCol = row("SELECT 1 AS x FROM information_schema.columns
-                     WHERE table_schema=DATABASE() AND table_name='client'
-                       AND column_name='preferred_shop_id'");
-    if ($cid && $hasCol) {
-      $hasShops = row("SELECT 1 AS x FROM information_schema.tables
-                         WHERE table_schema=DATABASE() AND table_name='shops'");
-      if ($hasShops) {
-        $shop = row("SELECT s.id, s.slug, s.webshop_url
-                       FROM client c JOIN shops s ON s.id = c.preferred_shop_id
-                      WHERE c.id = ?", [$cid]);
-      } else {
-        $shop = row("SELECT w.id, w.slug, NULL AS webshop_url
-                       FROM client c JOIN shops w ON w.id = c.preferred_shop_id AND w.webshop_enabled = 1
-                      WHERE c.id = ?", [$cid]);
-      }
-    }
-    if ($shop && !empty($shop['webshop_url'])) {
-      $url = $shop['webshop_url'];                         // 1) lien absolu par boutique
-    } elseif ($shop && !empty($shop['slug'])) {
-      $sep = (strpos($base, '?') !== false) ? '&' : '?';
-      $url = $base . $sep . 'shop=' . rawurlencode($shop['slug']);   // 2) base + slug
-    } else {
-      $url = $base;                                        // 3) générique
-    }
-    json_out([
-      'url'    => $url,
-      'shopId' => $shop['id']   ?? null,
-      'slug'   => $shop['slug'] ?? null,
-    ]);
-  }
-
-  /* ── Catalog ──
-     SOURCE DES PRODUITS = ws_products (catalogue actif). ws_product_shops
-     n'est PLUS un filtre obligatoire : une ligne d'assortiment sert seulement
-     de métadonnée par boutique (no_delivery, ou exclusion EXPLICITE via
-     active=0). Sans ligne, le produit est vendu tel quel. */
-  if ($m === 'GET' && $p === '/catalog/categories') {
-    $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    // N'expose une catégorie que si elle a >=1 produit actif du catalogue non
-    // explicitement exclu de cette boutique.
-    // Même filtre saisonnier que /catalog/products : sans lui, une catégorie
-    // entièrement hors saison (« Pâques » en août) restait dans la barre de nav
-    // et menait à une grille vide.
-    [$catSeason, $catSeasonArgs] = availability_where('p', qp('date'));
-    $cats = rows("SELECT c.id, c.slug, c.label, c.img, c.sort_order
-                    FROM ws_categories c
-                   WHERE c.active = 1 AND (c.shop_id = ? OR c.shop_id IS NULL)
-                     AND EXISTS (SELECT 1 FROM ws_products p
-                                   LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
-                                  WHERE p.cat_id = c.id AND p.active = 1
-                                    AND (ps.product_id IS NULL OR ps.active = 1)" . whitelist_where('p') . "$catSeason)
-                   ORDER BY c.sort_order, c.label", array_merge([$s, $s], $catSeasonArgs));
-    // Rattache les sous-catégories (ws_category_subs) à chaque catégorie -> c.subs[]
-    // (le front lit activeCat.subs pour la ligne de nav). Même règle : on
-    // n'expose qu'une sous-catégorie qui a >=1 produit du catalogue ici.
-    $subs = rows("SELECT sub.id, sub.category_id, sub.slug, sub.label, sub.img, sub.sort_order
-                    FROM ws_category_subs sub
-                    JOIN ws_categories c ON c.id = sub.category_id
-                   WHERE sub.active = 1 AND (c.shop_id = ? OR c.shop_id IS NULL)
-                     AND EXISTS (SELECT 1 FROM ws_products p
-                                   LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
-                                  WHERE p.sub_cat_id = sub.id AND p.active = 1
-                                    AND (ps.product_id IS NULL OR ps.active = 1)$catSeason)
-                   ORDER BY sub.sort_order, sub.label", array_merge([$s, $s], $catSeasonArgs));
-    $byCat = [];
-    foreach ($subs as $x) { $byCat[$x['category_id']][] = $x; }
-    foreach ($cats as &$c) { $c['subs'] = $byCat[$c['id']] ?? []; }
-    unset($c);
-    json_out($cats);
-  }
-  if ($m === 'GET' && $p === '/catalog/products') {
-    $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+     Le prix ERP est appliqué EN PHP (array_filter sur price > 0), après la
+     requête : aucune clause SQL ne peut le répliquer. Partager la fonction est
+     donc la seule façon d'empêcher les deux vues de diverger à nouveau. */
+  function catalog_produits_servis($s, $mode = '', $date = null) {
     // Filtre livraison bureau PARTAGÉ (source unique) : en mode 'delivery'/'office',
     // on EXCLUT serveur-side les produits non éligibles au canal bureau
     // (office_delivery=0), pour que TOUT front (webshop online, webshop après
     // handoff PWA, PWA, …) reçoive exactement la même liste — sans dépendre d'un
     // filtrage client ni d'un état résiduel. Sans mode → liste complète (les flags
     // office_delivery/no_delivery restent exposés pour l'UI).
-    $mode = strtolower((string) (qp('mode') ?: ''));
+    $mode = strtolower((string) ($mode ?: ''));
     $deliveryWhere = in_array($mode, ['delivery', 'office', 'apricot'], true)
       ? ' AND COALESCE(p.office_delivery,1) = 1' : '';
     // Gammes saisonnières (product_availability_period) : filtrées sur la DATE
     // DE RETRAIT/LIVRAISON, pas sur aujourd'hui. Un client qui commande le
     // 28 novembre pour le 2 décembre doit voir la gamme de Noël ; c'est la date
     // de remise de la marchandise qui fait foi, pas celle de la commande.
-    [$seasonWhere, $seasonArgs] = availability_where('p', qp('date'));
+    [$seasonWhere, $seasonArgs] = availability_where('p', $date);
     $whitelistWhere = whitelist_where('p');   // retiré du catalogue réseau = invisible partout
     // `badge` (texte) a été migré en FK tag_id -> ws_tags ; on expose le libellé
     // du tag sous la clé `badge` (rétro-compat UI) + couleurs, et la saison.
@@ -621,7 +477,176 @@ function dispatch($m, $p) {
     // prix effectif (magasin ERP, ou repli ws_) vaut 0 n'est pas vendable → masqué.
     // Appliqué APRÈS la surcharge du prix magasin pour couvrir les deux sources.
     $r = array_values(array_filter($r, static fn($x) => (float) $x['price'] > 0));
-    json_out($r);
+    return $r;
+  }
+
+function dispatch($m, $p) {
+  // helper de matching avec :param
+  $match = function ($pat) use ($p) {
+    $rx = '#^' . preg_replace('#:([\w]+)#', '(?<$1>[^/]+)', $pat) . '$#';
+    if (preg_match($rx, $p, $mm)) return $mm;
+    return null;
+  };
+
+  /* ── Back-offices Franchise Buddy (sessions isolées franchisé / franchiseur) ──
+     Tout « /bo/… » est routé par bo_dispatch() ; chaque route y est protégée par
+     son guard require_bo(). Placé en tête pour ne jamais retomber sur une route
+     publique.
+     EXCEPTION : /bo/pin-* (connexion tablette par PIN). Ces trois routes sont
+     définies plus bas et sont PUBLIQUES par nature — c'est l'écran de connexion
+     lui-même. Sans cette exception, elles n'étaient jamais atteintes : le pavé
+     PIN recevait « Not found » à chaque saisie, quel que soit le code. ── */
+  if (strpos($p, '/bo/') === 0 && strpos($p, '/bo/pin-') !== 0) {
+    bo_dispatch($m, $p);
+    json_out(['error' => 'Not found', 'path' => $p], 404);
+  }
+
+  /* ── Health ── */
+  if ($m === 'GET' && $p === '/health') { db()->query('SELECT 1'); json_out(['ok' => true]); }
+
+  /* ── Config front (clés ws_param en liste blanche — jamais la table entière).
+     Pilote notamment la visibilité de l'onglet Fidélité (masquable en prod sans
+     redéploiement : ws_param.fidelity_tab_enabled = '0') et le délai de demande
+     de facture (invoice_request_deadline : 'end_of_month' par défaut, ou un
+     nombre de jours). ── */
+  if ($m === 'GET' && $p === '/config') {
+    json_out([
+      'fidelityTabEnabled'     => ws_param('fidelity_tab_enabled', '1') !== '0',
+      'invoiceRequestDeadline' => ws_param('invoice_request_deadline', 'end_of_month'),
+      // Nav catégories : icônes des deux touches de première position (Tout /
+      // retour). Ce ne sont PAS des lignes de category — juste des références
+      // média (même bibliothèque que les icônes de catégorie), changeables via
+      // ws_param sans redéploiement.
+      'categoryNavAllIcon'     => ws_param('category_nav_all_icon',  '/webshop/assets/all.png'),
+      'categoryNavBackIcon'    => ws_param('category_nav_back_icon', '/webshop/assets/back.png'),
+    ]);
+  }
+
+  /* ── Shops / Brand ── */
+  if ($m === 'GET' && $p === '/shops') {
+    // La liste des boutiques est la PORTE D'ENTRÉE du webshop : si elle tombe, le
+    // client ne voit AUCUNE boutique. Le handler global renverrait « Erreur interne »
+    // sans dire pourquoi — on remonte donc ici l'erreur RÉELLE (message, ligne et
+    // base connectée), conformément à la règle « soit ça marche avec les vraies
+    // données, soit ça renvoie un bug » : jamais de liste inventée en repli.
+    try {
+      json_out(rows("SELECT id, slug, name, city, email, phone, accent, tint, logo_url,
+                            discount_type AS webshop_discount_type, discount_value AS webshop_discount_value,
+                            TRIM(CONCAT_WS(' ', street, street_num)) AS address
+                       FROM shops WHERE active = 1 AND webshop_enabled = 1 ORDER BY name"));
+    } catch (Throwable $e) {
+      $base = null;
+      try { $base = (row("SELECT DATABASE() d")['d'] ?? null); } catch (Throwable $e2) { $base = 'inconnue'; }
+      json_out(['error' => 'liste des boutiques KO',
+                'detail' => $e->getMessage(),
+                'ligne' => $e->getLine(),
+                'base' => $base], 500);
+    }
+  }
+  if ($m === 'GET' && $p === '/brand') {
+    $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+    json_out(row("SELECT id, slug, name, accent, tint, logo_url,
+                         discount_type AS webshop_discount_type, discount_value AS webshop_discount_value
+                    FROM shops WHERE id = ? AND webshop_enabled = 1", [$s]) ?: []);
+  }
+
+  /* ── Lien webshop du client PWA (footer PWA → boutique préférée) ──
+   * GET /webshop-link?clientId=123
+   *   → { url, shopId, slug }
+   * Résout client.preferred_shop_id → shop, et construit l'URL du webshop mobile :
+   *   1) lien absolu shops.landing_config.webshop_url s'il est défini,
+   *   2) sinon <webshop_base>?shop=<slug>,
+   *   3) sinon (pas connecté / pas de shop préféré / colonne absente) → <webshop_base>.
+   * Compatible avant/après unification (shops sinon ws_shops), sans dépendre du
+   * script d'auth : si la colonne preferred_shop_id n'existe pas encore → lien générique.
+   */
+  if ($m === 'GET' && $p === '/webshop-link') {
+    $base = cfg()['webshop_base'] ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html';
+    $cid  = qp('clientId');
+    $shop = null;
+    $hasCol = row("SELECT 1 AS x FROM information_schema.columns
+                     WHERE table_schema=DATABASE() AND table_name='client'
+                       AND column_name='preferred_shop_id'");
+    if ($cid && $hasCol) {
+      $hasShops = row("SELECT 1 AS x FROM information_schema.tables
+                         WHERE table_schema=DATABASE() AND table_name='shops'");
+      if ($hasShops) {
+        $shop = row("SELECT s.id, s.slug, s.webshop_url
+                       FROM client c JOIN shops s ON s.id = c.preferred_shop_id
+                      WHERE c.id = ?", [$cid]);
+      } else {
+        $shop = row("SELECT w.id, w.slug, NULL AS webshop_url
+                       FROM client c JOIN shops w ON w.id = c.preferred_shop_id AND w.webshop_enabled = 1
+                      WHERE c.id = ?", [$cid]);
+      }
+    }
+    if ($shop && !empty($shop['webshop_url'])) {
+      $url = $shop['webshop_url'];                         // 1) lien absolu par boutique
+    } elseif ($shop && !empty($shop['slug'])) {
+      $sep = (strpos($base, '?') !== false) ? '&' : '?';
+      $url = $base . $sep . 'shop=' . rawurlencode($shop['slug']);   // 2) base + slug
+    } else {
+      $url = $base;                                        // 3) générique
+    }
+    json_out([
+      'url'    => $url,
+      'shopId' => $shop['id']   ?? null,
+      'slug'   => $shop['slug'] ?? null,
+    ]);
+  }
+
+  /* ── Catalog ──
+     SOURCE DES PRODUITS = ws_products (catalogue actif). ws_product_shops
+     n'est PLUS un filtre obligatoire : une ligne d'assortiment sert seulement
+     de métadonnée par boutique (no_delivery, ou exclusion EXPLICITE via
+     active=0). Sans ligne, le produit est vendu tel quel. */
+  if ($m === 'GET' && $p === '/catalog/categories') {
+    $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+    /* LA BARRE DÉRIVE DE LA GRILLE, elle ne la redéduit plus.
+       Les deux requêtes appliquaient des règles différentes : la barre exigeait
+       ws_categories.active = 1 et la bonne boutique, mais IGNORAIT le prix ERP
+       et le canal bureau. D'où deux symptômes opposés, tous deux constatés :
+         · une catégorie dont aucun produit n'a de prix ERP s'affichait et
+           menait à une GRILLE VIDE ;
+         · un produit dont la catégorie est désactivée se vendait sans qu'aucune
+           catégorie ne permette d'y revenir.
+       Le prix ERP étant appliqué en PHP après la requête, aucune clause SQL ne
+       pouvait les réconcilier : on part donc des produits SERVIS. Une catégorie
+       n'apparaît que si elle contient au moins un produit réellement vendable
+       ici, et un produit vendable dont la catégorie manque le SIGNALE. */
+    $servis = catalog_produits_servis($s, qp('mode'), qp('date'));
+    $catIds = array_values(array_unique(array_filter(array_map(
+      static fn ($x) => $x['cat_id'] !== null ? (int) $x['cat_id'] : null, $servis))));
+    $subIds = array_values(array_unique(array_filter(array_map(
+      static fn ($x) => $x['sub_cat_id'] !== null ? (int) $x['sub_cat_id'] : null, $servis))));
+    if (!$catIds) json_out([]);
+
+    $in  = implode(',', array_map('intval', $catIds));
+    // active = 1 reste exigé : une catégorie que la marque a retirée ne
+    // réapparaît pas dans la navigation. Les produits orphelins qu'elle laisse
+    // sont signalés par l'assortiment (champ `navigation`), pas ici.
+    $cats = rows("SELECT id, slug, label, img, sort_order FROM ws_categories
+                   WHERE id IN ($in) AND active = 1 AND (shop_id = ? OR shop_id IS NULL)
+                   ORDER BY sort_order, label", [$s]);
+    $subs = [];
+    if ($subIds) {
+      $inS = implode(',', array_map('intval', $subIds));
+      $subs = rows("SELECT sub.id, sub.category_id, sub.slug, sub.label, sub.img, sub.sort_order
+                      FROM ws_category_subs sub
+                      JOIN ws_categories c ON c.id = sub.category_id
+                     WHERE sub.id IN ($inS) AND sub.active = 1
+                       AND (c.shop_id = ? OR c.shop_id IS NULL)
+                     ORDER BY sub.sort_order, sub.label", [$s]);
+    }
+    $byCat = [];
+    foreach ($subs as $x) { $byCat[$x['category_id']][] = $x; }
+    foreach ($cats as &$c) { $c['subs'] = $byCat[$c['id']] ?? []; }
+    unset($c);
+    json_out($cats);
+  }
+  if ($m === 'GET' && $p === '/catalog/products') {
+    $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+    json_out(catalog_produits_servis($s, qp('mode'), qp('date')));
   }
   /* ── VENTES CROISÉES — évaluation côté panier (migration 0056). ───────────
      Le navigateur envoie ce qu'il a (panier, boutique, date et heure de
