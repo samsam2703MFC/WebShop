@@ -3708,8 +3708,10 @@ function dispatch($m, $p) {
                             p.menu_override, c.label AS category
                        FROM ws_products p
                        LEFT JOIN ws_categories c ON c.id = p.cat_id
-                      WHERE p.active = 1
-                        AND EXISTS (SELECT 1 FROM ws_bundles b WHERE b.product_id = p.id)
+                      -- p.active n'est plus exigé : un PORTEUR de menu vit hors
+                      -- catalogue (active=0) précisément pour ne pas être un
+                      -- article — le constructeur doit pourtant le lister.
+                      WHERE EXISTS (SELECT 1 FROM ws_bundles b WHERE b.product_id = p.id)
                       ORDER BY p.name");
       $hasTrg = tbl_exists('ws_bundle_triggers');
       foreach ($prods as $p2) {
@@ -4593,8 +4595,12 @@ function dispatch($m, $p) {
          ici le produit-menu réel et on REND SON IDENTIFIANT : l'écran bascule
          dessus et tout le reste (formules, déclencheurs, commandes) suit. */
       if (!$pid && ($b['productName'] ?? '') !== '' && !is_numeric($b['productId'] ?? null)) {
+        // active = 0 : le PORTEUR d'un menu n'est pas un article — il ne doit
+        // pas apparaître dans la grille du webshop (constaté : « Menu ! » y
+        // figurait en carte à 8,90 €). Le menu n'atteint le client qu'à
+        // travers ses déclencheurs, sur les produits qu'ils couvrent.
         q("INSERT INTO ws_products (name, price, base_cost, active, menu_override)
-           VALUES (?, ?, ?, 1, 'on')",
+           VALUES (?, ?, ?, 0, 'on')",
           [(string) $b['productName'], (float) ($b['basePrice'] ?? 0), (float) ($b['baseCost'] ?? 0)]);
         $pid = (int) db()->lastInsertId();
         $creation = true;
@@ -10081,10 +10087,11 @@ function bundle_source_pid($pid) {
      disputer un produit : le déclencheur le plus précis gagne, puis le plus
      petit id — déterministe. */
   if ($meta['cat_id'] !== null && tbl_exists('ws_bundle_triggers')) {
+    /* Pas de condition tp.active : le porteur vit hors catalogue (active=0),
+       c'est voulu — seule sa FORMULE doit être active. */
     $tg = row("SELECT t.product_id
                  FROM ws_bundle_triggers t
                  JOIN ws_bundles b ON b.product_id = t.product_id AND b.active = 1
-                 JOIN ws_products tp ON tp.id = t.product_id AND tp.active = 1
                 WHERE t.cat_id = ?
                   AND (t.sub_cat_id IS NULL OR t.sub_cat_id = ?)
                 ORDER BY (t.sub_cat_id IS NOT NULL) DESC, t.product_id
