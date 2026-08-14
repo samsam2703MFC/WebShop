@@ -773,8 +773,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   if (activeBundle) {
     bundleDelta += activeBundle.price_modifier || 0;
     for (const slot of (activeBundle.slots || [])) {
-      const cid = bundleSlots[slot.id];
-      if (cid) {
+      for (const cid of slotPicked(slot)) {
         const c = slot.choices.find((x) => x.id === cid);
         if (c?.delta) bundleDelta += c.delta;
       }
@@ -801,7 +800,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   }
   if (activeBundle) {
     for (const slot of (activeBundle.slots || [])) {
-      if (slot.required && !bundleSlots[slot.id]) { valid = false; break; }
+      if (slot.required && slotPicked(slot).length < Math.max(1, slot.min_select || 1)) { valid = false; break; }
     }
   }
 
@@ -829,6 +828,22 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     }, IS_TOUCH ? 30 : 180);
   }
   function setSlot(slotId, choiceId) { setBundleSlots((s) => ({ ...s, [slotId]: choiceId })); }
+  // Rubrique multi (« 2 choix ») : le tap AJOUTE ou RETIRE, il ne remplace
+  // pas — c'était le blocage constaté : le 2e choix écrasait le 1er et la
+  // formule ne se complétait jamais. Plafond = max_select.
+  function toggleSlotMulti(slotId, choiceId, maxSel) {
+    setBundleSlots((s) => {
+      const cur = Array.isArray(s[slotId]) ? s[slotId] : (s[slotId] ? [s[slotId]] : []);
+      if (cur.includes(choiceId)) return { ...s, [slotId]: cur.filter((x) => x !== choiceId) };
+      if (cur.length >= Math.max(1, maxSel || 1)) return s;
+      return { ...s, [slotId]: [...cur, choiceId] };
+    });
+  }
+  function slotIsMulti(slot) { return (slot.max_select || 1) > 1 || slot.kind === 'multi'; }
+  function slotPicked(slot) {
+    const v = bundleSlots[slot.id];
+    return Array.isArray(v) ? v : (v ? [v] : []);
+  }
   // Ne scrolle que si l'élément déborde de la zone visible. Le glissement
   // systématique déplaçait le contenu SOUS LE DOIGT juste après un tap : le
   // tap suivant tombait à côté — la cause des « miss-clicks » constatés sur
@@ -842,7 +857,11 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     sc.scrollTo({ top: Math.max(0, computeTarget(elRect, scRect)), behavior: 'smooth' });
   }
   function pickBundle(bid) {
-    setBundleId((cur) => cur === bid ? cur : bid);
+    // Re-tap (ou tap remonté depuis l'intérieur) sur la formule DÉJÀ choisie :
+    // ne rien faire. L'ancien passage remettait bundleSlots à zéro — avec deux
+    // rubriques, remplir la seconde effaçait la première.
+    if (bid === bundleId) return;
+    setBundleId(bid);
     setBundleSlots({});
     // Glide the picked bundle card so its expanded body sits centered in the
     // modal scroll area, after the slot pickers animate open.
@@ -876,7 +895,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
         const p = pressRef.current;
         if (p.id !== e.pointerId || p.t === undefined) return;
         const moved = Math.abs(e.clientX - p.x) > 14 || Math.abs(e.clientY - p.y) > 14;
-        if (!moved && performance.now() - p.t < 600 && !already()) fire();
+        if (!moved && performance.now() - p.t < 600 && !already()) fire(true);
       },
       // Filet : si le navigateur requalifie le geste (pointercancel), pointerup
       // n'arrive JAMAIS — mais touchend, si. Un relâchement quasi immobile
@@ -890,14 +909,26 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
         const t = e.changedTouches && e.changedTouches[0];
         if (!t || p.tt === undefined) return;
         const moved = Math.abs(t.clientX - p.tx) > 12 || Math.abs(t.clientY - p.ty) > 12;
-        if (!moved && performance.now() - p.tt < 600 && !already()) fire();
+        if (!moved && performance.now() - p.tt < 600 && !already()) fire(true);
       },
       onClick: () => {
         if (already()) return;
-        fire();
+        fire(false);
       },
     };
-    function fire() { pressRef.current.handled = performance.now(); fn(); }
+    function fire(viaPointer) {
+      pressRef.current.handled = performance.now();
+      // L'ouverture est instantanée : le contenu se déplie ENTRE le
+      // relâchement (qui ouvre) et le click synthétisé du même tap — lequel
+      // atterrit alors sur une chip fraîchement révélée et la sélectionne
+      // toute seule. On avale ce click-là, et uniquement lui.
+      if (viaPointer) {
+        const swallow = (e) => { e.stopPropagation(); e.preventDefault(); };
+        document.addEventListener('click', swallow, { capture: true, once: true });
+        setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 350);
+      }
+      fn();
+    }
     function already() { return performance.now() - (pressRef.current.handled || 0) < 400; }
   }
   // Un accordéon qui vient de s'ouvrir (animation ~300 ms) ne doit pas se
@@ -931,8 +962,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     if (activeBundle) {
       optionLabels.push('Formule · ' + activeBundle.name);
       for (const slot of (activeBundle.slots || [])) {
-        const cid = bundleSlots[slot.id];
-        if (cid) {
+        for (const cid of slotPicked(slot)) {
           const c = slot.choices.find((x) => x.id === cid);
           if (c) optionLabels.push(slot.label + ' · ' + c.label);
         }
@@ -1176,23 +1206,29 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                         )}
                         {/* progressive disclosure: bundle slots open softly when picked */}
                         <div className={'pdm-bcard__expand' + (picked && b.id !== null && b.slots?.length > 0 ? ' is-open' : '')}>
-                          <div className="pdm-bcard__expand-inner" onClick={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
+                          <div className="pdm-bcard__expand-inner" onClick={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
                             {b.slots?.map((slot) => (
                               <div key={slot.id} className="pdm-opt is-open" style={{ background: 'transparent', boxShadow: 'none' }}>
                                 <div style={{ padding: '4px 0 0' }}>
                                   <div className="pdm-opt__head-l" style={{ marginBottom: 6 }}>
                                     <span className="pdm-opt__label" style={{ fontSize: 12.5 }}>{slot.label}
-                                      {slot.required && <span className="pdm-opt__req" style={{ marginLeft: 8 }}>Requis</span>}
+                                      {slotIsMulti(slot)
+                                        ? <span className={'pdm-opt__req' + (slot.required ? '' : ' pdm-opt__req--soft')} style={{ marginLeft: 8 }}>
+                                            {slotPicked(slot).length}/{Math.max(1, slot.max_select || 1)}
+                                            {slot.required ? ' — choisissez ' + Math.max(1, slot.min_select || 1) : ''}
+                                          </span>
+                                        : slot.required && <span className="pdm-opt__req" style={{ marginLeft: 8 }}>Requis</span>}
                                     </span>
                                   </div>
                                   <div className="pdm-chips">
                                     {slot.choices.map((c) => {
-                                      const cOn = bundleSlots[slot.id] === c.id;
+                                      const multi = slotIsMulti(slot);
+                                      const cOn = multi ? slotPicked(slot).includes(c.id) : bundleSlots[slot.id] === c.id;
                                       const klass = c.img ? 'pdm-imgchip' : 'pdm-chip';
                                       return (
                                         <button key={c.id}
                                           className={klass + (cOn ? ' is-on' : '')}
-                                          onClick={() => setSlot(slot.id, c.id)}>
+                                          onClick={() => multi ? toggleSlotMulti(slot.id, c.id, slot.max_select) : setSlot(slot.id, c.id)}>
                                           {c.img && <span className="pdm-imgchip__tile"><img src={c.img} alt=""/></span>}
                                           <span>{c.label}</span>
                                           {c.delta > 0 && <span className={c.img ? 'pdm-imgchip__delta' : 'pdm-chip__delta'}>+{c.delta.toFixed(2)}</span>}

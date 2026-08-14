@@ -2241,7 +2241,7 @@ function dispatch($m, $p) {
       if (!$comp['choices'] && !empty($it['bundleSlots']))
         error_log('[ws] menu non validé — produit ' . (int) $p2['id']
                   . ' formule ' . (int) ($it['bundleId'] ?? 0)
-                  . ' choix ' . implode(',', array_map('intval', (array) $it['bundleSlots'])));
+                  . ' choix ' . json_encode($it['bundleSlots']));
       $subtotal += ($unit + $suppl) * $qty;
       // `options` = composition du menu (formule, choix de chaque emplacement,
       // suppléments). La ligne était reconstruite depuis le produit ERP et
@@ -10272,7 +10272,11 @@ function bundle_source_pid($pid) {
 function bundle_compose($productId, $bundleId, $rawSlots) {
   $empty = ['modifier' => 0.0, 'choices' => []];
   $ids = [];
-  foreach ((array) $rawSlots as $v) { $n = (int) $v; if ($n > 0) $ids[$n] = $n; }
+  // Une rubrique multi (« 2 choix ») arrive en TABLEAU de choix : on aplatit.
+  // Le cast (int) d'un tableau rendait 1 — la composition multi était perdue.
+  foreach ((array) $rawSlots as $v) {
+    foreach (is_array($v) ? $v : [$v] as $w) { $n = (int) $w; if ($n > 0) $ids[$n] = $n; }
+  }
   $ids = array_values($ids);
   $bundleId = is_numeric($bundleId) ? (int) $bundleId : 0;
   if (!$ids && !$bundleId) return $empty;
