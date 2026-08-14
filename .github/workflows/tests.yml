@@ -15,10 +15,17 @@ name: Tests
 # LE SOCLE. ws_products et ws_categories ne sont créées par aucune migration —
 # elles viennent de l'ERP. On ne peut donc pas reconstruire la base en rejouant
 # les 71 migrations : il manque le socle. php-api/tests/socle_test.sql fournit
-# le minimum, jeu_essai.sql un produit par raison de refus. Les migrations sont
-# ensuite appliquées PAR-DESSUS, ce qui vérifie du même coup qu'elles passent
-# sur une base neuve — une migration qui échoue bloque tous les déploiements
-# suivants, c'est arrivé et ça a coûté sept commits.
+# le minimum — dumpé APRÈS migrations, il porte déjà les colonnes qu'elles
+# ajoutent — et jeu_essai.sql un produit par raison de refus.
+#
+# LES MIGRATIONS NE SONT PAS REJOUÉES ICI, et le premier essai l'a montré : la
+# 0003 référence ws_shops, table d'avant l'unification vers shops, et s'arrête
+# sur « Table citest.ws_shops doesn't exist ». Les migrations anciennes
+# supposent des états de l'ERP qui n'existent plus : les rejouer depuis zéro
+# testerait l'HISTORIQUE du schéma, pas le code d'aujourd'hui — et fabriquer
+# une ws_shops morte pour satisfaire la 0003 donnerait un vert qui ne veut rien
+# dire. CE QUE ÇA LAISSE NON COUVERT : qu'une NOUVELLE migration passe. Le
+# déploiement reste le premier endroit où on l'apprend.
 
 on:
   push:
@@ -49,7 +56,7 @@ jobs:
           php-version: '8.3'        # même version majeure que le serveur
           extensions: pdo_mysql, mbstring, gd
 
-      - name: Base de test — socle, jeu d'essai, puis migrations par-dessus
+      - name: Base de test — socle et jeu d'essai
         run: |
           set -euo pipefail
           M="mysql -h 127.0.0.1 -P 3306 -u root -proot citest"
