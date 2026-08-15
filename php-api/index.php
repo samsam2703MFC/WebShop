@@ -4815,12 +4815,16 @@ function dispatch($m, $p) {
       $pdo = db();
       $pdo->beginTransaction();
       try {
-        // Prix de base du menu = ws_products.price (éditable). base_cost + override menu.
-        if (array_key_exists('basePrice', $b)) {
-          q("UPDATE ws_products SET menu_override=?, base_cost=?, price=? WHERE id=?", [$ov, (float) ($b['baseCost'] ?? 0), (float) $b['basePrice'], $pid]);
-        } else {
-          q("UPDATE ws_products SET menu_override=?, base_cost=? WHERE id=?", [$ov, (float) ($b['baseCost'] ?? 0), $pid]);
-        }
+        // Prix de base, coût et override : chacun n'est écrit QUE s'il est
+        // présent dans le body. Sans ça, ouvrir un produit dans le
+        // constructeur envoyait baseCost:0 / menuOverride:null (valeurs par
+        // défaut du store local) et ÉCRASAIT le coût réel du produit à 0 et
+        // sa surcharge menu — pour tout produit simplement consulté.
+        $mSets = []; $mVals = [];
+        if (array_key_exists('menuOverride', $b)) { $mSets[] = 'menu_override=?'; $mVals[] = $ov; }
+        if (array_key_exists('baseCost', $b))     { $mSets[] = 'base_cost=?';     $mVals[] = (float) $b['baseCost']; }
+        if (array_key_exists('basePrice', $b))    { $mSets[] = 'price=?';         $mVals[] = (float) $b['basePrice']; }
+        if ($mSets) { $mVals[] = $pid; q("UPDATE ws_products SET " . implode(', ', $mSets) . " WHERE id=?", $mVals); }
         q("DELETE c FROM ws_bundle_slot_choices c JOIN ws_bundle_slots s ON s.id=c.slot_id JOIN ws_bundles bu ON bu.id=s.bundle_id WHERE bu.product_id=?", [$pid]);
         q("DELETE s FROM ws_bundle_slots s JOIN ws_bundles bu ON bu.id=s.bundle_id WHERE bu.product_id=?", [$pid]);
         q("DELETE FROM ws_bundles WHERE product_id=?", [$pid]);
