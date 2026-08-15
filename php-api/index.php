@@ -7933,6 +7933,10 @@ function dispatch($m, $p) {
         json_out(['error' => 'Google : ' . ((string) ($j9['error']['message'] ?? '') ?: 'refus'),
                   'status' => (string) ($j9['error']['status'] ?? '')], 502);
       header('Cache-Control: no-store');
+      /* Tri par date de publication, plus récents d'abord — l'ordre par
+         « pertinence » de Places mettrait un avis d'il y a un an en tête. */
+      $av9 = array_values((array) ($j9['reviews'] ?? []));
+      usort($av9, fn ($x9, $y9) => strcmp((string) ($y9['publishTime'] ?? ''), (string) ($x9['publishTime'] ?? '')));
       json_out([
         'nom'  => (string) ($j9['displayName']['text'] ?? ''),
         'note' => isset($j9['rating']) ? (float) $j9['rating'] : null,
@@ -7942,8 +7946,9 @@ function dispatch($m, $p) {
           'auteur' => (string) ($r9['authorAttribution']['displayName'] ?? '—'),
           'note'   => isset($r9['rating']) ? (int) $r9['rating'] : null,
           'quand'  => (string) ($r9['relativePublishTimeDescription'] ?? ''),
+          'date'   => substr((string) ($r9['publishTime'] ?? ''), 0, 10),
           'texte'  => (string) (($r9['text']['text'] ?? '') ?: ($r9['originalText']['text'] ?? '')),
-        ], array_values((array) ($j9['reviews'] ?? []))),
+        ], $av9),
       ]);
     }
 
@@ -8033,6 +8038,10 @@ function dispatch($m, $p) {
       if (!is_array($rv2)) json_out(['error' => 'API Business Profile (reviews) injoignable.'], 502);
       if (isset($rv2['error'])) json_out(['error' => 'Google (reviews) : ' . ((string) ($rv2['error']['message'] ?? 'refus'))], 502);
       $et2 = ['ONE' => 1, 'TWO' => 2, 'THREE' => 3, 'FOUR' => 4, 'FIVE' => 5];
+      /* Tri par date de l'avis (createTime), plus récents d'abord — l'API rend
+         l'ordre updateTime, qui bouge dès qu'une réponse est éditée. */
+      $av2 = array_values((array) ($rv2['reviews'] ?? []));
+      usort($av2, fn ($x9, $y9) => strcmp((string) ($y9['createTime'] ?? ''), (string) ($x9['createTime'] ?? '')));
       header('Cache-Control: no-store');
       json_out(['fiche' => $lc2[2],
         'nb'   => (int) ($rv2['totalReviewCount'] ?? 0),
@@ -8045,7 +8054,7 @@ function dispatch($m, $p) {
           'texte'   => (string) ($r9['comment'] ?? ''),
           'repondu' => isset($r9['reviewReply']['comment']),
           'reponse' => (string) ($r9['reviewReply']['comment'] ?? ''),
-        ], array_values((array) ($rv2['reviews'] ?? []))),
+        ], $av2),
       ]);
     }
 
