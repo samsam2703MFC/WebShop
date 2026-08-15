@@ -8891,7 +8891,11 @@ function dispatch($m, $p) {
           $floor = trim((string) ($r['etage'] ?? ($r['floor_room'] ?? '')));
           $cn    = trim((string) ($r['contact_name'] ?? ''));
           $cp    = trim((string) ($r['contact_phone'] ?? ''));
-          $acc   = isset($r['acc']) ? (float) $r['acc'] : (isset($r['site_access_minutes']) ? (float) $r['site_access_minutes'] : 10);
+          // Temps d'accès : NULL quand il n'est pas fourni — pas un 10 min
+          // inventé. La clé peut arriver présente mais null (« pas saisi ») :
+          // array_key_exists + valeur non-null exigés pour écrire un nombre.
+          $accRaw = array_key_exists('acc', $r) ? $r['acc'] : ($r['site_access_minutes'] ?? null);
+          $acc   = ($accRaw === null || $accRaw === '') ? null : (float) $accRaw;
           $rid   = $r['id'] ?? null;
           $ex    = is_numeric($rid) ? row("SELECT id FROM ws_office_delivery_sites WHERE id=?", [(int) $rid]) : null;
           // Repli anti-doublon : sans id round-trippé, on retrouve la ligne par
@@ -9392,6 +9396,33 @@ function dispatch($m, $p) {
           }
         }
       }
+      /* LE PERSONNEL DE L'ÉTAPE 6 (noms + e-mails). Il était POSTÉ par la
+         console (staff) mais $staff n'était jamais défini côté serveur : la
+         liste partait à la poubelle, aucun contact n'était enregistré et les
+         invitations « personnel » ne pouvaient pas être envoyées. On lit la
+         liste, on enregistre chaque adresse dans ws_office_emails (rôle
+         « Personnel »), et on initialise les compteurs renvoyés à la console. */
+      $staff = []; $staffOk = 0; $staffInvites = 0; $staffPourquoi = null;
+      foreach ((array) ($b['staff'] ?? []) as $sm) {
+        $em = strtolower(trim((string) (is_array($sm) ? ($sm['email'] ?? '') : $sm)));
+        if ($em === '' || !filter_var($em, FILTER_VALIDATE_EMAIL) || in_array($em, $staff, true)) continue;
+        $staff[] = $em;
+      }
+      if ($staff && $tblExists('ws_office_emails')) {
+        $hasRole = col_exists('ws_office_emails', 'role');
+        foreach ($staff as $em) {
+          try {
+            if ($hasRole)
+              q("INSERT IGNORE INTO ws_office_emails (office_id, email, role, active) VALUES (?,?, 'Personnel', 1)", [$officeId, $em]);
+            else
+              q("INSERT IGNORE INTO ws_office_emails (office_id, email, active) VALUES (?,?,1)", [$officeId, $em]);
+            $staffOk++;
+          } catch (Throwable $e) { if (!$staffPourquoi) $staffPourquoi = 'Enregistrement d’un contact refusé : ' . $e->getMessage(); }
+        }
+      } elseif ($staff) {
+        $staffPourquoi = 'Table ws_office_emails absente (migration 0063) — personnel non enregistré.';
+      }
+
       /* LES VOUCHERS DE L'ONBOARDING — zéro, un ou plusieurs.
          Un bureau peut repartir avec un bon de bienvenue ET la découverte
          d'une gamme ET un geste commercial : n'en accepter qu'un obligeait à
@@ -9406,21 +9437,38 @@ function dispatch($m, $p) {
         // Le libellé ne sera pas stocké (ws_vouchers ne garde que le code) :
         // il ne sert qu'au document envoyé dans la foulée.
         $voucherNoms[] = ['code' => $c,
-                          'libelle' => trim((string) (is_array($vRow) ? ($vRow['libelle'] ?? '') : ''))];
+                          'libelle' => trim((string) (is_array($vRow) ? ($vRow['libelle'] ?? '') : '')),
+                          'valeur'  => is_array($vRow) ? ($vRow['valeur'] ?? null) : null,
+                          'validite'=> is_array($vRow) ? trim((string) ($vRow['validite'] ?? '')) : ''];
       }
       if (!$voucherList) {
         $vc1 = strtoupper(trim((string) ($b['voucher']['code'] ?? '')));
         if ($vc1 !== '') { $voucherList[] = $vc1; $voucherNoms[] = ['code' => $vc1, 'libelle' => '']; }
       }
       $vouchersCreated = 0;
-      if ($voucherList) {
-        // ws_vouchers peut être une VUE (modèle ERP) — n'insérer que si table de base.
-        $isBase = row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_vouchers' AND table_type='BASE TABLE'");
-        if ($isBase) foreach ($voucherList as $vc) {
-          q("INSERT IGNORE INTO ws_vouchers (code, type, value, active" . ($shopId ? ", shop_id" : "") . ") VALUES (?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
-            [$vc, 'add_office', 0]);
-          $vouchersCreated++;
-        }
+      /* Création via le MODÈLE UNIFIÉ (ws_voucher_upsert), ciblée sur le
+         bureau créé (target OFFICE). L'ancien INSERT écrivait value=0 dans
+         ws_vouchers — devenue une VUE : aucun bon n'était créé, alors que la
+         console EXIGEAIT valeur et validité. Le bon porte désormais la valeur
+         saisie ; validité (validite) → expires_at si elle est une date. */
+      $voucherFailed = [];
+      foreach ($voucherNoms as $vn) {
+        $val = $vn['valeur'];
+        $num = is_numeric(preg_replace('/[^0-9.,]/', '', (string) $val)) ? (float) str_replace(',', '.', preg_replace('/[^0-9.,]/', '', (string) $val)) : null;
+        // Type : « % » ou « pourcent » dans la valeur ⇒ percent, sinon montant fixe.
+        $vtype = (stripos((string) $val, '%') !== false || stripos((string) $val, 'percent') !== false || stripos((string) $val, 'pour') !== false) ? 'percent' : 'fixed';
+        $exp = preg_match('/^\d{4}-\d{2}-\d{2}/', (string) $vn['validite']) ? substr((string) $vn['validite'], 0, 10) : null;
+        $r = ws_voucher_upsert([
+          'code' => $vn['code'], 'type' => $vtype, 'value' => $num ?? 0,
+          'expires_at' => $exp, 'active' => 1,
+          'id_shop' => $shopId ?: null,                       // émetteur = boutique
+          'target_kind' => 'OFFICE', 'target_id' => $officeId,
+          'reason_kind' => 'ONBOARDING',
+          'reason_note' => $vn['libelle'] ?: null,
+          'created_by'  => 'franchisee-onboarding',
+        ]);
+        if (empty($r['error'])) $vouchersCreated++;
+        else $voucherFailed[] = $vn['code'] . ' (' . $r['error'] . ')';
       }
       $voucherCreated = $vouchersCreated > 0;
       /* LIEN MAGIQUE « Créer mon compte ». Le bureau reçoit UN lien et le
@@ -9476,6 +9524,7 @@ function dispatch($m, $p) {
       }
       json_out(['ok' => true, 'office_id' => $officeId, 'voucher_created' => $voucherCreated,
                 'vouchers_created'  => $vouchersCreated,
+                'vouchers_failed'   => $voucherFailed ?? [],
                 'staff_saved'       => $staffOk,
                 'staff_invited'     => $staffInvites,
                 'staff_reason'      => $staffPourquoi,
