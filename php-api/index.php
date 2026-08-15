@@ -3972,16 +3972,20 @@ function dispatch($m, $p) {
     }
 
     /* ── Avis Google — directives de réponse, par tranche de note (1–5).
-       La marque définit ici le TON et les CONSIGNES ; la console franchisé
+       La marque définit ici le TON SOCLE commun (ws_param reviews_tone_base)
+       puis, note par note, TON, CONSIGNE et EXEMPLE ; la console franchisé
        les applique pour générer un brouillon (jamais publier — la publication
        reste un geste manuel sur Google). Aucun seed : tout naît sur cet
        écran, et la génération dit quelle tranche manque. ── */
     if ($m === 'GET' && $p === '/franchisor/review-guidelines') {
       if (!$tblExists('ws_review_guidelines'))
         json_out(['error' => 'table ws_review_guidelines absente — migration 0082 non jouée'], 501);
-      json_out(rows("SELECT id, note_min, note_max, tone, instructions, example_reply,
+      json_out([
+        'socle'      => (string) ws_param('reviews_tone_base', ''),
+        'directives' => rows("SELECT id, note_min, note_max, tone, instructions, example_reply,
                             DATE_FORMAT(updated_at,'%d/%m %H:%i') AS maj
-                       FROM ws_review_guidelines ORDER BY note_min, note_max, id"));
+                       FROM ws_review_guidelines ORDER BY note_min, note_max, id"),
+      ]);
     }
     if ($m === 'POST' && $p === '/franchisor/review-guideline') {
       if (!$tblExists('ws_review_guidelines'))
@@ -8053,9 +8057,11 @@ function dispatch($m, $p) {
       if (!$gd)
         json_out(['error' => 'Aucune directive pour la note ' . $rNote . ' — à définir dans la console marque (Avis Google — directives).'], 404);
       $shopN9 = (string) (row("SELECT name FROM shops WHERE id = ?", [$shopId])['name'] ?? '');
+      $socle9 = (string) ws_param('reviews_tone_base', '');
       $sys9 = "Tu rédiges la réponse publique d'un établissement à un avis Google, au nom de « " . ($shopN9 !== '' ? $shopN9 : 'la boutique') . " ».\n"
         . "Règles absolues : n'invente aucun fait ; n'admets aucune faute que l'avis n'établit pas ; ne promets aucun dédommagement ni geste commercial ; ne divulgue aucune donnée personnelle ; pour tout litige, invite à contacter directement l'établissement (canal privé).\n"
-        . 'Ton imposé par la marque : ' . (string) $gd['tone'] . "\n"
+        . ($socle9 !== '' ? 'Ton socle de la marque (commun à toutes les réponses) : ' . $socle9 . "\n" : '')
+        . 'Ton imposé par la marque pour cette note : ' . (string) $gd['tone'] . "\n"
         . ((string) ($gd['instructions'] ?? '') !== '' ? 'Consignes de la marque : ' . $gd['instructions'] . "\n" : '')
         . ((string) ($gd['example_reply'] ?? '') !== '' ? 'Exemple du registre attendu (ne pas recopier) : ' . $gd['example_reply'] . "\n" : '')
         . "Réponds dans la langue de l'avis (français par défaut). Rends UNIQUEMENT le texte de la réponse — sans guillemets, sans préambule, sans signature ajoutée.";
@@ -8089,7 +8095,7 @@ function dispatch($m, $p) {
       json_out(['reponse' => $txt9,
                 'tronque' => (($jA['stop_reason'] ?? '') === 'max_tokens'),
                 'modele'  => (string) ($jA['model'] ?? ''),
-                'directive' => ['tranche' => $gd['note_min'] . '–' . $gd['note_max'], 'ton' => (string) $gd['tone']]]);
+                'directive' => ['tranche' => ($gd['note_min'] == $gd['note_max'] ? (string) $gd['note_min'] : $gd['note_min'] . '–' . $gd['note_max']), 'ton' => (string) $gd['tone']]]);
     }
 
     /* TOUS les avis Business Profile de LA boutique, avec l'état de réponse —
