@@ -2627,6 +2627,10 @@
   padding: 16px;
   background: var(--color-bg-secondary);
 }
+/* Respiration CONSTANTE entre deux tickets successifs : sans elle les cartes
+   se touchaient (gap réel 0), collées bord à bord — illisible sur une longue
+   liste d'achats. 10px = même rythme que les autres listes du compte. */
+.ws-acc__card + .ws-acc__card { margin-top: 10px; }
 .ws-acc__card--ok      { background: color-mix(in oklab, var(--color-secondary) 25%, var(--color-surface)); border-color: var(--color-collection-border); }
 .ws-acc__card--ok .ws-acc__badge--ok,
 .ws-acc__card--ok .ws-acc__unplug {
