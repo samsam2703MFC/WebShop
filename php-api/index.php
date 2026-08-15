@@ -5135,6 +5135,19 @@ function dispatch($m, $p) {
         return preg_match('/^\d{1,2}:\d{2}$/', $v) ? (str_pad(explode(':', $v)[0], 2, '0', STR_PAD_LEFT) . ':' . explode(':', $v)[1] . ':00') : $def;
       };
       $ci = fn ($k, $def, $min, $max) => max($min, min($max, isset($b[$k]) && $b[$k] !== '' ? (int) $b[$k] : $def));
+      /* AUDIT GO-LIVE : cet écran complétait tout champ absent avec des
+         valeurs métier inventées (08:00–18:00, cut-off 16h, capacité 15/30…)
+         — des horaires que la boutique n'avait jamais fixés, écrits en base
+         puis appliqués au client. On EXIGE les champs d'horaires d'un canal
+         ACTIVÉ plutôt que de décider à sa place : requête refusée avec la
+         liste des manquants (la console les envoie tous ; ce garde ne bloque
+         qu'un appel partiel/forgé). */
+      $miss = [];
+      if (!empty($b['collect_enabled'])) foreach (['collect_open_days','collect_hours_start','collect_hours_end'] as $rk)
+        if (!isset($b[$rk]) || $b[$rk] === '' || $b[$rk] === []) $miss[] = $rk;
+      if (!empty($b['delivery_enabled'])) foreach (['delivery_open_days','delivery_hours_start','delivery_hours_end'] as $rk)
+        if (!isset($b[$rk]) || $b[$rk] === '' || $b[$rk] === []) $miss[] = $rk;
+      if ($miss) json_out(['ok' => false, 'error' => 'Champs requis manquants (aucune valeur par défaut inventée) : ' . implode(', ', $miss)], 400);
       q("INSERT INTO ws_shop_availability
            (shop_id, collect_enabled, delivery_enabled, collect_open_days, delivery_open_days,
             collect_hours_start, collect_hours_end, delivery_hours_start, delivery_hours_end,
