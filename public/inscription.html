@@ -375,7 +375,8 @@
         email: $('email').value.trim(), phone: $('tel').value.trim(),
         postalCode: $('cp').value.trim(),
         deptId: $('blocDept').hidden ? ((inv.depts && inv.depts[0]) ? inv.depts[0].id : 0) : Number($('dept').value),
-        pin: $('mdp').value
+        pin: $('mdp').value,
+        cgv: $('cgv').checked
       })
     }).then(function (r) {
       return r.json().catch(function () { return { error: 'Réponse illisible du serveur (HTTP ' + r.status + ').' }; });

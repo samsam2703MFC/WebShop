@@ -1879,6 +1879,9 @@ function dispatch($m, $p) {
       if (col_exists('ws_office_join_requests', 'contact_phone')) $set['contact_phone'] = ($phone ?: null);
       if (col_exists('ws_office_join_requests', 'shop_id'))       $set['shop_id']       = $shopI;
       if (col_exists('ws_office_join_requests', 'office_id'))     $set['office_id']     = $offI;
+      // Consentement CGV : la case était exigée à l'écran mais jamais
+      // transmise ni stockée — aucun moyen de prouver l'acceptation.
+      if (!empty($b['cgv']) && col_exists('ws_office_join_requests', 'cgv_accepted_at')) $set['cgv_accepted_at'] = date('Y-m-d H:i:s');
       try {
         q("INSERT INTO ws_office_join_requests (" . implode(', ', array_keys($set)) . ")
            VALUES (" . implode(', ', array_fill(0, count($set), '?')) . ")", array_values($set));
