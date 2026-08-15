@@ -5241,7 +5241,10 @@ function dispatch($m, $p) {
              FROM ws_office_delivery_sites s WHERE s.office_client_id=? AND s.active=1 LIMIT 20", [$f['id']]) : [];
         $out[] = [
           'raison' => $f['name'], 'code' => 'OF-' . str_pad((string) $f['id'], 4, '0', STR_PAD_LEFT),
-          'seg' => 'horeca', 'statut' => $f['status'] === 'validated' ? 'actif' : ($f['status'] ?: 'prospect'),
+          // Segment non stocké (pas de colonne) : « — » plutôt que « horeca »
+          // inventé pour tous. Voir NOTE go-live : conditions commerciales B2B
+          // à persister (segment, plafond, remise, franco) — décision schéma.
+          'seg' => '—', 'statut' => $f['status'] === 'validated' ? 'actif' : ($f['status'] ?: 'prospect'),
           'tva' => $f['vat'] ?: '—',
           'paiement' => $f['deferred_billing_enabled'] ? '30 j fin de mois' : 'Comptant',
           'plafond' => 0, 'encours' => 0, 'franco' => '—', 'remise' => '—', 'fact' => $f['deferred_billing_enabled'] ? 'Mensuel' : 'Par livraison',
@@ -7451,7 +7454,7 @@ function dispatch($m, $p) {
       json_out(array_map(function ($r) {
         $init = strtoupper(mb_substr($r['name'], 0, 1) . (preg_match('/\s(\S)/u', $r['name'], $mm) ? $mm[1] : ''));
         return ['id' => 'p' . $r['id'], 'init' => $init, 'raison' => $r['name'], 'email' => $r['email'] ?: '—',
-                'segment' => 'horeca', 'tva' => $r['vat'] ?: '—',
+                'segment' => '—', 'tva' => $r['vat'] ?: '—',
                 'vies' => $r['vat'] ? 'ok' : 'pending', 'date' => $r['d']];
       }, $rs));
     }
