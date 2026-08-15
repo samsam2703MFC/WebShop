@@ -9,10 +9,12 @@ CREATE TABLE IF NOT EXISTS ws_param (
   updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Base actuelle (accès par IP). Change-la en une ligne quand le vrai domaine
--- est prêt :  UPDATE ws_param SET param_value='https://ton-domaine/webshop' WHERE param_key='webshop_base_url';
+-- AUDIT GO-LIVE : plus d'IP en dur seedée. La base est un PLACEHOLDER évident
+-- (jamais une IP nue en HTTP) ; sur une installation existante, ON DUPLICATE
+-- KEY préserve la valeur déjà posée. À DÉFINIR en production :
+--   UPDATE ws_param SET param_value='https://VOTRE-DOMAINE/webshop' WHERE param_key='webshop_base_url';
 INSERT INTO ws_param (param_key, param_value)
-VALUES ('webshop_base_url', 'http://185.180.206.46/webshop')
+VALUES ('webshop_base_url', 'https://REMPLACER-PAR-VOTRE-DOMAINE/webshop')
 ON DUPLICATE KEY UPDATE param_value = param_value;  -- ne pas écraser une valeur déjà définie
 
 -- Vérif : SELECT * FROM ws_param;
