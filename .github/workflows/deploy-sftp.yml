@@ -71,6 +71,9 @@ jobs:
           SSHPASS: ${{ secrets.SSH_PASSWORD }}
         run: |
           sshpass -e rsync -rltDz --omit-dir-times \
+            --exclude 'tests/' --exclude 'tools/' --exclude 'cron/' \
+            --exclude 'bo/*.sql' --exclude 'bo/*.sh' --exclude 'bo/*.md' \
+            --exclude 'bo/test-*' --exclude 'bo/seed-*' --exclude 'config.example.php' \
             -e "ssh -p ${{ vars.SSH_PORT || '22' }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
             php-api/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ vars.WEB_ROOT || '/var/www/html' }}/api/"
 
