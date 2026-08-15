@@ -1117,7 +1117,10 @@ function dispatch($m, $p) {
     $tbl = fn ($t) => (bool) row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", [$t]);
     if (!$tbl('voucher_code')) json_out([]);
     try {
-      $cid = is_numeric(qp('customerId')) ? (int) qp('customerId') : null;
+      // L'identité vient de la SESSION (Authorization) — jamais du customerId
+      // de l'URL. Sinon, déclarer l'id d'autrui suffisait à faire RÉVÉLER en
+      // clair ses codes nominatifs (CUSTOMER) ou ceux de son bureau (OFFICE).
+      $cid = auth_uid() ?: null;
       $sub = (float) (qp('subtotal') ?: 0);
       $officeId = null;
       if ($cid && col_exists('client', 'office_id')) {
@@ -1194,7 +1197,7 @@ function dispatch($m, $p) {
                  FROM voucher_code vco JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
                 WHERE vco.code = ? LIMIT 1", [$v['code']]);
     if ($tg && ($tg['target_kind'] ?? 'NETWORK') !== 'NETWORK') {
-      $cidV = isset($b['customerId']) && $b['customerId'] !== '' ? (int) $b['customerId'] : null;
+      $cidV = auth_uid() ?: null;  // identité = session, pas le corps
       $okT = false;
       if ($tg['target_kind'] === 'CUSTOMER') {
         $okT = $cidV !== null && (int) $tg['id_customer'] === $cidV;
@@ -1216,7 +1219,7 @@ function dispatch($m, $p) {
                 JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
                 JOIN promotion_order_discount pod ON pod.id_promotion = vc.id_promotion
                WHERE vco.code = ? LIMIT 1", [$v['code']]);
-    $cidV = isset($b['customerId']) && $b['customerId'] !== '' ? (int) $b['customerId'] : null;
+    $cidV = auth_uid() ?: null;  // identité = session, pas le corps
     if ($sc && $sc['usage_limit_per_customer'] !== null) {
       if ($cidV === null) json_out(['ok' => false, 'message' => 'Code nominatif — connectez-vous pour l\'utiliser']);
       $used = row("SELECT COUNT(*) n FROM voucher_redemption WHERE id_voucher_code=? AND id_customer=? AND status='CONFIRMED'",
@@ -5314,7 +5317,11 @@ function dispatch($m, $p) {
       $hasAv = $tblExists('ws_tour_availability');
       $svc = (float) ws_param('cost_service_minutes', '15');
       json_out(array_map(function ($t) use ($hasAv, $svc) {
-        $start = 360; $amp = 240;
+        // Départ et amplitude : NULL tant que ws_tour_availability n'a pas de
+        // ligne pour cette tournée — plus de 06h00 / 4h inventés affichés
+        // comme des horaires réels. L'écran sait afficher « — » (gardes déjà
+        // en place) et « horaires à paramétrer ».
+        $start = null; $amp = null;
         $inv = [1 => 'L', 2 => 'Ma', 3 => 'Me', 4 => 'J', 5 => 'V', 6 => 'S', 7 => 'D'];
         $days = []; foreach ($inv as $kk) $days[$kk] = false;
         if ($hasAv) {
@@ -5331,10 +5338,11 @@ function dispatch($m, $p) {
         $short = preg_split('/[\s\/]+/u', $short)[0] ?: $name;
         return ['id' => 'r' . $t['id'], 'name' => $name, 'short' => $short,
                 'driver' => $t['driver_name'] ?: '— non assigné', 'start' => $start,
-                'max' => (int) ($t['max_items'] ?: 10), 'ret' => (col_exists('ws_tours','return_to_depot') ? ((int) ($t['return_to_depot'] ?? 1) !== 0) : true),
-                'forfait' => $t['delivery_fee'] !== null ? (float) $t['delivery_fee'] : 0,
+                'max' => ($t['max_items'] !== null && $t['max_items'] !== '') ? (int) $t['max_items'] : null,
+                'ret' => (col_exists('ws_tours','return_to_depot') ? ((int) ($t['return_to_depot'] ?? 1) !== 0) : true),
+                'forfait' => $t['delivery_fee'] !== null ? (float) $t['delivery_fee'] : null,
                 'vehicule' => $t['vehicle'] ?: '', 'days' => $days,
-                'amplitude' => $amp, 'decharge' => (int) $svc, 'trajet' => (int) $svc,
+                'amplitude' => $amp, 'decharge' => $hasAv && $amp !== null ? (int) $svc : null, 'trajet' => $hasAv && $amp !== null ? (int) $svc : null,
                 'used' => (int) $t['used'], 'zone' => $t['zone'] ?: '—',
                 'active' => ((int) ($t['active'] ?? 1)) !== 0];
       }, $rs));
