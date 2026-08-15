@@ -4006,6 +4006,32 @@ function dispatch($m, $p) {
       json_out(['ok' => true, 'id' => $gid]);
     }
 
+    /* ── Connexion Google Business Profile + clés du circuit avis — état
+       sondé EN DIRECT (rien de mémorisé). `cles` dit ce qui est posé en
+       ws_param ; `ok` dit si le refresh token s'échange et si accounts.list
+       répond — le message d'échec vient de Google, verbatim. ── */
+    if ($m === 'GET' && $p === '/franchisor/gbp-status') {
+      $cles9 = [
+        'places'    => ws_param('google_api_key', '') !== '',
+        'anthropic' => ws_param('anthropic_api_key', '') !== '',
+        'client'    => ws_param('google_oauth_client_id', '') !== '',
+        'secret'    => ws_param('google_oauth_client_secret', '') !== '',
+        'refresh'   => ws_param('google_oauth_refresh_token', '') !== '',
+      ];
+      $why9 = null; $tok9 = gbp_token($why9);
+      if (!$tok9) json_out(['cles' => $cles9, 'ok' => false, 'why' => $why9]);
+      $acc9 = gbp_http('GET', 'https://mybusinessaccountmanagement.googleapis.com/v1/accounts',
+                       ['Authorization' => 'Bearer ' . $tok9]);
+      if (!is_array($acc9) || isset($acc9['error']))
+        json_out(['cles' => $cles9, 'ok' => false,
+                  'why' => 'Jeton échangé, mais accounts.list échoue : '
+                    . (is_array($acc9) ? ((string) ($acc9['error']['message'] ?? 'refus')) : 'API injoignable')
+                    . ' — l’accès « Business Profile API » est-il approuvé et activé sur le projet Cloud ?']);
+      json_out(['cles' => $cles9, 'ok' => true,
+                'comptes' => array_map(fn ($a9) => (string) ($a9['accountName'] ?? ($a9['name'] ?? '—')),
+                                       (array) ($acc9['accounts'] ?? []))]);
+    }
+
     // Modèles d'email (ws_email_templates : tpl_key/lang/subject, marque=1).
     if ($m === 'GET' && $p === '/franchisor/email-templates') {
       json_out(rows("SELECT tpl_key AS cle, lang AS langue, subject AS sujet
@@ -7981,6 +8007,72 @@ function dispatch($m, $p) {
                 'directive' => ['tranche' => $gd['note_min'] . '–' . $gd['note_max'], 'ton' => (string) $gd['tone']]]);
     }
 
+    /* TOUS les avis Business Profile de LA boutique, avec l'état de réponse —
+       c'est la source qui permet de RÉPONDRE, contrairement à la lecture
+       Places (bornée aux 5 plus pertinents, lecture seule). Fiche localisée
+       par le Place ID de la boutique à chaque appel. */
+    if ($m === 'GET' && $p === '/franchisee/gbp-reviews') {
+      if (!$shopId) json_out(['error' => 'boutique requise (?shop=)'], 400);
+      $gCol2 = null;
+      foreach (['google_place_id', 'place_id', 'google_place', 'gplace_id'] as $c9)
+        if (col_exists('shops', $c9)) { $gCol2 = $c9; break; }
+      if (!$gCol2) json_out(['error' => 'Aucune colonne Place ID dans « shops ».'], 501);
+      $gPid2 = trim((string) (row("SELECT `$gCol2` v FROM shops WHERE id = ?", [$shopId])['v'] ?? ''));
+      if ($gPid2 === '') json_out(['error' => "Place ID Google vide pour cette boutique (shops.$gCol2)."], 404);
+      $why2 = null; $tok2 = gbp_token($why2);
+      if (!$tok2) json_out(['error' => $why2], 501);
+      $lc2 = gbp_locate($tok2, $gPid2, $why2);
+      if (!$lc2) json_out(['error' => $why2], 502);
+      $rv2 = gbp_http('GET', 'https://mybusiness.googleapis.com/v4/' . $lc2[0] . '/' . $lc2[1] . '/reviews?pageSize=50',
+                      ['Authorization' => 'Bearer ' . $tok2]);
+      if (!is_array($rv2)) json_out(['error' => 'API Business Profile (reviews) injoignable.'], 502);
+      if (isset($rv2['error'])) json_out(['error' => 'Google (reviews) : ' . ((string) ($rv2['error']['message'] ?? 'refus'))], 502);
+      $et2 = ['ONE' => 1, 'TWO' => 2, 'THREE' => 3, 'FOUR' => 4, 'FIVE' => 5];
+      header('Cache-Control: no-store');
+      json_out(['fiche' => $lc2[2],
+        'nb'   => (int) ($rv2['totalReviewCount'] ?? 0),
+        'note' => isset($rv2['averageRating']) ? (float) $rv2['averageRating'] : null,
+        'avis' => array_map(fn ($r9) => [
+          'id'      => (string) ($r9['reviewId'] ?? ''),
+          'auteur'  => (string) ($r9['reviewer']['displayName'] ?? '—'),
+          'note'    => $et2[(string) ($r9['starRating'] ?? '')] ?? null,
+          'quand'   => substr((string) ($r9['createTime'] ?? ''), 0, 10),
+          'texte'   => (string) ($r9['comment'] ?? ''),
+          'repondu' => isset($r9['reviewReply']['comment']),
+          'reponse' => (string) ($r9['reviewReply']['comment'] ?? ''),
+        ], array_values((array) ($rv2['reviews'] ?? []))),
+      ]);
+    }
+
+    /* PUBLICATION d'une réponse — LE geste qui part sur Google. Le clic du
+       franchisé est la validation humaine : rien ne se publie sans lui,
+       quelle que soit la note (l'auto-publication n'existe pas ici). Publier
+       sur un avis déjà répondu REMPLACE la réponse (comportement Google). */
+    if ($m === 'POST' && $p === '/franchisee/gbp-reply') {
+      if (!$shopId) json_out(['error' => 'boutique requise (?shop=)'], 400);
+      rate_limit('gbppub', 15, 300);
+      $b9 = body();
+      $rid9 = trim((string) ($b9['id'] ?? ''));
+      $txt9 = trim((string) ($b9['texte'] ?? ''));
+      if ($rid9 === '' || $txt9 === '') json_out(['error' => 'id de l’avis et texte requis'], 400);
+      if (mb_strlen($txt9) > 4000) json_out(['error' => 'Réponse trop longue — 4 000 caractères maximum sur Google.'], 400);
+      $gCol3 = null;
+      foreach (['google_place_id', 'place_id', 'google_place', 'gplace_id'] as $c9)
+        if (col_exists('shops', $c9)) { $gCol3 = $c9; break; }
+      $gPid3 = $gCol3 ? trim((string) (row("SELECT `$gCol3` v FROM shops WHERE id = ?", [$shopId])['v'] ?? '')) : '';
+      if ($gPid3 === '') json_out(['error' => 'Place ID Google absent pour cette boutique.'], 404);
+      $why3 = null; $tok3 = gbp_token($why3);
+      if (!$tok3) json_out(['error' => $why3], 501);
+      $lc3 = gbp_locate($tok3, $gPid3, $why3);
+      if (!$lc3) json_out(['error' => $why3], 502);
+      $up3 = gbp_http('PUT', 'https://mybusiness.googleapis.com/v4/' . $lc3[0] . '/' . $lc3[1] . '/reviews/' . rawurlencode($rid9) . '/reply',
+                      ['Authorization' => 'Bearer ' . $tok3, 'Content-Type' => 'application/json'],
+                      json_encode(['comment' => $txt9], JSON_UNESCAPED_UNICODE));
+      if (!is_array($up3)) json_out(['error' => 'API Business Profile (reply) injoignable.'], 502);
+      if (isset($up3['error'])) json_out(['error' => 'Google (reply) : ' . ((string) ($up3['error']['message'] ?? 'refus'))], 502);
+      json_out(['ok' => true, 'reponse' => (string) ($up3['comment'] ?? $txt9)]);
+    }
+
     // Résolution PRODUIT robuste — utilisée par tous les toggles/saisies :
     // id (productId) prioritaire quand le front le fournit, sinon nom TRIMé ;
     // inclut les produits OBLIGATOIRES même hors webshop (active=0). Avant :
@@ -10683,6 +10775,69 @@ function user_payload($id) {
  * clé/valeur les plus courantes ET une colonne dédiée, chacune isolée en
  * try/catch. Repli : la RACINE du serveur — le webshop vit sous /webshop/, donc
  * `<scheme>://<host>/` pointe sur le PWA. Toujours surchargeable via ws_param. */
+/* ── Google Business Profile (OAuth) — répondre aux avis. La connexion vit en
+ * ws_param (client OAuth + refresh token) : l'API exige un accès approuvé par
+ * Google et une redirection HTTPS qu'un serveur HTTP nu ne peut pas offrir,
+ * donc le refresh token se génère hors ligne (OAuth Playground) et se colle
+ * en Console marque → Avis. Chaque requête ré-échange le refresh token contre
+ * un access token — aucun cache entre deux requêtes, la vérité est chez
+ * Google. ── */
+function gbp_http($method, $url, $headers, $body = null) {
+  $h = '';
+  foreach ($headers as $k => $v) $h .= $k . ': ' . $v . "\r\n";
+  $opt = ['method' => $method, 'timeout' => 25, 'ignore_errors' => true, 'header' => $h];
+  if ($body !== null) $opt['content'] = $body;
+  $raw = @file_get_contents($url, false, stream_context_create(['http' => $opt]));
+  return ($raw !== false) ? json_decode($raw, true) : null;
+}
+function gbp_token(&$why = null) {
+  $cid = (string) ws_param('google_oauth_client_id', '');
+  $sec = (string) ws_param('google_oauth_client_secret', '');
+  $ref = (string) ws_param('google_oauth_refresh_token', '');
+  if ($cid === '' || $sec === '' || $ref === '') {
+    $why = 'Connexion Google Business Profile non configurée — poser google_oauth_client_id, google_oauth_client_secret et google_oauth_refresh_token (Console marque → Avis).';
+    return null;
+  }
+  $j = gbp_http('POST', 'https://oauth2.googleapis.com/token',
+    ['Content-Type' => 'application/x-www-form-urlencoded'],
+    http_build_query(['client_id' => $cid, 'client_secret' => $sec,
+                      'refresh_token' => $ref, 'grant_type' => 'refresh_token']));
+  if (!is_array($j)) { $why = 'oauth2.googleapis.com injoignable depuis le serveur.'; return null; }
+  if (empty($j['access_token'])) {
+    $why = 'Google a refusé le refresh token : ' . ((string) ($j['error_description'] ?? ($j['error'] ?? 'réponse sans access_token')));
+    return null;
+  }
+  return (string) $j['access_token'];
+}
+/* Localise la fiche Business Profile d'une boutique par son Place ID :
+ * accounts.list puis locations.list (readMask metadata → placeId). Rend
+ * [nomCompte, nomFiche, titre] ou null avec la raison exacte dans $why. */
+function gbp_locate($tok, $placeId, &$why = null) {
+  $acc = gbp_http('GET', 'https://mybusinessaccountmanagement.googleapis.com/v1/accounts',
+                  ['Authorization' => 'Bearer ' . $tok]);
+  if (!is_array($acc)) { $why = 'API Business Profile (accounts) injoignable.'; return null; }
+  if (isset($acc['error'])) { $why = 'Google (accounts) : ' . ((string) ($acc['error']['message'] ?? 'refus')); return null; }
+  foreach ((array) ($acc['accounts'] ?? []) as $a) {
+    $an = (string) ($a['name'] ?? '');
+    if ($an === '') continue;
+    $pg = '';
+    do {
+      $loc = gbp_http('GET', 'https://mybusinessbusinessinformation.googleapis.com/v1/' . $an
+        . '/locations?readMask=' . rawurlencode('name,title,metadata') . '&pageSize=100'
+        . ($pg !== '' ? '&pageToken=' . rawurlencode($pg) : ''),
+        ['Authorization' => 'Bearer ' . $tok]);
+      if (!is_array($loc)) { $why = 'API Business Profile (locations) injoignable.'; return null; }
+      if (isset($loc['error'])) { $why = 'Google (locations) : ' . ((string) ($loc['error']['message'] ?? 'refus')); return null; }
+      foreach ((array) ($loc['locations'] ?? []) as $l)
+        if ((string) ($l['metadata']['placeId'] ?? '') === $placeId)
+          return [$an, (string) $l['name'], (string) ($l['title'] ?? '')];
+      $pg = (string) ($loc['nextPageToken'] ?? '');
+    } while ($pg !== '');
+  }
+  $why = 'Aucune fiche du compte Google connecté ne porte le Place ID de cette boutique (' . $placeId . ').';
+  return null;
+}
+
 /* Lecture d'un paramètre ws_param (clé/valeur). Repli silencieux sur $default. */
 function ws_param($key, $default = null) {
   try {
