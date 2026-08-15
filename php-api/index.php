@@ -4016,46 +4016,6 @@ function dispatch($m, $p) {
       json_out(['ok' => true, 'id' => $gid]);
     }
 
-    /* SONDE temporaire (jeton admin) : quelle variante d'API Places peut
-       servir les 5 DERNIERS avis ? v1 nu, v1 + reviewsSort=newest, et
-       l'API legacy (reviews_sort=newest). Rend notes et dates — jamais la
-       clé, jamais les textes. À retirer une fois la variante choisie. */
-    if ($m === 'GET' && $p === '/franchisor/places-tri-probe') {
-      $sp9 = (int) ($_GET['shop'] ?? 0);
-      if (!$sp9) json_out(['error' => 'boutique requise (?shop=)'], 400);
-      $k9 = (string) ws_param('google_api_key', '');
-      if ($k9 === '') json_out(['error' => 'clé Places absente'], 501);
-      $col9 = null;
-      foreach (['google_place_id', 'place_id', 'google_place', 'gplace_id'] as $c9)
-        if (col_exists('shops', $c9)) { $col9 = $c9; break; }
-      $pid9 = $col9 ? trim((string) (row("SELECT `$col9` v FROM shops WHERE id = ?", [$sp9])['v'] ?? '')) : '';
-      if ($pid9 === '') json_out(['error' => 'place id introuvable'], 404);
-      $cx9 = stream_context_create(['http' => ['timeout' => 8, 'ignore_errors' => true]]);
-      $essai9 = function ($url9) use ($cx9) {
-        $r9 = @file_get_contents($url9, false, $cx9);
-        $j9 = ($r9 !== false) ? json_decode($r9, true) : null;
-        if (!is_array($j9)) return ['ok' => false, 'err' => 'injoignable'];
-        if (isset($j9['error'])) return ['ok' => false, 'err' => (string) ($j9['error']['message'] ?? 'refus')];
-        if (($j9['status'] ?? 'OK') !== 'OK')
-          return ['ok' => false, 'err' => trim((string) ($j9['status'] ?? '') . ' ' . (string) ($j9['error_message'] ?? ''))];
-        $out9 = [];
-        foreach ((array) ($j9['reviews'] ?? ($j9['result']['reviews'] ?? [])) as $a9)
-          $out9[] = ['note' => $a9['rating'] ?? null,
-                     'date' => isset($a9['publishTime']) ? substr((string) $a9['publishTime'], 0, 10)
-                                                         : date('Y-m-d', (int) ($a9['time'] ?? 0))];
-        return ['ok' => true, 'avis' => $out9];
-      };
-      $b9 = 'https://places.googleapis.com/v1/places/' . rawurlencode($pid9)
-        . '?fields=' . rawurlencode('reviews') . '&languageCode=fr&key=' . rawurlencode($k9);
-      header('Cache-Control: no-store');
-      json_out([
-        'v1'            => $essai9($b9),
-        'v1_newest'     => $essai9($b9 . '&reviewsSort=newest'),
-        'legacy_newest' => $essai9('https://maps.googleapis.com/maps/api/place/details/json?place_id='
-          . rawurlencode($pid9) . '&fields=reviews&reviews_sort=newest&language=fr&key=' . rawurlencode($k9)),
-      ]);
-    }
-
     /* ── Connexion Google Business Profile + clés du circuit avis — état
        sondé EN DIRECT (rien de mémorisé). `cles` dit ce qui est posé en
        ws_param ; `ok` dit si le refresh token s'échange et si accounts.list
@@ -8023,13 +7983,16 @@ function dispatch($m, $p) {
       exit;
     }
 
-    /* Avis Google de LA boutique — LECTURE seule, via l'API Places (New).
-       Le Place ID vient de la table `shops` (colonne détectée), la clé API de
-       ws_param `google_api_key` : la clé ne vit qu'en base, côté serveur — le
-       dépôt est public et le navigateur n'a pas à la voir, l'appel Google part
-       d'ici. Répondre aux avis exigerait OAuth Business Profile (client id +
-       secret + refresh token) : hors de portée d'une clé API, et l'écran le
-       dit. Au plus 5 avis rendus : limite de l'API Places, pas un choix. */
+    /* Avis Google de LA boutique — LECTURE seule, via l'API Places Details
+       LEGACY : c'est la seule variante qui sert les 5 DERNIERS avis
+       (reviews_sort=newest). L'API « New » refuse ce paramètre (« Unknown
+       name "reviewsSort" ») et ne rend que les « 5 plus pertinents » —
+       vérifié depuis ce serveur le 15/08/2026 (sonde). Le Place ID vient de
+       la table `shops` (colonne détectée), la clé API de ws_param
+       `google_api_key` : la clé ne vit qu'en base, côté serveur — le dépôt
+       est public et le navigateur n'a pas à la voir. Répondre aux avis
+       exigerait OAuth Business Profile. Au plus 5 avis rendus : limite de
+       l'API Places, pas un choix. */
     if ($m === 'GET' && $p === '/franchisee/google-reviews') {
       if (!$shopId) json_out(['error' => 'boutique requise (?shop=)'], 400);
       $gKey = (string) ws_param('google_api_key', '');
@@ -8043,30 +8006,33 @@ function dispatch($m, $p) {
       $gPid = trim((string) (row("SELECT `$gCol` v FROM shops WHERE id = ?", [$shopId])['v'] ?? ''));
       if ($gPid === '') json_out(['error' => "Place ID Google vide pour cette boutique (shops.$gCol)."], 404);
       $ctx9 = stream_context_create(['http' => ['timeout' => 8, 'ignore_errors' => true]]);
-      $raw9 = @file_get_contents('https://places.googleapis.com/v1/places/' . rawurlencode($gPid)
-        . '?fields=' . rawurlencode('displayName,rating,userRatingCount,googleMapsUri,reviews')
-        . '&languageCode=fr&key=' . rawurlencode($gKey), false, $ctx9);
+      $raw9 = @file_get_contents('https://maps.googleapis.com/maps/api/place/details/json'
+        . '?place_id=' . rawurlencode($gPid)
+        . '&fields=' . rawurlencode('name,rating,user_ratings_total,url,reviews')
+        . '&reviews_sort=newest&language=fr&key=' . rawurlencode($gKey), false, $ctx9);
       $j9 = ($raw9 !== false) ? json_decode($raw9, true) : null;
       if (!is_array($j9)) json_out(['error' => 'API Places injoignable depuis le serveur.'], 502);
-      if (isset($j9['error']))
-        json_out(['error' => 'Google : ' . ((string) ($j9['error']['message'] ?? '') ?: 'refus'),
-                  'status' => (string) ($j9['error']['status'] ?? '')], 502);
+      if (($j9['status'] ?? '') !== 'OK') {
+        $why9 = (string) (($j9['status'] ?? '') ?: 'refus');
+        if ((string) ($j9['error_message'] ?? '') !== '') $why9 .= ' — ' . $j9['error_message'];
+        json_out(['error' => 'Google : ' . $why9, 'status' => (string) ($j9['status'] ?? '')], 502);
+      }
+      $rs9 = (array) ($j9['result'] ?? []);
+      /* L'API rend déjà les 5 derniers ; le tri par time n'est qu'une ceinture. */
+      $av9 = array_values((array) ($rs9['reviews'] ?? []));
+      usort($av9, fn ($x9, $y9) => ((int) ($y9['time'] ?? 0)) <=> ((int) ($x9['time'] ?? 0)));
       header('Cache-Control: no-store');
-      /* Tri par date de publication, plus récents d'abord — l'ordre par
-         « pertinence » de Places mettrait un avis d'il y a un an en tête. */
-      $av9 = array_values((array) ($j9['reviews'] ?? []));
-      usort($av9, fn ($x9, $y9) => strcmp((string) ($y9['publishTime'] ?? ''), (string) ($x9['publishTime'] ?? '')));
       json_out([
-        'nom'  => (string) ($j9['displayName']['text'] ?? ''),
-        'note' => isset($j9['rating']) ? (float) $j9['rating'] : null,
-        'nb'   => isset($j9['userRatingCount']) ? (int) $j9['userRatingCount'] : null,
-        'url'  => (string) ($j9['googleMapsUri'] ?? ''),
+        'nom'  => (string) ($rs9['name'] ?? ''),
+        'note' => isset($rs9['rating']) ? (float) $rs9['rating'] : null,
+        'nb'   => isset($rs9['user_ratings_total']) ? (int) $rs9['user_ratings_total'] : null,
+        'url'  => (string) ($rs9['url'] ?? ''),
         'avis' => array_map(fn ($r9) => [
-          'auteur' => (string) ($r9['authorAttribution']['displayName'] ?? '—'),
+          'auteur' => (string) ($r9['author_name'] ?? '—'),
           'note'   => isset($r9['rating']) ? (int) $r9['rating'] : null,
-          'quand'  => (string) ($r9['relativePublishTimeDescription'] ?? ''),
-          'date'   => substr((string) ($r9['publishTime'] ?? ''), 0, 10),
-          'texte'  => (string) (($r9['text']['text'] ?? '') ?: ($r9['originalText']['text'] ?? '')),
+          'quand'  => (string) ($r9['relative_time_description'] ?? ''),
+          'date'   => !empty($r9['time']) ? date('Y-m-d', (int) $r9['time']) : '',
+          'texte'  => (string) ($r9['text'] ?? ''),
         ], $av9),
       ]);
     }
@@ -8140,7 +8106,7 @@ function dispatch($m, $p) {
 
     /* TOUS les avis Business Profile de LA boutique, avec l'état de réponse —
        c'est la source qui permet de RÉPONDRE, contrairement à la lecture
-       Places (bornée aux 5 plus pertinents, lecture seule). Fiche localisée
+       Places (bornée aux 5 derniers avis, lecture seule). Fiche localisée
        par le Place ID de la boutique à chaque appel. */
     if ($m === 'GET' && $p === '/franchisee/gbp-reviews') {
       if (!$shopId) json_out(['error' => 'boutique requise (?shop=)'], 400);
