@@ -4021,16 +4021,18 @@ function dispatch($m, $p) {
         'secret'    => ws_param('google_oauth_client_secret', '') !== '',
         'refresh'   => ws_param('google_oauth_refresh_token', '') !== '',
       ];
+      $nShops9 = (int) (row("SELECT COUNT(*) n FROM ws_param WHERE param_key LIKE 'google_oauth_refresh_token_shop_%'
+                                AND param_value <> ''")['n'] ?? 0);
       $why9 = null; $tok9 = gbp_token($why9);
-      if (!$tok9) json_out(['cles' => $cles9, 'ok' => false, 'why' => $why9]);
+      if (!$tok9) json_out(['cles' => $cles9, 'boutiques' => $nShops9, 'ok' => false, 'why' => $why9]);
       $acc9 = gbp_http('GET', 'https://mybusinessaccountmanagement.googleapis.com/v1/accounts',
                        ['Authorization' => 'Bearer ' . $tok9]);
       if (!is_array($acc9) || isset($acc9['error']))
-        json_out(['cles' => $cles9, 'ok' => false,
+        json_out(['cles' => $cles9, 'boutiques' => $nShops9, 'ok' => false,
                   'why' => 'Jeton échangé, mais accounts.list échoue : '
                     . (is_array($acc9) ? ((string) ($acc9['error']['message'] ?? 'refus')) : 'API injoignable')
                     . ' — l’accès « Business Profile API » est-il approuvé et activé sur le projet Cloud ?']);
-      json_out(['cles' => $cles9, 'ok' => true,
+      json_out(['cles' => $cles9, 'boutiques' => $nShops9, 'ok' => true,
                 'comptes' => array_map(fn ($a9) => (string) ($a9['accountName'] ?? ($a9['name'] ?? '—')),
                                        (array) ($acc9['accounts'] ?? []))]);
     }
@@ -8022,7 +8024,7 @@ function dispatch($m, $p) {
       if (!$gCol2) json_out(['error' => 'Aucune colonne Place ID dans « shops ».'], 501);
       $gPid2 = trim((string) (row("SELECT `$gCol2` v FROM shops WHERE id = ?", [$shopId])['v'] ?? ''));
       if ($gPid2 === '') json_out(['error' => "Place ID Google vide pour cette boutique (shops.$gCol2)."], 404);
-      $why2 = null; $tok2 = gbp_token($why2);
+      $why2 = null; $tok2 = gbp_token($why2, $shopId);
       if (!$tok2) json_out(['error' => $why2], 501);
       $lc2 = gbp_locate($tok2, $gPid2, $why2);
       if (!$lc2) json_out(['error' => $why2], 502);
@@ -8047,6 +8049,29 @@ function dispatch($m, $p) {
       ]);
     }
 
+    /* Le franchisé colle SON refresh token (compte Google de SA fiche) —
+       rangé sous la portée serveur (google_oauth_refresh_token_shop_<id>),
+       jamais l'id envoyé par le navigateur. Testé aussitôt : l'échange OAuth
+       doit réussir, sinon la raison de Google revient et rien ne laisse
+       croire que la connexion marche. {delete:true} le retire. */
+    if ($m === 'POST' && $p === '/franchisee/gbp-token') {
+      if (!$shopId) json_out(['error' => 'boutique requise (?shop=)'], 400);
+      rate_limit('gbptok', 10, 300);
+      $b9 = body();
+      $cle9 = 'google_oauth_refresh_token_shop_' . (int) $shopId;
+      if (!empty($b9['delete'])) {
+        q("DELETE FROM ws_param WHERE param_key = ?", [$cle9]);
+        json_out(['ok' => true, 'retire' => true]);
+      }
+      $tk9 = trim((string) ($b9['token'] ?? ''));
+      if ($tk9 === '' || strlen($tk9) > 512) json_out(['error' => 'refresh token requis (512 caractères max)'], 400);
+      q("INSERT INTO ws_param (param_key, param_value) VALUES (?,?)
+         ON DUPLICATE KEY UPDATE param_value=VALUES(param_value)", [$cle9, $tk9]);
+      $whyT = null; $tokT = gbp_token($whyT, $shopId);
+      if (!$tokT) json_out(['ok' => false, 'error' => 'Jeton enregistré mais l’échange OAuth échoue : ' . $whyT], 502);
+      json_out(['ok' => true]);
+    }
+
     /* PUBLICATION d'une réponse — LE geste qui part sur Google. Le clic du
        franchisé est la validation humaine : rien ne se publie sans lui,
        quelle que soit la note (l'auto-publication n'existe pas ici). Publier
@@ -8064,7 +8089,7 @@ function dispatch($m, $p) {
         if (col_exists('shops', $c9)) { $gCol3 = $c9; break; }
       $gPid3 = $gCol3 ? trim((string) (row("SELECT `$gCol3` v FROM shops WHERE id = ?", [$shopId])['v'] ?? '')) : '';
       if ($gPid3 === '') json_out(['error' => 'Place ID Google absent pour cette boutique.'], 404);
-      $why3 = null; $tok3 = gbp_token($why3);
+      $why3 = null; $tok3 = gbp_token($why3, $shopId);
       if (!$tok3) json_out(['error' => $why3], 501);
       $lc3 = gbp_locate($tok3, $gPid3, $why3);
       if (!$lc3) json_out(['error' => $why3], 502);
@@ -10793,12 +10818,24 @@ function gbp_http($method, $url, $headers, $body = null) {
   $raw = @file_get_contents($url, false, stream_context_create(['http' => $opt]));
   return ($raw !== false) ? json_decode($raw, true) : null;
 }
-function gbp_token(&$why = null) {
+function gbp_token(&$why = null, $shopId = null) {
   $cid = (string) ws_param('google_oauth_client_id', '');
   $sec = (string) ws_param('google_oauth_client_secret', '');
-  $ref = (string) ws_param('google_oauth_refresh_token', '');
-  if ($cid === '' || $sec === '' || $ref === '') {
-    $why = 'Connexion Google Business Profile non configurée — poser google_oauth_client_id, google_oauth_client_secret et google_oauth_refresh_token (Console marque → Avis).';
+  if ($cid === '' || $sec === '') {
+    $why = 'Client OAuth non configuré — poser google_oauth_client_id et google_oauth_client_secret (Console marque → Avis).';
+    return null;
+  }
+  /* CHAQUE FRANCHISÉ A SON COMPTE GOOGLE : sa fiche vit sous son compte, donc
+     son refresh token est à lui (clé google_oauth_refresh_token_shop_<id>,
+     collé depuis SA console). Le jeton réseau reste un repli pour les fiches
+     que la marque gère elle-même. */
+  $ref = '';
+  if ($shopId) $ref = (string) ws_param('google_oauth_refresh_token_shop_' . (int) $shopId, '');
+  if ($ref === '') $ref = (string) ws_param('google_oauth_refresh_token', '');
+  if ($ref === '') {
+    $why = $shopId
+      ? 'Aucun refresh token pour cette boutique — collez le vôtre dans la carte Avis Google de cette console (compte Google du franchisé), ou posez un jeton réseau en Console marque → Avis.'
+      : 'Aucun refresh token réseau (google_oauth_refresh_token) — chaque boutique peut aussi coller le sien dans sa console.';
     return null;
   }
   $j = gbp_http('POST', 'https://oauth2.googleapis.com/token',
