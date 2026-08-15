@@ -3790,7 +3790,13 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   function step1Valid() {
     if (isOffice) return true;             // all read-only, valid
     if (user)    return true;              // collect logged-in: prefilled
-    return contact.firstName && contact.lastName && contact.email && contact.phone;
+    // E-mail FORMELLEMENT valide (il sert à la confirmation de commande) et
+    // téléphone contenant au moins des chiffres : l'ancien test «vérité»
+    // laissait passer une adresse malformée ou un téléphone sans chiffre,
+    // refusés ou inexploitables ensuite.
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(contact.email || '').trim());
+    const phoneOk = /\d{5,}/.test(String(contact.phone || '').replace(/\D/g, ''));
+    return Boolean(contact.firstName && contact.lastName && emailOk && phoneOk);
   }
   function step2Valid() { return Boolean(slot); }
   // Étape 3 : un moyen de paiement doit être proposé ET choisi. Sans ce test, le

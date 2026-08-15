@@ -5164,6 +5164,31 @@ function dispatch($m, $p) {
       json_out(['ok' => true]);
     }
 
+    /* Identité de la boutique (enseigne, adresse, ville, CP). L'écran
+       « Paramètres boutique » l'appelait mais la route N'EXISTAIT PAS : la
+       console affichait « POST /franchisee/shop-update absent — rien
+       enregistré » (honnête) sans jamais pouvoir écrire. PORTÉE PAR LA
+       SESSION : on écrit la boutique du jeton, jamais le shopId du corps.
+       Seuls les champs présents dans le corps sont modifiés (UPDATE partiel). */
+    if ($m === 'POST' && $p === '/franchisee/shop-update') {
+      if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
+      $b = body();
+      $map = ['name' => 'name', 'city' => 'city', 'zip' => 'zip'];
+      $sets = []; $vals = [];
+      foreach ($map as $k => $col) {
+        if (array_key_exists($k, $b) && col_exists($SHOPS, $col)) { $sets[] = "$col=?"; $vals[] = mb_substr(trim((string) $b[$k]), 0, 190); }
+      }
+      // L'adresse : address_line si la colonne existe, sinon street.
+      if (array_key_exists('address', $b)) {
+        $aCol = col_exists($SHOPS, 'address_line') ? 'address_line' : (col_exists($SHOPS, 'street') ? 'street' : null);
+        if ($aCol) { $sets[] = "$aCol=?"; $vals[] = mb_substr(trim((string) $b['address']), 0, 255); }
+      }
+      if (!$sets) json_out(['ok' => false, 'error' => 'rien à modifier'], 400);
+      $vals[] = (int) $shopId;
+      q("UPDATE $SHOPS SET " . implode(', ', $sets) . " WHERE id=?", $vals);
+      json_out(['ok' => true]);
+    }
+
     // ── KPIs du jour — shape vstat du design (couleurs CSS brutes). ──
     if ($m === 'GET' && $p === '/franchisee/kpis') {
       if (!$hasOrders) json_out([]);
