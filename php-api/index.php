@@ -4016,6 +4016,46 @@ function dispatch($m, $p) {
       json_out(['ok' => true, 'id' => $gid]);
     }
 
+    /* SONDE temporaire (jeton admin) : quelle variante d'API Places peut
+       servir les 5 DERNIERS avis ? v1 nu, v1 + reviewsSort=newest, et
+       l'API legacy (reviews_sort=newest). Rend notes et dates — jamais la
+       clé, jamais les textes. À retirer une fois la variante choisie. */
+    if ($m === 'GET' && $p === '/franchisor/places-tri-probe') {
+      $sp9 = (int) ($_GET['shop'] ?? 0);
+      if (!$sp9) json_out(['error' => 'boutique requise (?shop=)'], 400);
+      $k9 = (string) ws_param('google_api_key', '');
+      if ($k9 === '') json_out(['error' => 'clé Places absente'], 501);
+      $col9 = null;
+      foreach (['google_place_id', 'place_id', 'google_place', 'gplace_id'] as $c9)
+        if (col_exists('shops', $c9)) { $col9 = $c9; break; }
+      $pid9 = $col9 ? trim((string) (row("SELECT `$col9` v FROM shops WHERE id = ?", [$sp9])['v'] ?? '')) : '';
+      if ($pid9 === '') json_out(['error' => 'place id introuvable'], 404);
+      $cx9 = stream_context_create(['http' => ['timeout' => 8, 'ignore_errors' => true]]);
+      $essai9 = function ($url9) use ($cx9) {
+        $r9 = @file_get_contents($url9, false, $cx9);
+        $j9 = ($r9 !== false) ? json_decode($r9, true) : null;
+        if (!is_array($j9)) return ['ok' => false, 'err' => 'injoignable'];
+        if (isset($j9['error'])) return ['ok' => false, 'err' => (string) ($j9['error']['message'] ?? 'refus')];
+        if (($j9['status'] ?? 'OK') !== 'OK')
+          return ['ok' => false, 'err' => trim((string) ($j9['status'] ?? '') . ' ' . (string) ($j9['error_message'] ?? ''))];
+        $out9 = [];
+        foreach ((array) ($j9['reviews'] ?? ($j9['result']['reviews'] ?? [])) as $a9)
+          $out9[] = ['note' => $a9['rating'] ?? null,
+                     'date' => isset($a9['publishTime']) ? substr((string) $a9['publishTime'], 0, 10)
+                                                         : date('Y-m-d', (int) ($a9['time'] ?? 0))];
+        return ['ok' => true, 'avis' => $out9];
+      };
+      $b9 = 'https://places.googleapis.com/v1/places/' . rawurlencode($pid9)
+        . '?fields=' . rawurlencode('reviews') . '&languageCode=fr&key=' . rawurlencode($k9);
+      header('Cache-Control: no-store');
+      json_out([
+        'v1'            => $essai9($b9),
+        'v1_newest'     => $essai9($b9 . '&reviewsSort=newest'),
+        'legacy_newest' => $essai9('https://maps.googleapis.com/maps/api/place/details/json?place_id='
+          . rawurlencode($pid9) . '&fields=reviews&reviews_sort=newest&language=fr&key=' . rawurlencode($k9)),
+      ]);
+    }
+
     /* ── Connexion Google Business Profile + clés du circuit avis — état
        sondé EN DIRECT (rien de mémorisé). `cles` dit ce qui est posé en
        ws_param ; `ok` dit si le refresh token s'échange et si accounts.list
