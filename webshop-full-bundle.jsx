@@ -1417,9 +1417,9 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
         <div className="ws-card__name">{p.name}</div>
         <div className="ws-card__meta">
           <span className="ws-card__price">€{price.toFixed(2)}{hasOptions && <span className="ws-card__from"> · à partir de</span>}</span>
-          {deliveryStockLeft !== null && !stockExhausted && (
-            <span className="ws-card__stock">{deliveryStockLeft} dispo</span>
-          )}
+          {/* Compteur « X dispo » retiré des vignettes (demandé le 15/08) — il
+              exposait le stock restant sur la grille. « Épuisé » reste : c'est
+              une contrainte que le client doit voir avant d'ajouter. */}
           {stockExhausted && <span className="ws-card__stock ws-card__stock--out">Épuisé livraison</span>}
         </div>
       </div>
