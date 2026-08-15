@@ -6,7 +6,7 @@
 #   - l'API tourne (ex. local :  php -S 127.0.0.1:8080 index.php  depuis php-api/)
 #   - config.php contient la section 'bo' avec 'cookie_secure' => false pour un
 #     test en http (sinon les cookies Secure ne repartent pas sur http)
-#   - comptes de démo seedés (seed-bo-users.example.sql), mdp Test1234!
+#   - comptes de démo seedés (seed-bo-users.example.sql), mot de passe de dev local
 #
 # Usage :   BASE=http://127.0.0.1:8080 ./test-isolation.sh
 # ============================================================================
@@ -28,10 +28,10 @@ code(){ # code <jar> <method> <path> [csrf]
 echo "▶ 1. Login des deux BO (cookies distincts)"
 CA=$(curl -s -c "$JA" -X POST "$BASE/bo/franchisee/login" \
       -H 'Content-Type: application/json' \
-      -d '{"email":"franchise@atelierby.be","password":"Test1234!"}')
+      -d '{"email":"franchise@example.invalid","password":"Test1234!"}')
 CB=$(curl -s -c "$JB" -X POST "$BASE/bo/franchisor/login" \
       -H 'Content-Type: application/json' \
-      -d '{"email":"siege@atelierby.be","password":"Test1234!"}')
+      -d '{"email":"siege@example.invalid","password":"Test1234!"}')
 CSRF_A=$(printf '%s' "$CA" | sed -n 's/.*"csrf":"\([^"]*\)".*/\1/p')
 CSRF_B=$(printf '%s' "$CB" | sed -n 's/.*"csrf":"\([^"]*\)".*/\1/p')
 [ -n "$CSRF_A" ] && ok "login franchisé OK"      || ko "login franchisé KO ($CA)"

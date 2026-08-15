@@ -64,7 +64,7 @@
         } catch (_) {}
         return [];
       }
-      return [DEMO_CAMPAIGN];
+      return [];  // go-live : plus de campagne démo « Été gourmand » — vide si non câblé.
     },
 
     async progress(campaignId, { guestEmail } = {}) {
@@ -77,7 +77,7 @@
         } catch (_) {}
         return null;
       }
-      return demoProgress();
+      return null;  // go-live : pas d'état de démo
     },
 
     async claim(campaignId, { guestEmail } = {}) {
@@ -90,14 +90,7 @@
         } catch (_) {}
         return null;
       }
-      // Démo : débloque + génère un code.
-      const s = demoState();
-      if (!s.unlockedAt && s.accumulated >= DEMO_CAMPAIGN.threshold) {
-        s.unlockedAt = new Date().toISOString();
-        s.voucherCode = 'GIFT-1-DEMO' + Math.floor(Math.random() * 9000 + 1000);
-        demoSave(s);
-      }
-      return demoProgress();
+      return null;  // go-live : pas de déblocage de démo
     },
 
     async redeem({ code, shopId, guestEmail } = {}) {
@@ -110,12 +103,7 @@
         } catch (_) {}
         return { valid: false, reason: 'network' };
       }
-      // Démo : le code émis par claim() est valable.
-      const s = demoState();
-      if (code && s.voucherCode && String(code).trim().toUpperCase() === s.voucherCode.toUpperCase()) {
-        return { valid: true, reward: DEMO_CAMPAIGN.reward };
-      }
-      return { valid: false, reason: 'unknown_code' };
+      return { valid: false, reason: 'unknown_code' };  // go-live : plus de validation de démo
     },
   };
 

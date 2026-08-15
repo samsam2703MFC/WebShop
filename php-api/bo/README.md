@@ -44,8 +44,10 @@ GET  /bo/<role>/scope      (cookie)             → {bo, role, shops}   (shops=n
 2. **Config** : copier la section `bo` de `config.example.php` dans `config.php`
    et y mettre **deux secrets longs et différents** (`openssl rand -hex 32`).
    En prod : `cookie_secure => true` (HTTPS).
-3. **Comptes** : `bo/seed-bo-users.example.sql` (démo, mdp `Test1234!`) — remplace
-   par tes comptes ; hash via `php -r 'echo password_hash("…",PASSWORD_BCRYPT);'`.
+3. **Comptes** : `bo/seed-bo-users.example.sql` est un GABARIT à placeholders
+   (aucun mot de passe réel) — remplis-le avec tes e-mails et des hash générés
+   depuis un mot de passe fort jamais commité :
+   `php -r 'echo password_hash("…",PASSWORD_BCRYPT);'`.
 
 ## Tester
 

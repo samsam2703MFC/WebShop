@@ -264,6 +264,18 @@ CREATE TABLE IF NOT EXISTS `client` (
   `is_b2b` tinyint(1) NOT NULL DEFAULT 0,
   `company_name` varchar(190) DEFAULT NULL,
   `invoice_name` varchar(190) DEFAULT NULL,
+  `city` varchar(120) DEFAULT NULL,
+  `street` varchar(190) DEFAULT NULL,
+  `tax_number` varchar(40) DEFAULT NULL,
+  `status` tinyint(1) DEFAULT NULL,
+  `office_delivery` tinyint(1) DEFAULT NULL,
+  -- Conditions commerciales B2B (migration 0084) — le socle les porte pour
+  -- que /franchisee/save et GET fr-clients soient testables en local.
+  `b2b_segment` varchar(32) DEFAULT NULL,
+  `b2b_payment_terms` varchar(64) DEFAULT NULL,
+  `b2b_credit_ceiling` decimal(12,2) DEFAULT NULL,
+  `b2b_web_discount` decimal(5,2) DEFAULT NULL,
+  `b2b_franco` varchar(40) DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci

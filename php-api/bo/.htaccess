@@ -1,0 +1,10 @@
+# bo/ contient du code PHP inclus depuis le filesystem (bootstrap/auth/guard/
+# routes via lib.php) — jamais appelé directement en HTTP. On refuse le service
+# web de TOUT sauf les fichiers réellement routés, et on bloque explicitement
+# les seeds, scripts de test et docs (mot de passe de démo, structure bo_users).
+<FilesMatch "\.(sql|sh|md|example\.php)$">
+  Require all denied
+</FilesMatch>
+<FilesMatch "^(test-|seed-)">
+  Require all denied
+</FilesMatch>

@@ -32,10 +32,11 @@ CREATE TABLE IF NOT EXISTS b2b_client_company_department (
   KEY idx_dept_client (client_id)
 );
 
--- Valeurs initiales de configuration (reprises de la maquette validée) — à
--- ajuster en production. INSERT IGNORE + ids fixes = rejouable sans doublon.
-INSERT IGNORE INTO ws_franchisor_catchment (id, name, postcodes, exclusive) VALUES
-  (1, 'Bruxelles Capitale (19 communes)',
-      '1000 · 1020 · 1030 · 1040 · 1050 · 1060 · 1070 · 1080 · 1081 · 1082 · 1083 · 1090 · 1120 · 1130 · 1140 · 1150 · 1160 · 1170 · 1180 · 1190 · 1200 · 1210', TRUE),
-  (2, 'Brabant flamand — périphérie', '1600 · 1700 · 1800 · 1930 · 1932 · 3000 · 3001 · 3010 · 3020', TRUE),
-  (3, 'Brabant wallon nord', '1300 · 1310 · 1320 · 1340 · 1348 · 1400 · 1410 · 1420', FALSE);
+-- AUDIT GO-LIVE : les trois zones de chalandise « reprises de la maquette »
+-- ont été RETIRÉES — c'étaient des données de démonstration insérées en
+-- production par migrate.sh (règle « aucune donnée inventée »). La table est
+-- créée vide ; les zones réelles se saisissent dans la console marque
+-- (POST /franchisor/catchment).
+-- NOTE PRODUCTION : une version précédente a pu poser les lignes id 1-3 —
+-- à vérifier/supprimer côté base si elles ne correspondent à aucune zone
+-- réellement paramétrée.

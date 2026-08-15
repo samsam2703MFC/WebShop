@@ -2712,6 +2712,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     },
   });
   const [savedFlash, setSavedFlash] = useState(false);
+  const [profileErr, setProfileErr] = React.useState('');
   // Statut VIES : si la société est déjà liée en base (verified_at côté client),
   // on affiche le badge « vérifié » d'office — comme la carte VIES de la PWA.
   const [vies, setVies] = useState(() => (user?.invoice?.viesVerified
@@ -2867,7 +2868,12 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   // Persist a partial update through onUpdateUser + WSI18n customer store.
   // Used for the in-row controls (fidelity toggle, preferred shop) that
   // shouldn't wait for the global "Enregistrer" button.
-  function persistPartial(patch) {
+  // Persistance serveur ATTENDUE : renvoie {ok, error}. L'ancien
+  // fire-and-forget appliquait l'état localement même si le serveur refusait
+  // (409) — le client croyait son bureau/sa boutique rattachés. On applique
+  // d'abord l'optimiste (réactivité), mais on rend le verdict serveur pour que
+  // l'appelant affiche l'erreur et, au besoin, revienne en arrière.
+  async function persistPartial(patch) {
     const updated = { ...user, ...patch };
     setForm((f) => ({ ...f, ...patch }));
     if (typeof onUpdateUser === 'function') onUpdateUser(updated);
@@ -2875,12 +2881,14 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       const existing = window.WSI18n.getCustomer() || {};
       window.WSI18n.setCustomer({ ...existing, ...updated });
     }
-    // Persistance serveur (best-effort) : sans cet appel, boutique préférée,
-    // bureau (flux entreprise) et statut fidélité restaient purement locaux —
-    // perdus au rechargement et invisibles côté PWA (base partagée).
     if (window.WSAuth && typeof window.WSAuth.updateMe === 'function' && window.WSAuth.endpoint) {
-      try { window.WSAuth.updateMe(patch); } catch (_) {}
+      try {
+        const r = await window.WSAuth.updateMe(patch);
+        if (r && r.ok && r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
+        return r || { ok: false, error: 'Réponse serveur vide.' };
+      } catch (e) { return { ok: false, error: 'Serveur injoignable — non enregistré.' }; }
     }
+    return { ok: false, error: 'Service de compte indisponible — non enregistré.' };
   }
 
   // Toggle app fidélité. L'état réel vit en base (fidelity_active, écrit par le
@@ -2978,10 +2986,11 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   function chooseDone() {
     setOfficeStep('idle');
   }
-  function confirmPick() {
+  async function confirmPick() {
     if (!pickedOfficeId) { setOfficeErr('Sélectionnez un bureau.'); return; }
-    persistPartial({ officeId: pickedOfficeId });
-    setOfficeStep('idle');
+    const r = await persistPartial({ officeId: pickedOfficeId });
+    if (r && r.ok === false) { setOfficeErr(r.error || 'Rattachement refusé par le serveur.'); return; }
+    setOfficeErr(''); setOfficeStep('idle');
   }
   function setNewOfficeField(k, v) { setNewOffice((f) => ({ ...f, [k]: v })); setOfficeErr(''); }
   // "My office isn't listed" → ask the franchise to contact it (no office is
@@ -3063,19 +3072,28 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       window.WSI18n.setCustomer({ ...existing, ...updated });
     }
     // Persist to the backend (customer profile) when the API is wired.
-    if (window.WSAuth && typeof window.WSAuth.updateMe === 'function') {
+    // « Enregistré » ne s'affiche QUE si le serveur a accepté — l'ancien code
+    // le montrait toujours, même sur un rejet (400/500 avalé) : perte
+    // silencieuse. On applique aussi l'état renvoyé par le serveur, pas
+    // l'optimiste local.
+    if (window.WSAuth && typeof window.WSAuth.updateMe === 'function' && window.WSAuth.endpoint) {
       try {
-        // Coordonnées uniquement : les données société ne s'éditent JAMAIS ici
-        // (voir section « Sociétés de facturation » — le serveur les ignore).
         const r = await window.WSAuth.updateMe({
           firstName: form.firstName, lastName: form.lastName,
           phone: form.phone, postalCode: form.postalCode, locality: form.locality,
         });
-        if (r && r.ok && r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
-      } catch (_) {}
+        if (r && r.ok) {
+          if (r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
+          setProfileErr(''); setSavedFlash(true); setTimeout(() => setSavedFlash(false), 1800);
+        } else {
+          setProfileErr((r && r.error) || 'Enregistrement refusé par le serveur.');
+        }
+      } catch (e) {
+        setProfileErr('Serveur injoignable — modifications NON enregistrées.');
+      }
+    } else {
+      setProfileErr('Service de compte indisponible — modifications NON enregistrées.');
     }
-    setSavedFlash(true);
-    setTimeout(() => setSavedFlash(false), 1800);
   }
   return (
     <ModalShell onClose={onClose} narrow>
@@ -3156,6 +3174,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         <div className="ws-acc__form-foot">
           <button type="submit" className="ws-cta">Enregistrer</button>
           {savedFlash && <span className="ws-acc__saved">✓ Enregistré</span>}
+          {profileErr && <span className="ws-acc__saved" style={{ color: 'var(--color-primary, #8d1d2c)' }}>{profileErr}</span>}
         </div>
       </form>
 
@@ -3771,7 +3790,13 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   function step1Valid() {
     if (isOffice) return true;             // all read-only, valid
     if (user)    return true;              // collect logged-in: prefilled
-    return contact.firstName && contact.lastName && contact.email && contact.phone;
+    // E-mail FORMELLEMENT valide (il sert à la confirmation de commande) et
+    // téléphone contenant au moins des chiffres : l'ancien test «vérité»
+    // laissait passer une adresse malformée ou un téléphone sans chiffre,
+    // refusés ou inexploitables ensuite.
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(contact.email || '').trim());
+    const phoneOk = /\d{5,}/.test(String(contact.phone || '').replace(/\D/g, ''));
+    return Boolean(contact.firstName && contact.lastName && emailOk && phoneOk);
   }
   function step2Valid() { return Boolean(slot); }
   // Étape 3 : un moyen de paiement doit être proposé ET choisi. Sans ce test, le

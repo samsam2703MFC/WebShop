@@ -1117,7 +1117,10 @@ function dispatch($m, $p) {
     $tbl = fn ($t) => (bool) row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", [$t]);
     if (!$tbl('voucher_code')) json_out([]);
     try {
-      $cid = is_numeric(qp('customerId')) ? (int) qp('customerId') : null;
+      // L'identité vient de la SESSION (Authorization) — jamais du customerId
+      // de l'URL. Sinon, déclarer l'id d'autrui suffisait à faire RÉVÉLER en
+      // clair ses codes nominatifs (CUSTOMER) ou ceux de son bureau (OFFICE).
+      $cid = auth_uid() ?: null;
       $sub = (float) (qp('subtotal') ?: 0);
       $officeId = null;
       if ($cid && col_exists('client', 'office_id')) {
@@ -1194,7 +1197,7 @@ function dispatch($m, $p) {
                  FROM voucher_code vco JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
                 WHERE vco.code = ? LIMIT 1", [$v['code']]);
     if ($tg && ($tg['target_kind'] ?? 'NETWORK') !== 'NETWORK') {
-      $cidV = isset($b['customerId']) && $b['customerId'] !== '' ? (int) $b['customerId'] : null;
+      $cidV = auth_uid() ?: null;  // identité = session, pas le corps
       $okT = false;
       if ($tg['target_kind'] === 'CUSTOMER') {
         $okT = $cidV !== null && (int) $tg['id_customer'] === $cidV;
@@ -1216,7 +1219,7 @@ function dispatch($m, $p) {
                 JOIN voucher_campaign vc ON vc.id = vco.id_voucher_campaign
                 JOIN promotion_order_discount pod ON pod.id_promotion = vc.id_promotion
                WHERE vco.code = ? LIMIT 1", [$v['code']]);
-    $cidV = isset($b['customerId']) && $b['customerId'] !== '' ? (int) $b['customerId'] : null;
+    $cidV = auth_uid() ?: null;  // identité = session, pas le corps
     if ($sc && $sc['usage_limit_per_customer'] !== null) {
       if ($cidV === null) json_out(['ok' => false, 'message' => 'Code nominatif — connectez-vous pour l\'utiliser']);
       $used = row("SELECT COUNT(*) n FROM voucher_redemption WHERE id_voucher_code=? AND id_customer=? AND status='CONFIRMED'",
@@ -4815,12 +4818,16 @@ function dispatch($m, $p) {
       $pdo = db();
       $pdo->beginTransaction();
       try {
-        // Prix de base du menu = ws_products.price (éditable). base_cost + override menu.
-        if (array_key_exists('basePrice', $b)) {
-          q("UPDATE ws_products SET menu_override=?, base_cost=?, price=? WHERE id=?", [$ov, (float) ($b['baseCost'] ?? 0), (float) $b['basePrice'], $pid]);
-        } else {
-          q("UPDATE ws_products SET menu_override=?, base_cost=? WHERE id=?", [$ov, (float) ($b['baseCost'] ?? 0), $pid]);
-        }
+        // Prix de base, coût et override : chacun n'est écrit QUE s'il est
+        // présent dans le body. Sans ça, ouvrir un produit dans le
+        // constructeur envoyait baseCost:0 / menuOverride:null (valeurs par
+        // défaut du store local) et ÉCRASAIT le coût réel du produit à 0 et
+        // sa surcharge menu — pour tout produit simplement consulté.
+        $mSets = []; $mVals = [];
+        if (array_key_exists('menuOverride', $b)) { $mSets[] = 'menu_override=?'; $mVals[] = $ov; }
+        if (array_key_exists('baseCost', $b))     { $mSets[] = 'base_cost=?';     $mVals[] = (float) $b['baseCost']; }
+        if (array_key_exists('basePrice', $b))    { $mSets[] = 'price=?';         $mVals[] = (float) $b['basePrice']; }
+        if ($mSets) { $mVals[] = $pid; q("UPDATE ws_products SET " . implode(', ', $mSets) . " WHERE id=?", $mVals); }
         q("DELETE c FROM ws_bundle_slot_choices c JOIN ws_bundle_slots s ON s.id=c.slot_id JOIN ws_bundles bu ON bu.id=s.bundle_id WHERE bu.product_id=?", [$pid]);
         q("DELETE s FROM ws_bundle_slots s JOIN ws_bundles bu ON bu.id=s.bundle_id WHERE bu.product_id=?", [$pid]);
         q("DELETE FROM ws_bundles WHERE product_id=?", [$pid]);
@@ -5128,6 +5135,19 @@ function dispatch($m, $p) {
         return preg_match('/^\d{1,2}:\d{2}$/', $v) ? (str_pad(explode(':', $v)[0], 2, '0', STR_PAD_LEFT) . ':' . explode(':', $v)[1] . ':00') : $def;
       };
       $ci = fn ($k, $def, $min, $max) => max($min, min($max, isset($b[$k]) && $b[$k] !== '' ? (int) $b[$k] : $def));
+      /* AUDIT GO-LIVE : cet écran complétait tout champ absent avec des
+         valeurs métier inventées (08:00–18:00, cut-off 16h, capacité 15/30…)
+         — des horaires que la boutique n'avait jamais fixés, écrits en base
+         puis appliqués au client. On EXIGE les champs d'horaires d'un canal
+         ACTIVÉ plutôt que de décider à sa place : requête refusée avec la
+         liste des manquants (la console les envoie tous ; ce garde ne bloque
+         qu'un appel partiel/forgé). */
+      $miss = [];
+      if (!empty($b['collect_enabled'])) foreach (['collect_open_days','collect_hours_start','collect_hours_end'] as $rk)
+        if (!isset($b[$rk]) || $b[$rk] === '' || $b[$rk] === []) $miss[] = $rk;
+      if (!empty($b['delivery_enabled'])) foreach (['delivery_open_days','delivery_hours_start','delivery_hours_end'] as $rk)
+        if (!isset($b[$rk]) || $b[$rk] === '' || $b[$rk] === []) $miss[] = $rk;
+      if ($miss) json_out(['ok' => false, 'error' => 'Champs requis manquants (aucune valeur par défaut inventée) : ' . implode(', ', $miss)], 400);
       q("INSERT INTO ws_shop_availability
            (shop_id, collect_enabled, delivery_enabled, collect_open_days, delivery_open_days,
             collect_hours_start, collect_hours_end, delivery_hours_start, delivery_hours_end,
@@ -5154,6 +5174,31 @@ function dispatch($m, $p) {
          $ci('collect_cutoff_hour', 16, 0, 23), $ci('collect_cutoff_minute', 0, 0, 59), $ci('collect_lead_hours', 2, 0, 336),
          $ci('delivery_cutoff_hour', 11, 0, 23), $ci('delivery_cutoff_minute', 0, 0, 59), $ci('delivery_lead_hours', 20, 0, 336),
          $ci('collect_capacity_per_slot', 15, 1, 9999), $ci('delivery_capacity_per_slot', 30, 1, 9999)]);
+      json_out(['ok' => true]);
+    }
+
+    /* Identité de la boutique (enseigne, adresse, ville, CP). L'écran
+       « Paramètres boutique » l'appelait mais la route N'EXISTAIT PAS : la
+       console affichait « POST /franchisee/shop-update absent — rien
+       enregistré » (honnête) sans jamais pouvoir écrire. PORTÉE PAR LA
+       SESSION : on écrit la boutique du jeton, jamais le shopId du corps.
+       Seuls les champs présents dans le corps sont modifiés (UPDATE partiel). */
+    if ($m === 'POST' && $p === '/franchisee/shop-update') {
+      if (!$shopId) json_out(['ok' => false, 'error' => 'boutique requise (?shop=)'], 400);
+      $b = body();
+      $map = ['name' => 'name', 'city' => 'city', 'zip' => 'zip'];
+      $sets = []; $vals = [];
+      foreach ($map as $k => $col) {
+        if (array_key_exists($k, $b) && col_exists($SHOPS, $col)) { $sets[] = "$col=?"; $vals[] = mb_substr(trim((string) $b[$k]), 0, 190); }
+      }
+      // L'adresse : address_line si la colonne existe, sinon street.
+      if (array_key_exists('address', $b)) {
+        $aCol = col_exists($SHOPS, 'address_line') ? 'address_line' : (col_exists($SHOPS, 'street') ? 'street' : null);
+        if ($aCol) { $sets[] = "$aCol=?"; $vals[] = mb_substr(trim((string) $b['address']), 0, 255); }
+      }
+      if (!$sets) json_out(['ok' => false, 'error' => 'rien à modifier'], 400);
+      $vals[] = (int) $shopId;
+      q("UPDATE $SHOPS SET " . implode(', ', $sets) . " WHERE id=?", $vals);
       json_out(['ok' => true]);
     }
 
@@ -5187,19 +5232,37 @@ function dispatch($m, $p) {
         $wh   = "(t.shop_id = " . (int) $shopId . " OR f.tour_id IS NULL)";
       }
       $hasSites = $tblExists('ws_office_delivery_sites');
-      $offices = rows("SELECT f.id, f.name, f.vat, f.status, f.deferred_billing_enabled
-                         FROM ws_offices f $join WHERE $wh ORDER BY f.name LIMIT 200");
+      // Conditions commerciales B2B servies depuis la fiche client liée
+      // (colonnes 0084) quand elles existent — plus de « horeca » / « 30 j »
+      // codés en dur. Jointure par ws_offices.client_id si la colonne existe.
+      $hasCli   = col_exists('ws_offices', 'client_id');
+      $hasB2bC  = $tblExists('client') && col_exists('client', 'b2b_segment');
+      $cliSel = ($hasCli && $hasB2bC)
+        ? ", c.b2b_segment, c.b2b_payment_terms, c.b2b_credit_ceiling, c.b2b_web_discount, c.b2b_franco"
+        : "";
+      $cliJoin = ($hasCli && $hasB2bC) ? " LEFT JOIN client c ON c.id = f.client_id" : "";
+      $offices = rows("SELECT f.id, f.name, f.vat, f.status, f.deferred_billing_enabled$cliSel
+                         FROM ws_offices f $join$cliJoin WHERE $wh ORDER BY f.name LIMIT 200");
       $out = [];
       foreach ($offices as $f) {
         $pts = $hasSites ? rows(
           "SELECT COALESCE(s.name,'—') AS libelle, COALESCE(s.address,'—') AS adresse
              FROM ws_office_delivery_sites s WHERE s.office_client_id=? AND s.active=1 LIMIT 20", [$f['id']]) : [];
+        // Paiement : la vraie condition si stockée, sinon dérivée du flag
+        // facturation différée ; jamais « 30 j fin de mois » inventé.
+        $paie = trim((string) ($f['b2b_payment_terms'] ?? ''));
+        if ($paie === '') $paie = $f['deferred_billing_enabled'] ? '—' : 'Comptant';
         $out[] = [
           'raison' => $f['name'], 'code' => 'OF-' . str_pad((string) $f['id'], 4, '0', STR_PAD_LEFT),
-          'seg' => 'horeca', 'statut' => $f['status'] === 'validated' ? 'actif' : ($f['status'] ?: 'prospect'),
+          'seg' => trim((string) ($f['b2b_segment'] ?? '')) ?: '—',
+          'statut' => $f['status'] === 'validated' ? 'actif' : ($f['status'] ?: 'prospect'),
           'tva' => $f['vat'] ?: '—',
-          'paiement' => $f['deferred_billing_enabled'] ? '30 j fin de mois' : 'Comptant',
-          'plafond' => 0, 'encours' => 0, 'franco' => '—', 'remise' => '—', 'fact' => $f['deferred_billing_enabled'] ? 'Mensuel' : 'Par livraison',
+          'paiement' => $paie,
+          'plafond' => $f['b2b_credit_ceiling'] !== null && $f['b2b_credit_ceiling'] !== '' ? (float) $f['b2b_credit_ceiling'] : null,
+          'encours' => 0,
+          'franco' => trim((string) ($f['b2b_franco'] ?? '')) ?: '—',
+          'remise' => $f['b2b_web_discount'] !== null && $f['b2b_web_discount'] !== '' ? ((float) $f['b2b_web_discount'] . ' %') : '—',
+          'fact' => $f['deferred_billing_enabled'] ? 'Mensuel' : 'Par livraison',
           'points' => array_map(fn ($s2) => ['libelle' => $s2['libelle'], 'adresse' => $s2['adresse'],
             'fenetre' => '—', 'jours' => '—', 'validation' => '—', 'marge' => 0], $pts),
         ];
@@ -5310,7 +5373,11 @@ function dispatch($m, $p) {
       $hasAv = $tblExists('ws_tour_availability');
       $svc = (float) ws_param('cost_service_minutes', '15');
       json_out(array_map(function ($t) use ($hasAv, $svc) {
-        $start = 360; $amp = 240;
+        // Départ et amplitude : NULL tant que ws_tour_availability n'a pas de
+        // ligne pour cette tournée — plus de 06h00 / 4h inventés affichés
+        // comme des horaires réels. L'écran sait afficher « — » (gardes déjà
+        // en place) et « horaires à paramétrer ».
+        $start = null; $amp = null;
         $inv = [1 => 'L', 2 => 'Ma', 3 => 'Me', 4 => 'J', 5 => 'V', 6 => 'S', 7 => 'D'];
         $days = []; foreach ($inv as $kk) $days[$kk] = false;
         if ($hasAv) {
@@ -5327,10 +5394,11 @@ function dispatch($m, $p) {
         $short = preg_split('/[\s\/]+/u', $short)[0] ?: $name;
         return ['id' => 'r' . $t['id'], 'name' => $name, 'short' => $short,
                 'driver' => $t['driver_name'] ?: '— non assigné', 'start' => $start,
-                'max' => (int) ($t['max_items'] ?: 10), 'ret' => (col_exists('ws_tours','return_to_depot') ? ((int) ($t['return_to_depot'] ?? 1) !== 0) : true),
-                'forfait' => $t['delivery_fee'] !== null ? (float) $t['delivery_fee'] : 0,
+                'max' => ($t['max_items'] !== null && $t['max_items'] !== '') ? (int) $t['max_items'] : null,
+                'ret' => (col_exists('ws_tours','return_to_depot') ? ((int) ($t['return_to_depot'] ?? 1) !== 0) : true),
+                'forfait' => $t['delivery_fee'] !== null ? (float) $t['delivery_fee'] : null,
                 'vehicule' => $t['vehicle'] ?: '', 'days' => $days,
-                'amplitude' => $amp, 'decharge' => (int) $svc, 'trajet' => (int) $svc,
+                'amplitude' => $amp, 'decharge' => $hasAv && $amp !== null ? (int) $svc : null, 'trajet' => $hasAv && $amp !== null ? (int) $svc : null,
                 'used' => (int) $t['used'], 'zone' => $t['zone'] ?: '—',
                 'active' => ((int) ($t['active'] ?? 1)) !== 0];
       }, $rs));
@@ -6378,7 +6446,12 @@ function dispatch($m, $p) {
       if (!$tblExists('ws_incidents') || !col_exists('ws_incidents', 'client_id'))
         json_out(['ok' => false, 'error' => 'ws_incidents.client_id absente (migration 0025)'], 501);
       if (!empty($b['resolve_client_id'])) {
-        q("UPDATE ws_incidents SET resolved_at=NOW(), status='resolved' WHERE client_id=? AND resolved_at IS NULL", [(int) $b['resolve_client_id']]);
+        // Ne résoudre que les incidents d'un client DE LA BOUTIQUE (le guard
+        // lève 403 si le client est hors périmètre), et borner l'UPDATE à
+        // shop_id quand la colonne existe.
+        $clientGuard((int) $b['resolve_client_id']);
+        $icSc = ($shopId && col_exists('ws_incidents','shop_id')) ? " AND shop_id=".(int)$shopId : "";
+        q("UPDATE ws_incidents SET resolved_at=NOW(), status='resolved' WHERE client_id=? AND resolved_at IS NULL$icSc", [(int) $b['resolve_client_id']]);
         json_out(['ok' => true, 'resolved' => true]);
       }
       $cid = (int) ($b['client_id'] ?? 0);
@@ -7396,7 +7469,7 @@ function dispatch($m, $p) {
       json_out(array_map(function ($r) {
         $init = strtoupper(mb_substr($r['name'], 0, 1) . (preg_match('/\s(\S)/u', $r['name'], $mm) ? $mm[1] : ''));
         return ['id' => 'p' . $r['id'], 'init' => $init, 'raison' => $r['name'], 'email' => $r['email'] ?: '—',
-                'segment' => 'horeca', 'tva' => $r['vat'] ?: '—',
+                'segment' => '—', 'tva' => $r['vat'] ?: '—',
                 'vies' => $r['vat'] ? 'ok' : 'pending', 'date' => $r['d']];
       }, $rs));
     }
@@ -7767,7 +7840,9 @@ function dispatch($m, $p) {
       if (!$id || !in_array($act, ['accept', 'reject'], true)) json_out(['ok' => false, 'error' => 'id + action requis'], 400);
       if (!$tblExists('ws_offices')) json_out(['ok' => false, 'error' => 'ws_offices absente'], 501);
       if ($act === 'accept') {
-        q("UPDATE ws_offices SET status='validated', active=1 WHERE id=?", [$id]);
+        $vSc = ($shopId && col_exists('ws_offices','shop_id')) ? " AND shop_id=".(int)$shopId : "";
+      if ($vSc && !row("SELECT 1 x FROM ws_offices WHERE id=?$vSc", [$id])) json_out(['ok'=>false,'error'=>'Bureau #'.$id.' hors de votre boutique — validation refusée.'],403);
+      q("UPDATE ws_offices SET status='validated', active=1 WHERE id=?$vSc", [$id]);
         // Tournée choisie dans la modale (nom ou id, résolution tolérante).
         $tv = trim((string) ($b['tour'] ?? ''));
         if ($tv !== '' && col_exists('ws_offices', 'tour_id') && $tblExists('ws_tours')) {
@@ -7794,7 +7869,7 @@ function dispatch($m, $p) {
             q("UPDATE ws_offices SET tour_id=COALESCE(tour_id, ?) WHERE id=?", [(int) $tpl2['tournee_id'], $id]);
         }
       } else {
-        q("UPDATE ws_offices SET active=0 WHERE id=? AND status='pending'", [$id]);
+        q("UPDATE ws_offices SET active=0 WHERE id=? AND status='pending'" . (($shopId && col_exists('ws_offices','shop_id')) ? " AND shop_id=".(int)$shopId : ""), [$id]);
       }
       json_out(['ok' => true, 'action' => $act]);
     }
@@ -8889,7 +8964,11 @@ function dispatch($m, $p) {
           $floor = trim((string) ($r['etage'] ?? ($r['floor_room'] ?? '')));
           $cn    = trim((string) ($r['contact_name'] ?? ''));
           $cp    = trim((string) ($r['contact_phone'] ?? ''));
-          $acc   = isset($r['acc']) ? (float) $r['acc'] : (isset($r['site_access_minutes']) ? (float) $r['site_access_minutes'] : 10);
+          // Temps d'accès : NULL quand il n'est pas fourni — pas un 10 min
+          // inventé. La clé peut arriver présente mais null (« pas saisi ») :
+          // array_key_exists + valeur non-null exigés pour écrire un nombre.
+          $accRaw = array_key_exists('acc', $r) ? $r['acc'] : ($r['site_access_minutes'] ?? null);
+          $acc   = ($accRaw === null || $accRaw === '') ? null : (float) $accRaw;
           $rid   = $r['id'] ?? null;
           $ex    = is_numeric($rid) ? row("SELECT id FROM ws_office_delivery_sites WHERE id=?", [(int) $rid]) : null;
           // Repli anti-doublon : sans id round-trippé, on retrouve la ligne par
@@ -8969,10 +9048,16 @@ function dispatch($m, $p) {
           $rais = trim((string) ($r['raison'] ?? ''));
           if ($tva === '' && $rais === '') continue;
           $ex = null;
+          // PORTÉE BOUTIQUE. Sans ce filtre, une correspondance par TVA ou
+          // raison sociale rattrapait le client d'une AUTRE boutique et
+          // écrasait son adresse / sa raison — un franchisé écrivait chez un
+          // autre. Même règle que $clientGuard : ce qui n'est pas visible
+          // n'est pas modifiable (réseau = $shopId nul = pas de filtre).
+          $cScope = ($shopId && $clientShopCol) ? " AND $clientShopCol=" . (int) $shopId : "";
           if ($tva !== '' && col_exists('client', 'tax_number'))
-            $ex = row("SELECT id FROM client WHERE REPLACE(REPLACE(REPLACE(UPPER(COALESCE(tax_number,'')),'.',''),' ',''),'-','')=? LIMIT 1", [$tva]);
+            $ex = row("SELECT id FROM client WHERE REPLACE(REPLACE(REPLACE(UPPER(COALESCE(tax_number,'')),'.',''),' ',''),'-','')=?$cScope LIMIT 1", [$tva]);
           if (!$ex && $rais !== '' && col_exists('client', 'company_name'))
-            $ex = row("SELECT id FROM client WHERE TRIM(COALESCE(company_name,''))=? LIMIT 1", [$rais]);
+            $ex = row("SELECT id FROM client WHERE TRIM(COALESCE(company_name,''))=?$cScope LIMIT 1", [$rais]);
           $sets = []; $uv = [];
           if ($rais !== '' && col_exists('client', 'company_name')) { $sets[] = 'company_name=?'; $uv[] = $rais; }
           if ($tva !== '' && col_exists('client', 'tax_number'))    { $sets[] = 'tax_number=?';   $uv[] = $tva; }
@@ -8980,6 +9065,16 @@ function dispatch($m, $p) {
             if (!empty($r[$fk]) && col_exists('client', $col)) { $sets[] = "$col=?"; $uv[] = trim((string) $r[$fk]); }
           }
           if (col_exists('client', 'is_b2b')) $sets[] = 'is_b2b=1';
+          // Conditions commerciales B2B (colonnes 0084) : chacune écrite si la
+          // clé est fournie — plus de perte silencieuse.
+          $b2bNum = function ($v) { $v = trim((string) $v); if ($v === '') return null; $v = str_replace(',', '.', preg_replace('/[^0-9.,]/', '', $v)); return is_numeric($v) ? (float) $v : null; };
+          foreach ([['seg','b2b_segment','txt'],['paiement','b2b_payment_terms','txt'],
+                    ['plafond','b2b_credit_ceiling','num'],['remise','b2b_web_discount','num'],
+                    ['remiseWeb','b2b_web_discount','num'],['franco','b2b_franco','txt']] as $mB) {
+            if (!array_key_exists($mB[0], $r) || !col_exists('client', $mB[1])) continue;
+            $sets[] = $mB[1] . '=?';
+            $uv[] = $mB[2] === 'num' ? $b2bNum($r[$mB[0]]) : (trim((string) $r[$mB[0]]) ?: null);
+          }
           if ($ex) {
             if ($sets) { $uv[] = (int) $ex['id']; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $uv); }
             $n++;
@@ -8993,6 +9088,13 @@ function dispatch($m, $p) {
             if (col_exists('client', 'is_b2b'))          { $cols[] = 'is_b2b';          $iv[] = 1; }
             if (col_exists('client', 'office_delivery')) { $cols[] = 'office_delivery'; $iv[] = 1; }
             if (col_exists('client', 'status'))          { $cols[] = 'status';          $iv[] = 1; }
+            foreach ([['seg','b2b_segment','txt'],['paiement','b2b_payment_terms','txt'],
+                      ['plafond','b2b_credit_ceiling','num'],['remiseWeb','b2b_web_discount','num'],
+                      ['remise','b2b_web_discount','num'],['franco','b2b_franco','txt']] as $mB) {
+              if (!array_key_exists($mB[0], $r) || !col_exists('client', $mB[1]) || in_array($mB[1], $cols, true)) continue;
+              $cols[] = $mB[1];
+              $iv[] = $mB[2] === 'num' ? $b2bNum($r[$mB[0]]) : (trim((string) $r[$mB[0]]) ?: null);
+            }
             q("INSERT INTO client (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $iv);
             $n++;
           }
@@ -9224,16 +9326,27 @@ function dispatch($m, $p) {
 
       // Paramètres → UPSERT ws_param (config partagée : upsert par clé, jamais de delete).
       if ($tbl === 'params' && $tblExists('ws_param')) {
-        $n = 0;
+        // LISTE BLANCHE. ws_param est GLOBAL (pas de colonne boutique) : sans
+        // filtre, une session boutique (PIN admin_boutique) pouvait écrire
+        // n'importe quelle clé de configuration réseau. On n'accepte que les
+        // familles réellement éditées par la console franchisé ; toute autre
+        // clé est refusée visiblement plutôt qu'écrite en silence.
+        $allowPrefix = ['cost_', 'bo_show_', 'remise.', 'stock.', 'stripe.',
+                        'order.', 'pwa_', 'pay.', 'nav.', 'delivery.'];
+        $n = 0; $refused = [];
         foreach ($rows2 as $r) {
           $cle = trim((string) ($r['cle'] ?? ''));
           if ($cle === '' || strlen($cle) > 100) continue;
+          $ok = false; foreach ($allowPrefix as $pre) if (strncmp($cle, $pre, strlen($pre)) === 0) { $ok = true; break; }
+          if (!$ok) { $refused[] = $cle; continue; }
           $val = $r['val'] ?? ($r['def'] ?? '');
           if (is_bool($val)) $val = $val ? '1' : '0';
           q("INSERT INTO ws_param (param_key, param_value) VALUES (?,?)
                ON DUPLICATE KEY UPDATE param_value = VALUES(param_value)", [$cle, (string) $val]);
           $n++;
         }
+        if ($refused)
+          json_out(['ok' => false, 'error' => 'Paramètre(s) hors périmètre boutique refusé(s) : ' . implode(', ', $refused), 'n' => $n], 403);
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
       }
 
@@ -9317,6 +9430,15 @@ function dispatch($m, $p) {
         $addC('office_id', $officeId);
         $addC('id_main_shop', (int) ($obShop ?: 0));
         $addC('preferred_shop_id', (int) ($obShop ?: 0));
+        // Conditions commerciales B2B — enfin persistées (colonnes 0084) :
+        // segment, paiement, plafond, remise webshop, franco. NULL quand vide
+        // (« non renseigné » est licite ; l'écran affiche « — »).
+        $b2bNum = function ($v) { $v = trim((string) $v); if ($v === '') return null; $v = str_replace(',', '.', preg_replace('/[^0-9.,]/', '', $v)); return is_numeric($v) ? (float) $v : null; };
+        $addC('b2b_segment',        trim((string) ($b['seg'] ?? '')) ?: null);
+        $addC('b2b_payment_terms',  trim((string) ($b['paiement'] ?? '')) ?: null);
+        $addC('b2b_credit_ceiling', $b2bNum($b['plafond'] ?? ''));
+        $addC('b2b_web_discount',   $b2bNum($b['remiseWeb'] ?? ''));
+        $addC('b2b_franco',         trim((string) ($b['franco'] ?? '')) ?: null);
         $addC('active', 1);
         if ($cCols) {
           try {
@@ -9373,6 +9495,33 @@ function dispatch($m, $p) {
           }
         }
       }
+      /* LE PERSONNEL DE L'ÉTAPE 6 (noms + e-mails). Il était POSTÉ par la
+         console (staff) mais $staff n'était jamais défini côté serveur : la
+         liste partait à la poubelle, aucun contact n'était enregistré et les
+         invitations « personnel » ne pouvaient pas être envoyées. On lit la
+         liste, on enregistre chaque adresse dans ws_office_emails (rôle
+         « Personnel »), et on initialise les compteurs renvoyés à la console. */
+      $staff = []; $staffOk = 0; $staffInvites = 0; $staffPourquoi = null;
+      foreach ((array) ($b['staff'] ?? []) as $sm) {
+        $em = strtolower(trim((string) (is_array($sm) ? ($sm['email'] ?? '') : $sm)));
+        if ($em === '' || !filter_var($em, FILTER_VALIDATE_EMAIL) || in_array($em, $staff, true)) continue;
+        $staff[] = $em;
+      }
+      if ($staff && $tblExists('ws_office_emails')) {
+        $hasRole = col_exists('ws_office_emails', 'role');
+        foreach ($staff as $em) {
+          try {
+            if ($hasRole)
+              q("INSERT IGNORE INTO ws_office_emails (office_id, email, role, active) VALUES (?,?, 'Personnel', 1)", [$officeId, $em]);
+            else
+              q("INSERT IGNORE INTO ws_office_emails (office_id, email, active) VALUES (?,?,1)", [$officeId, $em]);
+            $staffOk++;
+          } catch (Throwable $e) { if (!$staffPourquoi) $staffPourquoi = 'Enregistrement d’un contact refusé : ' . $e->getMessage(); }
+        }
+      } elseif ($staff) {
+        $staffPourquoi = 'Table ws_office_emails absente (migration 0063) — personnel non enregistré.';
+      }
+
       /* LES VOUCHERS DE L'ONBOARDING — zéro, un ou plusieurs.
          Un bureau peut repartir avec un bon de bienvenue ET la découverte
          d'une gamme ET un geste commercial : n'en accepter qu'un obligeait à
@@ -9387,21 +9536,38 @@ function dispatch($m, $p) {
         // Le libellé ne sera pas stocké (ws_vouchers ne garde que le code) :
         // il ne sert qu'au document envoyé dans la foulée.
         $voucherNoms[] = ['code' => $c,
-                          'libelle' => trim((string) (is_array($vRow) ? ($vRow['libelle'] ?? '') : ''))];
+                          'libelle' => trim((string) (is_array($vRow) ? ($vRow['libelle'] ?? '') : '')),
+                          'valeur'  => is_array($vRow) ? ($vRow['valeur'] ?? null) : null,
+                          'validite'=> is_array($vRow) ? trim((string) ($vRow['validite'] ?? '')) : ''];
       }
       if (!$voucherList) {
         $vc1 = strtoupper(trim((string) ($b['voucher']['code'] ?? '')));
         if ($vc1 !== '') { $voucherList[] = $vc1; $voucherNoms[] = ['code' => $vc1, 'libelle' => '']; }
       }
       $vouchersCreated = 0;
-      if ($voucherList) {
-        // ws_vouchers peut être une VUE (modèle ERP) — n'insérer que si table de base.
-        $isBase = row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_vouchers' AND table_type='BASE TABLE'");
-        if ($isBase) foreach ($voucherList as $vc) {
-          q("INSERT IGNORE INTO ws_vouchers (code, type, value, active" . ($shopId ? ", shop_id" : "") . ") VALUES (?,?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
-            [$vc, 'add_office', 0]);
-          $vouchersCreated++;
-        }
+      /* Création via le MODÈLE UNIFIÉ (ws_voucher_upsert), ciblée sur le
+         bureau créé (target OFFICE). L'ancien INSERT écrivait value=0 dans
+         ws_vouchers — devenue une VUE : aucun bon n'était créé, alors que la
+         console EXIGEAIT valeur et validité. Le bon porte désormais la valeur
+         saisie ; validité (validite) → expires_at si elle est une date. */
+      $voucherFailed = [];
+      foreach ($voucherNoms as $vn) {
+        $val = $vn['valeur'];
+        $num = is_numeric(preg_replace('/[^0-9.,]/', '', (string) $val)) ? (float) str_replace(',', '.', preg_replace('/[^0-9.,]/', '', (string) $val)) : null;
+        // Type : « % » ou « pourcent » dans la valeur ⇒ percent, sinon montant fixe.
+        $vtype = (stripos((string) $val, '%') !== false || stripos((string) $val, 'percent') !== false || stripos((string) $val, 'pour') !== false) ? 'percent' : 'fixed';
+        $exp = preg_match('/^\d{4}-\d{2}-\d{2}/', (string) $vn['validite']) ? substr((string) $vn['validite'], 0, 10) : null;
+        $r = ws_voucher_upsert([
+          'code' => $vn['code'], 'type' => $vtype, 'value' => $num ?? 0,
+          'expires_at' => $exp, 'active' => 1,
+          'id_shop' => $shopId ?: null,                       // émetteur = boutique
+          'target_kind' => 'OFFICE', 'target_id' => $officeId,
+          'reason_kind' => 'ONBOARDING',
+          'reason_note' => $vn['libelle'] ?: null,
+          'created_by'  => 'franchisee-onboarding',
+        ]);
+        if (empty($r['error'])) $vouchersCreated++;
+        else $voucherFailed[] = $vn['code'] . ' (' . $r['error'] . ')';
       }
       $voucherCreated = $vouchersCreated > 0;
       /* LIEN MAGIQUE « Créer mon compte ». Le bureau reçoit UN lien et le
@@ -9457,6 +9623,7 @@ function dispatch($m, $p) {
       }
       json_out(['ok' => true, 'office_id' => $officeId, 'voucher_created' => $voucherCreated,
                 'vouchers_created'  => $vouchersCreated,
+                'vouchers_failed'   => $voucherFailed ?? [],
                 'staff_saved'       => $staffOk,
                 'staff_invited'     => $staffInvites,
                 'staff_reason'      => $staffPourquoi,
