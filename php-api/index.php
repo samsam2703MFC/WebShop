@@ -6378,7 +6378,12 @@ function dispatch($m, $p) {
       if (!$tblExists('ws_incidents') || !col_exists('ws_incidents', 'client_id'))
         json_out(['ok' => false, 'error' => 'ws_incidents.client_id absente (migration 0025)'], 501);
       if (!empty($b['resolve_client_id'])) {
-        q("UPDATE ws_incidents SET resolved_at=NOW(), status='resolved' WHERE client_id=? AND resolved_at IS NULL", [(int) $b['resolve_client_id']]);
+        // Ne résoudre que les incidents d'un client DE LA BOUTIQUE (le guard
+        // lève 403 si le client est hors périmètre), et borner l'UPDATE à
+        // shop_id quand la colonne existe.
+        $clientGuard((int) $b['resolve_client_id']);
+        $icSc = ($shopId && col_exists('ws_incidents','shop_id')) ? " AND shop_id=".(int)$shopId : "";
+        q("UPDATE ws_incidents SET resolved_at=NOW(), status='resolved' WHERE client_id=? AND resolved_at IS NULL$icSc", [(int) $b['resolve_client_id']]);
         json_out(['ok' => true, 'resolved' => true]);
       }
       $cid = (int) ($b['client_id'] ?? 0);
@@ -7767,7 +7772,9 @@ function dispatch($m, $p) {
       if (!$id || !in_array($act, ['accept', 'reject'], true)) json_out(['ok' => false, 'error' => 'id + action requis'], 400);
       if (!$tblExists('ws_offices')) json_out(['ok' => false, 'error' => 'ws_offices absente'], 501);
       if ($act === 'accept') {
-        q("UPDATE ws_offices SET status='validated', active=1 WHERE id=?", [$id]);
+        $vSc = ($shopId && col_exists('ws_offices','shop_id')) ? " AND shop_id=".(int)$shopId : "";
+      if ($vSc && !row("SELECT 1 x FROM ws_offices WHERE id=?$vSc", [$id])) json_out(['ok'=>false,'error'=>'Bureau #'.$id.' hors de votre boutique — validation refusée.'],403);
+      q("UPDATE ws_offices SET status='validated', active=1 WHERE id=?$vSc", [$id]);
         // Tournée choisie dans la modale (nom ou id, résolution tolérante).
         $tv = trim((string) ($b['tour'] ?? ''));
         if ($tv !== '' && col_exists('ws_offices', 'tour_id') && $tblExists('ws_tours')) {
@@ -7794,7 +7801,7 @@ function dispatch($m, $p) {
             q("UPDATE ws_offices SET tour_id=COALESCE(tour_id, ?) WHERE id=?", [(int) $tpl2['tournee_id'], $id]);
         }
       } else {
-        q("UPDATE ws_offices SET active=0 WHERE id=? AND status='pending'", [$id]);
+        q("UPDATE ws_offices SET active=0 WHERE id=? AND status='pending'" . (($shopId && col_exists('ws_offices','shop_id')) ? " AND shop_id=".(int)$shopId : ""), [$id]);
       }
       json_out(['ok' => true, 'action' => $act]);
     }
@@ -8960,10 +8967,16 @@ function dispatch($m, $p) {
           $rais = trim((string) ($r['raison'] ?? ''));
           if ($tva === '' && $rais === '') continue;
           $ex = null;
+          // PORTÉE BOUTIQUE. Sans ce filtre, une correspondance par TVA ou
+          // raison sociale rattrapait le client d'une AUTRE boutique et
+          // écrasait son adresse / sa raison — un franchisé écrivait chez un
+          // autre. Même règle que $clientGuard : ce qui n'est pas visible
+          // n'est pas modifiable (réseau = $shopId nul = pas de filtre).
+          $cScope = ($shopId && $clientShopCol) ? " AND $clientShopCol=" . (int) $shopId : "";
           if ($tva !== '' && col_exists('client', 'tax_number'))
-            $ex = row("SELECT id FROM client WHERE REPLACE(REPLACE(REPLACE(UPPER(COALESCE(tax_number,'')),'.',''),' ',''),'-','')=? LIMIT 1", [$tva]);
+            $ex = row("SELECT id FROM client WHERE REPLACE(REPLACE(REPLACE(UPPER(COALESCE(tax_number,'')),'.',''),' ',''),'-','')=?$cScope LIMIT 1", [$tva]);
           if (!$ex && $rais !== '' && col_exists('client', 'company_name'))
-            $ex = row("SELECT id FROM client WHERE TRIM(COALESCE(company_name,''))=? LIMIT 1", [$rais]);
+            $ex = row("SELECT id FROM client WHERE TRIM(COALESCE(company_name,''))=?$cScope LIMIT 1", [$rais]);
           $sets = []; $uv = [];
           if ($rais !== '' && col_exists('client', 'company_name')) { $sets[] = 'company_name=?'; $uv[] = $rais; }
           if ($tva !== '' && col_exists('client', 'tax_number'))    { $sets[] = 'tax_number=?';   $uv[] = $tva; }
@@ -9215,16 +9228,27 @@ function dispatch($m, $p) {
 
       // Paramètres → UPSERT ws_param (config partagée : upsert par clé, jamais de delete).
       if ($tbl === 'params' && $tblExists('ws_param')) {
-        $n = 0;
+        // LISTE BLANCHE. ws_param est GLOBAL (pas de colonne boutique) : sans
+        // filtre, une session boutique (PIN admin_boutique) pouvait écrire
+        // n'importe quelle clé de configuration réseau. On n'accepte que les
+        // familles réellement éditées par la console franchisé ; toute autre
+        // clé est refusée visiblement plutôt qu'écrite en silence.
+        $allowPrefix = ['cost_', 'bo_show_', 'remise.', 'stock.', 'stripe.',
+                        'order.', 'pwa_', 'pay.', 'nav.', 'delivery.'];
+        $n = 0; $refused = [];
         foreach ($rows2 as $r) {
           $cle = trim((string) ($r['cle'] ?? ''));
           if ($cle === '' || strlen($cle) > 100) continue;
+          $ok = false; foreach ($allowPrefix as $pre) if (strncmp($cle, $pre, strlen($pre)) === 0) { $ok = true; break; }
+          if (!$ok) { $refused[] = $cle; continue; }
           $val = $r['val'] ?? ($r['def'] ?? '');
           if (is_bool($val)) $val = $val ? '1' : '0';
           q("INSERT INTO ws_param (param_key, param_value) VALUES (?,?)
                ON DUPLICATE KEY UPDATE param_value = VALUES(param_value)", [$cle, (string) $val]);
           $n++;
         }
+        if ($refused)
+          json_out(['ok' => false, 'error' => 'Paramètre(s) hors périmètre boutique refusé(s) : ' . implode(', ', $refused), 'n' => $n], 403);
         json_out(['ok' => true, 'mode' => 'typed', 'n' => $n]);
       }
 
