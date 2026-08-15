@@ -5232,22 +5232,37 @@ function dispatch($m, $p) {
         $wh   = "(t.shop_id = " . (int) $shopId . " OR f.tour_id IS NULL)";
       }
       $hasSites = $tblExists('ws_office_delivery_sites');
-      $offices = rows("SELECT f.id, f.name, f.vat, f.status, f.deferred_billing_enabled
-                         FROM ws_offices f $join WHERE $wh ORDER BY f.name LIMIT 200");
+      // Conditions commerciales B2B servies depuis la fiche client liée
+      // (colonnes 0084) quand elles existent — plus de « horeca » / « 30 j »
+      // codés en dur. Jointure par ws_offices.client_id si la colonne existe.
+      $hasCli   = col_exists('ws_offices', 'client_id');
+      $hasB2bC  = $tblExists('client') && col_exists('client', 'b2b_segment');
+      $cliSel = ($hasCli && $hasB2bC)
+        ? ", c.b2b_segment, c.b2b_payment_terms, c.b2b_credit_ceiling, c.b2b_web_discount, c.b2b_franco"
+        : "";
+      $cliJoin = ($hasCli && $hasB2bC) ? " LEFT JOIN client c ON c.id = f.client_id" : "";
+      $offices = rows("SELECT f.id, f.name, f.vat, f.status, f.deferred_billing_enabled$cliSel
+                         FROM ws_offices f $join$cliJoin WHERE $wh ORDER BY f.name LIMIT 200");
       $out = [];
       foreach ($offices as $f) {
         $pts = $hasSites ? rows(
           "SELECT COALESCE(s.name,'—') AS libelle, COALESCE(s.address,'—') AS adresse
              FROM ws_office_delivery_sites s WHERE s.office_client_id=? AND s.active=1 LIMIT 20", [$f['id']]) : [];
+        // Paiement : la vraie condition si stockée, sinon dérivée du flag
+        // facturation différée ; jamais « 30 j fin de mois » inventé.
+        $paie = trim((string) ($f['b2b_payment_terms'] ?? ''));
+        if ($paie === '') $paie = $f['deferred_billing_enabled'] ? '—' : 'Comptant';
         $out[] = [
           'raison' => $f['name'], 'code' => 'OF-' . str_pad((string) $f['id'], 4, '0', STR_PAD_LEFT),
-          // Segment non stocké (pas de colonne) : « — » plutôt que « horeca »
-          // inventé pour tous. Voir NOTE go-live : conditions commerciales B2B
-          // à persister (segment, plafond, remise, franco) — décision schéma.
-          'seg' => '—', 'statut' => $f['status'] === 'validated' ? 'actif' : ($f['status'] ?: 'prospect'),
+          'seg' => trim((string) ($f['b2b_segment'] ?? '')) ?: '—',
+          'statut' => $f['status'] === 'validated' ? 'actif' : ($f['status'] ?: 'prospect'),
           'tva' => $f['vat'] ?: '—',
-          'paiement' => $f['deferred_billing_enabled'] ? '30 j fin de mois' : 'Comptant',
-          'plafond' => 0, 'encours' => 0, 'franco' => '—', 'remise' => '—', 'fact' => $f['deferred_billing_enabled'] ? 'Mensuel' : 'Par livraison',
+          'paiement' => $paie,
+          'plafond' => $f['b2b_credit_ceiling'] !== null && $f['b2b_credit_ceiling'] !== '' ? (float) $f['b2b_credit_ceiling'] : null,
+          'encours' => 0,
+          'franco' => trim((string) ($f['b2b_franco'] ?? '')) ?: '—',
+          'remise' => $f['b2b_web_discount'] !== null && $f['b2b_web_discount'] !== '' ? ((float) $f['b2b_web_discount'] . ' %') : '—',
+          'fact' => $f['deferred_billing_enabled'] ? 'Mensuel' : 'Par livraison',
           'points' => array_map(fn ($s2) => ['libelle' => $s2['libelle'], 'adresse' => $s2['adresse'],
             'fenetre' => '—', 'jours' => '—', 'validation' => '—', 'marge' => 0], $pts),
         ];
@@ -9041,6 +9056,16 @@ function dispatch($m, $p) {
             if (!empty($r[$fk]) && col_exists('client', $col)) { $sets[] = "$col=?"; $uv[] = trim((string) $r[$fk]); }
           }
           if (col_exists('client', 'is_b2b')) $sets[] = 'is_b2b=1';
+          // Conditions commerciales B2B (colonnes 0084) : chacune écrite si la
+          // clé est fournie — plus de perte silencieuse.
+          $b2bNum = function ($v) { $v = trim((string) $v); if ($v === '') return null; $v = str_replace(',', '.', preg_replace('/[^0-9.,]/', '', $v)); return is_numeric($v) ? (float) $v : null; };
+          foreach ([['seg','b2b_segment','txt'],['paiement','b2b_payment_terms','txt'],
+                    ['plafond','b2b_credit_ceiling','num'],['remise','b2b_web_discount','num'],
+                    ['remiseWeb','b2b_web_discount','num'],['franco','b2b_franco','txt']] as $mB) {
+            if (!array_key_exists($mB[0], $r) || !col_exists('client', $mB[1])) continue;
+            $sets[] = $mB[1] . '=?';
+            $uv[] = $mB[2] === 'num' ? $b2bNum($r[$mB[0]]) : (trim((string) $r[$mB[0]]) ?: null);
+          }
           if ($ex) {
             if ($sets) { $uv[] = (int) $ex['id']; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $uv); }
             $n++;
@@ -9054,6 +9079,13 @@ function dispatch($m, $p) {
             if (col_exists('client', 'is_b2b'))          { $cols[] = 'is_b2b';          $iv[] = 1; }
             if (col_exists('client', 'office_delivery')) { $cols[] = 'office_delivery'; $iv[] = 1; }
             if (col_exists('client', 'status'))          { $cols[] = 'status';          $iv[] = 1; }
+            foreach ([['seg','b2b_segment','txt'],['paiement','b2b_payment_terms','txt'],
+                      ['plafond','b2b_credit_ceiling','num'],['remiseWeb','b2b_web_discount','num'],
+                      ['remise','b2b_web_discount','num'],['franco','b2b_franco','txt']] as $mB) {
+              if (!array_key_exists($mB[0], $r) || !col_exists('client', $mB[1]) || in_array($mB[1], $cols, true)) continue;
+              $cols[] = $mB[1];
+              $iv[] = $mB[2] === 'num' ? $b2bNum($r[$mB[0]]) : (trim((string) $r[$mB[0]]) ?: null);
+            }
             q("INSERT INTO client (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $iv);
             $n++;
           }
@@ -9389,6 +9421,15 @@ function dispatch($m, $p) {
         $addC('office_id', $officeId);
         $addC('id_main_shop', (int) ($obShop ?: 0));
         $addC('preferred_shop_id', (int) ($obShop ?: 0));
+        // Conditions commerciales B2B — enfin persistées (colonnes 0084) :
+        // segment, paiement, plafond, remise webshop, franco. NULL quand vide
+        // (« non renseigné » est licite ; l'écran affiche « — »).
+        $b2bNum = function ($v) { $v = trim((string) $v); if ($v === '') return null; $v = str_replace(',', '.', preg_replace('/[^0-9.,]/', '', $v)); return is_numeric($v) ? (float) $v : null; };
+        $addC('b2b_segment',        trim((string) ($b['seg'] ?? '')) ?: null);
+        $addC('b2b_payment_terms',  trim((string) ($b['paiement'] ?? '')) ?: null);
+        $addC('b2b_credit_ceiling', $b2bNum($b['plafond'] ?? ''));
+        $addC('b2b_web_discount',   $b2bNum($b['remiseWeb'] ?? ''));
+        $addC('b2b_franco',         trim((string) ($b['franco'] ?? '')) ?: null);
         $addC('active', 1);
         if ($cCols) {
           try {
