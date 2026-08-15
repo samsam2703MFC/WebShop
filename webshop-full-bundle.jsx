@@ -2560,6 +2560,12 @@ function AccountPurchases({ user }) {
     } catch (_) { return String(s || ''); }
   };
   const fmtEur = (n) => ((n === null || n === undefined) ? '—' : Number(n).toFixed(2).replace('.', ',') + ' €');
+  const peppolBadge = (st) => {
+    const s = String(st || '').toLowerCase();
+    if (s === 'transmise' || s === 'sent' || s === 'ok') return <span className="ws-acc__badge ws-acc__badge--ok">Transmise ✓</span>;
+    if (s === 'echec' || s === 'failed' || s === 'error') return <span className="ws-acc__badge ws-acc__badge--pending">Échec — à renvoyer</span>;
+    return <span className="ws-acc__badge ws-acc__badge--pending">En attente</span>;
+  };
   const badge = (st) => (st === 'invoiced'
     ? <span className="ws-acc__badge">Facturé</span>
     : st === 'requested'
@@ -2594,9 +2600,21 @@ function AccountPurchases({ user }) {
             <span className="ws-acc__k">{Number(it.items) || 0} article{Number(it.items) > 1 ? 's' : ''}</span>
             <span className="ws-acc__v">{fmtEur(it.invoiceTotal != null ? it.invoiceTotal : it.total)}</span>
           </div>
+          {/* Ticket de caisse FISCAL rattaché à la commande (édité à la
+              validation). N'apparaît que s'il est renseigné — jamais inventé. */}
+          {it.fiscalTicketNo && (
+            <div className="ws-acc__card-row"><span className="ws-acc__k">Ticket fiscal</span>
+              <span className="ws-acc__v">{it.fiscalTicketNo}{it.fiscalTicketUrl ? <> · <a href={it.fiscalTicketUrl} target="_blank" rel="noopener">PDF</a></> : null}</span></div>
+          )}
           {it.state === 'invoiced' && (
             <div className="ws-acc__card-row"><span className="ws-acc__k">Facture</span>
-              <span className="ws-acc__v">{it.invoiceNo}{it.pdfUrl ? <> · <a href={it.pdfUrl}>PDF</a></> : null}</span></div>
+              <span className="ws-acc__v">{it.invoiceNo}{it.hasInvoicePdf ? ' · PDF sur demande' : ''}</span></div>
+          )}
+          {/* Statut Peppol — transmission gérée par l'ERP ; le webshop affiche
+              ce qu'il pousse. « — » tant que rien n'est renseigné. */}
+          {it.state === 'invoiced' && it.peppolStatus && (
+            <div className="ws-acc__card-row"><span className="ws-acc__k">Peppol</span>
+              <span className="ws-acc__v">{peppolBadge(it.peppolStatus)}{it.peppolAt ? ' · ' + fmtDate(it.peppolAt) : ''}</span></div>
           )}
           {meta.canRequestInvoice && it.source === 'ticket' && it.state !== 'invoiced' && (
             <label className="ws-acc__toggle" aria-label="Voulez-vous une facture ?">

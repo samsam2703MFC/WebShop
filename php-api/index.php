@@ -2692,6 +2692,11 @@ function dispatch($m, $p) {
         'free_delivery_minimum' => $freeMin, 'po_number' => $poNumber, 'invoice_requested' => $invRequested, 'invoice_vat' => $invVat,
         // Source AUTOMATIQUE : toute commande passée ici vient du webshop.
         'source' => 'webshop',
+        // Ticket de caisse FISCAL édité à la validation (caisse certifiée) :
+        // stocké tel qu'il est fourni — jamais fabriqué par le webshop. Colonnes
+        // ignorées si absentes (col_exists ci-dessous). Ordre 0085.
+        'fiscal_ticket_no'  => isset($b['fiscalTicketNo'])  && $b['fiscalTicketNo']  !== '' ? mb_substr((string) $b['fiscalTicketNo'], 0, 40) : null,
+        'fiscal_ticket_url' => isset($b['fiscalTicketUrl']) && $b['fiscalTicketUrl'] !== '' ? mb_substr((string) $b['fiscalTicketUrl'], 0, 255) : null,
         // Clé d'idempotence de la tentative (voir garde en tête du handler).
         'request_key' => $reqKey,
       ];
@@ -3200,6 +3205,8 @@ function dispatch($m, $p) {
     $hasBe  = col_exists('pwa_purchases', 'billing_entity_id');
     $hasFrz = col_exists('pwa_purchases', 'frozen_at');
     $hasPdf = col_exists('pwa_invoices', 'pdf_path');
+    $hasPep = col_exists('pwa_invoices', 'peppol_status');   // statut Peppol (0085)
+    $hasFno = col_exists('ws_orders', 'fiscal_ticket_no');   // ticket fiscal (0085)
     $items  = [];
     try {                                                              // tickets (ERP/PWA)
       $items = array_merge($items, rows(
@@ -3213,6 +3220,9 @@ function dispatch($m, $p) {
                 " . ($hasFrz ? "p.frozen_at"               : "NULL") . " AS frozenAt,
                 i.invoice_no AS invoiceNo, i.total_ttc AS invoiceTotal,
                 " . ($hasPdf ? "i.pdf_path" : "NULL") . " AS pdfPath,
+                p.purchase_code AS fiscalTicketNo, NULL AS fiscalTicketUrl,
+                " . ($hasPep ? "i.peppol_status" : "NULL") . " AS peppolStatus,
+                " . ($hasPep ? "i.peppol_at"     : "NULL") . " AS peppolAt,
                 'ticket' AS source
            FROM pwa_purchases p LEFT JOIN pwa_invoices i ON i.id = p.invoice_id
           WHERE p.client_id = ? AND COALESCE(p.occurred_at, p.created_at) >= DATE_SUB(NOW(), INTERVAL 12 MONTH)",
@@ -3223,7 +3233,10 @@ function dispatch($m, $p) {
         "SELECT o.order_ref AS ref, s.name AS shop, o.created_at AS at,
                 (SELECT COUNT(*) FROM ws_order_lines l WHERE l.order_id = o.id" . oline_own() . ") AS items,
                 o.total AS total, 0 AS toInvoice, NULL AS billingEntityId, NULL AS frozenAt,
-                NULL AS invoiceNo, NULL AS invoiceTotal, NULL AS pdfPath, 'order' AS source
+                NULL AS invoiceNo, NULL AS invoiceTotal, NULL AS pdfPath,
+                " . ($hasFno ? "o.fiscal_ticket_no"  : "NULL") . " AS fiscalTicketNo,
+                " . ($hasFno ? "o.fiscal_ticket_url" : "NULL") . " AS fiscalTicketUrl,
+                NULL AS peppolStatus, NULL AS peppolAt, 'order' AS source
            FROM ws_orders o LEFT JOIN shops s ON s.id = o.shop_id AND s.webshop_enabled = 1
           WHERE o.customer_id = ? AND o.created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)",
         [$id]));
@@ -3237,6 +3250,8 @@ function dispatch($m, $p) {
         : (time() > $dl ? 'closed' : 'open'));
       $it['locked']   = $it['state'] === 'invoiced' || $it['state'] === 'closed' || !empty($it['frozenAt']);
       $it['deadline'] = date('Y-m-d', $dl);
+      // Drapeau « facture PDF disponible » sans exposer le chemin interne.
+      $it['hasInvoicePdf'] = !empty($it['pdfPath']);
       unset($it['frozenAt'], $it['pdfPath']); // pdf servi via endpoint authentifié uniquement
     }
     unset($it);
