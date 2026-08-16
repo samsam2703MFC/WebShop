@@ -21,6 +21,10 @@
         let u = `${api.endpoint}?shopId=${encodeURIComponent(shopId)}&profile=${encodeURIComponent(profile)}`;
         if (companyId) u += `&companyId=${encodeURIComponent(companyId)}`;
         if (mode) u += `&mode=${encodeURIComponent(mode)}`;
+        // `lang` : le libellé du moyen de paiement est traduit par le SERVEUR
+        // (clés pay.* de ws_i18n), comme les catégories et les produits.
+        const lg = (window.WSI18n && window.WSI18n.getLang && window.WSI18n.getLang()) || '';
+        if (lg) u += `&lang=${encodeURIComponent(lg)}`;
         const r = await fetch(u, { credentials: 'include' });
         if (!r.ok) return [];
         const j = await r.json();

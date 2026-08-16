@@ -77,6 +77,11 @@
         const qs = new URLSearchParams({ shopId: shopId || '' });
         if (customerId != null && customerId !== '') qs.set('customerId', String(customerId));
         if (subtotal != null) qs.set('subtotal', String(subtotal));
+        // `lang` : le libellé du bon (« Livraison offerte », « dès 30 € ») est
+        // COMPOSÉ par le serveur — le front reçoit une phrase déjà faite et ne
+        // peut donc pas la traduire lui-même.
+        const lg = (window.WSI18n && window.WSI18n.getLang && window.WSI18n.getLang()) || '';
+        if (lg) qs.set('lang', lg);
         const r = await fetch(`${WSVouchers.endpoint}/available?${qs}`, { credentials: 'include' });
         if (r.ok) { const j = await r.json(); return Array.isArray(j) ? j : []; }
       } catch (_) {}

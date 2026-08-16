@@ -1213,6 +1213,7 @@ function dispatch($m, $p) {
   //   Réseau (id_shop NULL/=shop) + nominatifs (CUSTOMER/OFFICE de CE client).
   //   Filtrés : actifs, non expirés, non épuisés (global + par client), éligibles.
   if ($m === 'GET' && $p === '/vouchers/available') {
+    $vLang = (string) (qp('lang') ?: '');
     $s = (int) (qp('shopId') ?: 0); if (!$s) json_out([]);
     // $tblExists n'existe QUE dans le bloc /franchisee/ — ici (racine) on
     // utilise une vérification directe (sinon « null is not callable » → 500).
@@ -1260,17 +1261,24 @@ function dispatch($m, $p) {
         $kind = $r['discount_kind'];
         $isGift = $kind === 'PERCENT' && (float) $r['discount_value'] >= 100 && !empty($r['scope_id_product']);
         $val = $kind === 'PERCENT' ? '−' . rtrim(rtrim((string) $r['discount_value'], '0'), '.') . ' %'
-             : ($kind === 'FIXED' ? '−' . rtrim(rtrim((string) $r['discount_value'], '0'), '.') . ' €' : 'Livraison offerte');
+             : ($kind === 'FIXED' ? '−' . rtrim(rtrim((string) $r['discount_value'], '0'), '.') . ' €'
+                                  : ui_t('voucher.freeDelivery', 'Livraison offerte', $vLang));
         if (!empty($r['scope_id_product'])) {
           $pn = row("SELECT name FROM ws_products WHERE id=?", [(int) $r['scope_id_product']]);
-          $pname = trim((string) (($pn['name'] ?? null) ?: 'un produit'));
-          $val = $isGift ? ($pname . ' offert') : ($val . ' sur ' . ($r['scope_max_qty'] !== null ? ((int) $r['scope_max_qty'] . ' × ') : '') . $pname);
+          $pname = trim((string) (($pn['name'] ?? null) ?: ui_t('voucher.someProduct', 'un produit', $vLang)));
+          $val = $isGift
+            ? ui_t('voucher.productFree', '{produit} offert', $vLang, ['produit' => $pname])
+            : ui_t('voucher.onProduct', '{remise} sur {qte}{produit}', $vLang, [
+                'remise' => $val,
+                'qte'    => $r['scope_max_qty'] !== null ? ((int) $r['scope_max_qty'] . ' × ') : '',
+                'produit'=> $pname]);
         }
         $minOrd = (float) $r['min_order_amount'];
         $out[] = ['code' => $r['code'], 'label' => $val,
                   'min_order' => $minOrd,
                   'reachable' => $minOrd <= 0 || $sub >= $minOrd,
-                  'hint' => $minOrd > 0 ? ('dès ' . rtrim(rtrim(number_format($minOrd, 2, ',', ''), '0'), ',') . ' €') : '',
+                  'hint' => $minOrd > 0 ? ui_t('voucher.fromAmount', 'dès {montant} €', $vLang,
+                                ['montant' => rtrim(rtrim(number_format($minOrd, 2, ',', ''), '0'), ',')]) : '',
                   'personal' => $tk !== 'NETWORK'];
       }
       json_out($out);
@@ -1501,7 +1509,7 @@ function dispatch($m, $p) {
     // compte ici : la marchandise partait au bureau et l'encaissement n'avait
     // jamais lieu. Même famille que la commande acceptée sans moyen de paiement.
     if (qp('mode') === 'delivery') $methods = array_values(array_filter($methods, fn ($x) => $x !== 'shop'));
-    json_out(array_map(fn ($x) => ['method' => $x, 'label' => payment_label($x)], $methods));
+    json_out(array_map(fn ($x) => ['method' => $x, 'label' => payment_label($x, qp('lang'))], $methods));
   }
 
   /* ── Availability / Calendar ── */
@@ -10394,9 +10402,59 @@ function payment_family($m) {
   if (in_array($m, ['deferred', 'account', 'compte', 'facturation'], true)) return 'deferred';
   return $m;
 }
-function payment_label($m) {
-  $map = ['stripe' => 'Carte / Bancontact (en ligne)', 'shop' => 'Paiement en boutique', 'deferred' => 'Sur compte (facturation)'];
-  return $map[$m] ?? $m;
+/* Libellé d'un moyen de paiement, DANS LA LANGUE DEMANDÉE.
+ * Ces libellés étaient codés en dur en français : sur une boutique
+ * néerlandophone, « Carte / Bancontact (en ligne) » s'affichait au milieu
+ * d'un écran en néerlandais. Ce ne sont pas des données de configuration
+ * (aucune table ne les porte), donc ils rejoignent la table de traduction
+ * comme le reste de l'interface : clés pay.<method>.
+ * Repli sur le libellé français si la traduction manque — jamais un code
+ * technique nu à l'écran. */
+/* Libellé d'interface côté serveur, dans la langue demandée (table ws_i18n).
+ * Sert aux textes que le SERVEUR compose — libellés de bons, moyens de
+ * paiement : le front ne peut pas les traduire, il ne reçoit qu'une phrase
+ * déjà faite. Repli sur le texte français fourni si la clé manque : jamais
+ * une clé nue ni une chaîne vide à l'écran. */
+function ui_t($key, $fr, $lang = '', array $params = []) {
+  static $cache = [];
+  $lg = strtolower(substr((string) $lang, 0, 2));
+  $out = $fr;
+  if ($lg !== '' && $lg !== 'fr') {
+    if (!array_key_exists($lg, $cache)) {
+      $cache[$lg] = [];
+      try {
+        if (tbl_exists('ws_i18n')) {
+          foreach (rows("SELECT k, value FROM ws_i18n WHERE scope='ui' AND lang=?", [$lg]) as $r) {
+            $cache[$lg][$r['k']] = $r['value'];
+          }
+        }
+      } catch (Throwable $e) { $cache[$lg] = []; }
+    }
+    if (!empty($cache[$lg][$key])) $out = $cache[$lg][$key];
+  }
+  foreach ($params as $k => $v) $out = str_replace('{' . $k . '}', (string) $v, $out);
+  return $out;
+}
+
+function payment_label($m, $lang = '') {
+  static $tr = null;
+  $fr = ['stripe' => 'Carte / Bancontact (en ligne)', 'shop' => 'Paiement en boutique',
+         'deferred' => 'Sur compte (facturation)'];
+  $lg = strtolower(substr((string) $lang, 0, 2));
+  if ($lg !== '' && $lg !== 'fr') {
+    if ($tr === null) {
+      $tr = [];
+      try {
+        if (tbl_exists('ws_i18n')) {
+          foreach (rows("SELECT k, lang, value FROM ws_i18n WHERE scope='ui' AND k LIKE 'pay.%'") as $r) {
+            $tr[$r['lang']][substr($r['k'], 4)] = $r['value'];
+          }
+        }
+      } catch (Throwable $e) { $tr = []; }
+    }
+    if (!empty($tr[$lg][$m])) return $tr[$lg][$m];
+  }
+  return $fr[$m] ?? $m;
 }
 /* Moyens de paiement autorisés pour une boutique + profil (config, sinon défaut).
    ws_shop_payment_options n'est créée par aucune migration : si la table est
