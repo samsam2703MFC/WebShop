@@ -366,12 +366,12 @@ function DatePill({ mode, value, onChange, shopId,
       {open && (
         <div className={`ws-datepop ws-datepop--${mode}`} onClick={(e) => e.stopPropagation()}>
           <div className="ws-datepop__head">
-            <button className="ws-datepop__nav" onClick={() => shift(-1)} aria-label="Mois précédent">‹</button>
+            <button className="ws-datepop__nav" onClick={() => shift(-1)} aria-label={t('cal.prevMonth')}>‹</button>
             <span className="ws-datepop__title">
               {wsMonthName(view.getMonth(), view.getFullYear())} {view.getFullYear()}
               {loadingDays && <span style={{fontSize:9,opacity:.5,marginLeft:4}}>…</span>}
             </span>
-            <button className="ws-datepop__nav" onClick={() => shift(1)} aria-label="Mois suivant">›</button>
+            <button className="ws-datepop__nav" onClick={() => shift(1)} aria-label={t('cal.nextMonth')}>›</button>
           </div>
           <div className="ws-datepop__dow">
             {wsWeekdayNames().map((d, i) => <span key={i}>{d}</span>)}
@@ -430,6 +430,7 @@ function DatePill({ mode, value, onChange, shopId,
    le client ne peut ni comprendre ni corriger. C'est au franchisé de les
    traiter, et le workflow check-endpoints les lui compte et les lui nomme. */
 function OfficeSearchPicker({ chercher, value, onPick, label }) {
+  const { t } = wsUseT();
   const [q, setQ] = React.useState('');
   const [hits, setHits] = React.useState([]);
   const [busy, setBusy] = React.useState(false);
@@ -455,7 +456,7 @@ function OfficeSearchPicker({ chercher, value, onPick, label }) {
     <div className="ws-acc__pick">
       <input type="search" className="ws-acc__input" value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="Nom de votre société ou adresse…"
+        placeholder={t('office.searchPh')}
         aria-label={label || 'Rechercher un bureau'} autoComplete="off"/>
       {q.trim().length < 2 ? (
         <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>
@@ -463,7 +464,7 @@ function OfficeSearchPicker({ chercher, value, onPick, label }) {
           par une tournée de cette boutique apparaissent.
         </p>
       ) : busy ? (
-        <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>Recherche…</p>
+        <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>{t('common.searchPh')}</p>
       ) : hits.length === 0 && cherche ? (
         <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>
           Aucun bureau desservi ne correspond à «&nbsp;{q.trim()}&nbsp;». S'il s'agit du vôtre,
@@ -504,7 +505,7 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
     : undefined;
   const effMode = deliveryCutoffPassed && mode === 'delivery' ? 'collect' : mode;
   return (
-    <div className="ws-modes" role="tablist" aria-label="Mode boutique">
+    <div className="ws-modes" role="tablist" aria-label={t('nav.modeAria')}>
       <span className="ws-modes__indicator" data-mode={effMode} aria-hidden="true"/>
       <button className={`ws-mode ws-mode--collect${mode === 'collect' ? ' is-active' : ''}${collectCutoffPassed ? ' is-disabled' : ''}`}
         onClick={() => onChange('collect')} role="tab" aria-selected={mode === 'collect'} aria-label={t('nav.mode.collect')}
@@ -800,6 +801,7 @@ function PortionOptions({ value, onChange, product }) {
 // PRODUCT DETAIL MODAL — options, upsells, bundles
 // =========================================================================
 function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
+  const { t } = wsUseT();
   // ── Hooks (must run unconditionally; never gate behind early-return) ──
   const initSelections = React.useMemo(() => {
     const out = {};
@@ -1122,7 +1124,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     <div className="pdm-scrim" role="dialog" aria-modal="true" onClick={onClose} style={{ '--accent': accentVar }}>
       <div ref={pdmPanelRef} className="pdm" onClick={(e) => e.stopPropagation()}>
         <span className="ws-modal__handle pdm-handle" aria-hidden="true"/>
-        <button className="pdm-close" aria-label="Fermer" {...wsTap(onClose, { shield: true })}><Pict d={ICONS.close} s={13}/></button>
+        <button className="pdm-close" aria-label={t('common.close2')} {...wsTap(onClose, { shield: true })}><Pict d={ICONS.close} s={13}/></button>
 
         {/* HERO */}
         <div className="pdm-hero">
@@ -1255,7 +1257,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                 <div className="pdm-section-head">
                   <span className="pdm-section-title">Formule</span>
                   {bundleList.length > 1 && (
-                    <button type="button" className="pdm-section-arrow" aria-label="Suivant"
+                    <button type="button" className="pdm-section-arrow" aria-label={t('co.next')}
                       {...wsTap(() => {
                         const cur = bundleList.findIndex((b) => b.id === bundleId);
                         const next = cur + 1 >= bundleList.length ? 0 : cur + 1;
@@ -1356,9 +1358,9 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
               </div>
             )}
             <div className="pdm-qty">
-              <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.max(1, q - 1)))} disabled={qty <= 1} aria-label="Diminuer">−</button>
+              <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.max(1, q - 1)))} disabled={qty <= 1} aria-label={t('qty.dec')}>−</button>
               <span className="pdm-qty__val">{qty}</span>
-              <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.min(q + 1, deliveryStockLeft ?? 99)))} aria-label="Augmenter" disabled={deliveryStockLeft !== null && qty >= deliveryStockLeft}>+</button>
+              <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.min(q + 1, deliveryStockLeft ?? 99)))} aria-label={t('qty.inc')} disabled={deliveryStockLeft !== null && qty >= deliveryStockLeft}>+</button>
             </div>
             <button className="pdm-cta" disabled={!valid || deliveryBlocked || (deliveryStockLeft !== null && deliveryStockLeft === 0)} {...wsTap(handleConfirm, { shield: true })}>
               <span>{deliveryBlocked ? 'Non disponible en livraison' : (deliveryStockLeft === 0 ? 'Stock épuisé' : (valid ? 'Ajouter au panier' : 'Choisissez vos options'))}</span>
@@ -1957,7 +1959,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
             {hiddenCount > 0 && !showAllSubs && (
               <button className="ws-subcat ws-subcat--more" {...wsTap(() => setShowAllSubs(true))}>
                 <span className="ws-subcat__tile"><span className="ws-subcat__more-num">+{hiddenCount}</span></span>
-                <span className="ws-subcat__lbl">Voir plus</span>
+                <span className="ws-subcat__lbl">{t('common.seeMore')}</span>
               </button>
             )}
           </>
@@ -2254,6 +2256,7 @@ function useSwipeDownToClose(onClose, scrollEl) {
 }
 
 function ModalShell({ onClose, children, narrow }) {
+  const { t } = wsUseT();
   const panelRef = useSwipeDownToClose(onClose);
   const [showArrows, setShowArrows] = React.useState({ up: false, down: false });
   React.useEffect(() => {
@@ -2279,13 +2282,13 @@ function ModalShell({ onClose, children, narrow }) {
     <div className="ws-modal" onClick={onClose}>
       <div ref={panelRef} className={`ws-modal__panel${narrow ? ' ws-modal__panel--narrow' : ''}`} onClick={(e) => e.stopPropagation()}>
         <span className="ws-modal__handle" aria-hidden="true"/>
-        <button className="ws-modal__close" onClick={onClose} aria-label="Fermer"><Pict d={ICONS.close} s={14}/></button>
+        <button className="ws-modal__close" onClick={onClose} aria-label={t('common.close2')}><Pict d={ICONS.close} s={14}/></button>
         {children}
         <div className="ws-modal__rail" aria-hidden={!(showArrows.up || showArrows.down)}>
-          <button type="button" className={`ws-modal__rail-btn${showArrows.up ? '' : ' is-disabled'}`} onClick={() => nudge(-1)} aria-label="Remonter">
+          <button type="button" className={`ws-modal__rail-btn${showArrows.up ? '' : ' is-disabled'}`} onClick={() => nudge(-1)} aria-label={t('scroll.up')}>
             <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 10l5-5 5 5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
           </button>
-          <button type="button" className={`ws-modal__rail-btn${showArrows.down ? '' : ' is-disabled'}`} onClick={() => nudge(1)} aria-label="Descendre">
+          <button type="button" className={`ws-modal__rail-btn${showArrows.down ? '' : ' is-disabled'}`} onClick={() => nudge(1)} aria-label={t('scroll.down')}>
             <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 6l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
           </button>
         </div>
@@ -2326,6 +2329,7 @@ async function cpLocalities(cp) {
 // Champ CP + localité auto. `variant` adapte le markup au formulaire hôte
 // ('modal' → ws-field du LoginModal, 'acc' → ws-acc__field du compte).
 function CpField({ cp, locality, onCp, onLocality, onOpts, variant }) {
+  const { t } = wsUseT();
   const [opts, setOpts] = useState([]);
   useEffect(() => {
     let alive = true;
@@ -2358,7 +2362,7 @@ function CpField({ cp, locality, onCp, onLocality, onOpts, variant }) {
       {opts.length > 1 && (
         <label className={fieldCls}>{lbl('Localité')}
           <select className={inputCls} value={locality} onChange={(e) => onLocality(e.target.value)} required>
-            <option value="">— Choisir la localité —</option>
+            <option value="">{t('cp.pickLocality')}</option>
             {opts.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </label>
@@ -2549,6 +2553,7 @@ const PURCHASE_FILTERS = [
   { key: 'invoiced',  label: 'Facturé' },
 ];
 function AccountPurchases({ user }) {
+  const { t } = wsUseT();
   const [filter, setFilter]   = useState('all');
   const [page, setPage]       = useState(1);
   const [meta, setMeta]       = useState({ total: 0, canRequestInvoice: false, invoiceNotice: '' });
@@ -2681,7 +2686,7 @@ function AccountPurchases({ user }) {
       ))}
       {hasMore && (
         <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={() => setPage((p) => p + 1)}>
-          Voir plus
+          {t('common.seeMore')}
         </button>
       )}
     </div>
@@ -2748,6 +2753,7 @@ if (typeof document !== 'undefined' && !document.getElementById('ws-bureau-style
 }
 
 function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdateUser, shops, currentShopId, onChangePreferredShop, office, tour }) {
+  const { t } = wsUseT();
   const [form, setForm] = useState({
     firstName: user?.firstName || '',
     lastName: user?.lastName || '',
@@ -3522,7 +3528,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Choisir un bureau</div>
             <p className="ws-acc__hint">Sélectionnez d'abord votre <strong>boutique préférée</strong> (ci-dessus) : la liste des bureaux en dépend.</p>
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-fid__cancel" onClick={() => setOfficeStep('idle')}>Fermer</button>
+              <button type="button" className="ws-fid__cancel" onClick={() => setOfficeStep('idle')}>{t('common.close2')}</button>
             </div>
           </div>
         )}
@@ -3586,7 +3592,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Demande envoyée ✓</div>
             <p className="ws-acc__hint">Merci ! Votre Atelier a reçu votre demande et contactera votre bureau. Vous pourrez le sélectionner dès qu'il aura été validé.</p>
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-cta" onClick={() => setOfficeStep('idle')}>Fermer</button>
+              <button type="button" className="ws-cta" onClick={() => setOfficeStep('idle')}>{t('common.close2')}</button>
             </div>
           </div>
         )}
@@ -3652,6 +3658,7 @@ function FidelityQR({ payload }) {
 }
 
 function FidelityLinkPanel({ open, user, onClose }) {
+  const { t } = wsUseT();
   // Modale QR-only : elle montre l'adresse du PWA (user.fidelityApp.installUrl,
   // servi par le backend depuis ws_param.pwa_url). L'activation réelle de l'app
   // fidélité se fait DANS le PWA (il écrit fidelity_active en base) ; la boutique
@@ -3665,7 +3672,7 @@ function FidelityLinkPanel({ open, user, onClose }) {
     <div className="ws-fidpanel" role="dialog" aria-modal="true" aria-label="Application fidélité L'Atelier">
       <div className="ws-fidpanel__head">
         <span className="ws-fidpanel__eyebrow">Application fidélité</span>
-        <button type="button" className="ws-fidpanel__close" aria-label="Fermer" onClick={onClose}>×</button>
+        <button type="button" className="ws-fidpanel__close" aria-label={t('common.close2')} onClick={onClose}>×</button>
       </div>
       <div className="ws-fid ws-fid--inline">
         <div className="ws-fid__qrwrap ws-fid__qrwrap--sm">
@@ -3682,7 +3689,7 @@ function FidelityLinkPanel({ open, user, onClose }) {
           <a className="ws-fid__link" href={payload} target="_blank" rel="noopener noreferrer">Ouvrir l'application</a>
         )}
         <div className="ws-fid__foot ws-fid__foot--sm">
-          <button type="button" className="ws-cta ws-fid__confirm" onClick={onClose}>Fermer</button>
+          <button type="button" className="ws-cta ws-fid__confirm" onClick={onClose}>{t('common.close2')}</button>
         </div>
       </div>
     </div>
@@ -3728,6 +3735,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
                           voucherInput, setVoucherInput, voucherApplied, setVoucherApplied,
                           office, tour, date,
                           deliveryFeeResult, deliveryFeeErr, officeSites, selectedSiteId, setSelectedSiteId }) {
+  const { t } = wsUseT();
   const [step, setStep] = useState(1);
   const [forceAuth, setForceAuth] = useState(false);
   const [paying, setPaying] = useState(false);
@@ -3955,7 +3963,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         <button className="ws-checkout__back" onClick={onClose}>
           <Pict d={<path d="M15 6l-6 6 6 6"/>} s={12}/> Retour au panier
         </button>
-        <span className="ws-checkout__title">Finalisez votre commande</span>
+        <span className="ws-checkout__title">{t('co.subtitle')}</span>
       </header>
 
       <ol className="ws-stepper">
@@ -4011,16 +4019,16 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
                 </svg>
               </span>
               <div className="ws-b2b__titles">
-                <span className="ws-b2b__title">Entreprise & note</span>
-                <span className="ws-b2b__sub">Facturation professionnelle ou message pour l'atelier</span>
+                <span className="ws-b2b__title">{t('co.company.step')}</span>
+                <span className="ws-b2b__sub">{t('co.company.hint')}</span>
               </div>
             </div>
 
             {companies.length > 0 && (
               <label className="ws-field ws-b2b__field">
-                <span>Commander pour une entreprise</span>
+                <span>{t('co.company.forCompany')}</span>
                 <select value={companyId} onChange={(e) => { setCompanyId(e.target.value); setOnAccount(false); }}>
-                  <option value="">Non — commande personnelle</option>
+                  <option value="">{t('co.company.personal')}</option>
                   {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </label>
@@ -4034,8 +4042,8 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
                     <input type="checkbox" checked={onAccount} onChange={(e) => setOnAccount(e.target.checked)} />
                     <span className="ws-b2b__account-box" aria-hidden="true"/>
                     <span className="ws-b2b__account-copy">
-                      <span className="ws-b2b__account-name">Commander sur le compte de l'entreprise</span>
-                      <span className="ws-b2b__account-sub">Facturation différée · réglée par la société</span>
+                      <span className="ws-b2b__account-name">{t('co.company.onAccount')}</span>
+                      <span className="ws-b2b__account-sub">{t('co.company.deferred')}</span>
                     </span>
                   </label>
                 );
@@ -4068,7 +4076,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
               if (!bName && !bVat && !bAddr) return null;
               return (
                 <div className="ws-b2b__bill" role="note">
-                  <span className="ws-b2b__bill-k">Facturé à</span>
+                  <span className="ws-b2b__bill-k">{t('co.company.billedTo')}</span>
                   {bName && <span className="ws-b2b__bill-name">{bName}</span>}
                   {bVat && <span className="ws-b2b__bill-addr">N° TVA · {bVat}</span>}
                   {bAddr && <span className="ws-b2b__bill-addr">{bAddr}</span>}
@@ -4077,14 +4085,14 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             })()}
 
             <label className="ws-field ws-b2b__field">
-              <span>Remarque (facultatif)</span>
+              <span>{t('co.company.note')}</span>
               <textarea value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2} maxLength={1000}
-                        placeholder="Remarque à faire figurer sur la facture, instructions…" />
+                        placeholder={t('co.company.notePh')} />
             </label>
             <label className="ws-field ws-b2b__field">
-              <span>PO# (bon de commande)</span>
+              <span>{t('co.company.po')}</span>
               <input type="text" value={poNumber} onChange={(e) => setPoNumber(e.target.value)}
-                     placeholder="Votre numéro de PO / commande" />
+                     placeholder={t('co.company.poPh')} />
             </label>
           </div>
           )}
@@ -4099,7 +4107,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           <span className="ws-checkout__foot-v">€{total.toFixed(2)}</span>
         </div>
         <div className="ws-checkout__foot-actions">
-          {step > 1 && <button className="ws-btn-ghost" {...wsTap(() => setStep((s) => s - 1), { shield: true })} disabled={paying}>Précédent</button>}
+          {step > 1 && <button className="ws-btn-ghost" {...wsTap(() => setStep((s) => s - 1), { shield: true })} disabled={paying}>{t('co.prev')}</button>}
           <button
             className="ws-cta ws-cta--block"
             disabled={paying || (step === 1 && !step1Valid()) || (step === 2 && !step2Valid()) || (step === 3 && !step3Valid())}
@@ -4116,6 +4124,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
 
 function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, forceAuth, onLoginNow,
                          officeSites, selectedSiteId, setSelectedSiteId, deliveryFeeResult }) {
+  const { t } = wsUseT();
   // Office Shop: site selector + read-only delivery info
   if (mode === 'delivery' && user && office) {
     const activeSite = (officeSites || []).find((s) => s.id === selectedSiteId) || null;
@@ -4129,8 +4138,8 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
     };
     return (
       <div className="ws-co-step">
-        <h3 className="ws-co-step__title">Adresse de livraison</h3>
-        <p className="ws-co-step__lede">Sélectionnez le site de livraison pour cette commande.</p>
+        <h3 className="ws-co-step__title">{t('co.delivery.address')}</h3>
+        <p className="ws-co-step__lede">{t('co.delivery.pickSite')}</p>
 
         {officeSites && officeSites.length > 1 && (
           <div className="ws-co-site-select">
@@ -4172,7 +4181,7 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
             <ReadRow k="Paiement" v="Différé · facturation mensuelle"/>
           )}
         </div>
-        <p className="ws-co-step__locknote"><Pict d={<><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></>} s={12}/> Modifier ces informations depuis Mon compte.</p>
+        <p className="ws-co-step__locknote"><Pict d={<><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></>} s={12}/> {t('co.contact.editFromAccount')}</p>
       </div>
     );
   }
@@ -4181,8 +4190,8 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
   if (user) {
     return (
       <div className="ws-co-step">
-        <h3 className="ws-co-step__title">Vos coordonnées</h3>
-        <p className="ws-co-step__lede">Pré-remplies depuis votre compte. Modifiables depuis Mon compte.</p>
+        <h3 className="ws-co-step__title">{t('co.contact.title')}</h3>
+        <p className="ws-co-step__lede">{t('co.contact.prefilled')}</p>
         <div className="ws-co-readbox">
           <ReadRow k="Nom"       v={user.firstName + ' ' + user.lastName}/>
           <ReadRow k="Email"     v={user.email}/>
@@ -4197,10 +4206,10 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
   if (forceAuth) {
     return (
       <div className="ws-co-step">
-        <h3 className="ws-co-step__title">Connectez-vous pour continuer</h3>
+        <h3 className="ws-co-step__title">{t('co.auth.title')}</h3>
         <p className="ws-co-step__lede">Pour finaliser votre commande, créez un compte ou connectez-vous. Vos coordonnées seront pré-remplies.</p>
         <div className="ws-co-authwall">
-          <button className="ws-cta ws-cta--block" onClick={onLoginNow}>Se connecter</button>
+          <button className="ws-cta ws-cta--block" onClick={onLoginNow}>{t('co.auth.signin')}</button>
           <button className="ws-btn-ghost" onClick={onLoginNow}>Créer un compte</button>
         </div>
       </div>
@@ -4214,11 +4223,11 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
         </span>
         <div className="ws-co-guest__banner-copy">
-          <strong>Commande sans compte</strong>
-          <span>Aucune inscription requise — vos coordonnées servent uniquement au retrait.</span>
+          <strong>{t('co.guest.title')}</strong>
+          <span>{t('co.guest.hint')}</span>
         </div>
       </div>
-      <h3 className="ws-co-step__title">Vos coordonnées</h3>
+      <h3 className="ws-co-step__title">{t('co.contact.title')}</h3>
       <div className="ws-form">
         <div className="ws-form__row2">
           <label className="ws-field"><span>Prénom</span><input value={contact.firstName} onChange={(e) => setContact((c) => ({ ...c, firstName: e.target.value }))} autoComplete="given-name"/></label>
@@ -4227,7 +4236,7 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
         <label className="ws-field"><span>Email</span><input type="email" value={contact.email} onChange={(e) => setContact((c) => ({ ...c, email: e.target.value }))} autoComplete="email"/></label>
         <label className="ws-field"><span>Téléphone</span><input value={contact.phone} onChange={(e) => setContact((c) => ({ ...c, phone: e.target.value }))} autoComplete="tel"/></label>
       </div>
-      <p className="ws-co-guest__login">Déjà client ? <button type="button" className="ws-linkbtn" onClick={onLoginNow}>Se connecter</button> pour pré-remplir vos infos.</p>
+      <p className="ws-co-guest__login">{t('co.guest.already')} <button type="button" className="ws-linkbtn" onClick={onLoginNow}>{t('co.auth.signin')}</button> pour pré-remplir vos infos.</p>
     </div>
   );
 }
@@ -4258,10 +4267,11 @@ function SlotCTA({ cta, onClick }) {
 
 // Sticky segmented control — shown only when the office has 2+ orderable slots.
 function SlotSegmented({ slots, selected, onSelect }) {
+  const { t } = wsUseT();
   if (!slots || slots.length < 2) return null;
   const active = slots.find((s) => s.slot_type === selected) || slots[0];
   return (
-    <div className="ws-slotseg" role="tablist" aria-label="Créneau de livraison">
+    <div className="ws-slotseg" role="tablist" aria-label={t('co.slot.title')}>
       <div className="ws-slotseg__tabs">
         {slots.map((s) => {
           const theme = (s.cta && s.cta.theme) || (s.slot_type === 'soir' ? 'evening' : 'lunch');
@@ -4277,7 +4287,7 @@ function SlotSegmented({ slots, selected, onSelect }) {
         })}
       </div>
       {active && active.cutoff_label && (
-        <div className="ws-slotseg__cutoff">Commande avant <strong>{active.cutoff_label}</strong></div>
+        <div className="ws-slotseg__cutoff">{t('co.slot.orderBefore')} <strong>{active.cutoff_label}</strong></div>
       )}
     </div>
   );
@@ -4285,17 +4295,18 @@ function SlotSegmented({ slots, selected, onSelect }) {
 
 // Confirmation modal — one cart = one route + one date. Lists removed items.
 function SlotChangeModal({ items, targetLabel, onConfirm, onCancel }) {
+  const { t } = wsUseT();
   return (
     <div className="ws-drawer is-open" onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-      <div className="ws-drawer__panel ws-slotchange" role="dialog" aria-label="Changer de créneau">
-        <h3 className="ws-co-step__title">Changer de créneau ?</h3>
+      <div className="ws-drawer__panel ws-slotchange" role="dialog" aria-label={t('co.slot.change')}>
+        <h3 className="ws-co-step__title">{t('co.slot.changeQ')}</h3>
         <p className="ws-co-step__lede">Un panier ne peut contenir qu'un seul créneau. Passer sur <strong>{targetLabel}</strong> retirera {items.length} article{items.length > 1 ? 's' : ''} indisponible{items.length > 1 ? 's' : ''} sur ce créneau :</p>
         <ul className="ws-slotchange__list">
           {items.map((l) => <li key={l.line}><span>{l.name}</span><span>×{l.qty}</span></li>)}
         </ul>
         <div className="ws-slotchange__actions">
           <button type="button" className="ws-fid__cancel" onClick={onCancel}>Annuler</button>
-          <button type="button" className="ws-slotchange__confirm" onClick={onConfirm}>Retirer et continuer</button>
+          <button type="button" className="ws-slotchange__confirm" onClick={onConfirm}>{t('co.slot.removeContinue')}</button>
         </div>
       </div>
     </div>
@@ -4303,6 +4314,7 @@ function SlotChangeModal({ items, targetLabel, onConfirm, onCancel }) {
 }
 
 function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
+  const { t } = wsUseT();
   const [slots, setSlots] = React.useState([]);
   const [dateLabel, setDateLabel] = React.useState('');
   React.useEffect(() => {
@@ -4332,7 +4344,7 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
       <p className="ws-co-step__lede">
         {mode === 'delivery'
           ? <>Tournée <strong>{tour?.name || '—'}</strong> · Livraison à <strong>{office?.name}</strong>, {office?.address || ''}.</>
-          : <>À retirer chez <strong>{shop.name}</strong>, {shop.address}.</>
+          : <>{t('co.pickup.at')} <strong>{shop.name}</strong>, {shop.address}.</>
         }
       </p>
       <div className="ws-co-day">
@@ -4358,7 +4370,7 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
           );
         })}
       </div>
-      {mode === 'delivery' && <p className="ws-co-step__hint">Livraison incluse pour les bureaux desservis par votre tournée.</p>}
+      {mode === 'delivery' && <p className="ws-co-step__hint">{t('co.delivery.included')}</p>}
     </div>
   );
 }
@@ -4368,6 +4380,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
                          giftCode, onGift, giftEmail,
                          deliveryFee, deliveryFeeResult, deliveryFeeErr, profile, companyId, customerId,
                          paymentMethods }) {
+  const { t } = wsUseT();
   const [voucherErr, setVoucherErr] = useState(null);
   // Cadeau « achat cumulé » : code saisi + produit cadeau validé (ligne 0 €).
   const [giftInput, setGiftInput] = useState('');
@@ -4473,11 +4486,11 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
   return (
     <div className="ws-co-step">
       <h3 className="ws-co-step__title">Paiement</h3>
-      <p className="ws-co-step__lede">Choisissez votre méthode de paiement et confirmez.</p>
+      <p className="ws-co-step__lede">{t('co.pay.subtitle')}</p>
 
       <div className="ws-co-voucher">
         <div className="ws-co-voucher__head">
-          <span className="ws-co-voucher__lbl">Code promo</span>
+          <span className="ws-co-voucher__lbl">{t('co.promo.title')}</span>
           {voucherApplied && voucherApplied.ok && (
             <span className="ws-co-voucher__badge">
               <Pict d={<path d="M5 12l4 4 10-10"/>} s={11}/> {voucherApplied.message}
@@ -4495,7 +4508,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
             <input
               type="text"
               className="ws-co-voucher__input"
-              placeholder="Saisir un code (ex. BIENVENUE10)"
+              placeholder={t('co.promo.ph')}
               value={voucherInput}
               onChange={(e) => { setVoucherInput(e.target.value.toUpperCase()); setVoucherErr(null); }}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyVoucher(); } }}
@@ -4555,7 +4568,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
       <div className="ws-co-gift">
         <div className="ws-co-gift__head">
           <GiftIcon size={15} className="ws-co-gift__ic"/>
-          <span className="ws-co-gift__lbl">Code cadeau</span>
+          <span className="ws-co-gift__lbl">{t('co.gift.title')}</span>
         </div>
         {giftReward ? (
           <div className="ws-co-gift__ok">
@@ -4565,7 +4578,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
           </div>
         ) : (
           <div className="ws-co-gift__row">
-            <input type="text" className="ws-co-gift__input" placeholder="Saisir votre code cadeau"
+            <input type="text" className="ws-co-gift__input" placeholder={t('co.gift.ph')}
               value={giftInput}
               onChange={(e) => { setGiftInput(e.target.value.toUpperCase()); setGiftErr(null); }}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyGift(); } }}
@@ -4577,7 +4590,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
       </div>
 
       <div className="ws-co-summary">
-        <div className="ws-co-summary__h">Récapitulatif</div>
+        <div className="ws-co-summary__h">{t('co.summary.title')}</div>
         <ul className="ws-co-summary__list">
           {basket.map((l) => (
             <li key={l.line}>
@@ -4653,7 +4666,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
             </label>
             {!isB2B && (
               <button type="button" className={`ws-co-invoice__i${infoOpen ? ' is-open' : ''}`}
-                      aria-label="À propos de la facture nominative" aria-expanded={infoOpen}
+                      aria-label={t('co.invoice.about')} aria-expanded={infoOpen}
                       onClick={() => setInfoOpen((v) => !v)}>i</button>
             )}
           </div>
@@ -4665,7 +4678,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
         </div>
       )}
 
-      <p className="ws-co-step__hint">Paiement sécurisé · L'Atelier By ne stocke aucune donnée bancaire.</p>
+      <p className="ws-co-step__hint">{t('co.pay.secure')}</p>
     </div>
   );
 }
@@ -4694,6 +4707,7 @@ function bug(source, quoi, e) {
 }
 
 function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
+  const { t } = wsUseT();
   const swPanelRef = useSwipeDownToClose(onClose);
   if (!open) return null;
   const list = shops || [];
@@ -4702,9 +4716,9 @@ function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
       <div ref={swPanelRef} className="ws-modal__panel ws-modal__panel--switcher" onClick={(e) => e.stopPropagation()}>
         <span className="ws-modal__handle" aria-hidden="true"/>
         <button className="ws-modal__close" onClick={onClose}><Pict d={ICONS.close} s={14}/></button>
-        <p className="ws-modal__eyebrow">Choisissez votre boutique</p>
+        <p className="ws-modal__eyebrow">{t('shoppick.title')}</p>
         <h2 className="ws-modal__title">Trouvez <em>votre</em> Atelier.</h2>
-        <p className="ws-modal__lede">Chaque boutique a ses produits, ses horaires et ses créneaux. Sélectionnez celle où vous souhaitez retirer votre commande.</p>
+        <p className="ws-modal__lede">{t('shoppick.hint')}</p>
         <div className="ws-modal__grid">
           {list.map((s) => (
             <button key={s.id} className={`ws-shopcard${s.id === currentId ? ' is-current' : ''}`} onClick={() => { onPick(s.id); onClose(); }} style={{ '--accent': s.accent }}>
@@ -4718,7 +4732,7 @@ function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
               <div className="ws-shopcard__svcs">
                 <span>Click & Collect</span>
                 <span>·</span>
-                <span>Livraison bureau</span>
+                <span>{t('shoppick.delivery')}</span>
               </div>
             </button>
           ))}
@@ -5840,7 +5854,7 @@ function ShopFrame({ variant }) {
       {cartDrawerOpen && (
         <div className="ws-drawer is-open" onClick={(e) => { if (e.target === e.currentTarget) setCartDrawerOpen(false); }}>
           <div className="ws-drawer__panel">
-            <button className="ws-drawer__close" onClick={() => setCartDrawerOpen(false)} aria-label="Fermer">×</button>
+            <button className="ws-drawer__close" onClick={() => setCartDrawerOpen(false)} aria-label={t('common.close2')}>×</button>
             <div className="ws-drawer__handle" aria-hidden="true"/>
             <Basket shop={shop} mode={mode} basket={basket} onCheckout={() => { setCartDrawerOpen(false); handleCheckout(); }} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
           </div>
@@ -5890,7 +5904,7 @@ function ShopFrame({ variant }) {
         officeSites={officeSites} selectedSiteId={selectedSiteId} setSelectedSiteId={setSelectedSiteId}
       />
       {prefNudge && (
-        <div className="ws-pref-nudge" role="dialog" aria-label="Mettre à jour la boutique préférée">
+        <div className="ws-pref-nudge" role="dialog" aria-label={t('prefshop.title')}>
           <div className="ws-pref-nudge__body">
             <div className="ws-pref-nudge__title">Faire de <em>{prefNudge.shopName}</em> votre boutique préférée ?</div>
             <div className="ws-pref-nudge__sub">Cela définira <em>{prefNudge.shopName}</em> par défaut à votre prochaine connexion.</div>
@@ -5907,7 +5921,7 @@ function ShopFrame({ variant }) {
                 }
               }
               setPrefNudge(null);
-            }}>Définir comme préférée</button>
+            }}>{t('prefshop.set')}</button>
           </div>
         </div>
       )}
@@ -5922,24 +5936,24 @@ function ShopFrame({ variant }) {
           </div>
           {/* « Fermer » EN BAS : à droite du texte, il comprimait le titre sur
               deux lignes et tombait haut dans l'écran, loin du pouce. */}
-          <button type="button" className="ws-toast__close" onClick={() => setNotice(null)}>Fermer</button>
+          <button type="button" className="ws-toast__close" onClick={() => setNotice(null)}>{t('common.close2')}</button>
         </div>
       )}
       {stockErr && (
         <div className="ws-toast ws-toast--err" role="alert" style={{ background: '#7a1f1f' }}>
           <div>
-            <div className="ws-toast__title">Stock non tenu</div>
+            <div className="ws-toast__title">{t('stock.untracked')}</div>
             <div className="ws-toast__sub">{stockErr}</div>
           </div>
           <button type="button" onClick={() => setStockErr('')}
-            style={{ marginLeft: 'auto', background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', font: '600 13px var(--font-ui)' }}>Fermer</button>
+            style={{ marginLeft: 'auto', background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', font: '600 13px var(--font-ui)' }}>{t('common.close2')}</button>
         </div>
       )}
       {orderToast && (
         <div className="ws-toast" role="status">
           <span className="ws-toast__check"><Pict d={<path d="M5 12l4 4 10-10"/>} s={14}/></span>
           <div>
-            <div className="ws-toast__title">Commande confirmée</div>
+            <div className="ws-toast__title">{t('order.confirmed')}</div>
             <div className="ws-toast__sub">Créneau {typeof orderToast.slot === 'object' ? orderToast.slot?.label : orderToast.slot} · {orderToast.paymentLabel || orderToast.payment} · €{orderToast.total.toFixed(2)}</div>
           </div>
         </div>
