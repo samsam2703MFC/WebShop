@@ -226,20 +226,48 @@ const ICONS = {
 // =========================================================================
 // DATE PILL — date picker with popover calendar
 // =========================================================================
-const W_MONTHS = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
-const W_DAYS = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
-const W_DAYS_SHORT3 = ['Lun.','Mar.','Mer.','Jeu.','Ven.','Sam.','Dim.'];
+/* Noms de jours et de mois : rendus par Intl DANS LA LANGUE COURANTE — jamais
+   des tableaux français en dur (une boutique néerlandophone affichait « Dim. »
+   à côté de libellés en NL). Ils n'ont pas leur place dans la table de
+   traduction : le navigateur les connaît pour toutes les langues, et une copie
+   en base se désynchroniserait. Le reste des libellés vient bien de ws_i18n. */
+function wsLocale() {
+  const l = (window.WSI18n && window.WSI18n.getLang && window.WSI18n.getLang()) || 'fr';
+  return l === 'nl' ? 'nl-BE' : l === 'en' ? 'en-GB' : l === 'de' ? 'de-DE' : 'fr-BE';
+}
+function wsCap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+// Mois en toutes lettres (en-tête du calendrier) : « août » / « augustus ».
+function wsMonthName(monthIndex, year) {
+  return wsCap(new Date(year != null ? year : 2000, monthIndex, 1)
+    .toLocaleDateString(wsLocale(), { month: 'long' }));
+}
+// Ligne d'en-tête du calendrier : Lun…Dim / Ma…Zo, semaine commençant le lundi.
+function wsWeekdayNames() {
+  const base = new Date(2024, 0, 1);              // 1er janvier 2024 = un lundi
+  return Array.from({ length: 7 }, (_, i) =>
+    wsCap(new Date(2024, 0, 1 + i).toLocaleDateString(wsLocale(), { weekday: 'short' })
+      .replace(/\.$/, '')));
+}
 function wsFormatPill(d) {
   // Pastille du bandeau : jour + numéro, SANS le mois. « Dim. 16 » suffit à
   // lever l'ambiguïté (on ne franchit presque jamais une fin de mois) et
   // libère la largeur qui manquait au nom de la boutique. Le mois reste
   // affiché dans le calendrier ouvert.
-  return `${W_DAYS_SHORT3[(d.getDay()+6)%7]} ${d.getDate()}`;
+  const day = wsCap(d.toLocaleDateString(wsLocale(), { weekday: 'short' }));
+  return `${day} ${d.getDate()}`;
+}
+// i18n : hook réactif (webshop-i18n-react → window.useT). Re-rend le composant
+// au changement de langue ; repli direct sur WSI18n.t si le hook n'est pas là.
+function wsUseT() {
+  return window.useT
+    ? window.useT()
+    : { t: (k, p) => (window.WSI18n ? window.WSI18n.t(k, p) : k), tCategory: (id, fb) => fb };
 }
 function DatePill({ mode, value, onChange, shopId,
                     collectCutoffPassed, collectCutoffLabel,
                     deliveryCutoffPassed, deliveryCutoffLabel,
                     minLeadDays }) {
+  const { t } = wsUseT();
   const [open, setOpen] = React.useState(false);
   const [view, setView] = React.useState(() => new Date(value.getFullYear(), value.getMonth(), 1));
   // dayMap: { 'YYYY-MM-DD': { available, reason } } — populated per visible month
@@ -331,7 +359,7 @@ function DatePill({ mode, value, onChange, shopId,
     <div ref={wrapRef} className="ws-datepill">
       <button className="ws-nav__date" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <Pict d={ICONS.cal} s={12}/>
-        <span>Date de {mode === 'delivery' ? 'livraison' : 'retrait'}</span>
+        <span>{t(mode === 'delivery' ? 'nav.datepill.delivery' : 'nav.datepill.pickup')}</span>
         <strong>· {wsFormatPill(value)}</strong>
         <Pict d={ICONS.chev} s={10}/>
       </button>
@@ -340,13 +368,13 @@ function DatePill({ mode, value, onChange, shopId,
           <div className="ws-datepop__head">
             <button className="ws-datepop__nav" onClick={() => shift(-1)} aria-label="Mois précédent">‹</button>
             <span className="ws-datepop__title">
-              {W_MONTHS[view.getMonth()]} {view.getFullYear()}
+              {wsMonthName(view.getMonth(), view.getFullYear())} {view.getFullYear()}
               {loadingDays && <span style={{fontSize:9,opacity:.5,marginLeft:4}}>…</span>}
             </span>
             <button className="ws-datepop__nav" onClick={() => shift(1)} aria-label="Mois suivant">›</button>
           </div>
           <div className="ws-datepop__dow">
-            {W_DAYS.map((d) => <span key={d}>{d}</span>)}
+            {wsWeekdayNames().map((d, i) => <span key={i}>{d}</span>)}
           </div>
           <div className="ws-datepop__grid">
             {cells.map((d, i) => {
@@ -466,6 +494,7 @@ function OfficeSearchPicker({ chercher, value, onPick, label }) {
 
 // Mode pill — Ruby (collect) / Abricot (delivery)
 function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel }) {
+  const { t } = wsUseT();
   const [hover, setHover] = React.useState(false);
   const delivTitle = deliveryCutoffPassed
     ? `Livraison non disponible après ${deliveryCutoffLabel}`
@@ -478,11 +507,11 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
     <div className="ws-modes" role="tablist" aria-label="Mode boutique">
       <span className="ws-modes__indicator" data-mode={effMode} aria-hidden="true"/>
       <button className={`ws-mode ws-mode--collect${mode === 'collect' ? ' is-active' : ''}${collectCutoffPassed ? ' is-disabled' : ''}`}
-        onClick={() => onChange('collect')} role="tab" aria-selected={mode === 'collect'} aria-label="Click & Collect"
+        onClick={() => onChange('collect')} role="tab" aria-selected={mode === 'collect'} aria-label={t('nav.mode.collect')}
         title={collTitle}>
         <Pict d={ICONS.bag} s={14}/>
-        <span className="ws-mode__lbl-full">Click &amp; Collect</span>
-        {collectCutoffPassed && <span className="ws-mode__cutoff"> · Fermé</span>}
+        <span className="ws-mode__lbl-full">{t('nav.mode.collect')}</span>
+        {collectCutoffPassed && <span className="ws-mode__cutoff"> · {t('nav.mode.closed')}</span>}
       </button>
       {/* Pas d'attribut `disabled` : un bouton désactivé n'émet aucun clic, donc
           le motif du refus ne pouvait jamais s'afficher — on retombait sur le
@@ -490,12 +519,12 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
           indisponible (is-disabled) et aria-disabled l'annonce aux lecteurs
           d'écran, mais le clic sert enfin à dire POURQUOI. */}
       <button className={`ws-mode ws-mode--delivery${mode === 'delivery' ? ' is-active' : ''}${deliveryCutoffPassed ? ' is-disabled' : ''}`}
-        onClick={() => onChange('delivery')} role="tab" aria-selected={mode === 'delivery'} aria-label="Livraison au bureau"
+        onClick={() => onChange('delivery')} role="tab" aria-selected={mode === 'delivery'} aria-label={t('nav.mode.delivery')}
         aria-disabled={deliveryCutoffPassed || undefined}
         title={delivTitle}>
         <Pict d={ICONS.truck} s={14}/>
-        <span className="ws-mode__lbl-full">Livraison au bureau</span>
-        {deliveryCutoffPassed && <span className="ws-mode__cutoff"> · Fermé</span>}
+        <span className="ws-mode__lbl-full">{t('nav.mode.delivery')}</span>
+        {deliveryCutoffPassed && <span className="ws-mode__cutoff"> · {t('nav.mode.closed')}</span>}
       </button>
       {/* « i » apricot : pas encore de bureau ? → ouvre le formulaire zone (landing) */}
       <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flex: 'none', marginLeft: 4 }}
@@ -4698,6 +4727,7 @@ function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
 // SHOP FRAME — full storefront
 // =========================================================================
 function ShopFrame({ variant }) {
+  const { t } = wsUseT();   // i18n réactif pour la coquille (tabbar, etc.)
   // Deep-link: read URL params once at mount so admin direct links
   // (?shop=&mode=&voucher=&category=) preload the storefront state.
   const _deep = typeof parseDeepLink === 'function' ? parseDeepLink() : {};
@@ -5778,16 +5808,16 @@ function ShopFrame({ variant }) {
 
       {/* Mobile bottom tab bar — 2 buttons, 50/50 split */}
       <nav className="ws-tabbar" aria-label="Navigation">
-        <button className="ws-tabbar__btn ws-tabbar__btn--cart" onClick={() => setCartDrawerOpen(true)} aria-label="Panier">
+        <button className="ws-tabbar__btn ws-tabbar__btn--cart" onClick={() => setCartDrawerOpen(true)} aria-label={t('nav.cart')}>
           <span className="ws-tabbar__cart-wrap">
             <Pict d={ICONS.bag} s={20}/>
             {cartCount > 0 && <span className="ws-tabbar__badge">{cartCount}</span>}
           </span>
-          <span className="ws-tabbar__label">Panier</span>
+          <span className="ws-tabbar__label">{t('nav.cart')}</span>
         </button>
-        <button className="ws-tabbar__btn ws-tabbar__btn--account" onClick={handleAccount} aria-label={user ? 'Profil' : 'Connexion'}>
+        <button className="ws-tabbar__btn ws-tabbar__btn--account" onClick={handleAccount} aria-label={user ? t('nav.profile') : t('nav.signin')}>
           <Pict d={ICONS.user} s={20}/>
-          <span className="ws-tabbar__label">{user ? 'Profil' : 'Connexion'}</span>
+          <span className="ws-tabbar__label">{user ? t('nav.profile') : t('nav.signin')}</span>
         </button>
       </nav>
 

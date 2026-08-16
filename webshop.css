@@ -159,11 +159,14 @@
   border-radius: 50%;
   text-decoration: none;
 }
-/* Vue mobile : pas de sélecteur de langue ; l'icône « i » prend sa place.
+/* Vue mobile : le sélecteur de langue RESTE visible. Il était masqué à l'époque
+   où l'icône « i » occupait ce coin ; le « i » est parti, et une boutique
+   bilingue (Halle : nl+fr) doit pouvoir changer de langue depuis un téléphone —
+   sans lui, un francophone à Halle n'avait aucun moyen de repasser en FR.
    Sélecteur descendant (.ws-nav__right …) pour l'emporter sur .ws-langchip
    défini plus tard dans webshop-i18n.css (spécificité égale sinon). */
 @media (max-width: 720px) {
-  .ws-nav__right .ws-nav__lang { display: none; }
+  .ws-nav__right .ws-nav__lang { display: inline-flex; }
   .ws-nav__right .ws-nav__info { display: inline-grid; }
 }
 .ws-nav__cart-badge {
@@ -3409,32 +3412,28 @@
   /* ---- Hide old floating cart pill (replaced by tab bar) ---- */
   .ws-cartbar { display: none !important; }
 
-  /* ---- Mobile nav layout: SINGLE row — shop / mode / date ---- */
+  /* ---- Mobile nav layout ----
+     Ligne 1 : boutique + date + sélecteur de langue. Ligne 2 : sélecteur de mode
+     sur TOUTE la largeur du bandeau.
+     `display: contents` sur .ws-nav__left fait remonter ses enfants au niveau de
+     .ws-nav : les quatre éléments partagent alors le MÊME conteneur flex, donc
+     la barre de mode (flex-basis 100%) prend la largeur du bandeau entier et non
+     celle du bloc gauche. Sans ça, le bloc de droite réservait sa largeur sur les
+     deux lignes et tronquait le libellé (« Levering op kant… ») — la même
+     mécanique qui coupait le nom de la boutique. Le DOM reste celui du desktop. */
   .ws-nav {
     padding: 8px 10px;
     gap: 6px;
     row-gap: 0;
-    flex-wrap: nowrap;
-    align-items: center;
-  }
-  .ws-nav__left {
-    flex: 1 1 auto;
-    width: auto;
-    gap: 6px;
-    /* Le sélecteur de mode passe sur SA PROPRE LIGNE (voir .ws-modes plus bas).
-       Il était réduit à deux pictos de 16 px dans 76 px, sans un mot, alors
-       qu'il commande les prix, les créneaux et l'heure limite. wrap plutôt
-       qu'un second conteneur : le DOM reste celui du desktop, donc une seule
-       version du composant à maintenir. */
     flex-wrap: wrap;
-    row-gap: 0;
-    min-width: 0;          /* allow children to shrink */
     align-items: center;
   }
+  .ws-nav__left { display: contents; }
   .ws-nav__right {
     width: auto;
     gap: 6px;
     flex: 0 0 auto;
+    order: 3;              /* fin de la ligne 1, avant la barre de mode */
   }
 
   /* Brand & brand wrappers are not part of the 3-element row */
@@ -3465,8 +3464,8 @@
   /* Toggle-switch style segmented control — compact icon-only for single-row */
   .ws-modes {
     position: relative;
-    flex: 1 0 100%;                      /* ligne à part, pleine largeur */
-    order: 3;                            /* après la boutique et la date */
+    flex: 1 0 100%;                      /* ligne à part, pleine largeur du bandeau */
+    order: 4;                            /* après boutique, date et langue */
     margin-top: 8px;
     gap: 0;
     background: var(--color-bg, #faf7f2);
@@ -3538,9 +3537,11 @@
     border: 1px solid var(--color-border-tertiary, rgba(0,0,0,.08));
     height: 32px;
     flex: 1 1 auto;
+    order: 1;              /* début de la ligne 1 */
     min-width: 0;
     gap: 5px;
   }
+  .ws-datepill { order: 2; flex: 0 0 auto; }
   .ws-nav__shopchip-dot { width: 7px; height: 7px; flex-shrink: 0; }
   .ws-nav__shopchip span:not(.ws-nav__shopchip-dot) {
     flex: 1 1 auto;
