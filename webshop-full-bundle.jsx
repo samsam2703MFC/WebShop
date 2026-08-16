@@ -230,7 +230,11 @@ const W_MONTHS = ['janvier','février','mars','avril','mai','juin','juillet','ao
 const W_DAYS = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
 const W_DAYS_SHORT3 = ['Lun.','Mar.','Mer.','Jeu.','Ven.','Sam.','Dim.'];
 function wsFormatPill(d) {
-  return `${W_DAYS_SHORT3[(d.getDay()+6)%7]} ${d.getDate()} ${W_MONTHS[d.getMonth()].slice(0,3)}.`;
+  // Pastille du bandeau : jour + numéro, SANS le mois. « Dim. 16 » suffit à
+  // lever l'ambiguïté (on ne franchit presque jamais une fin de mois) et
+  // libère la largeur qui manquait au nom de la boutique. Le mois reste
+  // affiché dans le calendrier ouvert.
+  return `${W_DAYS_SHORT3[(d.getDay()+6)%7]} ${d.getDate()}`;
 }
 function DatePill({ mode, value, onChange, shopId,
                     collectCutoffPassed, collectCutoffLabel,
@@ -2054,10 +2058,11 @@ function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, us
         {/* Desktop : sélecteur de langue. Mobile : masqué (voir .ws-nav__lang),
             remplacé par l'icône « i » -> landing « Livraison au bureau ». */}
         {window.LangChip && <window.LangChip className="ws-nav__lang" />}
-        <a className="ws-nav__info" href="/landing/livraison-bureau.html"
-           aria-label="Livraison au bureau — informations" title="Livraison au bureau">
-          <Pict d={ICONS.info} s={16}/>
-        </a>
+        {/* Le « i » « pas encore de bureau ? » a quitté le bandeau permanent :
+            il ne concerne QUE l'utilisateur sans bureau relié, et sera reposé
+            dans le flux « Livraison au bureau », là où il a du sens. Le retirer
+            vide le bloc de droite sur mobile → le nom de la boutique récupère
+            toute la ligne (fin de la troncature « Atelier by Ber… »). */}
         {window.AllergenNavButton && <window.AllergenNavButton onClick={onAllergens}/>}
         <button className="ws-nav__icon" aria-label="Compte" onClick={onAccount}>
           {user
