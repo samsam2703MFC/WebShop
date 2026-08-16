@@ -36,6 +36,34 @@
   const ALIAS_MAP = {};
   for (const a of ALLERGENS) for (const k of a.aliases) ALIAS_MAP[k.toLowerCase()] = a.id;
 
+  /* Libellés traduits (table ws_i18n, clés allergen.<id>). Les `label`
+     ci-dessus restent la SOURCE : ils servent de repli tant que les
+     traductions ne sont pas chargées, et ne sont jamais affichés à la place
+     d'un libellé traduit disponible. C'est une information réglementaire
+     (règlement UE 1169/2011) : elle doit être lisible dans la langue du
+     client, jamais approximative. */
+  function t(key, fallback) {
+    const v = window.WSI18n && window.WSI18n.t ? window.WSI18n.t(key) : key;
+    return (v && v !== key) ? v : fallback;
+  }
+  function tAllergen(a) { return t('allergen.' + a.id, a.label); }
+  /* Titre à emphase : une phrase = UNE clé, l'accent porté par des marqueurs
+     __…__ (même convention que le reste du webshop) plutôt qu'un découpage en
+     morceaux — l'ordre des mots change d'une langue à l'autre. */
+  function tRichAl(key, fallback) {
+    const raw = t(key, fallback);
+    const out = [];
+    const re = /\*\*([^*]+)\*\*|__([^_]+)__/g;
+    let last = 0, m, i = 0;
+    while ((m = re.exec(raw)) !== null) {
+      if (m.index > last) out.push(raw.slice(last, m.index));
+      out.push(m[1] != null ? <strong key={i++}>{m[1]}</strong> : <em key={i++}>{m[2]}</em>);
+      last = m.index + m[0].length;
+    }
+    if (last < raw.length) out.push(raw.slice(last));
+    return out;
+  }
+
   function resolve(name) {
     if (!name) return null;
     return ALIAS_MAP[String(name).toLowerCase()] || null;
@@ -43,7 +71,8 @@
   function labelOf(name) {
     const id = resolve(name);
     if (!id) return name;
-    return ALLERGENS.find((a) => a.id === id)?.label || name;
+    const a = ALLERGENS.find((x) => x.id === id);
+    return a ? tAllergen(a) : name;
   }
 
   // --- Inline SVG paths copied verbatim from the design system spec (allergens.html). ---
@@ -216,7 +245,17 @@
   // ---------------------------------------------------------------------
   // <AllergensRow list={['gluten','milk']}/>  — drop-in replacement for dots
   // ---------------------------------------------------------------------
+  /* Re-rend au changement de langue : ces libellés viennent de la table i18n,
+     pas des props — sans abonnement, la modale resterait dans la langue du
+     premier rendu. */
+  function useLangTick() {
+    const [, force] = React.useState(0);
+    useEffect(() => (window.WSI18n && window.WSI18n.onChange)
+      ? window.WSI18n.onChange(() => force((n) => n + 1)) : undefined, []);
+  }
+
   function AllergensRow({ list, size = 14, max = 5 }) {
+    useLangTick();
     if (!list || !list.length) return null;
     const ids = [];
     const seen = new Set();
@@ -227,7 +266,7 @@
     if (!ids.length) return null;
     const shown = ids.slice(0, max);
     const extra = ids.length - shown.length;
-    const labels = ids.map((i) => ALLERGENS.find((a) => a.id === i).label).join(', ');
+    const labels = ids.map((i) => tAllergen(ALLERGENS.find((a) => a.id === i))).join(', ');
     return (
       <span className="al-row" aria-label={`Allergènes: ${labels}`}>
         {shown.map((id) => (
@@ -243,16 +282,17 @@
   // <AllergenNavButton onClick={...}/>
   // ---------------------------------------------------------------------
   function AllergenNavButton({ onClick }) {
+    useLangTick();
     return (
       <button
         type="button"
         className="ws-nav__icon ws-nav__allergens-btn"
-        aria-label="Liste des allergènes"
-        title="Allergènes"
+        aria-label={t('allergen.listAria', 'Liste des allergènes')}
+        title={t('allergen.title2', 'Allergènes')}
         onClick={onClick}
       >
         {/* Wheat-ear glyph from the design system — the canonical allergen pictogram */}
-        <AllergenIcon name="gluten" size={16} strokeWidth={1.6} title="Allergènes"/>
+        <AllergenIcon name="gluten" size={16} strokeWidth={1.6} title={t('allergen.title2', 'Allergènes')}/>
       </button>
     );
   }
@@ -261,6 +301,7 @@
   // <AllergensModal open onClose />
   // ---------------------------------------------------------------------
   function AllergensModal({ open, onClose }) {
+    useLangTick();
     const dialogRef = useRef(null);
 
     useEffect(() => {
@@ -288,15 +329,15 @@
         <div className="al-modal__panel" ref={dialogRef}>
           <header className="al-modal__head">
             <div>
-              <p className="al-modal__eyebrow">Information consommateur</p>
+              <p className="al-modal__eyebrow">{t('allergen.eyebrow', 'Information consommateur')}</p>
               <h2 className="al-modal__title" id="al-modal-title">
-                Les <em>14 allergènes</em> majeurs
+                {tRichAl('allergen.title', 'Les __14 allergènes__ majeurs')}
               </h2>
               <p className="al-modal__lede">
-                Les pictogrammes utilisés sur nos fiches produit. Conforme au règlement européen n° 1169/2011.
+                {t('allergen.lede', 'Les pictogrammes utilisés sur nos fiches produit. Conforme au règlement européen n° 1169/2011.')}
               </p>
             </div>
-            <button type="button" className="al-modal__close" aria-label="Fermer" onClick={onClose}>
+            <button type="button" className="al-modal__close" aria-label={t('common.close', 'Fermer')} onClick={onClose}>
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
                 <path d="M6 6l12 12M18 6l-12 12"/>
               </svg>
@@ -310,13 +351,13 @@
                 <div className="al-card__icon">
                   <AllergenIcon name={a.id} size={36} strokeWidth={1.4}/>
                 </div>
-                <span className="al-card__name">{a.label}</span>
+                <span className="al-card__name">{tAllergen(a)}</span>
               </div>
             ))}
           </div>
 
           <footer className="al-modal__foot">
-            <span>Règlement UE n° 1169/2011 — substances ou produits provoquant des allergies ou intolérances.</span>
+            <span>{t('allergen.foot', 'Règlement UE n° 1169/2011 — substances ou produits provoquant des allergies ou intolérances.')}</span>
           </footer>
         </div>
       </div>
