@@ -292,7 +292,7 @@ function ws_voucher_upsert(array $o) {
      Le prix ERP est appliqué EN PHP (array_filter sur price > 0), après la
      requête : aucune clause SQL ne peut le répliquer. Partager la fonction est
      donc la seule façon d'empêcher les deux vues de diverger à nouveau. */
-  function catalog_produits_servis($s, $mode = '', $date = null) {
+  function catalog_produits_servis($s, $mode = '', $date = null, $lang = '') {
     // Filtre livraison bureau PARTAGÉ (source unique) : en mode 'delivery'/'office',
     // on EXCLUT serveur-side les produits non éligibles au canal bureau
     // (office_delivery=0), pour que TOUT front (webshop online, webshop après
@@ -485,6 +485,21 @@ function ws_voucher_upsert(array $o) {
     // prix effectif (magasin ERP, ou repli ws_) vaut 0 n'est pas vendable → masqué.
     // Appliqué APRÈS la surcharge du prix magasin pour couvrir les deux sources.
     $r = array_values(array_filter($r, static fn($x) => (float) $x['price'] > 0));
+
+    /* Noms traduits : alias servis par l'API ERP (products/aliases), résolus
+       ICI — le navigateur ne traduit rien. Sans alias dans cette langue, ou
+       API non configurée, le nom SOURCE est conservé : jamais de trou, jamais
+       de nom inventé. Un seul appel groupé sert tout le catalogue. */
+    $lg = strtolower(substr((string) ($lang ?: ''), 0, 2));
+    if ($lg !== '' && function_exists('erp_product_labels')) {
+      $al = erp_product_labels($lg);
+      if ($al) {
+        foreach ($r as &$x2) {
+          if (isset($al[(string) $x2['id']])) $x2['name'] = $al[(string) $x2['id']];
+        }
+        unset($x2);
+      }
+    }
     return $r;
   }
 
@@ -655,7 +670,7 @@ function dispatch($m, $p) {
        pouvait les réconcilier : on part donc des produits SERVIS. Une catégorie
        n'apparaît que si elle contient au moins un produit réellement vendable
        ici, et un produit vendable dont la catégorie manque le SIGNALE. */
-    $servis = catalog_produits_servis($s, qp('mode'), qp('date'));
+    $servis = catalog_produits_servis($s, qp('mode'), qp('date'), qp('lang'));
     $catIds = array_values(array_unique(array_filter(array_map(
       static fn ($x) => $x['cat_id'] !== null ? (int) $x['cat_id'] : null, $servis))));
     $subIds = array_values(array_unique(array_filter(array_map(
@@ -735,7 +750,7 @@ function dispatch($m, $p) {
   }
   if ($m === 'GET' && $p === '/catalog/products') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    json_out(catalog_produits_servis($s, qp('mode'), qp('date')));
+    json_out(catalog_produits_servis($s, qp('mode'), qp('date'), qp('lang')));
   }
   /* ── VENTES CROISÉES — évaluation côté panier (migration 0056). ───────────
      Le navigateur envoie ce qu'il a (panier, boutique, date et heure de

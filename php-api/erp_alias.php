@@ -141,6 +141,24 @@ function erp_alias_map($path) {
   return $out;
 }
 
+/* Noms de PRODUITS dans la langue demandée : [id_produit => nom].
+ * Source : GET {base}/products/aliases — un seul appel pour tout le catalogue
+ * (jamais un appel par produit). Même règle que pour les catégories : sans
+ * alias dans cette langue, l'appelant garde le nom SOURCE. */
+function erp_product_labels($lang) {
+  static $cache = [];
+  $lang = strtolower(substr((string) $lang, 0, 2));
+  if ($lang === '') return [];
+  if (isset($cache[$lang])) return $cache[$lang];
+  if (!erp_enabled()) return $cache[$lang] = [];
+
+  $out = [];
+  foreach (erp_alias_map('products/aliases') as $id => $byLang) {
+    if (isset($byLang[$lang]) && $byLang[$lang] !== '') $out[$id] = $byLang[$lang];
+  }
+  return $cache[$lang] = $out;
+}
+
 /* Libellés de catégories dans la langue demandée : [id => libellé].
  * Rend [] si l'API est absente ou muette — l'appelant garde ses libellés source. */
 function erp_category_labels($lang) {

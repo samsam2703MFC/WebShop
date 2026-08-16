@@ -5243,7 +5243,10 @@ function ShopFrame({ variant }) {
       if (alive && Array.isArray(list)) setAllProducts(list);
     })();
     return () => { alive = false; };
-  }, [shopId, mode, date]);
+    // `lang` : les NOMS de produits sont résolus par le serveur selon la
+    // langue — changer de langue doit redemander le catalogue, sinon la grille
+    // reste dans la langue du premier chargement.
+  }, [shopId, mode, date, lang]);
   // Source commune GRILLE + LIGNE DE NAV : le catalogue restreint au créneau
   // et à la date en cours. La règle d'affichage de la nav (« n'afficher que ce
   // qui contient au moins un produit disponible ») est ainsi exactement celle

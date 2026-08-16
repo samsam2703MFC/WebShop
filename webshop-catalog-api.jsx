@@ -77,8 +77,12 @@
       // pas à celle de la commande : on commande le 28 novembre pour le
       // 2 décembre, et la gamme de Noël doit alors être visible.
       const dateQs = date ? `&date=${encodeURIComponent(date)}` : '';
+      // `lang` : noms de produits traduits par le SERVEUR (alias ERP). Sans
+      // alias dans cette langue, il renvoie le nom source.
+      const lg = (window.WSI18n && window.WSI18n.getLang && window.WSI18n.getLang()) || '';
+      const langQs = lg ? `&lang=${encodeURIComponent(lg)}` : '';
       return await getJson(
-        `${base}/products?shopId=${encodeURIComponent(shopId || '')}&cat=${encodeURIComponent(cat || '')}${modeQs}${dateQs}`,
+        `${base}/products?shopId=${encodeURIComponent(shopId || '')}&cat=${encodeURIComponent(cat || '')}${modeQs}${dateQs}${langQs}`,
         'Catalogue'
       );
     },
