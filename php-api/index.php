@@ -3,6 +3,7 @@
  * .htaccess renvoie toutes les requêtes ici ; on route sur méthode + chemin. */
 require __DIR__ . '/lib.php';
 require __DIR__ . '/promo_lib.php';
+require __DIR__ . '/erp_alias.php';
 
 /* CORS */
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -711,6 +712,25 @@ function dispatch($m, $p) {
     foreach ($subs as $x) { $byCat[$x['category_id']][] = $x; }
     foreach ($cats as &$c) { $c['subs'] = $byCat[$c['id']] ?? []; }
     unset($c);
+
+    /* Libellés traduits : alias servis par l'API ERP (product-categories/aliases
+       et product-category-groups/aliases), résolus ICI — le navigateur ne
+       décide de rien. Sans alias pour la langue, ou API non configurée, le
+       libellé SOURCE est conservé : jamais de trou, jamais de nom inventé. */
+    $lang = strtolower(substr((string) (qp('lang') ?: ''), 0, 2));
+    if ($lang !== '' && function_exists('erp_category_labels')) {
+      $al = erp_category_labels($lang);
+      if ($al) {
+        foreach ($cats as &$c2) {
+          if (isset($al[(string) $c2['id']])) $c2['label'] = $al[(string) $c2['id']];
+          foreach ($c2['subs'] as &$sb) {
+            if (isset($al[(string) $sb['id']])) $sb['label'] = $al[(string) $sb['id']];
+          }
+          unset($sb);
+        }
+        unset($c2);
+      }
+    }
     json_out($cats);
   }
   if ($m === 'GET' && $p === '/catalog/products') {

@@ -261,7 +261,9 @@ function wsFormatPill(d) {
 function wsUseT() {
   return window.useT
     ? window.useT()
-    : { t: (k, p) => (window.WSI18n ? window.WSI18n.t(k, p) : k), tCategory: (id, fb) => fb };
+    : { t: (k, p) => (window.WSI18n ? window.WSI18n.t(k, p) : k), tCategory: (id, fb) => fb,
+        lang: (window.WSI18n && window.WSI18n.getLang) ? window.WSI18n.getLang() : 'fr',
+        setLang: (l) => { if (window.WSI18n) window.WSI18n.setLang(l); } };
 }
 function DatePill({ mode, value, onChange, shopId,
                     collectCutoffPassed, collectCutoffLabel,
@@ -4756,7 +4758,7 @@ function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
 // SHOP FRAME — full storefront
 // =========================================================================
 function ShopFrame({ variant }) {
-  const { t } = wsUseT();   // i18n réactif pour la coquille (tabbar, etc.)
+  const { t, lang } = wsUseT();   // i18n réactif : coquille + rechargement des catégories
   // Deep-link: read URL params once at mount so admin direct links
   // (?shop=&mode=&voucher=&category=) preload the storefront state.
   const _deep = typeof parseDeepLink === 'function' ? parseDeepLink() : {};
@@ -5054,7 +5056,10 @@ function ShopFrame({ variant }) {
         .catch((e) => bug('catalogue', 'catégories indisponibles — la barre restera vide', e));
     }
     return () => { alive = false; };
-  }, [shopId, date]);
+    // `lang` dans les dépendances : les libellés de catégories sont résolus par
+    // le SERVEUR selon la langue, donc changer de langue doit les redemander —
+    // sinon la barre reste dans la langue du premier chargement.
+  }, [shopId, date, lang]);
 
   // Assortiments (saisons) — serveur uniquement.
   const [assortments, setAssortments] = React.useState([]);

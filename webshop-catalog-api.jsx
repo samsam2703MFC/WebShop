@@ -60,7 +60,12 @@
       // `date` : même filtre saisonnier que listProducts — une catégorie
       // entièrement hors saison ne doit pas rester dans la barre de navigation.
       const dateQs = date ? `&date=${encodeURIComponent(date)}` : '';
-      return await getJson(`${base}/categories?shopId=${encodeURIComponent(shopId || '')}${dateQs}`, 'Catégories');
+      // `lang` : le SERVEUR résout les libellés traduits (alias ERP). Sans
+      // alias pour cette langue, il renvoie le libellé source — le front ne
+      // traduit rien lui-même et n'a donc jamais de trou à combler.
+      const lg = (window.WSI18n && window.WSI18n.getLang && window.WSI18n.getLang()) || '';
+      const langQs = lg ? `&lang=${encodeURIComponent(lg)}` : '';
+      return await getJson(`${base}/categories?shopId=${encodeURIComponent(shopId || '')}${dateQs}${langQs}`, 'Catégories');
     },
 
     async listProducts({ shopId, cat, mode, date } = {}) {

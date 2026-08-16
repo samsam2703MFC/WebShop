@@ -13,6 +13,22 @@ return [
   'auth_secret'  => getenv('WS_AUTH_SECRET') ?: 'change-me-long-random',
   // Jeton du back-office admin (/admin/* et la page admin/). Long & aléatoire.
   'admin_token'  => getenv('WS_ADMIN_TOKEN') ?: 'change-me-admin-token',
+  /* API ERP (Franchise Buddy) — lecture des LIBELLÉS TRADUITS.
+   * Consigne : passer par l'API plutôt que de lire les tables ERP en SQL.
+   *   GET {base}/product-categories/aliases        → noms de catégories
+   *   GET {base}/product-category-groups/aliases   → noms de groupes
+   * (un seul appel rend tout le dictionnaire ; mis en cache `ttl` secondes).
+   * Le webshop ne fait que LIRE : jamais de PATCH d'ici — l'édition des alias
+   * appartient à la console marque.
+   * base VIDE = fonction DÉSACTIVÉE : les libellés source sont servis tels
+   * quels, exactement comme aujourd'hui. Aucun repli inventé : si l'API répond
+   * mal, on garde le libellé source et l'échec part au journal. */
+  'erp' => [
+    'base'    => getenv('WS_ERP_BASE')  ?: '',   // ex. https://erp.example/api/v1
+    'token'   => getenv('WS_ERP_TOKEN') ?: '',   // Bearer ; vide = pas d'en-tête
+    'timeout' => (int) (getenv('WS_ERP_TIMEOUT') ?: 6),
+    'ttl'     => (int) (getenv('WS_ERP_TTL') ?: 300),
+  ],
   // E-mails de commande (from). Laisse vide pour désactiver l'envoi.
   'mail_from'    => getenv('WS_MAIL_FROM') ?: 'no-reply@atelierby.be',
   // Logo des courriers HTML — URL ABSOLUE (l'e-mail s'ouvre hors du site, un
