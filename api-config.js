@@ -48,6 +48,9 @@
   if (window.WSSlots)        window.WSSlots.endpoint        = BASE_URL + '/slots';
   if (window.WSCalendar)     window.WSCalendar.endpoint     = BASE_URL + '/calendar';
   if (window.WSBrand)        window.WSBrand.endpoint        = BASE_URL + '/brand';
+  /* i18n : source unique = table ws_i18n via GET /i18n. On lance le chargement
+     tout de suite pour que les libellés soient prêts au premier rendu. */
+  if (window.WSI18n) { window.WSI18n.setEndpoint(BASE_URL + '/i18n'); window.WSI18n.load(); }
   /* VIES: template endpoint — the stub fills {country}/{vat}. */
   if (window.WSVies)         window.WSVies.endpoint         = BASE_URL + '/vies/{country}/{vat}';
 

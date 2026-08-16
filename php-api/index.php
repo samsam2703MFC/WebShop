@@ -537,9 +537,15 @@ function dispatch($m, $p) {
     // base connectée), conformément à la règle « soit ça marche avec les vraies
     // données, soit ça renvoie un bug » : jamais de liste inventée en repli.
     try {
+      // Langue par boutique (migration 0087) : ajoutée seulement si les colonnes
+      // existent — sinon la porte d'entrée /shops casserait sur une base pas
+      // encore migrée. NULL = pas paramétré (le front retombe sur le défaut app).
+      $langCols = '';
+      if (col_exists('shops', 'default_lang')) $langCols .= ', default_lang';
+      if (col_exists('shops', 'languages'))    $langCols .= ', languages';
       json_out(rows("SELECT id, slug, name, city, email, phone, accent, tint, logo_url,
                             discount_type AS webshop_discount_type, discount_value AS webshop_discount_value,
-                            TRIM(CONCAT_WS(' ', street, street_num)) AS address
+                            TRIM(CONCAT_WS(' ', street, street_num)) AS address" . $langCols . "
                        FROM shops WHERE active = 1 AND webshop_enabled = 1 ORDER BY name"));
     } catch (Throwable $e) {
       $base = null;
@@ -552,9 +558,36 @@ function dispatch($m, $p) {
   }
   if ($m === 'GET' && $p === '/brand') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+    // Langue par boutique servie ici aussi : un lien profond ?shop=<id> doit
+    // ouvrir dans la langue de la boutique (Halle → nl). Colonnes gardées.
+    $langCols = '';
+    if (col_exists('shops', 'default_lang')) $langCols .= ', default_lang';
+    if (col_exists('shops', 'languages'))    $langCols .= ', languages';
     json_out(row("SELECT id, slug, name, accent, tint, logo_url,
-                         discount_type AS webshop_discount_type, discount_value AS webshop_discount_value
+                         discount_type AS webshop_discount_type, discount_value AS webshop_discount_value"
+                       . $langCols . "
                     FROM shops WHERE id = ? AND webshop_enabled = 1", [$s]) ?: []);
+  }
+
+  /* ── Traductions d'interface (source unique : table ws_i18n) ──
+   * GET /i18n[?scope=ui] → { scope, strings: { fr:{k:v,…}, nl:{…} } }
+   * « Rien en dur » : les libellés ne vivent plus dans le JS, le front les
+   * charge ici au boot. Pas de repli inventé — si la table manque ou la requête
+   * échoue, on remonte l'erreur réelle (comme /shops), le bandeau la signale. */
+  if ($m === 'GET' && $p === '/i18n') {
+    $scope = qp('scope') ?: 'ui';
+    if (!tbl_exists('ws_i18n')) {
+      json_out(['error' => 'table ws_i18n absente',
+                'detail' => 'migration 0086 non appliquée sur le serveur'], 500);
+    }
+    try {
+      $rws = rows("SELECT lang, k, value FROM ws_i18n WHERE scope = ? ORDER BY lang, k", [$scope]);
+      $out = [];
+      foreach ($rws as $r) { $out[$r['lang']][$r['k']] = $r['value']; }
+      json_out(['scope' => $scope, 'strings' => $out]);
+    } catch (Throwable $e) {
+      json_out(['error' => 'i18n KO', 'detail' => $e->getMessage(), 'ligne' => $e->getLine()], 500);
+    }
   }
 
   /* ── Lien webshop du client PWA (footer PWA → boutique préférée) ──

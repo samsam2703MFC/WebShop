@@ -5120,6 +5120,12 @@ function ShopFrame({ variant }) {
   // shopId nul en servant la premiere boutique par ordre alphabetique — donc
   // meme sans repli dans la resolution ci-dessus, l'ecran en aurait affiche une.
   const shop = shops.find((s) => String(s.id) === String(shopId) || s.slug === shopId) || null;
+  // Langue de la boutique : default_lang / languages (servis par /shops) →
+  // Halle ouvre en néerlandais, le sélecteur se limite aux langues offertes.
+  // N'impose la langue que si le visiteur n'a pas choisi lui-même (voir applyShop).
+  React.useEffect(() => {
+    if (shop && window.WSI18n && window.WSI18n.applyShop) window.WSI18n.applyShop(shop);
+  }, [shop && shop.id, shop && shop.default_lang, shop && shop.languages]);
   const isAssortment = typeof cat === 'string' && cat.startsWith('season:');
   const assortmentId = isAssortment ? cat.slice('season:'.length) : null;
   const assortment = assortmentId ? assortments.find((a) => a.id === assortmentId) : null;
