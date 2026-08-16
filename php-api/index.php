@@ -611,6 +611,35 @@ function dispatch($m, $p) {
     }
   }
 
+  /* ── Diagnostic de la liaison ERP (lecture seule, sans secret) ──
+   * GET /erp/probe[?lang=nl] → dit si l'API ERP est configurée, joignable, et
+   * COMBIEN de libellés traduits elle rend. Sans ça, « les produits ne sont pas
+   * traduits » se diagnostique à l'aveugle : on ne sait pas distinguer une
+   * adresse absente d'un jeton refusé ou d'une réponse de forme inattendue.
+   * Le jeton n'est jamais renvoyé — seulement le fait qu'il soit posé. */
+  if ($m === 'GET' && $p === '/erp/probe') {
+    $lg  = strtolower(substr((string) (qp('lang') ?: 'nl'), 0, 2));
+    $cfgE = function_exists('erp_cfg') ? erp_cfg() : ['base' => '', 'token' => ''];
+    if (!function_exists('erp_enabled') || !erp_enabled()) {
+      json_out(['configure' => false,
+                'message' => "Adresse ERP absente. Renseignez ws_param.erp_api_base "
+                           . "(ex. https://…/api/v1) ; ws_param.erp_api_token si un jeton est exigé.",
+                'langue' => $lg]);
+    }
+    $prod = erp_product_labels($lg);
+    $cat  = erp_category_labels($lg);
+    json_out([
+      'configure'  => true,
+      'base'       => $cfgE['base'],
+      'jeton_pose' => $cfgE['token'] !== '',
+      'langue'     => $lg,
+      'produits_traduits'   => count($prod),
+      'categories_traduites' => count($cat),
+      'exemples'   => array_slice($prod, 0, 3, true),
+      'incidents'  => erp_notes(),
+    ]);
+  }
+
   /* ── Lien webshop du client PWA (footer PWA → boutique préférée) ──
    * GET /webshop-link?clientId=123
    *   → { url, shopId, slug }

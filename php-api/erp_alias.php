@@ -22,11 +22,30 @@
  * ========================================================================== */
 
 function erp_cfg() {
-  $c = cfg();
-  $e = is_array($c['erp'] ?? null) ? $c['erp'] : [];
-  return [
-    'base'    => rtrim((string) ($e['base'] ?? ''), '/'),
-    'token'   => (string) ($e['token'] ?? ''),
+  static $c = null;
+  if ($c !== null) return $c;
+  $e = is_array(cfg()['erp'] ?? null) ? cfg()['erp'] : [];
+
+  /* L'adresse et le jeton peuvent aussi vivre dans ws_param — c'est le
+     paramétrage le plus PRATIQUE ici : il se règle depuis la base (phpMyAdmin
+     ou l'écran Paramètres), sans éditer config.php ni redéployer. La base
+     l'emporte sur le fichier ; à défaut, on garde config.php.
+       ws_param.erp_api_base   = https://…/api/v1
+       ws_param.erp_api_token  = <jeton Bearer, si l'API en exige un>
+     Vide des deux côtés = fonction inerte (libellés source servis). */
+  $base = (string) ($e['base'] ?? '');
+  $tok  = (string) ($e['token'] ?? '');
+  if (function_exists('ws_param')) {
+    try {
+      $b2 = (string) (ws_param('erp_api_base', '') ?: '');
+      $t2 = (string) (ws_param('erp_api_token', '') ?: '');
+      if ($b2 !== '') $base = $b2;
+      if ($t2 !== '') $tok  = $t2;
+    } catch (Throwable $ex) { /* table absente : on garde config.php */ }
+  }
+  return $c = [
+    'base'    => rtrim($base, '/'),
+    'token'   => $tok,
     'timeout' => (int) ($e['timeout'] ?? 6) ?: 6,
     'ttl'     => (int) ($e['ttl'] ?? 300),
   ];
