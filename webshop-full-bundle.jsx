@@ -3997,16 +3997,16 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
     <aside className="ws-checkout" role="dialog" aria-label={t('co.title')}>
       <header className="ws-checkout__head">
         <button className="ws-checkout__back" onClick={onClose}>
-          <Pict d={<path d="M15 6l-6 6 6 6"/>} s={12}/> Retour au panier
+          <Pict d={<path d="M15 6l-6 6 6 6"/>} s={12}/> {t('co.backToCart')}
         </button>
         <span className="ws-checkout__title">{t('co.subtitle')}</span>
       </header>
 
       <ol className="ws-stepper">
         {[
-          { n: 1, label: 'Coordonnées' },
-          { n: 2, label: 'Créneau' },
-          { n: 3, label: 'Paiement' },
+          { n: 1, label: t('co.step1') },
+          { n: 2, label: t('co.step2') },
+          { n: 3, label: t('co.step3') },
         ].map((s) => (
           <li key={s.n} className={`ws-stepper__step${step === s.n ? ' is-current' : ''}${step > s.n ? ' is-done' : ''}`}>
             <span className="ws-stepper__num">{step > s.n ? <Pict d={<path d="M5 12l4 4 10-10"/>} s={11}/> : s.n}</span>
@@ -4149,7 +4149,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             disabled={paying || (step === 1 && !step1Valid()) || (step === 2 && !step2Valid()) || (step === 3 && !step3Valid())}
             {...wsTap(next, { shield: true })}
           >
-            {paying ? 'Traitement…' : step === 3 ? `Payer · €${total.toFixed(2)}` : 'Continuer'}
+            {paying ? t('co.processing') : step === 3 ? t('co.payAmount', { amount: '€' + total.toFixed(2) }) : t('co.continue')}
             {!paying && step < 3 && <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>}
           </button>
         </div>
@@ -4194,13 +4194,13 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
         )}
 
         <div className="ws-co-readbox">
-          <ReadRow k="Entreprise" v={office.name}/>
+          <ReadRow k={t('acc.company')} v={office.name}/>
           {/* Repli sur le titulaire du compte, comme la ligne Téléphone juste en
               dessous : un site sans contact nommé affichait une ligne VIDE. */}
-          <ReadRow k="Contact"    v={(activeSite ? activeSite.contact_name : null)
+          <ReadRow k={t('off.contact')}    v={(activeSite ? activeSite.contact_name : null)
                                      || ((user.firstName || '') + ' ' + (user.lastName || '')).trim() || '—'}/>
-          <ReadRow k="Email"      v={user.email}/>
-          <ReadRow k="Téléphone"  v={(activeSite ? activeSite.contact_phone : office.phone) || user.phone || '—'}/>
+          <ReadRow k={t('form.emailLong')} v={user.email}/>
+          <ReadRow k={t('form.phone')} v={(activeSite ? activeSite.contact_phone : office.phone) || user.phone || '—'}/>
           <ReadRow k="Adresse"    v={activeSite
                                      ? (activeSite.address + (complement(activeSite.floor_room) ? ' · ' + complement(activeSite.floor_room) : ''))
                                      : (office.address || '—')}/>
@@ -4229,10 +4229,10 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
         <h3 className="ws-co-step__title">{t('co.contact.title')}</h3>
         <p className="ws-co-step__lede">{t('co.contact.prefilled')}</p>
         <div className="ws-co-readbox">
-          <ReadRow k="Nom"       v={user.firstName + ' ' + user.lastName}/>
-          <ReadRow k="Email"     v={user.email}/>
-          <ReadRow k="Téléphone" v={user.phone || office?.phone || '—'}/>
-          <ReadRow k="Boutique"  v={shop.name + ' · ' + shop.address}/>
+          <ReadRow k={t('form.lastName')} v={user.firstName + ' ' + user.lastName}/>
+          <ReadRow k={t('form.emailLong')} v={user.email}/>
+          <ReadRow k={t('form.phone')} v={user.phone || office?.phone || '—'}/>
+          <ReadRow k={t('off.shop')} v={shop.name + ' · ' + shop.address}/>
         </div>
       </div>
     );
@@ -4350,7 +4350,7 @@ function SlotChangeModal({ items, targetLabel, onConfirm, onCancel }) {
 }
 
 function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
-  const { t } = wsUseT();
+  const { t, lang } = wsUseT();
   const [slots, setSlots] = React.useState([]);
   const [dateLabel, setDateLabel] = React.useState('');
   React.useEffect(() => {
@@ -4358,7 +4358,7 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
     (async () => {
       // Use the parent-selected date, not hardcoded today
       const d = date instanceof Date ? date : new Date();
-      setDateLabel(d.toLocaleDateString('fr-BE', { weekday: 'long', day: 'numeric', month: 'long' }));
+      setDateLabel(wsCap(d.toLocaleDateString(wsLocale(), { weekday: 'long', day: 'numeric', month: 'long' })));
       // Repli LOCAL, jamais UTC : toISOString() renvoie la veille pour une Date
       // à minuit en UTC+2.
       const isoFn = (window.WSAvailability || window.WSCalendar)?.isoOf
@@ -4370,13 +4370,16 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
       if (alive) setSlots(list || []);
     })();
     return () => { alive = false; };
-  }, [mode, shop?.id, date]);
+    // `lang` : la date longue (« Zondag 16 augustus ») est rendue par Intl
+    // dans la langue courante — sans cette dépendance, elle resterait dans la
+    // langue du premier affichage.
+  }, [mode, shop?.id, date, lang]);
 
   const selectedId = typeof slot === 'object' && slot ? slot.id : slot;
 
   return (
     <div className="ws-co-step">
-      <h3 className="ws-co-step__title">{mode === 'delivery' ? 'Créneau de livraison' : 'Créneau de collecte'}</h3>
+      <h3 className="ws-co-step__title">{t(mode === 'delivery' ? 'co.slot.titleDelivery' : 'co.slot.titleCollect')}</h3>
       <p className="ws-co-step__lede">
         {mode === 'delivery'
           ? <>{t('off.tour')} <strong>{tour?.name || '—'}</strong> · Livraison à <strong>{office?.name}</strong>, {office?.address || ''}.</>
@@ -4556,7 +4559,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
                 « [object Object] » et le code saisi n'était jamais lu. Aucun
                 code tapé à la main ne pouvait aboutir — seuls les bons cliqués
                 dans la liste fonctionnaient, eux qui passent leur code. */}
-            <button type="button" className="ws-co-voucher__apply" onClick={() => applyVoucher()} disabled={!voucherInput.trim() || voucherLoading}>{voucherLoading ? '…' : 'Appliquer'}</button>
+            <button type="button" className="ws-co-voucher__apply" onClick={() => applyVoucher()} disabled={!voucherInput.trim() || voucherLoading}>{voucherLoading ? '…' : t('co.apply')}</button>
           </div>
         )}
         {voucherErr && <div className="ws-co-voucher__err">{voucherErr}</div>}
@@ -4572,7 +4575,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
           <div className="ws-co-avail">
             <div className="ws-co-avail__head">
               <PortionGlyph size={13}/>
-              <span>{availVouchers.length > 1 ? 'Vos codes promo disponibles' : 'Vous avez un code promo'}</span>
+              <span>{t(availVouchers.length > 1 ? 'co.voucher.availableMany' : 'co.voucher.availableOne')}</span>
               {availVouchers.length > 1 && (
                 <span className="ws-co-avail__rule"> · {t('co.voucher.onePerOrder')}</span>
               )}
@@ -4591,7 +4594,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
                       disabled={isOn || !v.reachable || voucherLoading}
                       title={isOn ? 'Déjà appliqué' : (v.reachable ? 'Remplace le code en cours' : ('Applicable ' + v.hint))}
                       onClick={() => applyVoucher(v.code)}>
-                      {isOn ? 'Appliqué' : (v.reachable ? 'Appliquer' : v.hint)}
+                      {isOn ? t('co.applied') : (v.reachable ? t('co.apply') : v.hint)}
                     </button>
                   </li>
                 );
@@ -4619,7 +4622,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
               onChange={(e) => { setGiftInput(e.target.value.toUpperCase()); setGiftErr(null); }}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyGift(); } }}
               autoComplete="off" spellCheck={false}/>
-            <button type="button" className="ws-co-gift__apply" onClick={applyGift} disabled={!giftInput.trim() || giftLoading}>{giftLoading ? '…' : 'Appliquer'}</button>
+            <button type="button" className="ws-co-gift__apply" onClick={applyGift} disabled={!giftInput.trim() || giftLoading}>{giftLoading ? '…' : t('co.apply')}</button>
           </div>
         )}
         {giftErr && <div className="ws-co-gift__err">{giftErr}</div>}
@@ -4698,7 +4701,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
           <div className="ws-co-invoice__row">
             <label className="ws-co-invoice__check">
               <input type="checkbox" checked={invoice} onChange={(e) => setInvoice(e.target.checked)}/>
-              <span>{isB2B ? 'Demander une facture' : 'Demander une facture nominative'}</span>
+              <span>{t(isB2B ? 'co.askInvoice' : 'co.askInvoiceNamed')}</span>
             </label>
             {!isB2B && (
               <button type="button" className={`ws-co-invoice__i${infoOpen ? ' is-open' : ''}`}
