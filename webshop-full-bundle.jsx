@@ -1553,6 +1553,7 @@ function wsTotaux({ basket, shop, crossSavings = 0, voucherDiscount = 0, deliver
 }
 
 function CrossPortionStrip({ calc }) {
+  const { t } = wsUseT();
   if (!calc) return null;
   const { eligibleCount, groupSize, freeCount, savings, freeNames, status, threshold } = calc;
   const unlocked = status !== 'dormant';
@@ -1564,9 +1565,10 @@ function CrossPortionStrip({ calc }) {
   let lede;
   if (unlocked) {
     const names = freeNames.slice(0, 2).join(', ') + (freeNames.length > 2 ? '…' : '');
-    lede = `${freeCount} quart${freeCount > 1 ? 's' : ''} offert${freeCount > 1 ? 's' : ''}${names ? ' · ' + names : ''}`;
+    lede = t(freeCount > 1 ? 'cross.freeMany' : 'cross.freeOne', { n: freeCount })
+         + (names ? ' · ' + names : '');
   } else {
-    lede = `Plus que ${calc.toNext} portion${calc.toNext > 1 ? 's' : ''} pour profiter de l'offre.`;
+    lede = t(calc.toNext > 1 ? 'cross.toNextMany' : 'cross.toNextOne', { n: calc.toNext });
   }
 
   return (
@@ -1588,7 +1590,7 @@ function CrossPortionStrip({ calc }) {
           )}
         </div>
         <div className="ws-cross__titles">
-          <div className="ws-cross__title">Offre cumulable · {threshold} quarts achetés, 1 offert</div>
+          <div className="ws-cross__title">{t('cross.title', { n: threshold })}</div>
           <div className="ws-cross__lede">{lede}</div>
         </div>
         {savings > 0 && <div className="ws-cross__save">−€{savings.toFixed(2)}</div>}
@@ -1605,13 +1607,11 @@ function CrossPortionStrip({ calc }) {
         </div>
       )}
       {!unlocked && (
-        <div className="ws-cross__hint">
-          Le quart le moins cher est offert automatiquement · cumul tartes, quiches & gâteaux (entier = 4 portions, demi = 2, quart = 1).
-        </div>
+        <div className="ws-cross__hint">{t('cross.hint')}</div>
       )}
       {unlocked && remainder > 0 && (
         <div className="ws-cross__nudge">
-          +{toNextCycle} portion{toNextCycle > 1 ? 's' : ''} pour un quart de plus offert.
+          {t(toNextCycle > 1 ? 'cross.nudgeMany' : 'cross.nudgeOne', { n: toNextCycle })}
         </div>
       )}
     </div>
@@ -1625,6 +1625,7 @@ function CrossPortionStrip({ calc }) {
    commande — on commande le soir pour le lendemain midi.
    Aucune suggestion → aucun bloc : pas de rubrique vide. */
 function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
+  const { t } = wsUseT();
   const [items, setItems] = React.useState([]);
   const ids = basket.map((l) => l.productId).filter(Boolean);
   const key = ids.slice().sort().join(',') + '|' + (date || '') + '|' + (time || '') + '|' + mode;
@@ -1660,14 +1661,14 @@ function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
   if (!items.length) return null;
   return (
     <div className="ws-xsell">
-      <div className="ws-xsell__h">Pour accompagner</div>
+      <div className="ws-xsell__h">{t('xsell.title')}</div>
       {items.map((it) => (
         <div className="ws-xsell__i" key={it.productId}>
           {it.img ? <img className="ws-xsell__img" src={it.img} alt="" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}/>
                   : <span className="ws-xsell__img"/>}
           <span className="ws-xsell__n">{it.name}</span>
           <span className="ws-xsell__p">€{Number(it.price).toFixed(2)}</span>
-          <button type="button" className="ws-xsell__add" aria-label={`Ajouter ${it.name}`} title="Ajouter au panier"
+          <button type="button" className="ws-xsell__add" aria-label={t('xsell.addItem', { name: it.name })} title={t('xsell.add')}
             onClick={() => {
               const base = window.WSCatalog && window.WSCatalog.endpoint;
               if (base) fetch(base + '/cross-sell/stat', {
@@ -1689,6 +1690,7 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
      recalculée serveur depuis les prix ERP : c'est son total qui s'affiche à
      la confirmation. (L'ancienne « réduction Webshop · 5 % » codée en dur a
      disparu : la remise réelle vient de shops.discount_value.) */
+  const { t } = wsUseT();
   const [crossPortionRule, setCrossPortionRule] = React.useState(null);
   React.useEffect(() => {
     if (window.WSPricing && typeof window.WSPricing.getCrossPortionRule === 'function') {
@@ -1708,18 +1710,18 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
   return (
     <aside className="ws-basket">
       <div className="ws-basket__head">
-        <button className="ws-basket__back"><Pict d={ICONS.back} s={11}/> Retour</button>
-        <span className="ws-basket__title">Récapitulatif de commande</span>
+        <button className="ws-basket__back"><Pict d={ICONS.back} s={11}/> {t('cart.back')}</button>
+        <span className="ws-basket__title">{t('cart.title')}</span>
       </div>
 
       <div className={`ws-basket__mode ws-basket__mode--${mode}`}>
         <span className="ws-basket__mode-dot"/>
-        {mode === 'collect' ? 'Collecte en magasin' : 'Livraison au bureau'}
+        {t(mode === 'collect' ? 'cart.mode.collect' : 'cart.mode.delivery')}
       </div>
 
       <div className="ws-basket__items">
         {basket.length === 0 && (
-          <div className="ws-basket__empty">Votre panier est vide.</div>
+          <div className="ws-basket__empty">{t('cart.empty')}</div>
         )}
         {basket.map((l) => (
           <div key={l.line} className="ws-line">
@@ -1728,7 +1730,7 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
               <div className="ws-line__name">{l.name}</div>
               {l.options.map((o, i) => (<div key={i} className="ws-line__opt">{o.label}</div>))}
               {l.offerLabel && (
-                <div className="ws-line__offer">Offre {l.offerLabel}{l.offerDiscount ? ` · −€${Number(l.offerDiscount).toFixed(2)}` : ''}</div>
+                <div className="ws-line__offer">{t('cart.offer', { label: l.offerLabel })}{l.offerDiscount ? ` · −€${Number(l.offerDiscount).toFixed(2)}` : ''}</div>
               )}
               {notesEnabled && typeof onNote === 'function' && (
                 <div className="ws-line__notewrap">
@@ -1738,7 +1740,7 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
                   </svg>
                   <input
                     className="ws-line__note" type="text" defaultValue={l.note || ''} maxLength={255}
-                    placeholder="Note (ex : sans oignon)"
+                    placeholder={t('cart.notePlaceholder')}
                     onBlur={(e) => onNote(l.line, e.target.value)}
                   />
                 </div>
@@ -1750,8 +1752,8 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
                 type="button"
                 className="ws-line__remove"
                 onClick={() => onRemove(l.line)}
-                aria-label={`Retirer ${l.name} du panier`}
-                title="Retirer du panier"
+                aria-label={t('cart.removeItem', { name: l.name })}
+                title={t('cart.remove')}
               >
                 <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                   <path d="M5 7h14"/>
@@ -1775,45 +1777,48 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
       <div className="ws-basket__sums">
         {basket.length > 0 && (
           <div className="ws-basket__row">
-            <span>Sous-total</span>
+            <span>{t('cart.subtotal')}</span>
             <span>€{subtotal.toFixed(2)}</span>
           </div>
         )}
 
         {crossSavings > 0 && (
           <div className="ws-basket__row ws-basket__row--promo">
-            <span>Offre cumulable · {crossOffer?.freeCount || 0} quart{(crossOffer?.freeCount || 0) > 1 ? 's' : ''} offert{(crossOffer?.freeCount || 0) > 1 ? 's' : ''}</span>
+            <span>{t((crossOffer?.freeCount || 0) > 1 ? 'cross.freeMany' : 'cross.freeOne',
+                     { n: crossOffer?.freeCount || 0 })}</span>
             <span>−€{crossSavings.toFixed(2)}</span>
           </div>
         )}
 
         {T.remise > 0 && (
           <div className="ws-basket__row ws-basket__row--promo">
-            <span>Remise boutique{T.remisePct ? ` · ${T.remisePct} %` : ''}</span>
+            <span>{t('cart.shopDiscount')}{T.remisePct ? ` · ${T.remisePct} %` : ''}</span>
             <span>−€{T.remise.toFixed(2)}</span>
           </div>
         )}
 
         {deliveryFeeResult && mode === 'delivery' && (
           <div className={`ws-basket__row${deliveryFee === 0 ? ' ws-basket__row--free' : ''}`}>
-            <span>Frais de livraison{deliveryFee === 0 && deliveryFeeResult.free_delivery_minimum > 0 ? ` · offerts dès €${deliveryFeeResult.free_delivery_minimum.toFixed(2)}` : ''}</span>
-            <span>{deliveryFee === 0 ? 'Offerts' : `+€${deliveryFee.toFixed(2)}`}</span>
+            <span>{t('cart.deliveryFee')}{deliveryFee === 0 && deliveryFeeResult.free_delivery_minimum > 0
+              ? ' · ' + t('cart.deliveryFreeFrom', { amount: '€' + deliveryFeeResult.free_delivery_minimum.toFixed(2) })
+              : ''}</span>
+            <span>{deliveryFee === 0 ? t('cart.deliveryFree') : `+€${deliveryFee.toFixed(2)}`}</span>
           </div>
         )}
         {deliveryFeeResult && mode === 'delivery' && deliveryFee > 0 && deliveryFeeResult.free_delivery_minimum > 0 && deliveryFeeResult.amount_remaining_for_free > 0 && (
           <div className="ws-basket__row ws-basket__row--fee-nudge">
-            <span>Encore €{deliveryFeeResult.amount_remaining_for_free.toFixed(2)} pour la livraison gratuite</span>
+            <span>{t('cart.deliveryRemaining', { amount: '€' + deliveryFeeResult.amount_remaining_for_free.toFixed(2) })}</span>
           </div>
         )}
 
         <div className="ws-basket__total">
-          <span>Total TTC</span>
+          <span>{t('cart.total')}</span>
           <span className="ws-basket__total-amount">€{total.toFixed(2)}</span>
         </div>
       </div>
 
       <button className="ws-cta" style={{ background: 'var(--color-primary)' }} {...wsTap(onCheckout, { shield: true })} disabled={!basket.length}>
-        Passer au paiement
+        {t('cart.checkout')}
         <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>
       </button>
 
