@@ -3545,6 +3545,12 @@
   .ws-nav__shopchip span:not(.ws-nav__shopchip-dot) {
     flex: 1 1 auto;
     min-width: 0;
+    /* Lève le max-width: 90px hérité de l'ancien bloc @media (max-width:720px) :
+       c'était LUI qui coupait le nom en « Atelier by Ber… », pas le manque de
+       place. Seul le bloc ≤380px le remettait à 100%, d'où un nom bridé à 90px
+       sur les écrans ~390-410px alors qu'il restait 170px de vide à droite.
+       flex:1 1 auto laisse le nom prendre la largeur libre de la ligne. */
+    max-width: none;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-weight: 500;
     text-align: left;
