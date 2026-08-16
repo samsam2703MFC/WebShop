@@ -825,7 +825,7 @@ function PortionOptions({ value, onChange, product }) {
 // PRODUCT DETAIL MODAL — options, upsells, bundles
 // =========================================================================
 function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
-  const { t } = wsUseT();
+  const { t, lang } = wsUseT();
   // ── Hooks (must run unconditionally; never gate behind early-return) ──
   const initSelections = React.useMemo(() => {
     const out = {};
@@ -851,10 +851,13 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   const bundleList = React.useMemo(() => {
     if (!product?.has_menu_options || !product.available_bundles) return [];
     return [
-      { id: null, name: 'À la carte', description: 'Le produit seul, sans formule.', price_modifier: 0, slots: [], advantages: [], included: [] },
+      { id: null, name: t('pd.alaCarte'), description: t('pd.alaCarteDesc'), price_modifier: 0, slots: [], advantages: [], included: [] },
       ...product.available_bundles,
     ];
-  }, [product]);
+    // `lang` en dépendance : « À la carte » et sa description viennent de la
+    // table de traduction. Sans elle, changer de langue modale ouverte laissait
+    // la première formule dans la langue précédente.
+  }, [product, lang]);
 
   // Reset state when the product changes — and auto-open required option groups + auto-pick recommended bundle.
   React.useEffect(() => {
@@ -1071,7 +1074,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
       .map((o) => { const c = o.choices.find((x) => x.id === sel[o.id]); return c ? c.label : null; })
       .filter(Boolean);
     if (activeBundle) {
-      optionLabels.push('Formule · ' + activeBundle.name);
+      optionLabels.push(t('pd.bundle') + ' · ' + activeBundle.name);
       for (const slot of (activeBundle.slots || [])) {
         for (const cid of slotPicked(slot)) {
           const c = slot.choices.find((x) => x.id === cid);
@@ -1164,7 +1167,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
         <div className="pdm-info">
           <div className="pdm-scroll" ref={scrollRef}>
             <div className="pdm-head">
-              <p className="pdm-eyebrow">{product.cat === 'sandwiches' ? 'Sandwich' : product.cat === 'plats' ? 'Plat du jour' : 'Notre sélection'}</p>
+              <p className="pdm-eyebrow">{product.cat === 'sandwiches' ? t('pd.eyebrow.sandwich') : product.cat === 'plats' ? t('pd.eyebrow.dish') : t('pd.eyebrow.selection')}</p>
               <h2 className="pdm-title">{product.name}</h2>
               {product.description ? <p className="pdm-desc">{product.description}</p> : null}
               {/* Allergènes — 3 états distincts (sécurité alimentaire) :
@@ -1304,7 +1307,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                         <div className="pdm-bcard__top">
                           <span className="pdm-bcard__name">{b.name}</span>
                           <span className={'pdm-bcard__price' + (b.price_modifier > 0 ? '' : ' pdm-bcard__price--free')}>
-                            {b.price_modifier > 0 ? '+' + b.price_modifier.toFixed(2) + ' €' : 'Inclus'}
+                            {b.price_modifier > 0 ? '+' + b.price_modifier.toFixed(2) + ' €' : t('pd.included')}
                           </span>
                         </div>
                         <p className="pdm-bcard__desc">{b.description}</p>
@@ -1378,7 +1381,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
             )}
             {!deliveryBlocked && deliveryStockLeft !== null && (
               <div className="pdm-delivery-notice">
-                {deliveryStockLeft > 0 ? `${deliveryStockLeft} unité${deliveryStockLeft > 1 ? 's' : ''} disponible${deliveryStockLeft > 1 ? 's' : ''}` : 'Stock épuisé'}
+                {deliveryStockLeft > 0 ? t(deliveryStockLeft > 1 ? 'pd.unitsLeftMany' : 'pd.unitsLeftOne', { n: deliveryStockLeft }) : t('pd.outOfStock')}
               </div>
             )}
             <div className="pdm-qty">
@@ -1387,7 +1390,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
               <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.min(q + 1, deliveryStockLeft ?? 99)))} aria-label={t('qty.inc')} disabled={deliveryStockLeft !== null && qty >= deliveryStockLeft}>+</button>
             </div>
             <button className="pdm-cta" disabled={!valid || deliveryBlocked || (deliveryStockLeft !== null && deliveryStockLeft === 0)} {...wsTap(handleConfirm, { shield: true })}>
-              <span>{deliveryBlocked ? 'Non disponible en livraison' : (deliveryStockLeft === 0 ? 'Stock épuisé' : (valid ? 'Ajouter au panier' : 'Choisissez vos options'))}</span>
+              <span>{deliveryBlocked ? t('pd.notForDelivery') : (deliveryStockLeft === 0 ? t('pd.outOfStock') : (valid ? t('pd.addToCart') : t('pd.chooseOptions')))}</span>
               <span className="pdm-cta__total" key={pulse}>
                 {offerDiscount > 0 && (
                   <span className="pdm-cta__strike">€{grossTotal.toFixed(2)}</span>
