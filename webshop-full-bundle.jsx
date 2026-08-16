@@ -265,6 +265,27 @@ function wsUseT() {
         lang: (window.WSI18n && window.WSI18n.getLang) ? window.WSI18n.getLang() : 'fr',
         setLang: (l) => { if (window.WSI18n) window.WSI18n.setLang(l); } };
 }
+/* Rendu RICHE d'un libellé traduit : une phrase = UNE clé, même quand une
+   partie est mise en valeur. Le texte en base porte des marqueurs —
+   **fort** → <strong>, __accent__ → <em> — au lieu d'être coupé en morceaux
+   par le JSX. Découper « Bon retour <em>parmi nous</em>. » en deux clés
+   rendait la phrase intraduisible : l'ordre des mots change d'une langue à
+   l'autre, et le traducteur doit pouvoir DÉPLACER l'emphase. */
+function tRich(t, key, params) {
+  const raw = t(key, params);
+  const out = [];
+  const re = /\*\*([^*]+)\*\*|__([^_]+)__/g;
+  let last = 0, m, i = 0;
+  while ((m = re.exec(raw)) !== null) {
+    if (m.index > last) out.push(raw.slice(last, m.index));
+    out.push(m[1] != null
+      ? <strong key={i++}>{m[1]}</strong>
+      : <em key={i++}>{m[2]}</em>);
+    last = m.index + m[0].length;
+  }
+  if (last < raw.length) out.push(raw.slice(last));
+  return out;
+}
 function DatePill({ mode, value, onChange, shopId,
                     collectCutoffPassed, collectCutoffLabel,
                     deliveryCutoffPassed, deliveryCutoffLabel,
@@ -532,7 +553,7 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
       {/* « i » apricot : pas encore de bureau ? → ouvre le formulaire zone (landing) */}
       <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flex: 'none', marginLeft: 4 }}
         onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
-        <button type="button" aria-label="Pas encore de bureau ?"
+        <button type="button" aria-label={t('office.notYet')}
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); window.open('/landing/livraison-bureau.html', '_blank', 'noopener'); }}
           style={{ width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer', flex: 'none',
                    background: '#c17a2a', color: '#fff', font: '700 11px/1 system-ui',
@@ -1222,7 +1243,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                          className={'pdm-opt' + (isOpen ? ' is-open' : '') + (activeOpt === id ? ' is-active' : '')}>
                       <button className="pdm-opt__head" {...wsTap(() => toggleOpt(id), { open: true })} aria-expanded={isOpen}>
                         <span className="pdm-opt__head-l">
-                          <span className="pdm-opt__label">Pour accompagner</span>
+                          <span className="pdm-opt__label">{t('xsell.title')}</span>
                           {!isOpen && count > 0 && <span className="pdm-opt__sub">{count} ajout{count>1?'s':''}</span>}
                         </span>
                         <span className="pdm-opt__head-r">
@@ -1455,7 +1476,7 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
         )}
         <div className="ws-card__name">{p.name}</div>
         <div className="ws-card__meta">
-          <span className="ws-card__price">€{price.toFixed(2)}{hasOptions && <span className="ws-card__from"> · à partir de</span>}</span>
+          <span className="ws-card__price">€{price.toFixed(2)}{hasOptions && <span className="ws-card__from"> · {t('card.fromPrice')}</span>}</span>
           {/* Compteur « X dispo » retiré des vignettes (demandé le 15/08) — il
               exposait le stock restant sur la grille. « Épuisé » reste : c'est
               une contrainte que le client doit voir avant d'ajouter. */}
@@ -2048,7 +2069,7 @@ function GiftProgressBanner({ shop, user }) {
         <b>{money(prog.accumulated)}</b><span className="ws-giftbar__goal">objectif {money(c.threshold)}</span>
       </div>
       {!unlocked && (
-        <div className="ws-giftbar__remain">Plus que <b>{money(prog.remaining)}</b> d'achats pour débloquer votre cadeau.</div>
+        <div className="ws-giftbar__remain">{tRich(t, 'gift.remaining', { amount: money(prog.remaining) })}</div>
       )}
       {unlocked && (
         <>
@@ -2129,7 +2150,7 @@ function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
       <div className="ws-shopbar" style={{ background: 'var(--color-primary)' }}>
         <div className="ws-shopbar__inner">
           <span className="ws-shopbar__pin"><Pict d={ICONS.pin} s={12}/></span>
-          <span className="ws-shopbar__name">Vous commandez chez · <strong>{shop.name}</strong></span>
+          <span className="ws-shopbar__name">{tRich(t, 'nav.orderingAt', { shop: shop.name })}</span>
           <span className="ws-shopbar__city">{shop.city} · {shop.address}</span>
           <button className="ws-shopbar__switch" onClick={onSwitchShop}>
             Changer de boutique <Pict d={ICONS.switch} s={12}/>
@@ -2451,7 +2472,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
       <p className="ws-modal__eyebrow">{t('auth.myAccount')}</p>
       {pwStep ? (
         <>
-          <h2 className="ws-modal__title">Ce compte <em>existe déjà</em>.</h2>
+          <h2 className="ws-modal__title">{tRich(t, 'auth.accountExists')}</h2>
           <p className="ws-modal__lede">{t('auth.setPassword')}</p>
           <div className="ws-form">
             <label className="ws-field"><span>{t('auth.password')}</span>
@@ -2463,7 +2484,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
         </>
       ) : (
       <>
-      <h2 className="ws-modal__title">{tab === 'login' ? <>Bon retour <em>parmi nous</em>.</> : <>Créez <em>votre</em> compte.</>}</h2>
+      <h2 className="ws-modal__title">{tRich(t, tab === 'login' ? 'auth.welcomeBack' : 'auth.createTitle')}</h2>
       <p className="ws-modal__lede">{tab === 'login' ? 'Connectez-vous pour retrouver vos commandes et votre bureau.' : 'Quelques secondes pour commander, suivre et faire livrer.'}</p>
       <div className="ws-tabs">
         <button className={`ws-tab${tab === 'login' ? ' is-active' : ''}`} onClick={() => { setTab('login'); setErr(''); }}>{t('auth.login')}</button>
@@ -2742,8 +2763,8 @@ function PostcodeCatchupModal({ user, onUpdateUser }) {
   return (
     <ModalShell onClose={() => setSnoozed(true)} narrow>
       <p className="ws-modal__eyebrow">{t('acc.yourProfile')}</p>
-      <h2 className="ws-modal__title">Votre <em>code postal</em> ?</h2>
-      <p className="ws-modal__lede">Il nous manque votre code postal — il nous aide à organiser les livraisons et les tournées près de chez vous.</p>
+      <h2 className="ws-modal__title">{tRich(t, 'cp.title')}</h2>
+      <p className="ws-modal__lede">{t('cp.lede')}</p>
       <form className="ws-form" onSubmit={submit}>
         <CpField variant="modal" cp={cp} locality={locality}
           onCp={(v) => { setCp(v); setErr(''); }} onLocality={setLocality} onOpts={setCpOpts}/>
@@ -3172,7 +3193,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   return (
     <ModalShell onClose={onClose} narrow>
       <p className="ws-modal__eyebrow">{t('auth.myAccount')}</p>
-      <h2 className="ws-modal__title">Bonjour <em>{form.firstName || user.firstName}</em>.</h2>
+      <h2 className="ws-modal__title">{tRich(t, 'acc.hello', { name: form.firstName || user.firstName })}</h2>
       <p className="ws-modal__lede">{user.email}</p>
 
       {/* Onglets — positions dérivées d'ACCOUNT_TABS, actif persisté. */}
@@ -3200,12 +3221,12 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           <div className="ws-fidinfo__body">
             <div className="ws-fidinfo__title">{t('fid.allInApp')}</div>
             <p className="ws-fidinfo__lede">
-              Vos commandes sont gérées <strong>directement dans l'application fidélité</strong>. Vous y retrouverez&nbsp;:
+              {tRich(t, 'fid.managedIn')}
             </p>
             <ul className="ws-fidinfo__list">
-              <li>Vos <strong>commandes précédentes</strong> et leur <strong>statut</strong> en temps réel</li>
-              <li>L'ouverture et le suivi de vos <strong>tickets</strong></li>
-              <li>Vos <strong>demandes de facture</strong> et la <strong>conversion ticket → facture</strong></li>
+              <li>{tRich(t, 'fid.bullet1')}</li>
+              <li>{tRich(t, 'fid.bullet2')}</li>
+              <li>{tRich(t, 'fid.bullet3')}</li>
             </ul>
             <p className="ws-fidinfo__foot">
               Pour limiter les e-mails, nous privilégions désormais les notifications de l'application.
@@ -3247,7 +3268,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
 
         <div className="ws-acc__form-foot">
           <button type="submit" className="ws-cta">{t('common.save2')}</button>
-          {savedFlash && <span className="ws-acc__saved">✓ Enregistré</span>}
+          {savedFlash && <span className="ws-acc__saved">✓ {t('common.saved')}</span>}
           {profileErr && <span className="ws-acc__saved" style={{ color: 'var(--color-primary, #8d1d2c)' }}>{profileErr}</span>}
         </div>
       </form>
@@ -3268,7 +3289,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
                 <span className="ws-acc__v">{[user.invoice?.address, [user.invoice?.postalCode, user.invoice?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</span></div>
             )}
             {user.invoice?.viesVerified && <div className="ws-acc__badge">{t('co2.viesOk')}</div>}
-            <p className="ws-acc__hint">Société par défaut pour vos demandes de facture. Pas d'édition libre : re-vérification VIES (réimporte les données) ou retrait puis ajout d'une nouvelle société.</p>
+            <p className="ws-acc__hint">{t('co2.defaultHint')}</p>
             <div className="ws-acc__row-foot">
               <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('vies'); setCompanyErr(''); }} disabled={companyBusy}>{t('co2.viesRecheck')}</button>
               <button type="button" className="ws-acc__unplug" onClick={removeCompany} disabled={companyBusy}>{t('common.remove')}</button>
@@ -3335,7 +3356,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
                   onChange={(e) => setAddNo((v) => ({ ...v, city: e.target.value }))} />
               </label>
             </div>
-            <p className="ws-acc__hint">Entité non assujettie : le n° TVA de la facture restera vide. La TVA belge reste due — aucune exonération à l'achat.</p>
+            <p className="ws-acc__hint">{t('co2.noVatHint')}</p>
             {companyErr && <p className="ws-acc__vat-msg ws-acc__vat-msg--err">⚠ {companyErr}</p>}
             <div className="ws-acc__row-foot">
               <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('idle'); setCompanyErr(''); }}>{t('common.cancel2')}</button>
@@ -3453,7 +3474,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             <div className="ws-acc__card-row"><span className="ws-acc__k">{t('off.office')}</span><span className="ws-acc__v">{office.name}</span></div>
             <div className="ws-acc__card-row"><span className="ws-acc__k">{t('off.contact')}</span><span className="ws-acc__v">{office.contact}</span></div>
             <div className="ws-acc__badge ws-acc__badge--pending">{t('off.pendingValidation')}</div>
-            <p className="ws-acc__note">Votre bureau sera relié à une tournée par notre équipe. En attendant, commandez en Click &amp; Collect.</p>
+            <p className="ws-acc__note">{t('off.pendingNote')}</p>
             <button type="button" className="ws-acc__unplug" onClick={startUnplug}>{t('off.unlink')}</button>
           </div>
         )}
@@ -3537,7 +3558,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         {officeStep === 'pick' && !officeShopId && (
           <div className="ws-acc__card">
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>{t('off.pick')}</div>
-            <p className="ws-acc__hint">Sélectionnez d'abord votre <strong>boutique préférée</strong> (ci-dessus) : la liste des bureaux en dépend.</p>
+            <p className="ws-acc__hint">{tRich(t, 'off.pickShopFirst')}</p>
             <div className="ws-acc__row-foot">
               <button type="button" className="ws-fid__cancel" onClick={() => setOfficeStep('idle')}>{t('common.close2')}</button>
             </div>
@@ -3570,11 +3591,11 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         {officeStep === 'add' && (
           <div className="ws-acc__card">
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>{t('off.notInListQ')}</div>
-            <p className="ws-acc__hint">Envoyez une demande à votre Atelier : il contactera votre bureau pour l'ajouter. Indiquez son nom et <strong>au moins un</strong> moyen de contact.</p>
+            <p className="ws-acc__hint">{tRich(t, 'off.reqHint')}</p>
             <div className="ws-acc__grid">
               <label className="ws-acc__field ws-acc__field--full">
                 <span className="ws-acc__field-label">{t('off.reqName')}</span>
-                <input className="ws-acc__input" value={newOffice.name} onChange={(e) => setNewOfficeField('name', e.target.value)} placeholder="ACME SA"/>
+                <input className="ws-acc__input" value={newOffice.name} onChange={(e) => setNewOfficeField('name', e.target.value)} placeholder={t('off.phName')}/>
               </label>
               <label className="ws-acc__field">
                 <span className="ws-acc__field-label">{t('form.phone')}</span>
@@ -3582,7 +3603,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
               </label>
               <label className="ws-acc__field">
                 <span className="ws-acc__field-label">{t('form.emailLong')}</span>
-                <input type="email" className="ws-acc__input" value={newOffice.email} onChange={(e) => setNewOfficeField('email', e.target.value)} placeholder="contact@acme.be"/>
+                <input type="email" className="ws-acc__input" value={newOffice.email} onChange={(e) => setNewOfficeField('email', e.target.value)} placeholder={t('off.phEmail')}/>
               </label>
               <label className="ws-acc__field ws-acc__field--full">
                 <span className="ws-acc__field-label">{t('co2.address')}</span>
@@ -3601,7 +3622,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         {officeStep === 'sent' && (
           <div className="ws-acc__card">
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>{t('off.reqSent')}</div>
-            <p className="ws-acc__hint">Merci ! Votre Atelier a reçu votre demande et contactera votre bureau. Vous pourrez le sélectionner dès qu'il aura été validé.</p>
+            <p className="ws-acc__hint">{t('off.reqThanks')}</p>
             <div className="ws-acc__row-foot">
               <button type="button" className="ws-cta" onClick={() => setOfficeStep('idle')}>{t('common.close2')}</button>
             </div>
@@ -3694,7 +3715,7 @@ function FidelityLinkPanel({ open, user, onClose }) {
         </div>
         <ol className="ws-fid__steps ws-fid__steps--sm">
           <li><span className="ws-fid__step-n">1</span> {t('fid.scan')}</li>
-          <li><span className="ws-fid__step-n">2</span> Installez / ouvrez l'app <strong>L'Atelier</strong>.</li>
+          <li><span className="ws-fid__step-n">2</span> {tRich(t, 'fid.step2')}</li>
           <li><span className="ws-fid__step-n">3</span> {t('fid.signinSync')}</li>
         </ol>
         {payload && (
@@ -3970,7 +3991,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   }
 
   return (
-    <aside className="ws-checkout" role="dialog" aria-label="Checkout">
+    <aside className="ws-checkout" role="dialog" aria-label={t('co.title')}>
       <header className="ws-checkout__head">
         <button className="ws-checkout__back" onClick={onClose}>
           <Pict d={<path d="M15 6l-6 6 6 6"/>} s={12}/> Retour au panier
@@ -4066,7 +4087,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
                     <rect x="2" y="5" width="20" height="14" rx="2"/>
                     <path d="M2 10h20"/>
                   </svg>
-                  <span>Je paie pour ma société — paiement par <strong>carte société</strong>.</span>
+                  <span>{tRich(t, 'co.company.payByCard')}</span>
                 </div>
               );
             })()}
@@ -4219,7 +4240,7 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
     return (
       <div className="ws-co-step">
         <h3 className="ws-co-step__title">{t('co.auth.title')}</h3>
-        <p className="ws-co-step__lede">Pour finaliser votre commande, créez un compte ou connectez-vous. Vos coordonnées seront pré-remplies.</p>
+        <p className="ws-co-step__lede">{t('co.auth.lede')}</p>
         <div className="ws-co-authwall">
           <button className="ws-cta ws-cta--block" onClick={onLoginNow}>{t('co.auth.signin')}</button>
           <button className="ws-btn-ghost" onClick={onLoginNow}>{t('auth.createAccount')}</button>
@@ -4550,7 +4571,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
               <PortionGlyph size={13}/>
               <span>{availVouchers.length > 1 ? 'Vos codes promo disponibles' : 'Vous avez un code promo'}</span>
               {availVouchers.length > 1 && (
-                <span className="ws-co-avail__rule"> · un seul par commande</span>
+                <span className="ws-co-avail__rule"> · {t('co.voucher.onePerOrder')}</span>
               )}
             </div>
             <ul className="ws-co-avail__list">
@@ -4560,7 +4581,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
                 return (
                   <li key={v.code} className={'ws-co-avail__item' + (v.personal ? ' is-personal' : '')}>
                     <div className="ws-co-avail__info">
-                      <span className="ws-co-avail__label">{v.label}{v.personal && <span className="ws-co-avail__perso"> · rien qu’à vous</span>}</span>
+                      <span className="ws-co-avail__label">{v.label}{v.personal && <span className="ws-co-avail__perso"> · {t('co.voucher.personal')}</span>}</span>
                       <span className="ws-co-avail__code">{v.code}{v.hint ? ' · ' + v.hint : ''}</span>
                     </div>
                     <button type="button" className="ws-co-avail__apply"
@@ -4729,7 +4750,7 @@ function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
         <span className="ws-modal__handle" aria-hidden="true"/>
         <button className="ws-modal__close" onClick={onClose}><Pict d={ICONS.close} s={14}/></button>
         <p className="ws-modal__eyebrow">{t('shoppick.title')}</p>
-        <h2 className="ws-modal__title">Trouvez <em>votre</em> Atelier.</h2>
+        <h2 className="ws-modal__title">{tRich(t, 'shoppick.findTitle')}</h2>
         <p className="ws-modal__lede">{t('shoppick.hint')}</p>
         <div className="ws-modal__grid">
           {list.map((s) => (
@@ -4742,7 +4763,7 @@ function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
               <div className="ws-shopcard__name">{s.name}</div>
               <div className="ws-shopcard__addr">{s.address}</div>
               <div className="ws-shopcard__svcs">
-                <span>Click & Collect</span>
+                <span>{t('nav.mode.collect')}</span>
                 <span>·</span>
                 <span>{t('shoppick.delivery')}</span>
               </div>
@@ -5778,9 +5799,9 @@ function ShopFrame({ variant }) {
           {variant === 'C' && (
             <div className="ws-hero" style={{ '--shop-accent': shop.accent }}>
               <div className="ws-hero__copy">
-                <span className="ws-hero__eyebrow">Campagne · Printemps 2026</span>
+                <span className="ws-hero__eyebrow">{t('hero.eyebrow')}</span>
                 <h1 className="ws-hero__slogan">On prend.<br/>On divise.<br/><em style={{ color: 'var(--color-primary)' }}>On goûte.</em></h1>
-                <p className="ws-hero__lede">4 parts achetées · 1 offerte. Disponible en boutique pour la collecte aujourd'hui.</p>
+                <p className="ws-hero__lede">{t('hero.lede')}</p>
               </div>
               <div className="ws-hero__chip" style={{ background: 'var(--color-primary)' }}>
                 <span>{shop.name}</span>
@@ -5921,8 +5942,8 @@ function ShopFrame({ variant }) {
       {prefNudge && (
         <div className="ws-pref-nudge" role="dialog" aria-label={t('prefshop.title')}>
           <div className="ws-pref-nudge__body">
-            <div className="ws-pref-nudge__title">Faire de <em>{prefNudge.shopName}</em> votre boutique préférée ?</div>
-            <div className="ws-pref-nudge__sub">Cela définira <em>{prefNudge.shopName}</em> par défaut à votre prochaine connexion.</div>
+            <div className="ws-pref-nudge__title">{tRich(t, 'prefshop.q', { shop: prefNudge.shopName })}</div>
+            <div className="ws-pref-nudge__sub">{tRich(t, 'prefshop.sub', { shop: prefNudge.shopName })}</div>
           </div>
           <div className="ws-pref-nudge__btns">
             <button type="button" className="ws-pref-nudge__no" onClick={() => setPrefNudge(null)}>{t('common.later')}</button>

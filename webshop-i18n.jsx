@@ -107,8 +107,28 @@
   }
 
   /* ---------- chargement depuis l'API ------------------------------ */
+  /* Filet de sécurité : la DERNIÈRE réponse réussie est gardée en local et
+     resservie si l'API tombe. Sans ça, une panne de /i18n affichait les CLÉS
+     BRUTES sur toute l'interface (« auth.welcomeBack ») — le pire des deux
+     mondes. Ce n'est pas un repli inventé : c'est le texte que le serveur a
+     réellement servi. L'échec reste signalé au bandeau. */
+  const LS_CACHE = 'ws.i18n.v1';
   let endpoint = null;                            // posé par api-config.js
   function setEndpoint(url) { endpoint = url; }
+
+  function useCache(reason) {
+    const cached = readJSON(LS_CACHE);
+    if (cached && typeof cached === 'object') {
+      merge(cached);
+      _loaded = true;
+      notify();
+    }
+    if (window.WSBug && window.WSBug.note)
+      window.WSBug.note('i18n', 'Traductions non chargées : ' + reason
+        + (cached ? ' (dernière version connue affichée)' : ''));
+    return false;
+  }
+
   function load(url) {
     if (url) endpoint = url;
     if (!endpoint) return Promise.resolve(false);
@@ -118,15 +138,12 @@
         const strings = data && data.strings;
         if (!strings || typeof strings !== 'object') throw new Error('réponse i18n vide');
         merge(strings);
+        writeJSON(LS_CACHE, strings);
         _loaded = true;
         notify();                                  // re-rend les composants montés
         return true;
       })
-      .catch((err) => {
-        if (window.WSBug && window.WSBug.note)
-          window.WSBug.note('i18n', 'Traductions non chargées : ' + (err.message || err));
-        return false;
-      });
+      .catch((err) => useCache(err.message || String(err)));
   }
 
   /* Applique la config langue d'une boutique (default_lang / languages). */
