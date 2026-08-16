@@ -600,7 +600,12 @@ function dispatch($m, $p) {
       $rws = rows("SELECT lang, k, value FROM ws_i18n WHERE scope = ? ORDER BY lang, k", [$scope]);
       $out = [];
       foreach ($rws as $r) { $out[$r['lang']][$r['k']] = $r['value']; }
-      json_out(['scope' => $scope, 'strings' => $out]);
+      // `count` : combien de libellés PAR LANGUE. Ouvrir /api/i18n dans un
+      // navigateur suffit alors à répondre à « pourquoi le néerlandais ne
+      // s'affiche pas ? » — table vide, langue absente, ou front en cause.
+      $count = [];
+      foreach ($out as $lg => $dict) { $count[$lg] = count($dict); }
+      json_out(['scope' => $scope, 'count' => $count, 'strings' => $out]);
     } catch (Throwable $e) {
       json_out(['error' => 'i18n KO', 'detail' => $e->getMessage(), 'ligne' => $e->getLine()], 500);
     }
@@ -5282,6 +5287,28 @@ function dispatch($m, $p) {
       if (array_key_exists('address', $b)) {
         $aCol = col_exists($SHOPS, 'address_line') ? 'address_line' : (col_exists($SHOPS, 'street') ? 'street' : null);
         if ($aCol) { $sets[] = "$aCol=?"; $vals[] = mb_substr(trim((string) $b['address']), 0, 255); }
+      }
+      /* Langue de la boutique (migration 0087). Elle n'était posée que par
+         migration : aucun écran ne pouvait la changer, donc « Halle ouvre en
+         néerlandais » n'était pas paramétrable par le franchisé.
+         - defaultLang : '' ou absent → NULL (= « non paramétré », l'app décide).
+         - languages   : liste offerte au sélecteur, filtrée sur les codes à
+           deux lettres. Vide → NULL (= toutes celles que l'app supporte).
+         Aucune valeur inventée : on n'écrit que ce que l'utilisateur envoie. */
+      if (array_key_exists('defaultLang', $b) && col_exists($SHOPS, 'default_lang')) {
+        $dl = strtolower(trim((string) $b['defaultLang']));
+        $sets[] = 'default_lang=?';
+        $vals[] = preg_match('/^[a-z]{2}$/', $dl) ? $dl : null;
+      }
+      if (array_key_exists('languages', $b) && col_exists($SHOPS, 'languages')) {
+        $raw = is_array($b['languages']) ? $b['languages'] : explode(',', (string) $b['languages']);
+        $lgs = [];
+        foreach ($raw as $x) {
+          $x = strtolower(trim((string) $x));
+          if (preg_match('/^[a-z]{2}$/', $x) && !in_array($x, $lgs, true)) $lgs[] = $x;
+        }
+        $sets[] = 'languages=?';
+        $vals[] = $lgs ? implode(',', $lgs) : null;
       }
       if (!$sets) json_out(['ok' => false, 'error' => 'rien à modifier'], 400);
       $vals[] = (int) $shopId;
