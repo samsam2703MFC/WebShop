@@ -528,6 +528,7 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
     : undefined;
   const effMode = deliveryCutoffPassed && mode === 'delivery' ? 'collect' : mode;
   return (
+    <div className="ws-modewrap">
     <div className="ws-modes" role="tablist" aria-label={t('nav.modeAria')}>
       <span className="ws-modes__indicator" data-mode={effMode} aria-hidden="true"/>
       <button className={`ws-mode ws-mode--collect${mode === 'collect' ? ' is-active' : ''}${collectCutoffPassed ? ' is-disabled' : ''}`}
@@ -550,7 +551,11 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
         <span className="ws-mode__lbl-full">{t('nav.mode.delivery')}</span>
         {deliveryCutoffPassed && <span className="ws-mode__cutoff"> · {t('nav.mode.closed')}</span>}
       </button>
-      {/* « i » apricot : pas encore de bureau ? → ouvre le formulaire zone (landing) */}
+      </div>
+      {/* « i » apricot : pas encore de bureau ? → ouvre le formulaire zone (landing).
+          Il est SORTI du rail : depuis que le sélecteur est un segment à deux
+          colonnes, un troisième enfant tombait en seconde ligne et débordait
+          sous le rail. Frère du rail, il reste à côté sans le déformer. */}
       <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flex: 'none', marginLeft: 4 }}
         onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
         <button type="button" aria-label={t('office.notYet')}
@@ -568,7 +573,7 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
             <span aria-hidden="true" style={{ position: 'absolute', top: -5, right: 15, width: 11, height: 11,
               background: '#e8a15c', borderTop: '1px solid rgba(36,26,22,.10)', borderLeft: '1px solid rgba(36,26,22,.10)',
               transform: 'rotate(45deg)', borderRadius: 3 }} />
-            Pas encore de bureau&nbsp;? Vérifiez si votre zone est desservie et faites votre demande.
+            {t('office.notYetTip')}
           </span>
         )}
       </span>

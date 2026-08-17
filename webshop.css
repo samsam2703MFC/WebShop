@@ -119,24 +119,64 @@
 }
 
 /* Mode pills */
-.ws-modes { display: inline-flex; gap: 6px; }
-.ws-modes__indicator { display: none; }   /* indicator only used on mobile toggle */
+/* SÉLECTEUR DE MODE — un seul objet segmenté, sur bureau COMME sur mobile.
+   C'étaient deux pastilles indépendantes : rien ne disait qu'elles sont
+   EXCLUSIVES, elles ressemblaient à deux filtres cumulables. Or le mode
+   commande les prix, les créneaux et l'heure limite. Un curseur qui glisse
+   dans un rail unique le rend évident.
+   Même composant que le mobile (qui n'ajuste plus que les dimensions) : une
+   seule version à maintenir, et le même geste sur les deux écrans. */
+.ws-modewrap { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.ws-modes {
+  position: relative;
+  display: grid; grid-template-columns: 1fr 1fr;
+  height: 34px;
+  padding: 3px;
+  gap: 0;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.ws-modes__indicator {
+  display: block;
+  position: absolute;
+  top: 3px; bottom: 3px; left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 999px;
+  background: var(--color-surface);
+  box-shadow: 0 1px 3px rgba(0,0,0,.10), 0 0 0 1px rgba(0,0,0,.04);
+  transition: transform 260ms cubic-bezier(.2,.8,.2,1), background 200ms ease;
+  z-index: 0;
+}
+.ws-modes__indicator[data-mode="delivery"] { transform: translateX(100%); }
+/* Le curseur porte la couleur du mode — Ruby en collecte, Abricot en
+   livraison — - comme les anciennes pastilles pleines. */
+.ws[data-mode="collect"] .ws-modes__indicator {
+  background: color-mix(in oklab, var(--color-primary) 14%, var(--color-surface));
+}
+.ws[data-mode="delivery"] .ws-modes__indicator {
+  background: color-mix(in oklab, var(--color-secondary) 60%, var(--color-surface));
+}
+.ws[data-mode="collect"]  .ws-mode.is-active { color: var(--color-primary); }
+.ws[data-mode="delivery"] .ws-mode.is-active { color: var(--color-on-abricot); }
 .ws-mode {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 32px;
+  position: relative; z-index: 1;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 100%;
   padding: 0 14px;
   line-height: 1;
-  font-size: 12px;
   border-radius: 999px;
-  border: 1px solid var(--color-border-tertiary);
-  background: var(--color-surface);
+  border: 0;
+  background: transparent;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 500;
+  white-space: nowrap;
+  transition: color 200ms ease;
 }
+.ws-mode.is-active { font-weight: 600; }
 .ws-mode__lbl-mob { display: none; }      /* mobile-only short label, kept for legacy */
-.ws-mode--collect.is-active   { background: var(--color-primary);   border-color: var(--color-primary);   color: #fff; }
-.ws-mode--delivery.is-active  { background: var(--color-secondary); border-color: var(--color-collection-border); color: var(--color-on-abricot); }
 .ws-mode:disabled, .ws-mode.is-disabled { opacity: 0.45; cursor: not-allowed; }
 .ws-mode__cutoff { font-size: 10px; opacity: 0.8; }
 
@@ -3452,7 +3492,7 @@
      .ws-nav__info de la barre rend déjà ce service en mobile.
      !important est nécessaire : ce span porte des styles EN LIGNE, qu'aucun
      sélecteur ne peut battre autrement — et le JSX est partagé avec le desktop. */
-  .ws-modes > span:last-child { display: none !important; }
+  .ws-modewrap > span:last-child { display: none !important; }
 
   /* Le fond du segment actif est l'INDICATEUR coulissant, pas le bouton.
      Sans cette neutralisation, la règle de base .ws-mode--collect.is-active
@@ -3462,11 +3502,15 @@
   .ws-modes .ws-mode.is-active { background: transparent; border-color: transparent; }
 
   /* Toggle-switch style segmented control — compact icon-only for single-row */
-  .ws-modes {
-    position: relative;
+  .ws-modewrap {
     flex: 1 0 100%;                      /* ligne à part, pleine largeur du bandeau */
     order: 4;                            /* après boutique, date et langue */
     margin-top: 8px;
+  }
+  .ws-modes {
+    position: relative;
+    flex: 1 1 auto;
+    width: 100%;
     gap: 0;
     background: var(--color-bg, #faf7f2);
     border-radius: 999px;
