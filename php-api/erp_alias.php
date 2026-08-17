@@ -117,11 +117,19 @@ function erp_alias_map($path) {
   }
   if ($list === null) { erp_notes('ERP : forme inattendue sur ' . $path); return []; }
 
-  $ID   = ['id', 'product_category_id', 'id_product_category', 'category_id',
+  /* `fk_id` en tête : c'est la clé RÉELLE de tfbuddy, vérifiée jeton en main sur
+     products/aliases (762 lignes) et product-categories/aliases (81). Sans elle
+     aucune ligne n'était reconnue : le catalogue restait en français sans que
+     rien ne le signale. */
+  $ID   = ['fk_id', 'id', 'product_category_id', 'id_product_category', 'category_id',
            'product_category_group_id', 'id_product_category_group', 'group_id',
            'product_id', 'id_product'];
   $LANG = ['lang', 'language', 'locale', 'lang_code', 'language_code'];
-  $LBL  = ['name', 'label', 'alias', 'value', 'title', 'translation'];
+  /* `alias_value` AVANT `effective_value` : le second retombe sur `base_value`
+     (le libellé SOURCE, en français) quand aucun alias n'existe. Le lire
+     d'abord ferait passer du français pour une traduction néerlandaise. */
+  $LBL  = ['alias_value', 'effective_value',
+           'name', 'label', 'alias', 'value', 'title', 'translation'];
 
   $out = [];
   foreach ($list as $row) {
