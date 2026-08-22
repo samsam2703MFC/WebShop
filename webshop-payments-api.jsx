@@ -3,7 +3,11 @@
      window.WSPayments.endpoint = BASE_URL + '/payment-methods';
 
    GET {endpoint}?shopId=&profile=guest|registered|company&companyId=&mode=
-     -> [{ method: 'stripe'|'shop'|'deferred', label }]
+     -> [{ method, label, family: 'stripe'|'shop'|'deferred' }]
+
+   `family` est calculée par le SERVEUR (payment_family) : c'est elle qui
+   dit si le moyen passe par la page de paiement hébergée. Le front ne
+   tient pas sa propre liste de méthodes carte.
 
    `mode` est indispensable : en livraison, le serveur écarte « paiement en
    boutique » — le client ne s'y rend jamais. Sans ce paramètre il était

@@ -43,8 +43,12 @@ return [
   'webshop_base' => getenv('WS_WEBSHOP_BASE') ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html',
   // Paiement (optionnel) — colle ta clé sk_live_… / sk_test_… pour activer Stripe.
   'stripe_secret'    => getenv('WS_STRIPE_SECRET') ?: '',
-  'checkout_success' => getenv('WS_CHECKOUT_SUCCESS') ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html?paid=1',
-  'checkout_cancel'  => getenv('WS_CHECKOUT_CANCEL')  ?: 'https://samsam2703mfc.github.io/WebShop/webshop-full.html?canceled=1',
+  /* URLs de RETOUR après la page de paiement Stripe. Elles doivent pointer
+   * vers la PAGE DE L'APP (celle qui accueille ?paid=1 / ?canceled=1) — en
+   * production :  https://<hôte>/webshop/?paid=1  et  ?canceled=1.
+   * Le paramètre &shop=<id> est ajouté automatiquement par commande. */
+  'checkout_success' => getenv('WS_CHECKOUT_SUCCESS') ?: 'https://samsam2703mfc.github.io/WebShop/?paid=1',
+  'checkout_cancel'  => getenv('WS_CHECKOUT_CANCEL')  ?: 'https://samsam2703mfc.github.io/WebShop/?canceled=1',
   /* Secret de signature du WEBHOOK Stripe (whsec_…). À créer dans le tableau de
    * bord Stripe › Développeurs › Webhooks, en pointant vers :
    *     <origine>/webshop/api/payments/stripe-webhook

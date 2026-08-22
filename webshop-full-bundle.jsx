@@ -3764,7 +3764,7 @@ function usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId) 
     window.WSPayments.list({ shopId, profile: profile || 'guest', companyId, mode })
       .then((m) => {
         if (!alive) return;
-        setMethods(Array.isArray(m) ? m.map((x) => ({ id: x.method, label: x.label || x.method, sub: '' })) : []);
+        setMethods(Array.isArray(m) ? m.map((x) => ({ id: x.method, label: x.label || x.method, family: x.family || x.method, sub: '' })) : []);
       })
       .catch(() => { if (alive) setMethods([]); });
     return () => { alive = false; };
@@ -3962,10 +3962,44 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       // confirmation inventée.
       if (!window.WSOrders) throw new Error('Service de commande indisponible — commande non enregistrée.');
       const result = await window.WSOrders.place(payload);
-      // Live backend + immediate payment → Stripe hosted Checkout
-      // (cards + Bancontact). The webhook marks the order paid.
+      // Compatibilité : si un jour POST /orders rend lui-même l'URL de paiement.
       if (result && result.checkoutUrl) {
         window.location.href = result.checkoutUrl;
+        return;
+      }
+      /* PAIEMENT EN LIGNE (famille « stripe », servie par /payment-methods).
+         La commande vient d'être ENREGISTRÉE ; l'encaissement se fait sur la
+         page Stripe hébergée, créée par POST /payments/checkout — et seul le
+         webhook Stripe marque « payé ». Sans cet appel, une commande « carte »
+         était confirmée à l'écran sans qu'aucun paiement n'ait jamais lieu :
+         POST /orders ne rend pas d'URL de paiement, et rien n'appelait la
+         route qui la fabrique. Hors ligne : différé/sur compte (la facture
+         suit) et paiement en boutique (encaissé au comptoir). */
+      const payFam = (paymentMethods.find((x) => x.id === payment) || {}).family || payment;
+      const differe = Boolean(result && (result.paymentType === 'deferred' || result.onAccount));
+      if (payFam === 'stripe' && !differe && window.WSOrders.pay) {
+        let sess;
+        try {
+          sess = await window.WSOrders.pay(result.orderId);
+        } catch (pe) {
+          /* La commande EXISTE déjà — le dire, et dire que réessayer est sûr :
+             la clé d'idempotence fait reprendre LA MÊME commande, jamais une
+             seconde. Un « Erreur 503 » nu ferait recommander le panier. */
+          throw new Error(t('co.payStartFail',
+            { ref: result.orderRef || String(result.orderId), reason: pe.message || '' }));
+        }
+        /* Mémorisé pour l'accueil du retour (?paid=1 / ?canceled=1) : la
+           redirection recharge la page, l'état React ne survit pas. */
+        try {
+          sessionStorage.setItem('ws.pendingPay', JSON.stringify({
+            orderId: result.orderId,
+            orderRef: result.orderRef || '',
+            slot: (typeof slot === 'object' && slot) ? slot.label : slot,
+            paymentLabel: (paymentMethods.find((x) => x.id === payment) || {}).label || payment,
+            total: (typeof result.total === 'number') ? result.total : total,
+          }));
+        } catch (_) { /* stockage indisponible : le retour sera juste muet */ }
+        window.location.href = sess.checkoutUrl;
         return;
       }
       // Le LIBELLÉ vient de la liste serveur : la confirmation annonçait
@@ -5436,6 +5470,51 @@ function ShopFrame({ variant }) {
      bascule automatique de mode, panier vidé, boutique changée. Une app qui
      agit sans le dire oblige à deviner — et sur un panier perdu, à recommencer. */
   const [notice, setNotice] = React.useState(null);
+  /* RETOUR DE LA PAGE DE PAIEMENT Stripe (checkout_success / checkout_cancel →
+     ?paid=1 / ?canceled=1). La commande a été enregistrée AVANT la redirection ;
+     ici on accueille, on ne crée rien :
+       · paid=1     → toast de confirmation, données mémorisées au départ ;
+       · canceled=1 → avis persistant : la commande existe mais reste impayée.
+     Le retour du navigateur ne PROUVE pas l'encaissement (seul le webhook fait
+     foi, cf. config.php) : on annonce la commande, pas le paiement. Les
+     paramètres sont ensuite retirés de l'adresse — un rechargement ne doit pas
+     rejouer l'accueil. */
+  React.useEffect(() => {
+    let q;
+    try { q = new URLSearchParams(window.location.search); } catch (_) { return; }
+    const paid = q.get('paid') === '1';
+    const canceled = q.get('canceled') === '1';
+    if (!paid && !canceled) return;
+    let pend = null;
+    try {
+      pend = JSON.parse(sessionStorage.getItem('ws.pendingPay') || 'null');
+      sessionStorage.removeItem('ws.pendingPay');
+    } catch (_) {}
+    if (paid && pend && Number.isFinite(Number(pend.total))) {
+      setOrderToast({ orderRef: pend.orderRef, slot: pend.slot,
+                      paymentLabel: pend.paymentLabel, total: Number(pend.total), ts: Date.now() });
+      setTimeout(() => setOrderToast(null), 6500);
+    }
+    if (canceled) {
+      /* Le texte est CAPTURÉ ici — le rendu affiche notice.texte tel quel. Au
+         premier chargement, /i18n n'a souvent pas encore répondu : t() aurait
+         figé les clés brutes dans l'avis. On le pose quand le dictionnaire est
+         là (ou tout de suite s'il l'est déjà). */
+      const ref = (pend && pend.orderRef) || '';
+      const poser = () => setNotice({ titre: t('co.payCanceled'),
+                                      texte: t('co.payCanceledSub', { ref }) });
+      if (!window.WSI18n || !window.WSI18n.onChange || window.WSI18n.isLoaded()) poser();
+      else {
+        const off = window.WSI18n.onChange(() => { poser(); off(); });
+      }
+    }
+    try {
+      q.delete('paid'); q.delete('canceled');
+      const qs = q.toString();
+      window.history.replaceState(window.history.state, '',
+        window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+    } catch (_) {}
+  }, []);
   function refreshStock() {
     return window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {}));
   }

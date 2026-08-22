@@ -41,6 +41,7 @@
   if (window.WSOffices)      window.WSOffices.endpoint      = BASE_URL + '/offices';
   if (window.WSTours)        window.WSTours.endpoint        = BASE_URL + '/tours';
   if (window.WSOrders)       window.WSOrders.endpoint       = BASE_URL + '/orders';
+  if (window.WSOrders)       window.WSOrders.payEndpoint    = BASE_URL + '/payments/checkout';
   if (window.WSCompanies)    window.WSCompanies.setEndpoint(BASE_URL + '/companies');
   if (window.WSPayments)     window.WSPayments.endpoint     = BASE_URL + '/payment-methods';
   if (window.WSAuth)         window.WSAuth.endpoint         = BASE_URL + '/auth';

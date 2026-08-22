@@ -1509,7 +1509,12 @@ function dispatch($m, $p) {
     // compte ici : la marchandise partait au bureau et l'encaissement n'avait
     // jamais lieu. Même famille que la commande acceptée sans moyen de paiement.
     if (qp('mode') === 'delivery') $methods = array_values(array_filter($methods, fn ($x) => $x !== 'shop'));
-    json_out(array_map(fn ($x) => ['method' => $x, 'label' => payment_label($x, qp('lang'))], $methods));
+    // `family` (payment_family) dit au front si le moyen passe par la page de
+    // paiement hébergée ('stripe'), se règle sur place ('shop') ou en compte
+    // ('deferred'). Le front ne tient PAS sa propre liste de méthodes carte :
+    // dupliquer la classification, c'est la voir diverger.
+    json_out(array_map(fn ($x) => ['method' => $x, 'label' => payment_label($x, qp('lang')),
+                                   'family' => payment_family($x)], $methods));
   }
 
   /* ── Availability / Calendar ── */
@@ -11735,9 +11740,19 @@ function stripe_checkout($order, $lines) {
   if (!$secret) return null;
   $total = round((float) ($order['total'] ?? 0), 2);
   if ($total <= 0) return false;                    // rien à encaisser : anomalie
+  /* Le retour atterrit sur la page de l'app (?paid=1 / ?canceled=1, accueillis
+     par le front). L'URL configurée est FIXE ; la commande, elle, connaît sa
+     boutique : on l'ajoute pour que le retour rouvre le bon magasin au lieu du
+     sélecteur. */
+  $suc = (string) cfg()['checkout_success'];
+  $can = (string) cfg()['checkout_cancel'];
+  if (!empty($order['shop_id'])) {
+    $suc .= (strpos($suc, '?') !== false ? '&' : '?') . 'shop=' . (int) $order['shop_id'];
+    $can .= (strpos($can, '?') !== false ? '&' : '?') . 'shop=' . (int) $order['shop_id'];
+  }
   $f = ['mode' => 'payment',
-        'success_url' => cfg()['checkout_success'],
-        'cancel_url' => cfg()['checkout_cancel'],
+        'success_url' => $suc,
+        'cancel_url' => $can,
         'metadata[order_id]' => $order['id'], 'metadata[order_ref]' => $order['order_ref'] ?? ''];
   $somme = 0.0;
   foreach ($lines as $l) $somme += ((float) $l['unit_price']) * ((int) $l['qty']);
