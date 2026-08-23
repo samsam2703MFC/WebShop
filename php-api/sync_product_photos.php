@@ -132,6 +132,20 @@ function spp_run(array $paires, $cfg) {
     fwrite(STDERR, "⚠ impossible de créer $dir\n");
     return null;
   }
+  /* Politique de cache DU DOSSIER, posée une fois pour toutes (relevé d'audit :
+     les photos partaient sans Cache-Control — le navigateur appliquait sa
+     fraîcheur heuristique et gardait l'ANCIENNE image après un
+     rafraîchissement, le nom de fichier ne changeant pas). no-cache = l'image
+     est revalidée à chaque affichage : avec l'ETag d'Apache ça coûte un 304,
+     pas un retéléchargement. Le manifeste et le journal, eux, n'ont rien à
+     faire en HTTP public. Fichier existant jamais réécrit : la boutique peut
+     l'ajuster à la main. */
+  $ht = "$dir/.htaccess";
+  if (!$cfg['dry'] && !is_file($ht)) {
+    @file_put_contents($ht,
+      "<IfModule mod_headers.c>\n  Header set Cache-Control \"no-cache, must-revalidate\"\n</IfModule>\n"
+      . "<FilesMatch \"\\.(json|log)$\">\n  Require all denied\n</FilesMatch>\n");
+  }
   $man = spp_manifest_load($dir);
   $c = ['produits' => count($paires), 'manuels' => 0, 'a_jour' => 0, 'sans_photo' => 0,
         'telecharges' => 0, 'rafraichis' => 0, 'disparues' => 0,
