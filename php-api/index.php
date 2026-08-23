@@ -3,6 +3,7 @@
  * .htaccess renvoie toutes les requêtes ici ; on route sur méthode + chemin. */
 require __DIR__ . '/lib.php';
 require __DIR__ . '/promo_lib.php';
+require __DIR__ . '/erp_alias.php';
 
 /* CORS */
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -48,6 +49,51 @@ try {
    /webshop/assets/product_pictures/. Scandir une seule fois par requête : permet
    de résoudre l'image d'un produit PAR CONVENTION ({id}.png|jpg) sans dépendre de
    ws_products.img — toute photo déposée (git ou SFTP) apparaît automatiquement. */
+/* ── Rafraîchissement AUTOMATIQUE des photos ERP, déclenché par la navigation.
+ * Chaque affichage du catalogue relance la synchro photos (sync_product_photos
+ * puis sync_product_images) — EN ARRIÈRE-PLAN et AU PLUS une fois par fenêtre
+ * de `ws_param.photos_refresh_ttl` secondes (900 par défaut, 0 = coupé) : une
+ * photo ajoutée dans l'ERP apparaît donc sans attendre un déploiement, et un
+ * pic de visites ne déclenche qu'UN balayage. Le visiteur ne paie rien :
+ * exec() rend la main immédiatement (nohup … &), la réponse part sans délai.
+ * Si exec est indisponible sur ce PHP, on ne fait RIEN ici — /erp/probe le
+ * dit (photos.auto=false) et la synchro reste celle des déploiements. */
+function photos_refresh_due($stamp, $ttl) {
+  if ($ttl <= 0) return false;                                  // coupé volontairement
+  $age = is_file($stamp) ? time() - (int) filemtime($stamp) : PHP_INT_MAX;
+  return $age >= $ttl;
+}
+function photos_exec_ok() {
+  if (!function_exists('exec')) return false;
+  $off = array_map('trim', explode(',', strtolower((string) ini_get('disable_functions'))));
+  return !in_array('exec', $off, true);
+}
+/* Lance le balayage photos EN ARRIÈRE-PLAN, tout de suite. Le tampon est posé
+   AVANT le lancement : c'est lui qui fait l'anti-rafale, y compris entre deux
+   requêtes simultanées (la fenêtre restante se compte en millisecondes, et
+   les scripts eux-mêmes sont idempotents). */
+function photos_refresh_spawn() {
+  $dir = __DIR__ . '/../assets/product_pictures';
+  if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
+  @touch($dir . '/.last_refresh');
+  $log = $dir . '/.refresh.log';
+  if (is_file($log) && filesize($log) > 262144) @file_put_contents($log, '');   // journal borné
+  $cmd = 'php ' . escapeshellarg(__DIR__ . '/sync_product_photos.php')
+       . ' >> ' . escapeshellarg($log) . ' 2>&1'
+       . ' && php ' . escapeshellarg(__DIR__ . '/sync_product_images.php')
+       . ' >> ' . escapeshellarg($log) . ' 2>&1';
+  @exec('nohup sh -c ' . escapeshellarg($cmd) . ' > /dev/null 2>&1 &');
+  return true;
+}
+function photos_refresh_async() {
+  try {
+    $ttl = (int) ws_param('photos_refresh_ttl', 900);
+    $stamp = __DIR__ . '/../assets/product_pictures/.last_refresh';
+    if (!photos_refresh_due($stamp, $ttl) || !photos_exec_ok()) return;
+    photos_refresh_spawn();
+  } catch (Throwable $e) { /* jamais au détriment de la réponse catalogue */ }
+}
+
 function product_photo_files() {
   static $map = null;
   if ($map !== null) return $map;
@@ -291,7 +337,7 @@ function ws_voucher_upsert(array $o) {
      Le prix ERP est appliqué EN PHP (array_filter sur price > 0), après la
      requête : aucune clause SQL ne peut le répliquer. Partager la fonction est
      donc la seule façon d'empêcher les deux vues de diverger à nouveau. */
-  function catalog_produits_servis($s, $mode = '', $date = null) {
+  function catalog_produits_servis($s, $mode = '', $date = null, $lang = '') {
     // Filtre livraison bureau PARTAGÉ (source unique) : en mode 'delivery'/'office',
     // on EXCLUT serveur-side les produits non éligibles au canal bureau
     // (office_delivery=0), pour que TOUT front (webshop online, webshop après
@@ -484,6 +530,21 @@ function ws_voucher_upsert(array $o) {
     // prix effectif (magasin ERP, ou repli ws_) vaut 0 n'est pas vendable → masqué.
     // Appliqué APRÈS la surcharge du prix magasin pour couvrir les deux sources.
     $r = array_values(array_filter($r, static fn($x) => (float) $x['price'] > 0));
+
+    /* Noms traduits : alias servis par l'API ERP (products/aliases), résolus
+       ICI — le navigateur ne traduit rien. Sans alias dans cette langue, ou
+       API non configurée, le nom SOURCE est conservé : jamais de trou, jamais
+       de nom inventé. Un seul appel groupé sert tout le catalogue. */
+    $lg = strtolower(substr((string) ($lang ?: ''), 0, 2));
+    if ($lg !== '' && function_exists('erp_product_labels')) {
+      $al = erp_product_labels($lg);
+      if ($al) {
+        foreach ($r as &$x2) {
+          if (isset($al[(string) $x2['id']])) $x2['name'] = $al[(string) $x2['id']];
+        }
+        unset($x2);
+      }
+    }
     return $r;
   }
 
@@ -537,9 +598,15 @@ function dispatch($m, $p) {
     // base connectée), conformément à la règle « soit ça marche avec les vraies
     // données, soit ça renvoie un bug » : jamais de liste inventée en repli.
     try {
+      // Langue par boutique (migration 0087) : ajoutée seulement si les colonnes
+      // existent — sinon la porte d'entrée /shops casserait sur une base pas
+      // encore migrée. NULL = pas paramétré (le front retombe sur le défaut app).
+      $langCols = '';
+      if (col_exists('shops', 'default_lang')) $langCols .= ', default_lang';
+      if (col_exists('shops', 'languages'))    $langCols .= ', languages';
       json_out(rows("SELECT id, slug, name, city, email, phone, accent, tint, logo_url,
                             discount_type AS webshop_discount_type, discount_value AS webshop_discount_value,
-                            TRIM(CONCAT_WS(' ', street, street_num)) AS address
+                            TRIM(CONCAT_WS(' ', street, street_num)) AS address" . $langCols . "
                        FROM shops WHERE active = 1 AND webshop_enabled = 1 ORDER BY name"));
     } catch (Throwable $e) {
       $base = null;
@@ -552,9 +619,170 @@ function dispatch($m, $p) {
   }
   if ($m === 'GET' && $p === '/brand') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+    // Langue par boutique servie ici aussi : un lien profond ?shop=<id> doit
+    // ouvrir dans la langue de la boutique (Halle → nl). Colonnes gardées.
+    $langCols = '';
+    if (col_exists('shops', 'default_lang')) $langCols .= ', default_lang';
+    if (col_exists('shops', 'languages'))    $langCols .= ', languages';
     json_out(row("SELECT id, slug, name, accent, tint, logo_url,
-                         discount_type AS webshop_discount_type, discount_value AS webshop_discount_value
+                         discount_type AS webshop_discount_type, discount_value AS webshop_discount_value"
+                       . $langCols . "
                     FROM shops WHERE id = ? AND webshop_enabled = 1", [$s]) ?: []);
+  }
+
+  /* ── Traductions d'interface (source unique : table ws_i18n) ──
+   * GET /i18n[?scope=ui] → { scope, strings: { fr:{k:v,…}, nl:{…} } }
+   * « Rien en dur » : les libellés ne vivent plus dans le JS, le front les
+   * charge ici au boot. Pas de repli inventé — si la table manque ou la requête
+   * échoue, on remonte l'erreur réelle (comme /shops), le bandeau la signale. */
+  if ($m === 'GET' && $p === '/i18n') {
+    $scope = qp('scope') ?: 'ui';
+    if (!tbl_exists('ws_i18n')) {
+      json_out(['error' => 'table ws_i18n absente',
+                'detail' => 'migration 0086 non appliquée sur le serveur'], 500);
+    }
+    try {
+      $rws = rows("SELECT lang, k, value FROM ws_i18n WHERE scope = ? ORDER BY lang, k", [$scope]);
+      $out = [];
+      foreach ($rws as $r) { $out[$r['lang']][$r['k']] = $r['value']; }
+      // `count` : combien de libellés PAR LANGUE. Ouvrir /api/i18n dans un
+      // navigateur suffit alors à répondre à « pourquoi le néerlandais ne
+      // s'affiche pas ? » — table vide, langue absente, ou front en cause.
+      $count = [];
+      foreach ($out as $lg => $dict) { $count[$lg] = count($dict); }
+      json_out(['scope' => $scope, 'count' => $count, 'strings' => $out]);
+    } catch (Throwable $e) {
+      json_out(['error' => 'i18n KO', 'detail' => $e->getMessage(), 'ligne' => $e->getLine()], 500);
+    }
+  }
+
+  /* ── Diagnostic de la liaison ERP (lecture seule, sans secret) ──
+   * GET /erp/probe[?lang=nl] → dit si l'API ERP est configurée, joignable, et
+   * COMBIEN de libellés traduits elle rend. Sans ça, « les produits ne sont pas
+   * traduits » se diagnostique à l'aveugle : on ne sait pas distinguer une
+   * adresse absente d'un jeton refusé ou d'une réponse de forme inattendue.
+   * Le jeton n'est jamais renvoyé — seulement le fait qu'il soit posé. */
+  if ($m === 'GET' && $p === '/erp/probe') {
+    $lg  = strtolower(substr((string) (qp('lang') ?: 'nl'), 0, 2));
+    $cfgE = function_exists('erp_cfg') ? erp_cfg() : ['base' => '', 'token' => ''];
+    if (!function_exists('erp_enabled') || !erp_enabled()) {
+      json_out(['configure' => false,
+                'message' => "Adresse ERP absente. Renseignez ws_param.erp_api_base "
+                           . "(ex. https://…/api/v1) ; ws_param.erp_api_token si un jeton est exigé.",
+                'langue' => $lg]);
+    }
+    $prod = erp_product_labels($lg);
+    $cat  = erp_category_labels($lg);
+    json_out([
+      'configure'  => true,
+      'base'       => $cfgE['base'],
+      'jeton_pose' => $cfgE['token'] !== '',
+      // 'login-auto' = reconnexion consultant automatique (transitoire) ;
+      // 'jeton-statique' = erp_api_token seul — meurt en 30 min si consultant.
+      'auth'       => (($cfgE['auth_phone'] ?? '') !== '' && ($cfgE['auth_pass'] ?? '') !== '')
+                        ? 'login-auto' : ($cfgE['token'] !== '' ? 'jeton-statique' : 'aucun'),
+      'langue'     => $lg,
+      'produits_traduits'   => count($prod),
+      'categories_traduites' => count($cat),
+      'exemples'   => array_slice($prod, 0, 3, true),
+      'photos'     => (function () {
+        $stamp = __DIR__ . '/../assets/product_pictures/.last_refresh';
+        return ['auto' => photos_exec_ok(),
+                'ttl'  => (int) ws_param('photos_refresh_ttl', 900),
+                'dernier_declenchement_s' => is_file($stamp) ? time() - (int) filemtime($stamp) : null];
+      })(),
+      'incidents'  => erp_notes(),
+    ]);
+  }
+
+  /* ── SYNCHRO PHOTOS À LA DEMANDE — « j'ai changé la photo, je veux la voir
+   * MAINTENANT ». GET /erp/photos-refresh lance le balayage tout de suite,
+   * sans attendre la fenêtre de 15 minutes des visites. Garde de 60 s contre
+   * le matraquage (le balayage fait ~50 appels ERP) ; le travail part en
+   * arrière-plan, la réponse dit quand revenir. ── */
+  if ($m === 'GET' && $p === '/erp/photos-refresh') {
+    if (!photos_exec_ok())
+      json_out(['declenche' => false,
+                'motif' => "exec indisponible sur ce PHP — la synchro ne tourne qu'au déploiement"], 503);
+    $stamp = __DIR__ . '/../assets/product_pictures/.last_refresh';
+    $age = is_file($stamp) ? time() - (int) filemtime($stamp) : PHP_INT_MAX;
+    if ($age < 60)
+      json_out(['declenche' => false, 'motif' => 'balayage déjà lancé il y a ' . $age . ' s',
+                'reessayer_dans_s' => 60 - $age]);
+    photos_refresh_spawn();
+    json_out(['declenche' => true,
+              'info' => 'balayage lancé — comptez ~30 s puis rechargez la page ; état détaillé : /erp/photos-report']);
+  }
+
+  /* ── RAPPORT PHOTOS — l'état de CHAQUE produit actif, d'un seul regard. ──
+   * GET /erp/photos-report
+   * Né d'un vrai besoin : « je ne sais pas vérifier un par un ». Pour chaque
+   * produit actif, le rapport dit OÙ il en est et QUOI faire :
+   *   photo_erp          — photo en ligne, gérée par la synchro ERP ;
+   *   photo_manuelle     — photo en ligne, déposée à la main (jamais écrasée) ;
+   *   prete_cote_erp     — photo posée dans Franchise Buddy, PAS ENCORE
+   *                        synchronisée : elle arrive au prochain balayage.
+   *                        Si elle reste ici d'un rapport à l'autre, la
+   *                        synchro a un problème ;
+   *   recette_sans_photo — recette liée mais aucune photo dans Franchise
+   *                        Buddy : c'est là-bas qu'il faut la poser ;
+   *   sans_recette       — pas de recette liée : lier la recette dans
+   *                        Franchise Buddy, ou déposer une photo à la main.
+   * Le lien produit→recette vient de l'API (available, boutique de référence),
+   * comme dans la synchro — le réplica local a déjà menti. Les recettes ne
+   * sont interrogées QUE pour les produits sans fichier (cache erp_get). */
+  if ($m === 'GET' && $p === '/erp/photos-report') {
+    if (!function_exists('erp_enabled') || !erp_enabled())
+      json_out(['error' => 'API ERP non configurée (ws_param.erp_api_base)'], 503);
+    $prods = rows("SELECT id, name, COALESCE(office_delivery,1) AS od" .
+                  (col_exists('ws_products', 'click_and_collect') ? ", COALESCE(click_and_collect,1) AS cc" : ", 1 AS cc") . "
+                    FROM ws_products WHERE active = 1 ORDER BY name");
+    $fichiers = product_photo_files();
+    $manif = [];
+    $mf = __DIR__ . '/../assets/product_pictures/.erp_photos.json';
+    if (is_file($mf)) { $mj = json_decode((string) @file_get_contents($mf), true); if (is_array($mj)) $manif = $mj; }
+    // Lien produit→recette : API d'abord (une requête, cache disque erp_get).
+    $refShop = (int) (ws_param('erp_ref_shop', 0) ?: (row("SELECT MIN(id) m FROM shops WHERE webshop_enabled=1")['m'] ?? 0));
+    $apiRec = [];
+    $av = $refShop > 0 ? erp_get('shops/' . $refShop . '/products/available') : null;
+    if (is_array($av)) {
+      $lst = array_is_list($av) ? $av : ($av['data'] ?? $av['items'] ?? []);
+      foreach ((array) $lst as $pr) if (is_array($pr) && !empty($pr['id']) && !empty($pr['id_recipe'])) $apiRec[(int) $pr['id']] = (int) $pr['id_recipe'];
+    }
+    $etats = ['photo_erp' => [], 'photo_manuelle' => [], 'prete_cote_erp' => [],
+              'recette_sans_photo' => [], 'sans_recette' => []];
+    foreach ($prods as $pr) {
+      $id = (int) $pr['id'];
+      $ligne = ['id' => $id, 'name' => $pr['name'],
+                'canaux' => trim(((int) $pr['cc'] ? 'click&collect ' : '') . ((int) $pr['od'] ? 'livraison' : '')) ?: 'aucun'];
+      if (isset($fichiers[$id]) || isset($fichiers[(string) $id])) {
+        $etats[isset($manif[$id]) || isset($manif[(string) $id]) ? 'photo_erp' : 'photo_manuelle'][] = $ligne;
+        continue;
+      }
+      $rid = $apiRec[$id] ?? 0;
+      if ($rid <= 0) { $etats['sans_recette'][] = $ligne; continue; }
+      $rec = erp_get('recipes/' . $rid);
+      $aPhoto = false;
+      if (is_array($rec)) {
+        foreach (['shop_photo_path', 'main_photo_path', 'photo_1_path', 'photo_2_path', 'photo_3_path'] as $k) {
+          if (!empty($rec[$k])) { $aPhoto = true; break; }
+        }
+      }
+      $ligne['recette'] = $rid;
+      $etats[$aPhoto ? 'prete_cote_erp' : 'recette_sans_photo'][] = $ligne;
+    }
+    json_out([
+      'produits_actifs' => count($prods),
+      'resume' => array_map('count', $etats),
+      'a_faire' => [
+        'prete_cote_erp'     => 'rien — la photo arrive au prochain balayage (GET /erp/photos-refresh pour tout de suite). Persistante ? la synchro a un problème.',
+        'recette_sans_photo' => 'poser la photo dans Franchise Buddy (shop_photo_path de préférence) — source unique',
+        'sans_recette'       => 'lier une recette dans Franchise Buddy — source unique, plus de fichiers manuels',
+        'photo_manuelle'     => 'anomalie transitoire : fichier hors ERP, remplacé ou retiré au prochain balayage',
+      ],
+      'etats' => $etats,
+      'incidents' => erp_notes(),
+    ]);
   }
 
   /* ── Lien webshop du client PWA (footer PWA → boutique préférée) ──
@@ -621,7 +849,7 @@ function dispatch($m, $p) {
        pouvait les réconcilier : on part donc des produits SERVIS. Une catégorie
        n'apparaît que si elle contient au moins un produit réellement vendable
        ici, et un produit vendable dont la catégorie manque le SIGNALE. */
-    $servis = catalog_produits_servis($s, qp('mode'), qp('date'));
+    $servis = catalog_produits_servis($s, qp('mode'), qp('date'), qp('lang'));
     $catIds = array_values(array_unique(array_filter(array_map(
       static fn ($x) => $x['cat_id'] !== null ? (int) $x['cat_id'] : null, $servis))));
     $subIds = array_values(array_unique(array_filter(array_map(
@@ -678,11 +906,31 @@ function dispatch($m, $p) {
     foreach ($subs as $x) { $byCat[$x['category_id']][] = $x; }
     foreach ($cats as &$c) { $c['subs'] = $byCat[$c['id']] ?? []; }
     unset($c);
+
+    /* Libellés traduits : alias servis par l'API ERP (product-categories/aliases
+       et product-category-groups/aliases), résolus ICI — le navigateur ne
+       décide de rien. Sans alias pour la langue, ou API non configurée, le
+       libellé SOURCE est conservé : jamais de trou, jamais de nom inventé. */
+    $lang = strtolower(substr((string) (qp('lang') ?: ''), 0, 2));
+    if ($lang !== '' && function_exists('erp_category_labels')) {
+      $al = erp_category_labels($lang);
+      if ($al) {
+        foreach ($cats as &$c2) {
+          if (isset($al[(string) $c2['id']])) $c2['label'] = $al[(string) $c2['id']];
+          foreach ($c2['subs'] as &$sb) {
+            if (isset($al[(string) $sb['id']])) $sb['label'] = $al[(string) $sb['id']];
+          }
+          unset($sb);
+        }
+        unset($c2);
+      }
+    }
     json_out($cats);
   }
   if ($m === 'GET' && $p === '/catalog/products') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    json_out(catalog_produits_servis($s, qp('mode'), qp('date')));
+    photos_refresh_async();   // relance des photos ERP au fil des visites (throttlée, en arrière-plan)
+    json_out(catalog_produits_servis($s, qp('mode'), qp('date'), qp('lang')));
   }
   /* ── VENTES CROISÉES — évaluation côté panier (migration 0056). ───────────
      Le navigateur envoie ce qu'il a (panier, boutique, date et heure de
@@ -1117,6 +1365,7 @@ function dispatch($m, $p) {
   //   Réseau (id_shop NULL/=shop) + nominatifs (CUSTOMER/OFFICE de CE client).
   //   Filtrés : actifs, non expirés, non épuisés (global + par client), éligibles.
   if ($m === 'GET' && $p === '/vouchers/available') {
+    $vLang = (string) (qp('lang') ?: '');
     $s = (int) (qp('shopId') ?: 0); if (!$s) json_out([]);
     // $tblExists n'existe QUE dans le bloc /franchisee/ — ici (racine) on
     // utilise une vérification directe (sinon « null is not callable » → 500).
@@ -1164,17 +1413,24 @@ function dispatch($m, $p) {
         $kind = $r['discount_kind'];
         $isGift = $kind === 'PERCENT' && (float) $r['discount_value'] >= 100 && !empty($r['scope_id_product']);
         $val = $kind === 'PERCENT' ? '−' . rtrim(rtrim((string) $r['discount_value'], '0'), '.') . ' %'
-             : ($kind === 'FIXED' ? '−' . rtrim(rtrim((string) $r['discount_value'], '0'), '.') . ' €' : 'Livraison offerte');
+             : ($kind === 'FIXED' ? '−' . rtrim(rtrim((string) $r['discount_value'], '0'), '.') . ' €'
+                                  : ui_t('voucher.freeDelivery', 'Livraison offerte', $vLang));
         if (!empty($r['scope_id_product'])) {
           $pn = row("SELECT name FROM ws_products WHERE id=?", [(int) $r['scope_id_product']]);
-          $pname = trim((string) (($pn['name'] ?? null) ?: 'un produit'));
-          $val = $isGift ? ($pname . ' offert') : ($val . ' sur ' . ($r['scope_max_qty'] !== null ? ((int) $r['scope_max_qty'] . ' × ') : '') . $pname);
+          $pname = trim((string) (($pn['name'] ?? null) ?: ui_t('voucher.someProduct', 'un produit', $vLang)));
+          $val = $isGift
+            ? ui_t('voucher.productFree', '{produit} offert', $vLang, ['produit' => $pname])
+            : ui_t('voucher.onProduct', '{remise} sur {qte}{produit}', $vLang, [
+                'remise' => $val,
+                'qte'    => $r['scope_max_qty'] !== null ? ((int) $r['scope_max_qty'] . ' × ') : '',
+                'produit'=> $pname]);
         }
         $minOrd = (float) $r['min_order_amount'];
         $out[] = ['code' => $r['code'], 'label' => $val,
                   'min_order' => $minOrd,
                   'reachable' => $minOrd <= 0 || $sub >= $minOrd,
-                  'hint' => $minOrd > 0 ? ('dès ' . rtrim(rtrim(number_format($minOrd, 2, ',', ''), '0'), ',') . ' €') : '',
+                  'hint' => $minOrd > 0 ? ui_t('voucher.fromAmount', 'dès {montant} €', $vLang,
+                                ['montant' => rtrim(rtrim(number_format($minOrd, 2, ',', ''), '0'), ',')]) : '',
                   'personal' => $tk !== 'NETWORK'];
       }
       json_out($out);
@@ -1405,7 +1661,12 @@ function dispatch($m, $p) {
     // compte ici : la marchandise partait au bureau et l'encaissement n'avait
     // jamais lieu. Même famille que la commande acceptée sans moyen de paiement.
     if (qp('mode') === 'delivery') $methods = array_values(array_filter($methods, fn ($x) => $x !== 'shop'));
-    json_out(array_map(fn ($x) => ['method' => $x, 'label' => payment_label($x)], $methods));
+    // `family` (payment_family) dit au front si le moyen passe par la page de
+    // paiement hébergée ('stripe'), se règle sur place ('shop') ou en compte
+    // ('deferred'). Le front ne tient PAS sa propre liste de méthodes carte :
+    // dupliquer la classification, c'est la voir diverger.
+    json_out(array_map(fn ($x) => ['method' => $x, 'label' => payment_label($x, qp('lang')),
+                                   'family' => payment_family($x)], $methods));
   }
 
   /* ── Availability / Calendar ── */
@@ -2698,6 +2959,11 @@ function dispatch($m, $p) {
         'free_delivery_minimum' => $freeMin, 'po_number' => $poNumber, 'invoice_requested' => $invRequested, 'invoice_vat' => $invVat,
         // Source AUTOMATIQUE : toute commande passée ici vient du webshop.
         'source' => 'webshop',
+        // Ticket de caisse FISCAL édité à la validation (caisse certifiée) :
+        // stocké tel qu'il est fourni — jamais fabriqué par le webshop. Colonnes
+        // ignorées si absentes (col_exists ci-dessous). Ordre 0085.
+        'fiscal_ticket_no'  => isset($b['fiscalTicketNo'])  && $b['fiscalTicketNo']  !== '' ? mb_substr((string) $b['fiscalTicketNo'], 0, 40) : null,
+        'fiscal_ticket_url' => isset($b['fiscalTicketUrl']) && $b['fiscalTicketUrl'] !== '' ? mb_substr((string) $b['fiscalTicketUrl'], 0, 255) : null,
         // Clé d'idempotence de la tentative (voir garde en tête du handler).
         'request_key' => $reqKey,
       ];
@@ -3206,6 +3472,8 @@ function dispatch($m, $p) {
     $hasBe  = col_exists('pwa_purchases', 'billing_entity_id');
     $hasFrz = col_exists('pwa_purchases', 'frozen_at');
     $hasPdf = col_exists('pwa_invoices', 'pdf_path');
+    $hasPep = col_exists('pwa_invoices', 'peppol_status');   // statut Peppol (0085)
+    $hasFno = col_exists('ws_orders', 'fiscal_ticket_no');   // ticket fiscal (0085)
     $items  = [];
     try {                                                              // tickets (ERP/PWA)
       $items = array_merge($items, rows(
@@ -3219,6 +3487,9 @@ function dispatch($m, $p) {
                 " . ($hasFrz ? "p.frozen_at"               : "NULL") . " AS frozenAt,
                 i.invoice_no AS invoiceNo, i.total_ttc AS invoiceTotal,
                 " . ($hasPdf ? "i.pdf_path" : "NULL") . " AS pdfPath,
+                p.purchase_code AS fiscalTicketNo, NULL AS fiscalTicketUrl,
+                " . ($hasPep ? "i.peppol_status" : "NULL") . " AS peppolStatus,
+                " . ($hasPep ? "i.peppol_at"     : "NULL") . " AS peppolAt,
                 'ticket' AS source
            FROM pwa_purchases p LEFT JOIN pwa_invoices i ON i.id = p.invoice_id
           WHERE p.client_id = ? AND COALESCE(p.occurred_at, p.created_at) >= DATE_SUB(NOW(), INTERVAL 12 MONTH)",
@@ -3229,7 +3500,10 @@ function dispatch($m, $p) {
         "SELECT o.order_ref AS ref, s.name AS shop, o.created_at AS at,
                 (SELECT COUNT(*) FROM ws_order_lines l WHERE l.order_id = o.id" . oline_own() . ") AS items,
                 o.total AS total, 0 AS toInvoice, NULL AS billingEntityId, NULL AS frozenAt,
-                NULL AS invoiceNo, NULL AS invoiceTotal, NULL AS pdfPath, 'order' AS source
+                NULL AS invoiceNo, NULL AS invoiceTotal, NULL AS pdfPath,
+                " . ($hasFno ? "o.fiscal_ticket_no"  : "NULL") . " AS fiscalTicketNo,
+                " . ($hasFno ? "o.fiscal_ticket_url" : "NULL") . " AS fiscalTicketUrl,
+                NULL AS peppolStatus, NULL AS peppolAt, 'order' AS source
            FROM ws_orders o LEFT JOIN shops s ON s.id = o.shop_id AND s.webshop_enabled = 1
           WHERE o.customer_id = ? AND o.created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)",
         [$id]));
@@ -3243,6 +3517,8 @@ function dispatch($m, $p) {
         : (time() > $dl ? 'closed' : 'open'));
       $it['locked']   = $it['state'] === 'invoiced' || $it['state'] === 'closed' || !empty($it['frozenAt']);
       $it['deadline'] = date('Y-m-d', $dl);
+      // Drapeau « facture PDF disponible » sans exposer le chemin interne.
+      $it['hasInvoicePdf'] = !empty($it['pdfPath']);
       unset($it['frozenAt'], $it['pdfPath']); // pdf servi via endpoint authentifié uniquement
     }
     unset($it);
@@ -5213,6 +5489,28 @@ function dispatch($m, $p) {
       if (array_key_exists('address', $b)) {
         $aCol = col_exists($SHOPS, 'address_line') ? 'address_line' : (col_exists($SHOPS, 'street') ? 'street' : null);
         if ($aCol) { $sets[] = "$aCol=?"; $vals[] = mb_substr(trim((string) $b['address']), 0, 255); }
+      }
+      /* Langue de la boutique (migration 0087). Elle n'était posée que par
+         migration : aucun écran ne pouvait la changer, donc « Halle ouvre en
+         néerlandais » n'était pas paramétrable par le franchisé.
+         - defaultLang : '' ou absent → NULL (= « non paramétré », l'app décide).
+         - languages   : liste offerte au sélecteur, filtrée sur les codes à
+           deux lettres. Vide → NULL (= toutes celles que l'app supporte).
+         Aucune valeur inventée : on n'écrit que ce que l'utilisateur envoie. */
+      if (array_key_exists('defaultLang', $b) && col_exists($SHOPS, 'default_lang')) {
+        $dl = strtolower(trim((string) $b['defaultLang']));
+        $sets[] = 'default_lang=?';
+        $vals[] = preg_match('/^[a-z]{2}$/', $dl) ? $dl : null;
+      }
+      if (array_key_exists('languages', $b) && col_exists($SHOPS, 'languages')) {
+        $raw = is_array($b['languages']) ? $b['languages'] : explode(',', (string) $b['languages']);
+        $lgs = [];
+        foreach ($raw as $x) {
+          $x = strtolower(trim((string) $x));
+          if (preg_match('/^[a-z]{2}$/', $x) && !in_array($x, $lgs, true)) $lgs[] = $x;
+        }
+        $sets[] = 'languages=?';
+        $vals[] = $lgs ? implode(',', $lgs) : null;
       }
       if (!$sets) json_out(['ok' => false, 'error' => 'rien à modifier'], 400);
       $vals[] = (int) $shopId;
@@ -10269,9 +10567,59 @@ function payment_family($m) {
   if (in_array($m, ['deferred', 'account', 'compte', 'facturation'], true)) return 'deferred';
   return $m;
 }
-function payment_label($m) {
-  $map = ['stripe' => 'Carte / Bancontact (en ligne)', 'shop' => 'Paiement en boutique', 'deferred' => 'Sur compte (facturation)'];
-  return $map[$m] ?? $m;
+/* Libellé d'un moyen de paiement, DANS LA LANGUE DEMANDÉE.
+ * Ces libellés étaient codés en dur en français : sur une boutique
+ * néerlandophone, « Carte / Bancontact (en ligne) » s'affichait au milieu
+ * d'un écran en néerlandais. Ce ne sont pas des données de configuration
+ * (aucune table ne les porte), donc ils rejoignent la table de traduction
+ * comme le reste de l'interface : clés pay.<method>.
+ * Repli sur le libellé français si la traduction manque — jamais un code
+ * technique nu à l'écran. */
+/* Libellé d'interface côté serveur, dans la langue demandée (table ws_i18n).
+ * Sert aux textes que le SERVEUR compose — libellés de bons, moyens de
+ * paiement : le front ne peut pas les traduire, il ne reçoit qu'une phrase
+ * déjà faite. Repli sur le texte français fourni si la clé manque : jamais
+ * une clé nue ni une chaîne vide à l'écran. */
+function ui_t($key, $fr, $lang = '', array $params = []) {
+  static $cache = [];
+  $lg = strtolower(substr((string) $lang, 0, 2));
+  $out = $fr;
+  if ($lg !== '' && $lg !== 'fr') {
+    if (!array_key_exists($lg, $cache)) {
+      $cache[$lg] = [];
+      try {
+        if (tbl_exists('ws_i18n')) {
+          foreach (rows("SELECT k, value FROM ws_i18n WHERE scope='ui' AND lang=?", [$lg]) as $r) {
+            $cache[$lg][$r['k']] = $r['value'];
+          }
+        }
+      } catch (Throwable $e) { $cache[$lg] = []; }
+    }
+    if (!empty($cache[$lg][$key])) $out = $cache[$lg][$key];
+  }
+  foreach ($params as $k => $v) $out = str_replace('{' . $k . '}', (string) $v, $out);
+  return $out;
+}
+
+function payment_label($m, $lang = '') {
+  static $tr = null;
+  $fr = ['stripe' => 'Carte / Bancontact (en ligne)', 'shop' => 'Paiement en boutique',
+         'deferred' => 'Sur compte (facturation)'];
+  $lg = strtolower(substr((string) $lang, 0, 2));
+  if ($lg !== '' && $lg !== 'fr') {
+    if ($tr === null) {
+      $tr = [];
+      try {
+        if (tbl_exists('ws_i18n')) {
+          foreach (rows("SELECT k, lang, value FROM ws_i18n WHERE scope='ui' AND k LIKE 'pay.%'") as $r) {
+            $tr[$r['lang']][substr($r['k'], 4)] = $r['value'];
+          }
+        }
+      } catch (Throwable $e) { $tr = []; }
+    }
+    if (!empty($tr[$lg][$m])) return $tr[$lg][$m];
+  }
+  return $fr[$m] ?? $m;
 }
 /* Moyens de paiement autorisés pour une boutique + profil (config, sinon défaut).
    ws_shop_payment_options n'est créée par aucune migration : si la table est
@@ -11552,9 +11900,19 @@ function stripe_checkout($order, $lines) {
   if (!$secret) return null;
   $total = round((float) ($order['total'] ?? 0), 2);
   if ($total <= 0) return false;                    // rien à encaisser : anomalie
+  /* Le retour atterrit sur la page de l'app (?paid=1 / ?canceled=1, accueillis
+     par le front). L'URL configurée est FIXE ; la commande, elle, connaît sa
+     boutique : on l'ajoute pour que le retour rouvre le bon magasin au lieu du
+     sélecteur. */
+  $suc = (string) cfg()['checkout_success'];
+  $can = (string) cfg()['checkout_cancel'];
+  if (!empty($order['shop_id'])) {
+    $suc .= (strpos($suc, '?') !== false ? '&' : '?') . 'shop=' . (int) $order['shop_id'];
+    $can .= (strpos($can, '?') !== false ? '&' : '?') . 'shop=' . (int) $order['shop_id'];
+  }
   $f = ['mode' => 'payment',
-        'success_url' => cfg()['checkout_success'],
-        'cancel_url' => cfg()['checkout_cancel'],
+        'success_url' => $suc,
+        'cancel_url' => $can,
         'metadata[order_id]' => $order['id'], 'metadata[order_ref]' => $order['order_ref'] ?? ''];
   $somme = 0.0;
   foreach ($lines as $l) $somme += ((float) $l['unit_price']) * ((int) $l['qty']);

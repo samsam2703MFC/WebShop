@@ -41,6 +41,7 @@
   if (window.WSOffices)      window.WSOffices.endpoint      = BASE_URL + '/offices';
   if (window.WSTours)        window.WSTours.endpoint        = BASE_URL + '/tours';
   if (window.WSOrders)       window.WSOrders.endpoint       = BASE_URL + '/orders';
+  if (window.WSOrders)       window.WSOrders.payEndpoint    = BASE_URL + '/payments/checkout';
   if (window.WSCompanies)    window.WSCompanies.setEndpoint(BASE_URL + '/companies');
   if (window.WSPayments)     window.WSPayments.endpoint     = BASE_URL + '/payment-methods';
   if (window.WSAuth)         window.WSAuth.endpoint         = BASE_URL + '/auth';
@@ -48,6 +49,9 @@
   if (window.WSSlots)        window.WSSlots.endpoint        = BASE_URL + '/slots';
   if (window.WSCalendar)     window.WSCalendar.endpoint     = BASE_URL + '/calendar';
   if (window.WSBrand)        window.WSBrand.endpoint        = BASE_URL + '/brand';
+  /* i18n : source unique = table ws_i18n via GET /i18n. On lance le chargement
+     tout de suite pour que les libellés soient prêts au premier rendu. */
+  if (window.WSI18n) { window.WSI18n.setEndpoint(BASE_URL + '/i18n'); window.WSI18n.load(); }
   /* VIES: template endpoint — the stub fills {country}/{vat}. */
   if (window.WSVies)         window.WSVies.endpoint         = BASE_URL + '/vies/{country}/{vat}';
 

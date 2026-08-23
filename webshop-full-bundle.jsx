@@ -226,16 +226,71 @@ const ICONS = {
 // =========================================================================
 // DATE PILL — date picker with popover calendar
 // =========================================================================
-const W_MONTHS = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
-const W_DAYS = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
-const W_DAYS_SHORT3 = ['Lun.','Mar.','Mer.','Jeu.','Ven.','Sam.','Dim.'];
+/* Noms de jours et de mois : rendus par Intl DANS LA LANGUE COURANTE — jamais
+   des tableaux français en dur (une boutique néerlandophone affichait « Dim. »
+   à côté de libellés en NL). Ils n'ont pas leur place dans la table de
+   traduction : le navigateur les connaît pour toutes les langues, et une copie
+   en base se désynchroniserait. Le reste des libellés vient bien de ws_i18n. */
+function wsLocale() {
+  const l = (window.WSI18n && window.WSI18n.getLang && window.WSI18n.getLang()) || 'fr';
+  return l === 'nl' ? 'nl-BE' : l === 'en' ? 'en-GB' : l === 'de' ? 'de-DE' : 'fr-BE';
+}
+function wsCap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+// Mois en toutes lettres (en-tête du calendrier) : « août » / « augustus ».
+function wsMonthName(monthIndex, year) {
+  return wsCap(new Date(year != null ? year : 2000, monthIndex, 1)
+    .toLocaleDateString(wsLocale(), { month: 'long' }));
+}
+// Ligne d'en-tête du calendrier : Lun…Dim / Ma…Zo, semaine commençant le lundi.
+function wsWeekdayNames() {
+  const base = new Date(2024, 0, 1);              // 1er janvier 2024 = un lundi
+  return Array.from({ length: 7 }, (_, i) =>
+    wsCap(new Date(2024, 0, 1 + i).toLocaleDateString(wsLocale(), { weekday: 'short' })
+      .replace(/\.$/, '')));
+}
 function wsFormatPill(d) {
-  return `${W_DAYS_SHORT3[(d.getDay()+6)%7]} ${d.getDate()} ${W_MONTHS[d.getMonth()].slice(0,3)}.`;
+  // Pastille du bandeau : jour + numéro, SANS le mois. « Dim. 16 » suffit à
+  // lever l'ambiguïté (on ne franchit presque jamais une fin de mois) et
+  // libère la largeur qui manquait au nom de la boutique. Le mois reste
+  // affiché dans le calendrier ouvert.
+  const day = wsCap(d.toLocaleDateString(wsLocale(), { weekday: 'short' }));
+  return `${day} ${d.getDate()}`;
+}
+// i18n : hook réactif (webshop-i18n-react → window.useT). Re-rend le composant
+// au changement de langue ; repli direct sur WSI18n.t si le hook n'est pas là.
+function wsUseT() {
+  return window.useT
+    ? window.useT()
+    : { t: (k, p) => (window.WSI18n ? window.WSI18n.t(k, p) : k), tCategory: (id, fb) => fb,
+        lang: (window.WSI18n && window.WSI18n.getLang) ? window.WSI18n.getLang() : 'fr',
+        setLang: (l) => { if (window.WSI18n) window.WSI18n.setLang(l); } };
+}
+/* Rendu RICHE d'un libellé traduit : une phrase = UNE clé, même quand une
+   partie est mise en valeur. Le texte en base porte des marqueurs —
+   **fort** → <strong>, __accent__ → <em> — au lieu d'être coupé en morceaux
+   par le JSX. Découper « Bon retour <em>parmi nous</em>. » en deux clés
+   rendait la phrase intraduisible : l'ordre des mots change d'une langue à
+   l'autre, et le traducteur doit pouvoir DÉPLACER l'emphase. */
+function tRich(t, key, params) {
+  const raw = t(key, params);
+  const out = [];
+  const re = /\*\*([^*]+)\*\*|__([^_]+)__/g;
+  let last = 0, m, i = 0;
+  while ((m = re.exec(raw)) !== null) {
+    if (m.index > last) out.push(raw.slice(last, m.index));
+    out.push(m[1] != null
+      ? <strong key={i++}>{m[1]}</strong>
+      : <em key={i++}>{m[2]}</em>);
+    last = m.index + m[0].length;
+  }
+  if (last < raw.length) out.push(raw.slice(last));
+  return out;
 }
 function DatePill({ mode, value, onChange, shopId,
                     collectCutoffPassed, collectCutoffLabel,
                     deliveryCutoffPassed, deliveryCutoffLabel,
                     minLeadDays }) {
+  const { t } = wsUseT();
   const [open, setOpen] = React.useState(false);
   const [view, setView] = React.useState(() => new Date(value.getFullYear(), value.getMonth(), 1));
   // dayMap: { 'YYYY-MM-DD': { available, reason } } — populated per visible month
@@ -327,22 +382,22 @@ function DatePill({ mode, value, onChange, shopId,
     <div ref={wrapRef} className="ws-datepill">
       <button className="ws-nav__date" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <Pict d={ICONS.cal} s={12}/>
-        <span>Date de {mode === 'delivery' ? 'livraison' : 'retrait'}</span>
+        <span>{t(mode === 'delivery' ? 'nav.datepill.delivery' : 'nav.datepill.pickup')}</span>
         <strong>· {wsFormatPill(value)}</strong>
         <Pict d={ICONS.chev} s={10}/>
       </button>
       {open && (
         <div className={`ws-datepop ws-datepop--${mode}`} onClick={(e) => e.stopPropagation()}>
           <div className="ws-datepop__head">
-            <button className="ws-datepop__nav" onClick={() => shift(-1)} aria-label="Mois précédent">‹</button>
+            <button className="ws-datepop__nav" onClick={() => shift(-1)} aria-label={t('cal.prevMonth')}>‹</button>
             <span className="ws-datepop__title">
-              {W_MONTHS[view.getMonth()]} {view.getFullYear()}
+              {wsMonthName(view.getMonth(), view.getFullYear())} {view.getFullYear()}
               {loadingDays && <span style={{fontSize:9,opacity:.5,marginLeft:4}}>…</span>}
             </span>
-            <button className="ws-datepop__nav" onClick={() => shift(1)} aria-label="Mois suivant">›</button>
+            <button className="ws-datepop__nav" onClick={() => shift(1)} aria-label={t('cal.nextMonth')}>›</button>
           </div>
           <div className="ws-datepop__dow">
-            {W_DAYS.map((d) => <span key={d}>{d}</span>)}
+            {wsWeekdayNames().map((d, i) => <span key={i}>{d}</span>)}
           </div>
           <div className="ws-datepop__grid">
             {cells.map((d, i) => {
@@ -398,6 +453,7 @@ function DatePill({ mode, value, onChange, shopId,
    le client ne peut ni comprendre ni corriger. C'est au franchisé de les
    traiter, et le workflow check-endpoints les lui compte et les lui nomme. */
 function OfficeSearchPicker({ chercher, value, onPick, label }) {
+  const { t } = wsUseT();
   const [q, setQ] = React.useState('');
   const [hits, setHits] = React.useState([]);
   const [busy, setBusy] = React.useState(false);
@@ -423,7 +479,7 @@ function OfficeSearchPicker({ chercher, value, onPick, label }) {
     <div className="ws-acc__pick">
       <input type="search" className="ws-acc__input" value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="Nom de votre société ou adresse…"
+        placeholder={t('office.searchPh')}
         aria-label={label || 'Rechercher un bureau'} autoComplete="off"/>
       {q.trim().length < 2 ? (
         <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>
@@ -431,7 +487,7 @@ function OfficeSearchPicker({ chercher, value, onPick, label }) {
           par une tournée de cette boutique apparaissent.
         </p>
       ) : busy ? (
-        <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>Recherche…</p>
+        <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>{t('common.searchPh')}</p>
       ) : hits.length === 0 && cherche ? (
         <p className="ws-acc__hint" style={{ margin: '8px 2px 0' }}>
           Aucun bureau desservi ne correspond à «&nbsp;{q.trim()}&nbsp;». S'il s'agit du vôtre,
@@ -462,6 +518,7 @@ function OfficeSearchPicker({ chercher, value, onPick, label }) {
 
 // Mode pill — Ruby (collect) / Abricot (delivery)
 function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel }) {
+  const { t } = wsUseT();
   const [hover, setHover] = React.useState(false);
   const delivTitle = deliveryCutoffPassed
     ? `Livraison non disponible après ${deliveryCutoffLabel}`
@@ -471,14 +528,15 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
     : undefined;
   const effMode = deliveryCutoffPassed && mode === 'delivery' ? 'collect' : mode;
   return (
-    <div className="ws-modes" role="tablist" aria-label="Mode boutique">
+    <div className="ws-modewrap">
+    <div className="ws-modes" role="tablist" aria-label={t('nav.modeAria')}>
       <span className="ws-modes__indicator" data-mode={effMode} aria-hidden="true"/>
       <button className={`ws-mode ws-mode--collect${mode === 'collect' ? ' is-active' : ''}${collectCutoffPassed ? ' is-disabled' : ''}`}
-        onClick={() => onChange('collect')} role="tab" aria-selected={mode === 'collect'} aria-label="Click & Collect"
+        onClick={() => onChange('collect')} role="tab" aria-selected={mode === 'collect'} aria-label={t('nav.mode.collect')}
         title={collTitle}>
         <Pict d={ICONS.bag} s={14}/>
-        <span className="ws-mode__lbl-full">Click &amp; Collect</span>
-        {collectCutoffPassed && <span className="ws-mode__cutoff"> · Fermé</span>}
+        <span className="ws-mode__lbl-full">{t('nav.mode.collect')}</span>
+        {collectCutoffPassed && <span className="ws-mode__cutoff"> · {t('nav.mode.closed')}</span>}
       </button>
       {/* Pas d'attribut `disabled` : un bouton désactivé n'émet aucun clic, donc
           le motif du refus ne pouvait jamais s'afficher — on retombait sur le
@@ -486,17 +544,21 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
           indisponible (is-disabled) et aria-disabled l'annonce aux lecteurs
           d'écran, mais le clic sert enfin à dire POURQUOI. */}
       <button className={`ws-mode ws-mode--delivery${mode === 'delivery' ? ' is-active' : ''}${deliveryCutoffPassed ? ' is-disabled' : ''}`}
-        onClick={() => onChange('delivery')} role="tab" aria-selected={mode === 'delivery'} aria-label="Livraison au bureau"
+        onClick={() => onChange('delivery')} role="tab" aria-selected={mode === 'delivery'} aria-label={t('nav.mode.delivery')}
         aria-disabled={deliveryCutoffPassed || undefined}
         title={delivTitle}>
         <Pict d={ICONS.truck} s={14}/>
-        <span className="ws-mode__lbl-full">Livraison au bureau</span>
-        {deliveryCutoffPassed && <span className="ws-mode__cutoff"> · Fermé</span>}
+        <span className="ws-mode__lbl-full">{t('nav.mode.delivery')}</span>
+        {deliveryCutoffPassed && <span className="ws-mode__cutoff"> · {t('nav.mode.closed')}</span>}
       </button>
-      {/* « i » apricot : pas encore de bureau ? → ouvre le formulaire zone (landing) */}
+      </div>
+      {/* « i » apricot : pas encore de bureau ? → ouvre le formulaire zone (landing).
+          Il est SORTI du rail : depuis que le sélecteur est un segment à deux
+          colonnes, un troisième enfant tombait en seconde ligne et débordait
+          sous le rail. Frère du rail, il reste à côté sans le déformer. */}
       <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flex: 'none', marginLeft: 4 }}
         onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
-        <button type="button" aria-label="Pas encore de bureau ?"
+        <button type="button" aria-label={t('office.notYet')}
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); window.open('/landing/livraison-bureau.html', '_blank', 'noopener'); }}
           style={{ width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer', flex: 'none',
                    background: '#c17a2a', color: '#fff', font: '700 11px/1 system-ui',
@@ -511,7 +573,7 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
             <span aria-hidden="true" style={{ position: 'absolute', top: -5, right: 15, width: 11, height: 11,
               background: '#e8a15c', borderTop: '1px solid rgba(36,26,22,.10)', borderLeft: '1px solid rgba(36,26,22,.10)',
               transform: 'rotate(45deg)', borderRadius: 3 }} />
-            Pas encore de bureau&nbsp;? Vérifiez si votre zone est desservie et faites votre demande.
+            {t('office.notYetTip')}
           </span>
         )}
       </span>
@@ -731,15 +793,16 @@ function PortionGlyph({ size = 14 }) {
 // other option groups (pdm-optrow + pdm-seg). Each button shows icon +
 // portion name + computed price.
 function PortionOptions({ value, onChange, product }) {
+  const { t } = wsUseT();
   // Options du produit : prix EXPLICITES ERP quand fournis, sinon facteurs.
   const shapes = portionOptionList(product);
   return (
     <div className="pdm-optrow">
       <div className="pdm-optrow__head">
-        <span className="pdm-opt__label">Portion</span>
-        <span className="pdm-opt__req">Requis</span>
+        <span className="pdm-opt__label">{t('pd.portion')}</span>
+        <span className="pdm-opt__req">{t('pd.required')}</span>
       </div>
-      <div className="pdm-seg pdm-seg--portions" role="radiogroup" aria-label="Portion" style={{ '--pdm-seg-n': shapes.length }}>
+      <div className="pdm-seg pdm-seg--portions" role="radiogroup" aria-label={t('pd.portion')} style={{ '--pdm-seg-n': shapes.length }}>
         {shapes.map((o) => {
           const on = value === o.v;
           const price = o.price;
@@ -767,6 +830,7 @@ function PortionOptions({ value, onChange, product }) {
 // PRODUCT DETAIL MODAL — options, upsells, bundles
 // =========================================================================
 function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
+  const { t, lang } = wsUseT();
   // ── Hooks (must run unconditionally; never gate behind early-return) ──
   const initSelections = React.useMemo(() => {
     const out = {};
@@ -792,10 +856,13 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   const bundleList = React.useMemo(() => {
     if (!product?.has_menu_options || !product.available_bundles) return [];
     return [
-      { id: null, name: 'À la carte', description: 'Le produit seul, sans formule.', price_modifier: 0, slots: [], advantages: [], included: [] },
+      { id: null, name: t('pd.alaCarte'), description: t('pd.alaCarteDesc'), price_modifier: 0, slots: [], advantages: [], included: [] },
       ...product.available_bundles,
     ];
-  }, [product]);
+    // `lang` en dépendance : « À la carte » et sa description viennent de la
+    // table de traduction. Sans elle, changer de langue modale ouverte laissait
+    // la première formule dans la langue précédente.
+  }, [product, lang]);
 
   // Reset state when the product changes — and auto-open required option groups + auto-pick recommended bundle.
   React.useEffect(() => {
@@ -1012,7 +1079,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
       .map((o) => { const c = o.choices.find((x) => x.id === sel[o.id]); return c ? c.label : null; })
       .filter(Boolean);
     if (activeBundle) {
-      optionLabels.push('Formule · ' + activeBundle.name);
+      optionLabels.push(t('pd.bundle') + ' · ' + activeBundle.name);
       for (const slot of (activeBundle.slots || [])) {
         for (const cid of slotPicked(slot)) {
           const c = slot.choices.find((x) => x.id === cid);
@@ -1089,7 +1156,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     <div className="pdm-scrim" role="dialog" aria-modal="true" onClick={onClose} style={{ '--accent': accentVar }}>
       <div ref={pdmPanelRef} className="pdm" onClick={(e) => e.stopPropagation()}>
         <span className="ws-modal__handle pdm-handle" aria-hidden="true"/>
-        <button className="pdm-close" aria-label="Fermer" {...wsTap(onClose, { shield: true })}><Pict d={ICONS.close} s={13}/></button>
+        <button className="pdm-close" aria-label={t('common.close2')} {...wsTap(onClose, { shield: true })}><Pict d={ICONS.close} s={13}/></button>
 
         {/* HERO */}
         <div className="pdm-hero">
@@ -1105,7 +1172,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
         <div className="pdm-info">
           <div className="pdm-scroll" ref={scrollRef}>
             <div className="pdm-head">
-              <p className="pdm-eyebrow">{product.cat === 'sandwiches' ? 'Sandwich' : product.cat === 'plats' ? 'Plat du jour' : 'Notre sélection'}</p>
+              <p className="pdm-eyebrow">{product.cat === 'sandwiches' ? t('pd.eyebrow.sandwich') : product.cat === 'plats' ? t('pd.eyebrow.dish') : t('pd.eyebrow.selection')}</p>
               <h2 className="pdm-title">{product.name}</h2>
               {product.description ? <p className="pdm-desc">{product.description}</p> : null}
               {/* Allergènes — 3 états distincts (sécurité alimentaire) :
@@ -1115,10 +1182,10 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                 <div className="pdm-allergens"><Allergens list={product.allergens}/></div>
               )}
               {Array.isArray(product.allergens) && product.allergens.length === 0 && (
-                <p className="pdm-allergens pdm-allergens--none">Sans allergène déclaré (recette évaluée).</p>
+                <p className="pdm-allergens pdm-allergens--none">{t('pd.noAllergen')}</p>
               )}
               {!Array.isArray(product.allergens) && (
-                <p className="pdm-allergens pdm-allergens--unknown">Allergènes non renseignés — renseignez-vous en boutique.</p>
+                <p className="pdm-allergens pdm-allergens--unknown">{t('pd.allergenUnknown')}</p>
               )}
               {product.portions && (
                 <PortionOptions
@@ -1151,8 +1218,8 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                       <div className="pdm-optrow__head">
                         <span className="pdm-opt__label">{o.label}</span>
                         {o.required
-                          ? <span className="pdm-opt__req">Requis</span>
-                          : <span className="pdm-opt__req pdm-opt__req--soft">Optionnel</span>}
+                          ? <span className="pdm-opt__req">{t('pd.required')}</span>
+                          : <span className="pdm-opt__req pdm-opt__req--soft">{t('pd.optional')}</span>}
                       </div>
                       <div className="pdm-seg" role="radiogroup" aria-label={o.label} style={{ '--pdm-seg-n': o.choices.length }}>
                         {o.choices.map((c) => {
@@ -1184,11 +1251,11 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                          className={'pdm-opt' + (isOpen ? ' is-open' : '') + (activeOpt === id ? ' is-active' : '')}>
                       <button className="pdm-opt__head" {...wsTap(() => toggleOpt(id), { open: true })} aria-expanded={isOpen}>
                         <span className="pdm-opt__head-l">
-                          <span className="pdm-opt__label">Pour accompagner</span>
+                          <span className="pdm-opt__label">{t('xsell.title')}</span>
                           {!isOpen && count > 0 && <span className="pdm-opt__sub">{count} ajout{count>1?'s':''}</span>}
                         </span>
                         <span className="pdm-opt__head-r">
-                          <span className="pdm-opt__req pdm-opt__req--soft">Optionnel</span>
+                          <span className="pdm-opt__req pdm-opt__req--soft">{t('pd.optional')}</span>
                           <span className="pdm-opt__chev"><Pict d={ICONS.chev} s={12}/></span>
                         </span>
                       </button>
@@ -1220,9 +1287,9 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
             {bundleList.length > 0 && (
               <div className="pdm-bundles">
                 <div className="pdm-section-head">
-                  <span className="pdm-section-title">Formule</span>
+                  <span className="pdm-section-title">{t('pd.bundle')}</span>
                   {bundleList.length > 1 && (
-                    <button type="button" className="pdm-section-arrow" aria-label="Suivant"
+                    <button type="button" className="pdm-section-arrow" aria-label={t('co.next')}
                       {...wsTap(() => {
                         const cur = bundleList.findIndex((b) => b.id === bundleId);
                         const next = cur + 1 >= bundleList.length ? 0 : cur + 1;
@@ -1241,11 +1308,11 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                            className={'pdm-bcard' + (picked ? ' is-picked' : '')}
                            role="button"
                            {...wsTap(() => pickBundle(b.id), { open: true })}>
-                        {b.recommended && <span className="pdm-bcard__badge">Best option</span>}
+                        {b.recommended && <span className="pdm-bcard__badge">{t('pd.bestOption')}</span>}
                         <div className="pdm-bcard__top">
                           <span className="pdm-bcard__name">{b.name}</span>
                           <span className={'pdm-bcard__price' + (b.price_modifier > 0 ? '' : ' pdm-bcard__price--free')}>
-                            {b.price_modifier > 0 ? '+' + b.price_modifier.toFixed(2) + ' €' : 'Inclus'}
+                            {b.price_modifier > 0 ? '+' + b.price_modifier.toFixed(2) + ' €' : t('pd.included')}
                           </span>
                         </div>
                         <p className="pdm-bcard__desc">{b.description}</p>
@@ -1269,7 +1336,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                                             {slotPicked(slot).length}/{Math.max(1, slot.max_select || 1)}
                                             {slot.required ? ' — choisissez ' + Math.max(1, slot.min_select || 1) : ''}
                                           </span>
-                                        : slot.required && <span className="pdm-opt__req" style={{ marginLeft: 8 }}>Requis</span>}
+                                        : slot.required && <span className="pdm-opt__req" style={{ marginLeft: 8 }}>{t('pd.required')}</span>}
                                     </span>
                                   </div>
                                   <div className="pdm-chips">
@@ -1317,18 +1384,21 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                 Ce produit n'est pas disponible en livraison · Retrait en boutique uniquement
               </div>
             )}
-            {!deliveryBlocked && deliveryStockLeft !== null && (
-              <div className="pdm-delivery-notice">
-                {deliveryStockLeft > 0 ? `${deliveryStockLeft} unité${deliveryStockLeft > 1 ? 's' : ''} disponible${deliveryStockLeft > 1 ? 's' : ''}` : 'Stock épuisé'}
-              </div>
+            {/* Le NOMBRE d'unités restantes n'est plus affiché (retiré le 23/08,
+                comme le compteur des vignettes avant lui) : c'est une donnée
+                interne de stock, pas une information client. Seul l'état
+                bloquant reste visible — « Épuisé » — et la quantité demeure
+                plafonnée en silence par le sélecteur ci-dessous. */}
+            {!deliveryBlocked && deliveryStockLeft === 0 && (
+              <div className="pdm-delivery-notice">{t('pd.outOfStock')}</div>
             )}
             <div className="pdm-qty">
-              <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.max(1, q - 1)))} disabled={qty <= 1} aria-label="Diminuer">−</button>
+              <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.max(1, q - 1)))} disabled={qty <= 1} aria-label={t('qty.dec')}>−</button>
               <span className="pdm-qty__val">{qty}</span>
-              <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.min(q + 1, deliveryStockLeft ?? 99)))} aria-label="Augmenter" disabled={deliveryStockLeft !== null && qty >= deliveryStockLeft}>+</button>
+              <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.min(q + 1, deliveryStockLeft ?? 99)))} aria-label={t('qty.inc')} disabled={deliveryStockLeft !== null && qty >= deliveryStockLeft}>+</button>
             </div>
             <button className="pdm-cta" disabled={!valid || deliveryBlocked || (deliveryStockLeft !== null && deliveryStockLeft === 0)} {...wsTap(handleConfirm, { shield: true })}>
-              <span>{deliveryBlocked ? 'Non disponible en livraison' : (deliveryStockLeft === 0 ? 'Stock épuisé' : (valid ? 'Ajouter au panier' : 'Choisissez vos options'))}</span>
+              <span>{deliveryBlocked ? t('pd.notForDelivery') : (deliveryStockLeft === 0 ? t('pd.outOfStock') : (valid ? t('pd.addToCart') : t('pd.chooseOptions')))}</span>
               <span className="pdm-cta__total" key={pulse}>
                 {offerDiscount > 0 && (
                   <span className="pdm-cta__strike">€{grossTotal.toFixed(2)}</span>
@@ -1347,6 +1417,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
 // PRODUCT CARD
 // =========================================================================
 const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, basketQty, stock, platsBadge }) {
+  const { t } = wsUseT();
   const price = p.price;
   const hasOptions = !!(p.options || p.bundle || p.upsells);
   const isDelivery = mode === 'delivery';
@@ -1369,9 +1440,9 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
     <article className={`ws-card${addDisabled ? ' ws-card--unavail' : ''}`} {...wsTap(handleCardClick, { open: true })} role="button" tabIndex={0}>
       <div className="ws-card__photo">
         {deliveryBlocked
-          ? <span className="ws-card__badge ws-card__badge--nodeliv">Retrait seulement</span>
+          ? <span className="ws-card__badge ws-card__badge--nodeliv">{t('pd.pickupOnly')}</span>
           : platsBadge
-            ? <span className="ws-badge--plats ws-card__badge">Plats préparés</span>
+            ? <span className="ws-badge--plats ws-card__badge">{t('pd.readyMeals')}</span>
             : p.badge && <span className="ws-card__badge">{p.badge}</span>}
         <img
           className={p.img ? 'ws-card__photo-img' : 'ws-card__photo-img ws-card__photo-img--lineart'}
@@ -1394,8 +1465,8 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
       <div className="ws-card__metaStrip">
         <Allergens list={p.allergens}/>
         <div className="ws-card__icons">
-          <button className="ws-iconcircle" aria-label="Infos" {...wsTap(() => onOpen(p), { stop: true, open: true })}><Pict d={ICONS.info} s={11}/></button>
-          <button className="ws-add" {...wsTap(() => { if (!addDisabled) onOpen(p); }, { stop: true, open: true })} aria-label="Ajouter au panier"
+          <button className="ws-iconcircle" aria-label={t('pd.info')} {...wsTap(() => onOpen(p), { stop: true, open: true })}><Pict d={ICONS.info} s={11}/></button>
+          <button className="ws-add" {...wsTap(() => { if (!addDisabled) onOpen(p); }, { stop: true, open: true })} aria-label={t('pd.addToCart')}
             disabled={addDisabled} title={deliveryBlocked ? 'Non disponible en livraison' : stockExhausted ? 'Stock épuisé pour la livraison' : undefined}>
             {stockExhausted ? '✕' : '+'}
           </button>
@@ -1403,10 +1474,10 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
       </div>
       <div className="ws-card__body">
         {p.portions && (
-          <div className="ws-card__portions" aria-label="Disponible en portions"
+          <div className="ws-card__portions" aria-label={t('pd.portionsAvailable')}
                title={'Portions : ' + portionOptionList(p).map((o) => o.name).join(' · ')}>
             <PortionGlyph size={12}/>
-            <span>Disponible en portions</span>
+            <span>{t('pd.portionsAvailable')}</span>
           </div>
         )}
         {p.lead_time > 0 && (
@@ -1416,11 +1487,11 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
         )}
         <div className="ws-card__name">{p.name}</div>
         <div className="ws-card__meta">
-          <span className="ws-card__price">€{price.toFixed(2)}{hasOptions && <span className="ws-card__from"> · à partir de</span>}</span>
+          <span className="ws-card__price">€{price.toFixed(2)}{hasOptions && <span className="ws-card__from"> · {t('card.fromPrice')}</span>}</span>
           {/* Compteur « X dispo » retiré des vignettes (demandé le 15/08) — il
               exposait le stock restant sur la grille. « Épuisé » reste : c'est
               une contrainte que le client doit voir avant d'ajouter. */}
-          {stockExhausted && <span className="ws-card__stock ws-card__stock--out">Épuisé livraison</span>}
+          {stockExhausted && <span className="ws-card__stock ws-card__stock--out">{t('pd.soldOutDelivery')}</span>}
         </div>
       </div>
     </article>
@@ -1520,6 +1591,7 @@ function wsTotaux({ basket, shop, crossSavings = 0, voucherDiscount = 0, deliver
 }
 
 function CrossPortionStrip({ calc }) {
+  const { t } = wsUseT();
   if (!calc) return null;
   const { eligibleCount, groupSize, freeCount, savings, freeNames, status, threshold } = calc;
   const unlocked = status !== 'dormant';
@@ -1531,9 +1603,10 @@ function CrossPortionStrip({ calc }) {
   let lede;
   if (unlocked) {
     const names = freeNames.slice(0, 2).join(', ') + (freeNames.length > 2 ? '…' : '');
-    lede = `${freeCount} quart${freeCount > 1 ? 's' : ''} offert${freeCount > 1 ? 's' : ''}${names ? ' · ' + names : ''}`;
+    lede = t(freeCount > 1 ? 'cross.freeMany' : 'cross.freeOne', { n: freeCount })
+         + (names ? ' · ' + names : '');
   } else {
-    lede = `Plus que ${calc.toNext} portion${calc.toNext > 1 ? 's' : ''} pour profiter de l'offre.`;
+    lede = t(calc.toNext > 1 ? 'cross.toNextMany' : 'cross.toNextOne', { n: calc.toNext });
   }
 
   return (
@@ -1555,7 +1628,7 @@ function CrossPortionStrip({ calc }) {
           )}
         </div>
         <div className="ws-cross__titles">
-          <div className="ws-cross__title">Offre cumulable · {threshold} quarts achetés, 1 offert</div>
+          <div className="ws-cross__title">{t('cross.title', { n: threshold })}</div>
           <div className="ws-cross__lede">{lede}</div>
         </div>
         {savings > 0 && <div className="ws-cross__save">−€{savings.toFixed(2)}</div>}
@@ -1572,13 +1645,11 @@ function CrossPortionStrip({ calc }) {
         </div>
       )}
       {!unlocked && (
-        <div className="ws-cross__hint">
-          Le quart le moins cher est offert automatiquement · cumul tartes, quiches & gâteaux (entier = 4 portions, demi = 2, quart = 1).
-        </div>
+        <div className="ws-cross__hint">{t('cross.hint')}</div>
       )}
       {unlocked && remainder > 0 && (
         <div className="ws-cross__nudge">
-          +{toNextCycle} portion{toNextCycle > 1 ? 's' : ''} pour un quart de plus offert.
+          {t(toNextCycle > 1 ? 'cross.nudgeMany' : 'cross.nudgeOne', { n: toNextCycle })}
         </div>
       )}
     </div>
@@ -1592,6 +1663,7 @@ function CrossPortionStrip({ calc }) {
    commande — on commande le soir pour le lendemain midi.
    Aucune suggestion → aucun bloc : pas de rubrique vide. */
 function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
+  const { t } = wsUseT();
   const [items, setItems] = React.useState([]);
   const ids = basket.map((l) => l.productId).filter(Boolean);
   const key = ids.slice().sort().join(',') + '|' + (date || '') + '|' + (time || '') + '|' + mode;
@@ -1627,14 +1699,14 @@ function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
   if (!items.length) return null;
   return (
     <div className="ws-xsell">
-      <div className="ws-xsell__h">Pour accompagner</div>
+      <div className="ws-xsell__h">{t('xsell.title')}</div>
       {items.map((it) => (
         <div className="ws-xsell__i" key={it.productId}>
           {it.img ? <img className="ws-xsell__img" src={it.img} alt="" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}/>
                   : <span className="ws-xsell__img"/>}
           <span className="ws-xsell__n">{it.name}</span>
           <span className="ws-xsell__p">€{Number(it.price).toFixed(2)}</span>
-          <button type="button" className="ws-xsell__add" aria-label={`Ajouter ${it.name}`} title="Ajouter au panier"
+          <button type="button" className="ws-xsell__add" aria-label={t('xsell.addItem', { name: it.name })} title={t('xsell.add')}
             onClick={() => {
               const base = window.WSCatalog && window.WSCatalog.endpoint;
               if (base) fetch(base + '/cross-sell/stat', {
@@ -1656,6 +1728,7 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
      recalculée serveur depuis les prix ERP : c'est son total qui s'affiche à
      la confirmation. (L'ancienne « réduction Webshop · 5 % » codée en dur a
      disparu : la remise réelle vient de shops.discount_value.) */
+  const { t } = wsUseT();
   const [crossPortionRule, setCrossPortionRule] = React.useState(null);
   React.useEffect(() => {
     if (window.WSPricing && typeof window.WSPricing.getCrossPortionRule === 'function') {
@@ -1675,18 +1748,18 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
   return (
     <aside className="ws-basket">
       <div className="ws-basket__head">
-        <button className="ws-basket__back"><Pict d={ICONS.back} s={11}/> Retour</button>
-        <span className="ws-basket__title">Récapitulatif de commande</span>
+        <button className="ws-basket__back"><Pict d={ICONS.back} s={11}/> {t('cart.back')}</button>
+        <span className="ws-basket__title">{t('cart.title')}</span>
       </div>
 
       <div className={`ws-basket__mode ws-basket__mode--${mode}`}>
         <span className="ws-basket__mode-dot"/>
-        {mode === 'collect' ? 'Collecte en magasin' : 'Livraison au bureau'}
+        {t(mode === 'collect' ? 'cart.mode.collect' : 'cart.mode.delivery')}
       </div>
 
       <div className="ws-basket__items">
         {basket.length === 0 && (
-          <div className="ws-basket__empty">Votre panier est vide.</div>
+          <div className="ws-basket__empty">{t('cart.empty')}</div>
         )}
         {basket.map((l) => (
           <div key={l.line} className="ws-line">
@@ -1695,7 +1768,7 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
               <div className="ws-line__name">{l.name}</div>
               {l.options.map((o, i) => (<div key={i} className="ws-line__opt">{o.label}</div>))}
               {l.offerLabel && (
-                <div className="ws-line__offer">Offre {l.offerLabel}{l.offerDiscount ? ` · −€${Number(l.offerDiscount).toFixed(2)}` : ''}</div>
+                <div className="ws-line__offer">{t('cart.offer', { label: l.offerLabel })}{l.offerDiscount ? ` · −€${Number(l.offerDiscount).toFixed(2)}` : ''}</div>
               )}
               {notesEnabled && typeof onNote === 'function' && (
                 <div className="ws-line__notewrap">
@@ -1705,7 +1778,7 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
                   </svg>
                   <input
                     className="ws-line__note" type="text" defaultValue={l.note || ''} maxLength={255}
-                    placeholder="Note (ex : sans oignon)"
+                    placeholder={t('cart.notePlaceholder')}
                     onBlur={(e) => onNote(l.line, e.target.value)}
                   />
                 </div>
@@ -1717,8 +1790,8 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
                 type="button"
                 className="ws-line__remove"
                 onClick={() => onRemove(l.line)}
-                aria-label={`Retirer ${l.name} du panier`}
-                title="Retirer du panier"
+                aria-label={t('cart.removeItem', { name: l.name })}
+                title={t('cart.remove')}
               >
                 <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                   <path d="M5 7h14"/>
@@ -1742,45 +1815,48 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
       <div className="ws-basket__sums">
         {basket.length > 0 && (
           <div className="ws-basket__row">
-            <span>Sous-total</span>
+            <span>{t('cart.subtotal')}</span>
             <span>€{subtotal.toFixed(2)}</span>
           </div>
         )}
 
         {crossSavings > 0 && (
           <div className="ws-basket__row ws-basket__row--promo">
-            <span>Offre cumulable · {crossOffer?.freeCount || 0} quart{(crossOffer?.freeCount || 0) > 1 ? 's' : ''} offert{(crossOffer?.freeCount || 0) > 1 ? 's' : ''}</span>
+            <span>{t((crossOffer?.freeCount || 0) > 1 ? 'cross.freeMany' : 'cross.freeOne',
+                     { n: crossOffer?.freeCount || 0 })}</span>
             <span>−€{crossSavings.toFixed(2)}</span>
           </div>
         )}
 
         {T.remise > 0 && (
           <div className="ws-basket__row ws-basket__row--promo">
-            <span>Remise boutique{T.remisePct ? ` · ${T.remisePct} %` : ''}</span>
+            <span>{t('cart.shopDiscount')}{T.remisePct ? ` · ${T.remisePct} %` : ''}</span>
             <span>−€{T.remise.toFixed(2)}</span>
           </div>
         )}
 
         {deliveryFeeResult && mode === 'delivery' && (
           <div className={`ws-basket__row${deliveryFee === 0 ? ' ws-basket__row--free' : ''}`}>
-            <span>Frais de livraison{deliveryFee === 0 && deliveryFeeResult.free_delivery_minimum > 0 ? ` · offerts dès €${deliveryFeeResult.free_delivery_minimum.toFixed(2)}` : ''}</span>
-            <span>{deliveryFee === 0 ? 'Offerts' : `+€${deliveryFee.toFixed(2)}`}</span>
+            <span>{t('cart.deliveryFee')}{deliveryFee === 0 && deliveryFeeResult.free_delivery_minimum > 0
+              ? ' · ' + t('cart.deliveryFreeFrom', { amount: '€' + deliveryFeeResult.free_delivery_minimum.toFixed(2) })
+              : ''}</span>
+            <span>{deliveryFee === 0 ? t('cart.deliveryFree') : `+€${deliveryFee.toFixed(2)}`}</span>
           </div>
         )}
         {deliveryFeeResult && mode === 'delivery' && deliveryFee > 0 && deliveryFeeResult.free_delivery_minimum > 0 && deliveryFeeResult.amount_remaining_for_free > 0 && (
           <div className="ws-basket__row ws-basket__row--fee-nudge">
-            <span>Encore €{deliveryFeeResult.amount_remaining_for_free.toFixed(2)} pour la livraison gratuite</span>
+            <span>{t('cart.deliveryRemaining', { amount: '€' + deliveryFeeResult.amount_remaining_for_free.toFixed(2) })}</span>
           </div>
         )}
 
         <div className="ws-basket__total">
-          <span>Total TTC</span>
+          <span>{t('cart.total')}</span>
           <span className="ws-basket__total-amount">€{total.toFixed(2)}</span>
         </div>
       </div>
 
       <button className="ws-cta" style={{ background: 'var(--color-primary)' }} {...wsTap(onCheckout, { shield: true })} disabled={!basket.length}>
-        Passer au paiement
+        {t('cart.checkout')}
         <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>
       </button>
 
@@ -1919,7 +1995,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
             {hiddenCount > 0 && !showAllSubs && (
               <button className="ws-subcat ws-subcat--more" {...wsTap(() => setShowAllSubs(true))}>
                 <span className="ws-subcat__tile"><span className="ws-subcat__more-num">+{hiddenCount}</span></span>
-                <span className="ws-subcat__lbl">Voir plus</span>
+                <span className="ws-subcat__lbl">{t('common.seeMore')}</span>
               </button>
             )}
           </>
@@ -1950,6 +2026,7 @@ function GiftIcon({ size = 22, className }) {
   );
 }
 function GiftProgressBanner({ shop, user }) {
+  const { t } = wsUseT();
   const [prog, setProg] = React.useState(null);
   const [copied, setCopied] = React.useState(false);
   const shopId = shop && shop.id;
@@ -1990,7 +2067,7 @@ function GiftProgressBanner({ shop, user }) {
   };
 
   return (
-    <section className={`ws-giftbar${unlocked ? ' is-unlocked' : ''}`} aria-label="Campagne cadeau">
+    <section className={`ws-giftbar${unlocked ? ' is-unlocked' : ''}`} aria-label={t('gift.campaign')}>
       <div className="ws-giftbar__head">
         <GiftIcon size={22} className="ws-giftbar__ic"/>
         <div>
@@ -2003,7 +2080,7 @@ function GiftProgressBanner({ shop, user }) {
         <b>{money(prog.accumulated)}</b><span className="ws-giftbar__goal">objectif {money(c.threshold)}</span>
       </div>
       {!unlocked && (
-        <div className="ws-giftbar__remain">Plus que <b>{money(prog.remaining)}</b> d'achats pour débloquer votre cadeau.</div>
+        <div className="ws-giftbar__remain">{tRich(t, 'gift.remaining', { amount: money(prog.remaining) })}</div>
       )}
       {unlocked && (
         <>
@@ -2017,7 +2094,7 @@ function GiftProgressBanner({ shop, user }) {
           {prog.voucherCode && (
             <div className="ws-giftbar__code">
               <span>
-                <span className="ws-giftbar__lab">Votre code cadeau</span>
+                <span className="ws-giftbar__lab">{t('gift.yourCode')}</span>
                 <span className="ws-giftbar__val">{prog.voucherCode}</span>
               </span>
               <button type="button" className="ws-giftbar__copy" onClick={copy}>{copied ? 'Copié' : 'Copier'}</button>
@@ -2034,6 +2111,7 @@ function GiftProgressBanner({ shop, user }) {
 
 function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, user, onAccount, onAllergens,
                    collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays }) {
+  const { t } = wsUseT();
   return (
     <header className="ws-nav ws-nav--A">
       <div className="ws-nav__left">
@@ -2054,17 +2132,18 @@ function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, us
         {/* Desktop : sélecteur de langue. Mobile : masqué (voir .ws-nav__lang),
             remplacé par l'icône « i » -> landing « Livraison au bureau ». */}
         {window.LangChip && <window.LangChip className="ws-nav__lang" />}
-        <a className="ws-nav__info" href="/landing/livraison-bureau.html"
-           aria-label="Livraison au bureau — informations" title="Livraison au bureau">
-          <Pict d={ICONS.info} s={16}/>
-        </a>
+        {/* Le « i » « pas encore de bureau ? » a quitté le bandeau permanent :
+            il ne concerne QUE l'utilisateur sans bureau relié, et sera reposé
+            dans le flux « Livraison au bureau », là où il a du sens. Le retirer
+            vide le bloc de droite sur mobile → le nom de la boutique récupère
+            toute la ligne (fin de la troncature « Atelier by Ber… »). */}
         {window.AllergenNavButton && <window.AllergenNavButton onClick={onAllergens}/>}
-        <button className="ws-nav__icon" aria-label="Compte" onClick={onAccount}>
+        <button className="ws-nav__icon" aria-label={t('nav.accountAria')} onClick={onAccount}>
           {user
             ? <span className="ws-nav__avatar" aria-hidden="true">{user.firstName?.[0] || user.email?.[0]?.toUpperCase() || '·'}</span>
             : <Pict d={ICONS.user} s={15}/>}
         </button>
-        <button className="ws-nav__icon ws-nav__cart" aria-label="Panier">
+        <button className="ws-nav__icon ws-nav__cart" aria-label={t('nav.cartAria')}>
           <Pict d={ICONS.bag} s={15}/>
           {cartCount > 0 && <span className="ws-nav__cart-badge">{cartCount}</span>}
         </button>
@@ -2076,12 +2155,13 @@ function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, us
 // Variant B — Medium: full colored brand bar above navbar
 function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens,
                    collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays }) {
+  const { t } = wsUseT();
   return (
     <>
       <div className="ws-shopbar" style={{ background: 'var(--color-primary)' }}>
         <div className="ws-shopbar__inner">
           <span className="ws-shopbar__pin"><Pict d={ICONS.pin} s={12}/></span>
-          <span className="ws-shopbar__name">Vous commandez chez · <strong>{shop.name}</strong></span>
+          <span className="ws-shopbar__name">{tRich(t, 'nav.orderingAt', { shop: shop.name })}</span>
           <span className="ws-shopbar__city">{shop.city} · {shop.address}</span>
           <button className="ws-shopbar__switch" onClick={onSwitchShop}>
             Changer de boutique <Pict d={ICONS.switch} s={12}/>
@@ -2102,8 +2182,8 @@ function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
         <div className="ws-nav__right">
           {window.LangChip && <window.LangChip />}
           {window.AllergenNavButton && <window.AllergenNavButton onClick={onAllergens}/>}
-          <button className="ws-nav__icon" aria-label="Compte"><Pict d={ICONS.user} s={15}/></button>
-          <button className="ws-nav__icon ws-nav__cart" aria-label="Panier">
+          <button className="ws-nav__icon" aria-label={t('nav.accountAria')}><Pict d={ICONS.user} s={15}/></button>
+          <button className="ws-nav__icon ws-nav__cart" aria-label={t('nav.cartAria')}>
             <Pict d={ICONS.bag} s={15}/>
             {cartCount > 0 && <span className="ws-nav__cart-badge">{cartCount}</span>}
           </button>
@@ -2116,6 +2196,7 @@ function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
 // Variant C — Strong: full per-shop accent. Brand wordmark, navbar background, CTA, focus rings all picked up.
 function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens,
                    collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays }) {
+  const { t } = wsUseT();
   return (
     <header className="ws-nav ws-nav--C" style={{ '--shop-accent': shop.accent }}>
       <div className="ws-nav__left">
@@ -2139,8 +2220,8 @@ function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
       <div className="ws-nav__right">
         {window.LangChip && <window.LangChip />}
         {window.AllergenNavButton && <window.AllergenNavButton onClick={onAllergens}/>}
-        <button className="ws-nav__icon" aria-label="Compte"><Pict d={ICONS.user} s={15}/></button>
-        <button className="ws-nav__icon ws-nav__cart" aria-label="Panier">
+        <button className="ws-nav__icon" aria-label={t('nav.accountAria')}><Pict d={ICONS.user} s={15}/></button>
+        <button className="ws-nav__icon ws-nav__cart" aria-label={t('nav.cartAria')}>
           <Pict d={ICONS.bag} s={15}/>
           {cartCount > 0 && <span className="ws-nav__cart-badge">{cartCount}</span>}
         </button>
@@ -2215,6 +2296,7 @@ function useSwipeDownToClose(onClose, scrollEl) {
 }
 
 function ModalShell({ onClose, children, narrow }) {
+  const { t } = wsUseT();
   const panelRef = useSwipeDownToClose(onClose);
   const [showArrows, setShowArrows] = React.useState({ up: false, down: false });
   React.useEffect(() => {
@@ -2240,13 +2322,13 @@ function ModalShell({ onClose, children, narrow }) {
     <div className="ws-modal" onClick={onClose}>
       <div ref={panelRef} className={`ws-modal__panel${narrow ? ' ws-modal__panel--narrow' : ''}`} onClick={(e) => e.stopPropagation()}>
         <span className="ws-modal__handle" aria-hidden="true"/>
-        <button className="ws-modal__close" onClick={onClose} aria-label="Fermer"><Pict d={ICONS.close} s={14}/></button>
+        <button className="ws-modal__close" onClick={onClose} aria-label={t('common.close2')}><Pict d={ICONS.close} s={14}/></button>
         {children}
         <div className="ws-modal__rail" aria-hidden={!(showArrows.up || showArrows.down)}>
-          <button type="button" className={`ws-modal__rail-btn${showArrows.up ? '' : ' is-disabled'}`} onClick={() => nudge(-1)} aria-label="Remonter">
+          <button type="button" className={`ws-modal__rail-btn${showArrows.up ? '' : ' is-disabled'}`} onClick={() => nudge(-1)} aria-label={t('scroll.up')}>
             <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 10l5-5 5 5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
           </button>
-          <button type="button" className={`ws-modal__rail-btn${showArrows.down ? '' : ' is-disabled'}`} onClick={() => nudge(1)} aria-label="Descendre">
+          <button type="button" className={`ws-modal__rail-btn${showArrows.down ? '' : ' is-disabled'}`} onClick={() => nudge(1)} aria-label={t('scroll.down')}>
             <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 6l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
           </button>
         </div>
@@ -2287,6 +2369,7 @@ async function cpLocalities(cp) {
 // Champ CP + localité auto. `variant` adapte le markup au formulaire hôte
 // ('modal' → ws-field du LoginModal, 'acc' → ws-acc__field du compte).
 function CpField({ cp, locality, onCp, onLocality, onOpts, variant }) {
+  const { t } = wsUseT();
   const [opts, setOpts] = useState([]);
   useEffect(() => {
     let alive = true;
@@ -2319,7 +2402,7 @@ function CpField({ cp, locality, onCp, onLocality, onOpts, variant }) {
       {opts.length > 1 && (
         <label className={fieldCls}>{lbl('Localité')}
           <select className={inputCls} value={locality} onChange={(e) => onLocality(e.target.value)} required>
-            <option value="">— Choisir la localité —</option>
+            <option value="">{t('cp.pickLocality')}</option>
             {opts.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </label>
@@ -2329,6 +2412,7 @@ function CpField({ cp, locality, onCp, onLocality, onOpts, variant }) {
 }
 
 function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
+  const { t } = wsUseT();
   const [tab, setTab] = useState('login');
   const [form, setForm] = useState({ identifier: '', email: '', phone: '', phonePrefix: '+32', password: '', firstName: '', lastName: '', postalCode: '', locality: '', authMethod: 'email' });
   const [err, setErr] = useState('');
@@ -2396,39 +2480,39 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
   }
   return (
     <ModalShell onClose={onClose} narrow>
-      <p className="ws-modal__eyebrow">Mon compte</p>
+      <p className="ws-modal__eyebrow">{t('auth.myAccount')}</p>
       {pwStep ? (
         <>
-          <h2 className="ws-modal__title">Ce compte <em>existe déjà</em>.</h2>
-          <p className="ws-modal__lede">Définissez votre mot de passe pour vous connecter.</p>
+          <h2 className="ws-modal__title">{tRich(t, 'auth.accountExists')}</h2>
+          <p className="ws-modal__lede">{t('auth.setPassword')}</p>
           <div className="ws-form">
-            <label className="ws-field"><span>Mot de passe</span>
-              <input type="password" value={newPw} onChange={(e) => { setNewPw(e.target.value); setErr(''); }} autoComplete="new-password" placeholder="min. 6 caractères"/></label>
+            <label className="ws-field"><span>{t('auth.password')}</span>
+              <input type="password" value={newPw} onChange={(e) => { setNewPw(e.target.value); setErr(''); }} autoComplete="new-password" placeholder={t('auth.min6')}/></label>
             {err && <p className="ws-form__err">{err}</p>}
             <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={submitSetPassword}>{loading ? 'Mise à jour…' : 'Mettre à jour & se connecter'}</button>
-            <button type="button" className="ws-linkbtn" onClick={() => { setPwStep(false); setTab('login'); setErr(''); }}>J'ai déjà un mot de passe — Se connecter</button>
+            <button type="button" className="ws-linkbtn" onClick={() => { setPwStep(false); setTab('login'); setErr(''); }}>{t('auth.havePassword')}</button>
           </div>
         </>
       ) : (
       <>
-      <h2 className="ws-modal__title">{tab === 'login' ? <>Bon retour <em>parmi nous</em>.</> : <>Créez <em>votre</em> compte.</>}</h2>
+      <h2 className="ws-modal__title">{tRich(t, tab === 'login' ? 'auth.welcomeBack' : 'auth.createTitle')}</h2>
       <p className="ws-modal__lede">{tab === 'login' ? 'Connectez-vous pour retrouver vos commandes et votre bureau.' : 'Quelques secondes pour commander, suivre et faire livrer.'}</p>
       <div className="ws-tabs">
-        <button className={`ws-tab${tab === 'login' ? ' is-active' : ''}`} onClick={() => { setTab('login'); setErr(''); }}>Connexion</button>
-        <button className={`ws-tab${tab === 'register' ? ' is-active' : ''}`} onClick={() => { setTab('register'); setErr(''); }}>Créer un compte</button>
+        <button className={`ws-tab${tab === 'login' ? ' is-active' : ''}`} onClick={() => { setTab('login'); setErr(''); }}>{t('auth.login')}</button>
+        <button className={`ws-tab${tab === 'register' ? ' is-active' : ''}`} onClick={() => { setTab('register'); setErr(''); }}>{t('auth.createAccount')}</button>
       </div>
       <form className="ws-form" onSubmit={submit}>
         {tab === 'register' && (
           <>
             <div className="ws-form__row2">
-              <label className="ws-field"><span>Prénom</span><input value={form.firstName} onChange={(e) => set('firstName', e.target.value)} autoComplete="given-name"/></label>
-              <label className="ws-field"><span>Nom</span><input value={form.lastName} onChange={(e) => set('lastName', e.target.value)} autoComplete="family-name"/></label>
+              <label className="ws-field"><span>{t('form.firstName')}</span><input value={form.firstName} onChange={(e) => set('firstName', e.target.value)} autoComplete="given-name"/></label>
+              <label className="ws-field"><span>{t('form.lastName')}</span><input value={form.lastName} onChange={(e) => set('lastName', e.target.value)} autoComplete="family-name"/></label>
             </div>
-            <label className="ws-field"><span>Email</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
-            <label className="ws-field"><span>Mot de passe</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="new-password" minLength={8} placeholder="8 caractères minimum"/></label>
-            <label className="ws-field"><span>Téléphone <em style={{ fontStyle: 'normal', fontWeight: 400, opacity: .6 }}>(optionnel)</em></span>
+            <label className="ws-field"><span>{t('form.email')}</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
+            <label className="ws-field"><span>{t('auth.password')}</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="new-password" minLength={8} placeholder={t('auth.min8')}/></label>
+            <label className="ws-field"><span>{t('form.phone')} <em style={{ fontStyle: 'normal', fontWeight: 400, opacity: .6 }}>{t('form.optional')}</em></span>
               <span className="ws-phone">
-                <select className="ws-phone__pfx" value={form.phonePrefix} onChange={(e) => set('phonePrefix', e.target.value)} aria-label="Indicatif">
+                <select className="ws-phone__pfx" value={form.phonePrefix} onChange={(e) => set('phonePrefix', e.target.value)} aria-label={t('form.phonePrefix')}>
                   {PHONE_PREFIXES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
                 <input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="tel" inputMode="tel" placeholder="470 00 00 02"/>
@@ -2441,14 +2525,14 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
         {tab === 'login' && (
           <>
             {/* Toggle : se connecter avec email OU téléphone */}
-            <div className="ws-toggle" role="tablist" aria-label="Se connecter avec">
-              <button type="button" role="tab" aria-selected={form.authMethod === 'email'} className={`ws-toggle__opt${form.authMethod === 'email' ? ' is-active' : ''}`} onClick={() => set('authMethod', 'email')}>Email</button>
-              <button type="button" role="tab" aria-selected={form.authMethod === 'phone'} className={`ws-toggle__opt${form.authMethod === 'phone' ? ' is-active' : ''}`} onClick={() => set('authMethod', 'phone')}>Téléphone</button>
+            <div className="ws-toggle" role="tablist" aria-label={t('auth.signinWith')}>
+              <button type="button" role="tab" aria-selected={form.authMethod === 'email'} className={`ws-toggle__opt${form.authMethod === 'email' ? ' is-active' : ''}`} onClick={() => set('authMethod', 'email')}>{t('form.email')}</button>
+              <button type="button" role="tab" aria-selected={form.authMethod === 'phone'} className={`ws-toggle__opt${form.authMethod === 'phone' ? ' is-active' : ''}`} onClick={() => set('authMethod', 'phone')}>{t('form.phone')}</button>
             </div>
             <label className="ws-field"><span>{form.authMethod === 'phone' ? 'Téléphone' : 'Email'}</span>
               {form.authMethod === 'phone' ? (
                 <span className="ws-phone">
-                  <select className="ws-phone__pfx" value={form.phonePrefix} onChange={(e) => set('phonePrefix', e.target.value)} aria-label="Indicatif">
+                  <select className="ws-phone__pfx" value={form.phonePrefix} onChange={(e) => set('phonePrefix', e.target.value)} aria-label={t('form.phonePrefix')}>
                     {PHONE_PREFIXES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                   </select>
                   <input type="tel" value={form.identifier} onChange={(e) => set('identifier', e.target.value)} autoComplete="username" inputMode="tel" placeholder="470 00 00 02"/>
@@ -2457,7 +2541,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
                 <input type="email" value={form.identifier} onChange={(e) => set('identifier', e.target.value)} autoComplete="username"/>
               )}
             </label>
-            <label className="ws-field"><span>Mot de passe</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="current-password"/></label>
+            <label className="ws-field"><span>{t('auth.password')}</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="current-password"/></label>
           </>
         )}
         {err && <p className="ws-form__err">{err}</p>}
@@ -2485,11 +2569,12 @@ const ACCOUNT_TAB_LS = 'ws.accountTab';
 // Onglet Fidélité : coquille volontairement explicite — pas d'écran nu ni de
 // compteur à zéro qui laisserait croire que le client a perdu ses points.
 function FideliteShell() {
+  const { t } = wsUseT();
   return (
     <div className="ws-acc__section">
-      <div className="ws-acc__section-h">Fidélité</div>
+      <div className="ws-acc__section-h">{t('acc.loyalty')}</div>
       <div className="ws-acc__card ws-acc__card--empty">
-        <p className="ws-acc__note"><strong>Votre programme de fidélité arrive bientôt.</strong> Points, avantages et récompenses vous attendront ici — vos achats d'aujourd'hui compteront.</p>
+        <p className="ws-acc__note"><strong>{t('acc.loyaltySoon')}</strong> {t('acc.loyaltySoonHint')}</p>
       </div>
     </div>
   );
@@ -2510,6 +2595,7 @@ const PURCHASE_FILTERS = [
   { key: 'invoiced',  label: 'Facturé' },
 ];
 function AccountPurchases({ user }) {
+  const { t } = wsUseT();
   const [filter, setFilter]   = useState('all');
   const [page, setPage]       = useState(1);
   const [meta, setMeta]       = useState({ total: 0, canRequestInvoice: false, invoiceNotice: '' });
@@ -2560,18 +2646,24 @@ function AccountPurchases({ user }) {
     } catch (_) { return String(s || ''); }
   };
   const fmtEur = (n) => ((n === null || n === undefined) ? '—' : Number(n).toFixed(2).replace('.', ',') + ' €');
+  const peppolBadge = (st) => {
+    const s = String(st || '').toLowerCase();
+    if (s === 'transmise' || s === 'sent' || s === 'ok') return <span className="ws-acc__badge ws-acc__badge--ok">{t('acc.peppolSent')}</span>;
+    if (s === 'echec' || s === 'failed' || s === 'error') return <span className="ws-acc__badge ws-acc__badge--pending">{t('acc.peppolFailed')}</span>;
+    return <span className="ws-acc__badge ws-acc__badge--pending">{t('acc.pending')}</span>;
+  };
   const badge = (st) => (st === 'invoiced'
-    ? <span className="ws-acc__badge">Facturé</span>
+    ? <span className="ws-acc__badge">{t('acc.invoiced')}</span>
     : st === 'requested'
-      ? <span className="ws-acc__badge ws-acc__badge--pending">Facture demandée</span>
+      ? <span className="ws-acc__badge ws-acc__badge--pending">{t('acc.invoiceRequested')}</span>
       : null);
   const hasMore = items.length < (meta.total || 0);
   return (
     <div className="ws-acc__section">
-      <div className="ws-acc__section-h">Mes achats</div>
+      <div className="ws-acc__section-h">{t('acc.purchases')}</div>
       {/* Filtre discret — remplace un onglet « Mes factures » : le client qui
           veut ses factures pour son comptable filtre sur « Facturé ». */}
-      <div className="ws-toggle" role="tablist" aria-label="Filtrer les achats">
+      <div className="ws-toggle" role="tablist" aria-label={t('acc.filterPurchases')}>
         {PURCHASE_FILTERS.map((f) => (
           <button key={f.key} type="button" role="tab" aria-selected={filter === f.key}
             className={'ws-toggle__opt' + (filter === f.key ? ' is-active' : '')}
@@ -2580,7 +2672,7 @@ function AccountPurchases({ user }) {
       </div>
       {notice && <p className="ws-acc__hint">🧾 {notice}</p>}
       {err && <p className="ws-acc__vat-msg ws-acc__vat-msg--err">⚠ {err}</p>}
-      {loading && items.length === 0 && <p className="ws-acc__hint">Chargement…</p>}
+      {loading && items.length === 0 && <p className="ws-acc__hint">{t('common.loading2')}</p>}
       {!loading && items.length === 0 && (
         <div className="ws-acc__card ws-acc__card--empty">
           <p className="ws-acc__note">Aucun achat sur les 12 derniers mois{filter !== 'all' ? ' pour ce filtre' : ''}.</p>
@@ -2594,12 +2686,24 @@ function AccountPurchases({ user }) {
             <span className="ws-acc__k">{Number(it.items) || 0} article{Number(it.items) > 1 ? 's' : ''}</span>
             <span className="ws-acc__v">{fmtEur(it.invoiceTotal != null ? it.invoiceTotal : it.total)}</span>
           </div>
+          {/* Ticket de caisse FISCAL rattaché à la commande (édité à la
+              validation). N'apparaît que s'il est renseigné — jamais inventé. */}
+          {it.fiscalTicketNo && (
+            <div className="ws-acc__card-row"><span className="ws-acc__k">{t('acc.fiscalTicket')}</span>
+              <span className="ws-acc__v">{it.fiscalTicketNo}{it.fiscalTicketUrl ? <> · <a href={it.fiscalTicketUrl} target="_blank" rel="noopener">PDF</a></> : null}</span></div>
+          )}
           {it.state === 'invoiced' && (
-            <div className="ws-acc__card-row"><span className="ws-acc__k">Facture</span>
-              <span className="ws-acc__v">{it.invoiceNo}{it.pdfUrl ? <> · <a href={it.pdfUrl}>PDF</a></> : null}</span></div>
+            <div className="ws-acc__card-row"><span className="ws-acc__k">{t('acc.invoice')}</span>
+              <span className="ws-acc__v">{it.invoiceNo}{it.hasInvoicePdf ? ' · PDF sur demande' : ''}</span></div>
+          )}
+          {/* Statut Peppol — transmission gérée par l'ERP ; le webshop affiche
+              ce qu'il pousse. « — » tant que rien n'est renseigné. */}
+          {it.state === 'invoiced' && it.peppolStatus && (
+            <div className="ws-acc__card-row"><span className="ws-acc__k">{t('acc.peppol')}</span>
+              <span className="ws-acc__v">{peppolBadge(it.peppolStatus)}{it.peppolAt ? ' · ' + fmtDate(it.peppolAt) : ''}</span></div>
           )}
           {meta.canRequestInvoice && it.source === 'ticket' && it.state !== 'invoiced' && (
-            <label className="ws-acc__toggle" aria-label="Voulez-vous une facture ?">
+            <label className="ws-acc__toggle" aria-label={t('acc.wantInvoice')}>
               <input type="checkbox" checked={it.state === 'requested'}
                 disabled={it.state === 'closed' || busyRef === it.ref}
                 onChange={(e) => toggleInvoice(it, e.target.checked)} />
@@ -2611,12 +2715,12 @@ function AccountPurchases({ user }) {
           )}
           {meta.canRequestInvoice && it.source === 'ticket' && it.state === 'requested' && user.companyClientId && (
             <div className="ws-acc__select-row">
-              <select className="ws-acc__input" aria-label="Société de facturation"
+              <select className="ws-acc__input" aria-label={t('acc.billingCompany')}
                 value={String(it.billingEntityId || user.companyClientId)}
                 disabled={busyRef === it.ref}
                 onChange={(e) => toggleInvoice(it, true, Number(e.target.value))}>
                 <option value={String(user.companyClientId)}>{user.company || 'Ma société'}</option>
-                <option value={String(user.id)}>À mon nom</option>
+                <option value={String(user.id)}>{t('acc.inMyName')}</option>
               </select>
             </div>
           )}
@@ -2624,7 +2728,7 @@ function AccountPurchases({ user }) {
       ))}
       {hasMore && (
         <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={() => setPage((p) => p + 1)}>
-          Voir plus
+          {t('common.seeMore')}
         </button>
       )}
     </div>
@@ -2639,6 +2743,7 @@ function AccountPurchases({ user }) {
 // connu ; ne réapparaît plus une fois enregistré. « Plus tard » referme pour
 // cette session — elle reviendra à la prochaine connexion.
 function PostcodeCatchupModal({ user, onUpdateUser }) {
+  const { t } = wsUseT();
   const [cp, setCp] = useState('');
   const [locality, setLocality] = useState('');
   const [cpOpts, setCpOpts] = useState([]);
@@ -2668,15 +2773,15 @@ function PostcodeCatchupModal({ user, onUpdateUser }) {
   }
   return (
     <ModalShell onClose={() => setSnoozed(true)} narrow>
-      <p className="ws-modal__eyebrow">Votre profil</p>
-      <h2 className="ws-modal__title">Votre <em>code postal</em> ?</h2>
-      <p className="ws-modal__lede">Il nous manque votre code postal — il nous aide à organiser les livraisons et les tournées près de chez vous.</p>
+      <p className="ws-modal__eyebrow">{t('acc.yourProfile')}</p>
+      <h2 className="ws-modal__title">{tRich(t, 'cp.title')}</h2>
+      <p className="ws-modal__lede">{t('cp.lede')}</p>
       <form className="ws-form" onSubmit={submit}>
         <CpField variant="modal" cp={cp} locality={locality}
           onCp={(v) => { setCp(v); setErr(''); }} onLocality={setLocality} onOpts={setCpOpts}/>
         {err && <p className="ws-form__err">{err}</p>}
         <button type="submit" className="ws-cta ws-cta--block" disabled={busy}>{busy ? 'Enregistrement…' : 'Valider'}</button>
-        <button type="button" className="ws-linkbtn" onClick={() => setSnoozed(true)}>Plus tard</button>
+        <button type="button" className="ws-linkbtn" onClick={() => setSnoozed(true)}>{t('common.later')}</button>
       </form>
     </ModalShell>
   );
@@ -2691,6 +2796,7 @@ if (typeof document !== 'undefined' && !document.getElementById('ws-bureau-style
 }
 
 function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdateUser, shops, currentShopId, onChangePreferredShop, office, tour }) {
+  const { t } = wsUseT();
   const [form, setForm] = useState({
     firstName: user?.firstName || '',
     lastName: user?.lastName || '',
@@ -3097,12 +3203,12 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   }
   return (
     <ModalShell onClose={onClose} narrow>
-      <p className="ws-modal__eyebrow">Mon compte</p>
-      <h2 className="ws-modal__title">Bonjour <em>{form.firstName || user.firstName}</em>.</h2>
+      <p className="ws-modal__eyebrow">{t('auth.myAccount')}</p>
+      <h2 className="ws-modal__title">{tRich(t, 'acc.hello', { name: form.firstName || user.firstName })}</h2>
       <p className="ws-modal__lede">{user.email}</p>
 
       {/* Onglets — positions dérivées d'ACCOUNT_TABS, actif persisté. */}
-      <div className="ws-toggle" role="tablist" aria-label="Sections de mon compte">
+      <div className="ws-toggle" role="tablist" aria-label={t('acc.sectionsAria')}>
         {visibleTabs.map((t) => (
           <button key={t.key} type="button" role="tab" aria-selected={activeTab === t.key}
             className={'ws-toggle__opt' + (activeTab === t.key ? ' is-active' : '')}
@@ -3115,7 +3221,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
 
       {activeTab === 'profil' && <>
       {form.fidelityApp?.active && (
-        <aside className="ws-fidinfo" role="note" aria-label="Information application fidélité">
+        <aside className="ws-fidinfo" role="note" aria-label={t('fid.infoAria')}>
           <div className="ws-fidinfo__icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
               <rect x="6" y="2.5" width="12" height="19" rx="2.5"/>
@@ -3124,14 +3230,14 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             </svg>
           </div>
           <div className="ws-fidinfo__body">
-            <div className="ws-fidinfo__title">Tout est dans votre application L'Atelier</div>
+            <div className="ws-fidinfo__title">{t('fid.allInApp')}</div>
             <p className="ws-fidinfo__lede">
-              Vos commandes sont gérées <strong>directement dans l'application fidélité</strong>. Vous y retrouverez&nbsp;:
+              {tRich(t, 'fid.managedIn')}
             </p>
             <ul className="ws-fidinfo__list">
-              <li>Vos <strong>commandes précédentes</strong> et leur <strong>statut</strong> en temps réel</li>
-              <li>L'ouverture et le suivi de vos <strong>tickets</strong></li>
-              <li>Vos <strong>demandes de facture</strong> et la <strong>conversion ticket → facture</strong></li>
+              <li>{tRich(t, 'fid.bullet1')}</li>
+              <li>{tRich(t, 'fid.bullet2')}</li>
+              <li>{tRich(t, 'fid.bullet3')}</li>
             </ul>
             <p className="ws-fidinfo__foot">
               Pour limiter les e-mails, nous privilégions désormais les notifications de l'application.
@@ -3141,29 +3247,29 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       )}
 
       <form className="ws-acc__section" onSubmit={saveProfile}>
-        <div className="ws-acc__section-h">Coordonnées</div>
+        <div className="ws-acc__section-h">{t('acc.contact')}</div>
         <div className="ws-acc__form">
           <label className="ws-acc__field">
-            <span className="ws-acc__field-label">Prénom</span>
+            <span className="ws-acc__field-label">{t('form.firstName')}</span>
             <input type="text" className="ws-acc__input" value={form.firstName}
-              onChange={(e) => setField('firstName', e.target.value)} placeholder="Prénom" />
+              onChange={(e) => setField('firstName', e.target.value)} placeholder={t('form.firstName')} />
           </label>
           <label className="ws-acc__field">
-            <span className="ws-acc__field-label">Nom</span>
+            <span className="ws-acc__field-label">{t('form.lastName')}</span>
             <input type="text" className="ws-acc__input" value={form.lastName}
-              onChange={(e) => setField('lastName', e.target.value)} placeholder="Nom" />
+              onChange={(e) => setField('lastName', e.target.value)} placeholder={t('form.lastName')} />
           </label>
           <label className="ws-acc__field ws-acc__field--full">
-            <span className="ws-acc__field-label">E-mail</span>
+            <span className="ws-acc__field-label">{t('form.emailLong')}</span>
             {/* LECTURE SEULE, honnêtement : le champ était éditable mais la
                 sauvegarde ne l'envoyait jamais — « ✓ Enregistré » mentait, et
                 l'email sert d'identifiant (connexion, rattachement bureau). */}
             <input type="email" className="ws-acc__input" value={form.email} readOnly disabled
-              title="L'adresse e-mail sert d'identifiant de connexion et ne se modifie pas ici." />
-            <span style={{ font: '400 10.5px var(--font-ui, sans-serif)', color: 'var(--color-text-muted, #8a7c6e)' }}>Identifiant de connexion — non modifiable ici.</span>
+              title={t('acc.emailIsLogin')} />
+            <span style={{ font: '400 10.5px var(--font-ui, sans-serif)', color: 'var(--color-text-muted, #8a7c6e)' }}>{t('acc.emailIsLoginShort')}</span>
           </label>
           <label className="ws-acc__field">
-            <span className="ws-acc__field-label">Téléphone</span>
+            <span className="ws-acc__field-label">{t('form.phone')}</span>
             <input type="tel" className="ws-acc__input" value={form.phone}
               onChange={(e) => setField('phone', e.target.value)} placeholder="+32 ..." />
           </label>
@@ -3172,8 +3278,8 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         </div>
 
         <div className="ws-acc__form-foot">
-          <button type="submit" className="ws-cta">Enregistrer</button>
-          {savedFlash && <span className="ws-acc__saved">✓ Enregistré</span>}
+          <button type="submit" className="ws-cta">{t('common.save2')}</button>
+          {savedFlash && <span className="ws-acc__saved">✓ {t('common.saved')}</span>}
           {profileErr && <span className="ws-acc__saved" style={{ color: 'var(--color-primary, #8d1d2c)' }}>{profileErr}</span>}
         </div>
       </form>
@@ -3184,52 +3290,52 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           lecture seule, règle appliquée aussi côté serveur (PATCH /auth/me
           ignore ces clés). Retrait = archivage, la fiche reste en base. */}
       <div className="ws-acc__section">
-        <div className="ws-acc__section-h">Sociétés de facturation</div>
+        <div className="ws-acc__section-h">{t('acc.companies')}</div>
         {(user.companyClientId || user.company) && (
           <div className="ws-acc__card ws-acc__card--ok">
-            <div className="ws-acc__card-row"><span className="ws-acc__k">Raison sociale</span><span className="ws-acc__v">{user.invoice?.name || user.company}</span></div>
-            <div className="ws-acc__card-row"><span className="ws-acc__k">N° TVA</span><span className="ws-acc__v">{user.invoice?.vat || 'Non assujettie'}</span></div>
+            <div className="ws-acc__card-row"><span className="ws-acc__k">{t('co2.legalName')}</span><span className="ws-acc__v">{user.invoice?.name || user.company}</span></div>
+            <div className="ws-acc__card-row"><span className="ws-acc__k">{t('co2.vat')}</span><span className="ws-acc__v">{user.invoice?.vat || 'Non assujettie'}</span></div>
             {(user.invoice?.address || user.invoice?.city) && (
-              <div className="ws-acc__card-row"><span className="ws-acc__k">Adresse</span>
+              <div className="ws-acc__card-row"><span className="ws-acc__k">{t('co2.address')}</span>
                 <span className="ws-acc__v">{[user.invoice?.address, [user.invoice?.postalCode, user.invoice?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</span></div>
             )}
-            {user.invoice?.viesVerified && <div className="ws-acc__badge">✓ Vérifiée VIES</div>}
-            <p className="ws-acc__hint">Société par défaut pour vos demandes de facture. Pas d'édition libre : re-vérification VIES (réimporte les données) ou retrait puis ajout d'une nouvelle société.</p>
+            {user.invoice?.viesVerified && <div className="ws-acc__badge">{t('co2.viesOk')}</div>}
+            <p className="ws-acc__hint">{t('co2.defaultHint')}</p>
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('vies'); setCompanyErr(''); }} disabled={companyBusy}>Re-vérifier (VIES)</button>
-              <button type="button" className="ws-acc__unplug" onClick={removeCompany} disabled={companyBusy}>Retirer</button>
+              <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('vies'); setCompanyErr(''); }} disabled={companyBusy}>{t('co2.viesRecheck')}</button>
+              <button type="button" className="ws-acc__unplug" onClick={removeCompany} disabled={companyBusy}>{t('common.remove')}</button>
             </div>
           </div>
         )}
         {!(user.companyClientId || user.company) && companyStep === 'idle' && (
           <div className="ws-acc__card ws-acc__card--empty">
-            <p className="ws-acc__note">Aucune société liée à votre compte.</p>
-            <button className="ws-cta ws-cta--block" onClick={() => { setCompanyStep('vies'); setCompanyErr(''); }}>Ajouter une société</button>
+            <p className="ws-acc__note">{t('co2.none')}</p>
+            <button className="ws-cta ws-cta--block" onClick={() => { setCompanyStep('vies'); setCompanyErr(''); }}>{t('co2.add')}</button>
           </div>
         )}
         {companyStep === 'vies' && (
           <div className="ws-acc__card">
-            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Ajouter par n° TVA — import VIES</div>
+            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>{t('co2.addByVat')}</div>
             <div className="ws-acc__form ws-acc__form--vat">
               <label className="ws-acc__field ws-acc__field--country">
-                <span className="ws-acc__field-label">Pays</span>
+                <span className="ws-acc__field-label">{t('co2.country')}</span>
                 <select className="ws-acc__input" value={addVat.country}
                   onChange={(e) => setAddVat((v) => ({ ...v, country: e.target.value }))}>
                   {['BE','NL','FR','DE','LU','IT','ES','AT','PT','IE','FI','SE','DK','PL','CZ'].map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </label>
               <label className="ws-acc__field ws-acc__field--vat">
-                <span className="ws-acc__field-label">Numéro de TVA</span>
+                <span className="ws-acc__field-label">{t('co2.vatNumber')}</span>
                 <input type="text" className="ws-acc__input" value={addVat.vat}
                   onChange={(e) => setAddVat((v) => ({ ...v, vat: e.target.value }))}
                   placeholder="0123456789" autoComplete="off" />
               </label>
             </div>
-            <p className="ws-acc__hint">Raison sociale et adresse seront importées automatiquement depuis VIES.</p>
+            <p className="ws-acc__hint">{t('co2.viesImport')}</p>
             {companyErr && <p className="ws-acc__vat-msg ws-acc__vat-msg--err">⚠ {companyErr}</p>}
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('idle'); setCompanyErr(''); }}>Annuler</button>
-              <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('novat'); setCompanyErr(''); }}>Sans n° TVA</button>
+              <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('idle'); setCompanyErr(''); }}>{t('common.cancel2')}</button>
+              <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('novat'); setCompanyErr(''); }}>{t('co2.noVat')}</button>
               <button type="button" className="ws-cta" disabled={companyBusy || !addVat.vat} onClick={addByVies}>
                 {companyBusy ? 'Vérification…' : 'Vérifier et importer'}
               </button>
@@ -3238,34 +3344,34 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         )}
         {companyStep === 'novat' && (
           <div className="ws-acc__card">
-            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Ajouter sans n° TVA (ASBL, association, particulier)</div>
+            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>{t('co2.addNoVat')}</div>
             <div className="ws-acc__form">
               <label className="ws-acc__field ws-acc__field--full">
-                <span className="ws-acc__field-label">Raison sociale</span>
+                <span className="ws-acc__field-label">{t('co2.legalName')}</span>
                 <input type="text" className="ws-acc__input" value={addNo.name}
                   onChange={(e) => setAddNo((v) => ({ ...v, name: e.target.value }))} />
               </label>
               <label className="ws-acc__field ws-acc__field--full">
-                <span className="ws-acc__field-label">Adresse</span>
+                <span className="ws-acc__field-label">{t('co2.address')}</span>
                 <input type="text" className="ws-acc__input" value={addNo.address}
                   onChange={(e) => setAddNo((v) => ({ ...v, address: e.target.value }))} />
               </label>
               <label className="ws-acc__field">
-                <span className="ws-acc__field-label">Code postal</span>
+                <span className="ws-acc__field-label">{t('co2.zip')}</span>
                 <input type="text" className="ws-acc__input" value={addNo.postalCode}
                   onChange={(e) => setAddNo((v) => ({ ...v, postalCode: e.target.value }))} />
               </label>
               <label className="ws-acc__field">
-                <span className="ws-acc__field-label">Ville</span>
+                <span className="ws-acc__field-label">{t('co2.city')}</span>
                 <input type="text" className="ws-acc__input" value={addNo.city}
                   onChange={(e) => setAddNo((v) => ({ ...v, city: e.target.value }))} />
               </label>
             </div>
-            <p className="ws-acc__hint">Entité non assujettie : le n° TVA de la facture restera vide. La TVA belge reste due — aucune exonération à l'achat.</p>
+            <p className="ws-acc__hint">{t('co2.noVatHint')}</p>
             {companyErr && <p className="ws-acc__vat-msg ws-acc__vat-msg--err">⚠ {companyErr}</p>}
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('idle'); setCompanyErr(''); }}>Annuler</button>
-              <button type="button" className="ws-cta" disabled={companyBusy || !addNo.name} onClick={addNoVat}>Ajouter</button>
+              <button type="button" className="ws-fid__cancel" onClick={() => { setCompanyStep('idle'); setCompanyErr(''); }}>{t('common.cancel2')}</button>
+              <button type="button" className="ws-cta" disabled={companyBusy || !addNo.name} onClick={addNoVat}>{t('common.add')}</button>
             </div>
           </div>
         )}
@@ -3273,15 +3379,15 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
 
       {/* ── Sécurité ── */}
       <div className="ws-acc__section">
-        <div className="ws-acc__section-h">Sécurité</div>
+        <div className="ws-acc__section-h">{t('acc.security')}</div>
         <div className="ws-acc__form">
           <label className="ws-acc__field">
-            <span className="ws-acc__field-label">Nouveau mot de passe</span>
+            <span className="ws-acc__field-label">{t('acc.newPassword')}</span>
             <input type="password" className="ws-acc__input" value={pw1}
               onChange={(e) => setPw1(e.target.value)} autoComplete="new-password" />
           </label>
           <label className="ws-acc__field">
-            <span className="ws-acc__field-label">Confirmation</span>
+            <span className="ws-acc__field-label">{t('acc.confirmPassword')}</span>
             <input type="password" className="ws-acc__input" value={pw2}
               onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" />
           </label>
@@ -3299,12 +3405,12 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       </div>
 
       <div className="ws-acc__section">
-        <div className="ws-acc__section-h">Préférences</div>
+        <div className="ws-acc__section-h">{t('acc.prefs')}</div>
 
         {/* Preferred shop ----------------------------------------------- */}
         <div className="ws-acc__row">
           <div className="ws-acc__row-body">
-            <div className="ws-acc__row-title">Boutique préférée</div>
+            <div className="ws-acc__row-title">{t('acc.prefShop')}</div>
             <div className="ws-acc__row-sub">
               Détermine votre boutique par défaut à la connexion. Conditionne aussi votre éligibilité à la livraison au bureau et les créneaux disponibles.
             </div>
@@ -3313,9 +3419,9 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
                 className="ws-acc__input"
                 value={form.preferredShopId || ''}
                 onChange={(e) => changePreferredShop(e.target.value || null)}
-                aria-label="Boutique préférée"
+                aria-label={t('acc.prefShop')}
               >
-                <option value="">— Aucune (choisir à chaque visite) —</option>
+                <option value="">{t('acc.noPrefShop')}</option>
                 {(shops || []).map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name} · {s.city}
@@ -3329,17 +3435,17 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         {/* Fidelity mobile app ------------------------------------------ */}
         <div className="ws-acc__row">
           <div className="ws-acc__row-body">
-            <div className="ws-acc__row-title">Application fidélité</div>
+            <div className="ws-acc__row-title">{t('acc.loyaltyApp')}</div>
             <div className="ws-acc__row-sub">
               Liez votre compte web à l'application mobile L'Atelier pour synchroniser vos points et vos avantages.
             </div>
             {form.fidelityApp?.active ? (
               <span className="ws-acc__row-status">Liée · {form.fidelityApp.linkedAt ? new Date(form.fidelityApp.linkedAt).toLocaleDateString('fr-BE') : 'récemment'}</span>
             ) : (
-              <span className="ws-acc__row-status ws-acc__row-status--off">Non liée</span>
+              <span className="ws-acc__row-status ws-acc__row-status--off">{t('acc.notLinked')}</span>
             )}
           </div>
-          <label className="ws-acc__toggle" aria-label="Activer l'application fidélité">
+          <label className="ws-acc__toggle" aria-label={t('acc.enableLoyalty')}>
             <input
               type="checkbox"
               checked={!!form.fidelityApp?.active}
@@ -3357,30 +3463,30 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       />
 
       <div className="ws-acc__section">
-        <div className="ws-acc__section-h">Mon bureau</div>
+        <div className="ws-acc__section-h">{t('acc.myOffice')}</div>
 
         {officeStep === 'idle' && status === 'active' && (
           <div className="ws-acc__card ws-acc__card--ok">
-            <div className="ws-acc__card-row"><span className="ws-acc__k">Bureau</span><span className="ws-acc__v">{office.name}</span></div>
-            {office.address && <div className="ws-acc__card-row"><span className="ws-acc__k">Adresse</span><span className="ws-acc__v">{office.address}</span></div>}
+            <div className="ws-acc__card-row"><span className="ws-acc__k">{t('off.office')}</span><span className="ws-acc__v">{office.name}</span></div>
+            {office.address && <div className="ws-acc__card-row"><span className="ws-acc__k">{t('co2.address')}</span><span className="ws-acc__v">{office.address}</span></div>}
             {tour && tour.shopId && (shops || []).find((s) => s.id === tour.shopId) && (
-              <div className="ws-acc__card-row"><span className="ws-acc__k">Boutique</span><span className="ws-acc__v">{(shops || []).find((s) => s.id === tour.shopId).name}</span></div>
+              <div className="ws-acc__card-row"><span className="ws-acc__k">{t('off.shop')}</span><span className="ws-acc__v">{(shops || []).find((s) => s.id === tour.shopId).name}</span></div>
             )}
-            <div className="ws-acc__card-row"><span className="ws-acc__k">Tournée</span><span className="ws-acc__v">{tour.name} · {tour.window}</span></div>
+            <div className="ws-acc__card-row"><span className="ws-acc__k">{t('off.tour')}</span><span className="ws-acc__v">{tour.name} · {tour.window}</span></div>
             <div className="ws-acc__btnrow">
-              <span className="ws-acc__badge ws-acc__badge--ok">Livraison active</span>
-              <button type="button" className="ws-acc__unplug" onClick={startUnplug}>Délier ce bureau</button>
+              <span className="ws-acc__badge ws-acc__badge--ok">{t('off.deliveryActive')}</span>
+              <button type="button" className="ws-acc__unplug" onClick={startUnplug}>{t('off.unlink')}</button>
             </div>
           </div>
         )}
 
         {officeStep === 'idle' && status === 'pending' && (
           <div className="ws-acc__card ws-acc__card--pending">
-            <div className="ws-acc__card-row"><span className="ws-acc__k">Bureau</span><span className="ws-acc__v">{office.name}</span></div>
-            <div className="ws-acc__card-row"><span className="ws-acc__k">Contact</span><span className="ws-acc__v">{office.contact}</span></div>
-            <div className="ws-acc__badge ws-acc__badge--pending">En attente de validation</div>
-            <p className="ws-acc__note">Votre bureau sera relié à une tournée par notre équipe. En attendant, commandez en Click &amp; Collect.</p>
-            <button type="button" className="ws-acc__unplug" onClick={startUnplug}>Délier ce bureau</button>
+            <div className="ws-acc__card-row"><span className="ws-acc__k">{t('off.office')}</span><span className="ws-acc__v">{office.name}</span></div>
+            <div className="ws-acc__card-row"><span className="ws-acc__k">{t('off.contact')}</span><span className="ws-acc__v">{office.contact}</span></div>
+            <div className="ws-acc__badge ws-acc__badge--pending">{t('off.pendingValidation')}</div>
+            <p className="ws-acc__note">{t('off.pendingNote')}</p>
+            <button type="button" className="ws-acc__unplug" onClick={startUnplug}>{t('off.unlink')}</button>
           </div>
         )}
 
@@ -3389,27 +3495,27 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             avec les mêmes données que la carte bureau de la PWA. */}
         {officeStep === 'idle' && siteStep === 'idle' && status === 'unlinked' && user.officeSite && (
           <div className="ws-acc__card ws-acc__card--ok">
-            <div className="ws-acc__card-row"><span className="ws-acc__k">Bureau</span><span className="ws-acc__v">{user.officeSite.name}</span></div>
-            {user.officeSite.address && <div className="ws-acc__card-row"><span className="ws-acc__k">Adresse</span><span className="ws-acc__v">{user.officeSite.address}</span></div>}
+            <div className="ws-acc__card-row"><span className="ws-acc__k">{t('off.office')}</span><span className="ws-acc__v">{user.officeSite.name}</span></div>
+            {user.officeSite.address && <div className="ws-acc__card-row"><span className="ws-acc__k">{t('co2.address')}</span><span className="ws-acc__v">{user.officeSite.address}</span></div>}
             <div className={'ws-acc__badge' + (Number(user.officeSite.active) ? '' : ' ws-acc__badge--pending')}>
               {Number(user.officeSite.active) ? 'Validé' : 'En attente de validation'}
             </div>
-            <p className="ws-acc__note">Proposé par défaut comme « Livraison au bureau » lors du paiement.</p>
+            <p className="ws-acc__note">{t('off.defaultAtCheckout')}</p>
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-fid__cancel" onClick={openSitePicker} disabled={siteBusy}>Changer de bureau</button>
-              <button type="button" className="ws-acc__unplug" onClick={unlinkSite} disabled={siteBusy}>Délier ce bureau</button>
+              <button type="button" className="ws-fid__cancel" onClick={openSitePicker} disabled={siteBusy}>{t('off.change')}</button>
+              <button type="button" className="ws-acc__unplug" onClick={unlinkSite} disabled={siteBusy}>{t('off.unlink')}</button>
             </div>
           </div>
         )}
 
         {officeStep === 'idle' && siteStep === 'idle' && status === 'unlinked' && !user.officeSite && (
           <div className="ws-acc__card ws-acc__card--empty">
-            <p className="ws-acc__note">Aucun bureau associé. Liez-vous à un bureau de livraison de votre boutique.</p>
-            <button className="ws-cta ws-cta--block" onClick={openSitePicker}>Lier un bureau</button>
+            <p className="ws-acc__note">{t('off.noneLinked')}</p>
+            <button className="ws-cta ws-cta--block" onClick={openSitePicker}>{t('off.link')}</button>
             {/* Le rattachement à une ENTREPRISE (ws_offices) n'était atteignable
                 qu'après avoir délié un bureau existant : un client sans bureau ne
                 pouvait ni se rattacher, ni demander l'ajout du sien. */}
-            <button type="button" className="ws-acc__addlink" onClick={chooseLinkAnother}>Me rattacher à une entreprise / demander l'ajout de mon bureau</button>
+            <button type="button" className="ws-acc__addlink" onClick={chooseLinkAnother}>{t('off.joinCompany')}</button>
             <button type="button" className="ws-acc__unplug" onClick={() => window.open('/landing/livraison-bureau.html', '_blank', 'noopener')}>Ma zone est-elle desservie&nbsp;?</button>
           </div>
         )}
@@ -3434,38 +3540,38 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
               label="Choisir un bureau de livraison"/>
             {siteErr && <p className="ws-acc__vat-msg ws-acc__vat-msg--err">⚠ {siteErr}</p>}
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-fid__cancel" onClick={() => setSiteStep('idle')}>Annuler</button>
-              <button type="button" className="ws-cta" onClick={saveSite} disabled={siteBusy || !sitePicked}>Lier ce bureau</button>
+              <button type="button" className="ws-fid__cancel" onClick={() => setSiteStep('idle')}>{t('common.cancel2')}</button>
+              <button type="button" className="ws-cta" onClick={saveSite} disabled={siteBusy || !sitePicked}>{t('off.linkThis')}</button>
             </div>
           </div>
         )}
 
         {officeStep === 'confirm' && (
           <div className="ws-acc__card ws-acc__card--warn">
-            <p className="ws-acc__note"><strong>Délier votre compte de ce bureau ?</strong> La livraison au bureau sera désactivée jusqu'à ce que vous liiez un nouveau bureau. Votre compte reste actif.</p>
+            <p className="ws-acc__note"><strong>{t('off.unlinkQ')}</strong> La livraison au bureau sera désactivée jusqu'à ce que vous liiez un nouveau bureau. Votre compte reste actif.</p>
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-fid__cancel" onClick={() => setOfficeStep('idle')}>Annuler</button>
-              <button type="button" className="ws-cta" onClick={confirmUnplug}>Confirmer</button>
+              <button type="button" className="ws-fid__cancel" onClick={() => setOfficeStep('idle')}>{t('common.cancel2')}</button>
+              <button type="button" className="ws-cta" onClick={confirmUnplug}>{t('common.confirm')}</button>
             </div>
           </div>
         )}
 
         {officeStep === 'ask' && (
           <div className="ws-acc__card">
-            <p className="ws-acc__note"><strong>Bureau délié.</strong> Souhaitez-vous lier un autre bureau maintenant ?</p>
+            <p className="ws-acc__note"><strong>{t('off.unlinked')}</strong> {t('off.linkAnotherQ')}</p>
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-fid__cancel" onClick={chooseDone}>Non</button>
-              <button type="button" className="ws-cta" onClick={chooseLinkAnother}>Oui</button>
+              <button type="button" className="ws-fid__cancel" onClick={chooseDone}>{t('common.no')}</button>
+              <button type="button" className="ws-cta" onClick={chooseLinkAnother}>{t('common.yes')}</button>
             </div>
           </div>
         )}
 
         {officeStep === 'pick' && !officeShopId && (
           <div className="ws-acc__card">
-            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Choisir un bureau</div>
-            <p className="ws-acc__hint">Sélectionnez d'abord votre <strong>boutique préférée</strong> (ci-dessus) : la liste des bureaux en dépend.</p>
+            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>{t('off.pick')}</div>
+            <p className="ws-acc__hint">{tRich(t, 'off.pickShopFirst')}</p>
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-fid__cancel" onClick={() => setOfficeStep('idle')}>Fermer</button>
+              <button type="button" className="ws-fid__cancel" onClick={() => setOfficeStep('idle')}>{t('common.close2')}</button>
             </div>
           </div>
         )}
@@ -3475,9 +3581,9 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>
               Bureaux de {((shops || []).find((s) => s.id === officeShopId) || {}).name || 'votre boutique'}
             </div>
-            {officeBusy && <p className="ws-acc__hint">Chargement…</p>}
+            {officeBusy && <p className="ws-acc__hint">{t('common.loading2')}</p>}
             {!officeBusy && approvedOffices.length === 0 && (
-              <p className="ws-acc__hint">Aucun bureau validé pour cette boutique. Vous pouvez demander l'ajout du vôtre ci-dessous.</p>
+              <p className="ws-acc__hint">{t('off.noneValidated')}</p>
             )}
             {!officeBusy && approvedOffices.length > 0 && (
               <OfficeSearchPicker items={approvedOffices} value={pickedOfficeId}
@@ -3485,40 +3591,40 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
                 label="Bureaux validés"/>
             )}
             {officeErr && <p className="ws-form__err">{officeErr}</p>}
-            <button type="button" className="ws-acc__addlink" onClick={() => { setOfficeErr(''); setOfficeStep('add'); }}>Mon bureau n'est pas dans la liste</button>
+            <button type="button" className="ws-acc__addlink" onClick={() => { setOfficeErr(''); setOfficeStep('add'); }}>{t('off.notInList')}</button>
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-fid__cancel" onClick={() => setOfficeStep('idle')}>Annuler</button>
-              <button type="button" className="ws-cta" onClick={confirmPick} disabled={!pickedOfficeId}>Confirmer</button>
+              <button type="button" className="ws-fid__cancel" onClick={() => setOfficeStep('idle')}>{t('common.cancel2')}</button>
+              <button type="button" className="ws-cta" onClick={confirmPick} disabled={!pickedOfficeId}>{t('common.confirm')}</button>
             </div>
           </div>
         )}
 
         {officeStep === 'add' && (
           <div className="ws-acc__card">
-            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Votre bureau n'est pas dans la liste ?</div>
-            <p className="ws-acc__hint">Envoyez une demande à votre Atelier : il contactera votre bureau pour l'ajouter. Indiquez son nom et <strong>au moins un</strong> moyen de contact.</p>
+            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>{t('off.notInListQ')}</div>
+            <p className="ws-acc__hint">{tRich(t, 'off.reqHint')}</p>
             <div className="ws-acc__grid">
               <label className="ws-acc__field ws-acc__field--full">
-                <span className="ws-acc__field-label">Nom du bureau ou de la société *</span>
-                <input className="ws-acc__input" value={newOffice.name} onChange={(e) => setNewOfficeField('name', e.target.value)} placeholder="ACME SA"/>
+                <span className="ws-acc__field-label">{t('off.reqName')}</span>
+                <input className="ws-acc__input" value={newOffice.name} onChange={(e) => setNewOfficeField('name', e.target.value)} placeholder={t('off.phName')}/>
               </label>
               <label className="ws-acc__field">
-                <span className="ws-acc__field-label">Téléphone</span>
+                <span className="ws-acc__field-label">{t('form.phone')}</span>
                 <input className="ws-acc__input" value={newOffice.phone} onChange={(e) => setNewOfficeField('phone', e.target.value)} placeholder="+32 …"/>
               </label>
               <label className="ws-acc__field">
-                <span className="ws-acc__field-label">E-mail</span>
-                <input type="email" className="ws-acc__input" value={newOffice.email} onChange={(e) => setNewOfficeField('email', e.target.value)} placeholder="contact@acme.be"/>
+                <span className="ws-acc__field-label">{t('form.emailLong')}</span>
+                <input type="email" className="ws-acc__input" value={newOffice.email} onChange={(e) => setNewOfficeField('email', e.target.value)} placeholder={t('off.phEmail')}/>
               </label>
               <label className="ws-acc__field ws-acc__field--full">
-                <span className="ws-acc__field-label">Adresse</span>
-                <input className="ws-acc__input" value={newOffice.address} onChange={(e) => setNewOfficeField('address', e.target.value)} placeholder="Rue, numéro, ville"/>
+                <span className="ws-acc__field-label">{t('co2.address')}</span>
+                <input className="ws-acc__input" value={newOffice.address} onChange={(e) => setNewOfficeField('address', e.target.value)} placeholder={t('off.reqAddress')}/>
               </label>
             </div>
-            <p className="ws-acc__hint">Au moins un des trois champs de contact est requis.</p>
+            <p className="ws-acc__hint">{t('off.reqContactHint')}</p>
             {officeErr && <p className="ws-form__err">{officeErr}</p>}
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-fid__cancel" onClick={() => { setOfficeErr(''); setOfficeStep('pick'); }}>Retour</button>
+              <button type="button" className="ws-fid__cancel" onClick={() => { setOfficeErr(''); setOfficeStep('pick'); }}>{t('common.back2')}</button>
               <button type="button" className="ws-cta" onClick={submitContactRequest} disabled={officeBusy}>{officeBusy ? 'Envoi…' : 'Envoyer à votre Atelier'}</button>
             </div>
           </div>
@@ -3526,10 +3632,10 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
 
         {officeStep === 'sent' && (
           <div className="ws-acc__card">
-            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>Demande envoyée ✓</div>
-            <p className="ws-acc__hint">Merci ! Votre Atelier a reçu votre demande et contactera votre bureau. Vous pourrez le sélectionner dès qu'il aura été validé.</p>
+            <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>{t('off.reqSent')}</div>
+            <p className="ws-acc__hint">{t('off.reqThanks')}</p>
             <div className="ws-acc__row-foot">
-              <button type="button" className="ws-cta" onClick={() => setOfficeStep('idle')}>Fermer</button>
+              <button type="button" className="ws-cta" onClick={() => setOfficeStep('idle')}>{t('common.close2')}</button>
             </div>
           </div>
         )}
@@ -3537,12 +3643,12 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
 
       {linkedCompanies.length > 0 && (
         <div className="ws-acc__section">
-          <div className="ws-acc__section-h">Comptes entreprise (livraison bureau)</div>
+          <div className="ws-acc__section-h">{t('acc.b2bAccounts')}</div>
           {linkedCompanies.map((c) => (
             <div key={c.id} className="ws-acc__card ws-acc__card--ok">
-              <div className="ws-acc__card-row"><span className="ws-acc__k">Entreprise</span><span className="ws-acc__v">{c.name}</span></div>
+              <div className="ws-acc__card-row"><span className="ws-acc__k">{t('acc.company')}</span><span className="ws-acc__v">{c.name}</span></div>
               {c.vat ? <div className="ws-acc__card-row"><span className="ws-acc__k">TVA</span><span className="ws-acc__v">{c.vat}</span></div> : null}
-              <div className="ws-acc__card-row"><span className="ws-acc__k">Facturation</span><span className="ws-acc__v">{c.deferredBilling ? 'Sur compte (différée)' : 'Paiement direct'}</span></div>
+              <div className="ws-acc__card-row"><span className="ws-acc__k">{t('acc.billing')}</span><span className="ws-acc__v">{c.deferredBilling ? 'Sur compte (différée)' : 'Paiement direct'}</span></div>
             </div>
           ))}
         </div>
@@ -3550,14 +3656,14 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
 
       {window.LangMenu && (
         <div className="ws-acc__section">
-          <div className="ws-acc__section-h">Langue</div>
+          <div className="ws-acc__section-h">{t('acc.language')}</div>
           <window.LangMenu />
         </div>
       )}
       </>}
 
       <div className="ws-acc__foot">
-        <button className="ws-acc__logout" onClick={() => { onLogout(); onClose(); }}>Se déconnecter</button>
+        <button className="ws-acc__logout" onClick={() => { onLogout(); onClose(); }}>{t('acc.signout')}</button>
       </div>
     </ModalShell>
   );
@@ -3568,6 +3674,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
 // Shown when the user toggles the fidelity-app setting from OFF to ON.
 // =========================================================================
 function FidelityQR({ payload }) {
+  const { t } = wsUseT();
   // Vrai QR scannable (window.QR, fourni par qr.jsx). Rendu « classique » —
   // modules pleins, sombres, marge complète : le style brandé (points ronds
   // bordeaux, finders arrondis) n'est pas lu par tous les scanners.
@@ -3581,7 +3688,7 @@ function FidelityQR({ payload }) {
   }, [payload]);
   if (svg) {
     return (
-      <div className="ws-fid__qr" role="img" aria-label="QR code vers l'application L'Atelier"
+      <div className="ws-fid__qr" role="img" aria-label={t('fid.qrAlt')}
         dangerouslySetInnerHTML={{ __html: svg }} />
     );
   }
@@ -3595,6 +3702,7 @@ function FidelityQR({ payload }) {
 }
 
 function FidelityLinkPanel({ open, user, onClose }) {
+  const { t } = wsUseT();
   // Modale QR-only : elle montre l'adresse du PWA (user.fidelityApp.installUrl,
   // servi par le backend depuis ws_param.pwa_url). L'activation réelle de l'app
   // fidélité se fait DANS le PWA (il écrit fidelity_active en base) ; la boutique
@@ -3605,27 +3713,27 @@ function FidelityLinkPanel({ open, user, onClose }) {
   }, [open, user?.fidelityApp?.installUrl]);
   if (!open) return null;
   return (
-    <div className="ws-fidpanel" role="dialog" aria-modal="true" aria-label="Application fidélité L'Atelier">
+    <div className="ws-fidpanel" role="dialog" aria-modal="true" aria-label={t('fid.title')}>
       <div className="ws-fidpanel__head">
-        <span className="ws-fidpanel__eyebrow">Application fidélité</span>
-        <button type="button" className="ws-fidpanel__close" aria-label="Fermer" onClick={onClose}>×</button>
+        <span className="ws-fidpanel__eyebrow">{t('acc.loyaltyApp')}</span>
+        <button type="button" className="ws-fidpanel__close" aria-label={t('common.close2')} onClick={onClose}>×</button>
       </div>
       <div className="ws-fid ws-fid--inline">
         <div className="ws-fid__qrwrap ws-fid__qrwrap--sm">
           {payload
             ? <FidelityQR payload={payload}/>
-            : <p className="ws-fid__hint">Lien d'installation indisponible pour le moment.</p>}
+            : <p className="ws-fid__hint">{t('fid.noLink')}</p>}
         </div>
         <ol className="ws-fid__steps ws-fid__steps--sm">
-          <li><span className="ws-fid__step-n">1</span> Scannez ce code avec votre téléphone.</li>
-          <li><span className="ws-fid__step-n">2</span> Installez / ouvrez l'app <strong>L'Atelier</strong>.</li>
-          <li><span className="ws-fid__step-n">3</span> Connectez-vous : vos points et avantages s'y synchronisent.</li>
+          <li><span className="ws-fid__step-n">1</span> {t('fid.scan')}</li>
+          <li><span className="ws-fid__step-n">2</span> {tRich(t, 'fid.step2')}</li>
+          <li><span className="ws-fid__step-n">3</span> {t('fid.signinSync')}</li>
         </ol>
         {payload && (
-          <a className="ws-fid__link" href={payload} target="_blank" rel="noopener noreferrer">Ouvrir l'application</a>
+          <a className="ws-fid__link" href={payload} target="_blank" rel="noopener noreferrer">{t('fid.open')}</a>
         )}
         <div className="ws-fid__foot ws-fid__foot--sm">
-          <button type="button" className="ws-cta ws-fid__confirm" onClick={onClose}>Fermer</button>
+          <button type="button" className="ws-cta ws-fid__confirm" onClick={onClose}>{t('common.close2')}</button>
         </div>
       </div>
     </div>
@@ -3659,7 +3767,7 @@ function usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId) 
     window.WSPayments.list({ shopId, profile: profile || 'guest', companyId, mode })
       .then((m) => {
         if (!alive) return;
-        setMethods(Array.isArray(m) ? m.map((x) => ({ id: x.method, label: x.label || x.method, sub: '' })) : []);
+        setMethods(Array.isArray(m) ? m.map((x) => ({ id: x.method, label: x.label || x.method, family: x.family || x.method, sub: '' })) : []);
       })
       .catch(() => { if (alive) setMethods([]); });
     return () => { alive = false; };
@@ -3671,6 +3779,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
                           voucherInput, setVoucherInput, voucherApplied, setVoucherApplied,
                           office, tour, date,
                           deliveryFeeResult, deliveryFeeErr, officeSites, selectedSiteId, setSelectedSiteId }) {
+  const { t } = wsUseT();
   const [step, setStep] = useState(1);
   const [forceAuth, setForceAuth] = useState(false);
   const [paying, setPaying] = useState(false);
@@ -3856,10 +3965,44 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       // confirmation inventée.
       if (!window.WSOrders) throw new Error('Service de commande indisponible — commande non enregistrée.');
       const result = await window.WSOrders.place(payload);
-      // Live backend + immediate payment → Stripe hosted Checkout
-      // (cards + Bancontact). The webhook marks the order paid.
+      // Compatibilité : si un jour POST /orders rend lui-même l'URL de paiement.
       if (result && result.checkoutUrl) {
         window.location.href = result.checkoutUrl;
+        return;
+      }
+      /* PAIEMENT EN LIGNE (famille « stripe », servie par /payment-methods).
+         La commande vient d'être ENREGISTRÉE ; l'encaissement se fait sur la
+         page Stripe hébergée, créée par POST /payments/checkout — et seul le
+         webhook Stripe marque « payé ». Sans cet appel, une commande « carte »
+         était confirmée à l'écran sans qu'aucun paiement n'ait jamais lieu :
+         POST /orders ne rend pas d'URL de paiement, et rien n'appelait la
+         route qui la fabrique. Hors ligne : différé/sur compte (la facture
+         suit) et paiement en boutique (encaissé au comptoir). */
+      const payFam = (paymentMethods.find((x) => x.id === payment) || {}).family || payment;
+      const differe = Boolean(result && (result.paymentType === 'deferred' || result.onAccount));
+      if (payFam === 'stripe' && !differe && window.WSOrders.pay) {
+        let sess;
+        try {
+          sess = await window.WSOrders.pay(result.orderId);
+        } catch (pe) {
+          /* La commande EXISTE déjà — le dire, et dire que réessayer est sûr :
+             la clé d'idempotence fait reprendre LA MÊME commande, jamais une
+             seconde. Un « Erreur 503 » nu ferait recommander le panier. */
+          throw new Error(t('co.payStartFail',
+            { ref: result.orderRef || String(result.orderId), reason: pe.message || '' }));
+        }
+        /* Mémorisé pour l'accueil du retour (?paid=1 / ?canceled=1) : la
+           redirection recharge la page, l'état React ne survit pas. */
+        try {
+          sessionStorage.setItem('ws.pendingPay', JSON.stringify({
+            orderId: result.orderId,
+            orderRef: result.orderRef || '',
+            slot: (typeof slot === 'object' && slot) ? slot.label : slot,
+            paymentLabel: (paymentMethods.find((x) => x.id === payment) || {}).label || payment,
+            total: (typeof result.total === 'number') ? result.total : total,
+          }));
+        } catch (_) { /* stockage indisponible : le retour sera juste muet */ }
+        window.location.href = sess.checkoutUrl;
         return;
       }
       // Le LIBELLÉ vient de la liste serveur : la confirmation annonçait
@@ -3893,19 +4036,19 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   }
 
   return (
-    <aside className="ws-checkout" role="dialog" aria-label="Checkout">
+    <aside className="ws-checkout" role="dialog" aria-label={t('co.title')}>
       <header className="ws-checkout__head">
         <button className="ws-checkout__back" onClick={onClose}>
-          <Pict d={<path d="M15 6l-6 6 6 6"/>} s={12}/> Retour au panier
+          <Pict d={<path d="M15 6l-6 6 6 6"/>} s={12}/> {t('co.backToCart')}
         </button>
-        <span className="ws-checkout__title">Finalisez votre commande</span>
+        <span className="ws-checkout__title">{t('co.subtitle')}</span>
       </header>
 
       <ol className="ws-stepper">
         {[
-          { n: 1, label: 'Coordonnées' },
-          { n: 2, label: 'Créneau' },
-          { n: 3, label: 'Paiement' },
+          { n: 1, label: t('co.step1') },
+          { n: 2, label: t('co.step2') },
+          { n: 3, label: t('co.step3') },
         ].map((s) => (
           <li key={s.n} className={`ws-stepper__step${step === s.n ? ' is-current' : ''}${step > s.n ? ' is-done' : ''}`}>
             <span className="ws-stepper__num">{step > s.n ? <Pict d={<path d="M5 12l4 4 10-10"/>} s={11}/> : s.n}</span>
@@ -3954,16 +4097,16 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
                 </svg>
               </span>
               <div className="ws-b2b__titles">
-                <span className="ws-b2b__title">Entreprise & note</span>
-                <span className="ws-b2b__sub">Facturation professionnelle ou message pour l'atelier</span>
+                <span className="ws-b2b__title">{t('co.company.step')}</span>
+                <span className="ws-b2b__sub">{t('co.company.hint')}</span>
               </div>
             </div>
 
             {companies.length > 0 && (
               <label className="ws-field ws-b2b__field">
-                <span>Commander pour une entreprise</span>
+                <span>{t('co.company.forCompany')}</span>
                 <select value={companyId} onChange={(e) => { setCompanyId(e.target.value); setOnAccount(false); }}>
-                  <option value="">Non — commande personnelle</option>
+                  <option value="">{t('co.company.personal')}</option>
                   {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </label>
@@ -3977,8 +4120,8 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
                     <input type="checkbox" checked={onAccount} onChange={(e) => setOnAccount(e.target.checked)} />
                     <span className="ws-b2b__account-box" aria-hidden="true"/>
                     <span className="ws-b2b__account-copy">
-                      <span className="ws-b2b__account-name">Commander sur le compte de l'entreprise</span>
-                      <span className="ws-b2b__account-sub">Facturation différée · réglée par la société</span>
+                      <span className="ws-b2b__account-name">{t('co.company.onAccount')}</span>
+                      <span className="ws-b2b__account-sub">{t('co.company.deferred')}</span>
                     </span>
                   </label>
                 );
@@ -3989,7 +4132,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
                     <rect x="2" y="5" width="20" height="14" rx="2"/>
                     <path d="M2 10h20"/>
                   </svg>
-                  <span>Je paie pour ma société — paiement par <strong>carte société</strong>.</span>
+                  <span>{tRich(t, 'co.company.payByCard')}</span>
                 </div>
               );
             })()}
@@ -4011,7 +4154,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
               if (!bName && !bVat && !bAddr) return null;
               return (
                 <div className="ws-b2b__bill" role="note">
-                  <span className="ws-b2b__bill-k">Facturé à</span>
+                  <span className="ws-b2b__bill-k">{t('co.company.billedTo')}</span>
                   {bName && <span className="ws-b2b__bill-name">{bName}</span>}
                   {bVat && <span className="ws-b2b__bill-addr">N° TVA · {bVat}</span>}
                   {bAddr && <span className="ws-b2b__bill-addr">{bAddr}</span>}
@@ -4020,14 +4163,14 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             })()}
 
             <label className="ws-field ws-b2b__field">
-              <span>Remarque (facultatif)</span>
+              <span>{t('co.company.note')}</span>
               <textarea value={orderNote} onChange={(e) => setOrderNote(e.target.value)} rows={2} maxLength={1000}
-                        placeholder="Remarque à faire figurer sur la facture, instructions…" />
+                        placeholder={t('co.company.notePh')} />
             </label>
             <label className="ws-field ws-b2b__field">
-              <span>PO# (bon de commande)</span>
+              <span>{t('co.company.po')}</span>
               <input type="text" value={poNumber} onChange={(e) => setPoNumber(e.target.value)}
-                     placeholder="Votre numéro de PO / commande" />
+                     placeholder={t('co.company.poPh')} />
             </label>
           </div>
           )}
@@ -4038,17 +4181,17 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       <footer className="ws-checkout__foot">
         {payErr && <div className="ws-checkout__pay-err" role="alert">{payErr}</div>}
         <div className="ws-checkout__foot-total">
-          <span className="ws-checkout__foot-k">Total TTC</span>
+          <span className="ws-checkout__foot-k">{t('sum.total')}</span>
           <span className="ws-checkout__foot-v">€{total.toFixed(2)}</span>
         </div>
         <div className="ws-checkout__foot-actions">
-          {step > 1 && <button className="ws-btn-ghost" {...wsTap(() => setStep((s) => s - 1), { shield: true })} disabled={paying}>Précédent</button>}
+          {step > 1 && <button className="ws-btn-ghost" {...wsTap(() => setStep((s) => s - 1), { shield: true })} disabled={paying}>{t('co.prev')}</button>}
           <button
             className="ws-cta ws-cta--block"
             disabled={paying || (step === 1 && !step1Valid()) || (step === 2 && !step2Valid()) || (step === 3 && !step3Valid())}
             {...wsTap(next, { shield: true })}
           >
-            {paying ? 'Traitement…' : step === 3 ? `Payer · €${total.toFixed(2)}` : 'Continuer'}
+            {paying ? t('co.processing') : step === 3 ? t('co.payAmount', { amount: '€' + total.toFixed(2) }) : t('co.continue')}
             {!paying && step < 3 && <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>}
           </button>
         </div>
@@ -4059,6 +4202,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
 
 function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, forceAuth, onLoginNow,
                          officeSites, selectedSiteId, setSelectedSiteId, deliveryFeeResult }) {
+  const { t } = wsUseT();
   // Office Shop: site selector + read-only delivery info
   if (mode === 'delivery' && user && office) {
     const activeSite = (officeSites || []).find((s) => s.id === selectedSiteId) || null;
@@ -4072,8 +4216,8 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
     };
     return (
       <div className="ws-co-step">
-        <h3 className="ws-co-step__title">Adresse de livraison</h3>
-        <p className="ws-co-step__lede">Sélectionnez le site de livraison pour cette commande.</p>
+        <h3 className="ws-co-step__title">{t('co.delivery.address')}</h3>
+        <p className="ws-co-step__lede">{t('co.delivery.pickSite')}</p>
 
         {officeSites && officeSites.length > 1 && (
           <div className="ws-co-site-select">
@@ -4092,13 +4236,13 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
         )}
 
         <div className="ws-co-readbox">
-          <ReadRow k="Entreprise" v={office.name}/>
+          <ReadRow k={t('acc.company')} v={office.name}/>
           {/* Repli sur le titulaire du compte, comme la ligne Téléphone juste en
               dessous : un site sans contact nommé affichait une ligne VIDE. */}
-          <ReadRow k="Contact"    v={(activeSite ? activeSite.contact_name : null)
+          <ReadRow k={t('off.contact')}    v={(activeSite ? activeSite.contact_name : null)
                                      || ((user.firstName || '') + ' ' + (user.lastName || '')).trim() || '—'}/>
-          <ReadRow k="Email"      v={user.email}/>
-          <ReadRow k="Téléphone"  v={(activeSite ? activeSite.contact_phone : office.phone) || user.phone || '—'}/>
+          <ReadRow k={t('form.emailLong')} v={user.email}/>
+          <ReadRow k={t('form.phone')} v={(activeSite ? activeSite.contact_phone : office.phone) || user.phone || '—'}/>
           <ReadRow k="Adresse"    v={activeSite
                                      ? (activeSite.address + (complement(activeSite.floor_room) ? ' · ' + complement(activeSite.floor_room) : ''))
                                      : (office.address || '—')}/>
@@ -4115,7 +4259,7 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
             <ReadRow k="Paiement" v="Différé · facturation mensuelle"/>
           )}
         </div>
-        <p className="ws-co-step__locknote"><Pict d={<><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></>} s={12}/> Modifier ces informations depuis Mon compte.</p>
+        <p className="ws-co-step__locknote"><Pict d={<><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></>} s={12}/> {t('co.contact.editFromAccount')}</p>
       </div>
     );
   }
@@ -4124,13 +4268,13 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
   if (user) {
     return (
       <div className="ws-co-step">
-        <h3 className="ws-co-step__title">Vos coordonnées</h3>
-        <p className="ws-co-step__lede">Pré-remplies depuis votre compte. Modifiables depuis Mon compte.</p>
+        <h3 className="ws-co-step__title">{t('co.contact.title')}</h3>
+        <p className="ws-co-step__lede">{t('co.contact.prefilled')}</p>
         <div className="ws-co-readbox">
-          <ReadRow k="Nom"       v={user.firstName + ' ' + user.lastName}/>
-          <ReadRow k="Email"     v={user.email}/>
-          <ReadRow k="Téléphone" v={user.phone || office?.phone || '—'}/>
-          <ReadRow k="Boutique"  v={shop.name + ' · ' + shop.address}/>
+          <ReadRow k={t('form.lastName')} v={user.firstName + ' ' + user.lastName}/>
+          <ReadRow k={t('form.emailLong')} v={user.email}/>
+          <ReadRow k={t('form.phone')} v={user.phone || office?.phone || '—'}/>
+          <ReadRow k={t('off.shop')} v={shop.name + ' · ' + shop.address}/>
         </div>
       </div>
     );
@@ -4140,11 +4284,11 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
   if (forceAuth) {
     return (
       <div className="ws-co-step">
-        <h3 className="ws-co-step__title">Connectez-vous pour continuer</h3>
-        <p className="ws-co-step__lede">Pour finaliser votre commande, créez un compte ou connectez-vous. Vos coordonnées seront pré-remplies.</p>
+        <h3 className="ws-co-step__title">{t('co.auth.title')}</h3>
+        <p className="ws-co-step__lede">{t('co.auth.lede')}</p>
         <div className="ws-co-authwall">
-          <button className="ws-cta ws-cta--block" onClick={onLoginNow}>Se connecter</button>
-          <button className="ws-btn-ghost" onClick={onLoginNow}>Créer un compte</button>
+          <button className="ws-cta ws-cta--block" onClick={onLoginNow}>{t('co.auth.signin')}</button>
+          <button className="ws-btn-ghost" onClick={onLoginNow}>{t('auth.createAccount')}</button>
         </div>
       </div>
     );
@@ -4157,20 +4301,20 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
         </span>
         <div className="ws-co-guest__banner-copy">
-          <strong>Commande sans compte</strong>
-          <span>Aucune inscription requise — vos coordonnées servent uniquement au retrait.</span>
+          <strong>{t('co.guest.title')}</strong>
+          <span>{t('co.guest.hint')}</span>
         </div>
       </div>
-      <h3 className="ws-co-step__title">Vos coordonnées</h3>
+      <h3 className="ws-co-step__title">{t('co.contact.title')}</h3>
       <div className="ws-form">
         <div className="ws-form__row2">
-          <label className="ws-field"><span>Prénom</span><input value={contact.firstName} onChange={(e) => setContact((c) => ({ ...c, firstName: e.target.value }))} autoComplete="given-name"/></label>
-          <label className="ws-field"><span>Nom</span><input value={contact.lastName} onChange={(e) => setContact((c) => ({ ...c, lastName: e.target.value }))} autoComplete="family-name"/></label>
+          <label className="ws-field"><span>{t('form.firstName')}</span><input value={contact.firstName} onChange={(e) => setContact((c) => ({ ...c, firstName: e.target.value }))} autoComplete="given-name"/></label>
+          <label className="ws-field"><span>{t('form.lastName')}</span><input value={contact.lastName} onChange={(e) => setContact((c) => ({ ...c, lastName: e.target.value }))} autoComplete="family-name"/></label>
         </div>
-        <label className="ws-field"><span>Email</span><input type="email" value={contact.email} onChange={(e) => setContact((c) => ({ ...c, email: e.target.value }))} autoComplete="email"/></label>
-        <label className="ws-field"><span>Téléphone</span><input value={contact.phone} onChange={(e) => setContact((c) => ({ ...c, phone: e.target.value }))} autoComplete="tel"/></label>
+        <label className="ws-field"><span>{t('form.email')}</span><input type="email" value={contact.email} onChange={(e) => setContact((c) => ({ ...c, email: e.target.value }))} autoComplete="email"/></label>
+        <label className="ws-field"><span>{t('form.phone')}</span><input value={contact.phone} onChange={(e) => setContact((c) => ({ ...c, phone: e.target.value }))} autoComplete="tel"/></label>
       </div>
-      <p className="ws-co-guest__login">Déjà client ? <button type="button" className="ws-linkbtn" onClick={onLoginNow}>Se connecter</button> pour pré-remplir vos infos.</p>
+      <p className="ws-co-guest__login">{t('co.guest.already')} <button type="button" className="ws-linkbtn" onClick={onLoginNow}>{t('co.auth.signin')}</button> pour pré-remplir vos infos.</p>
     </div>
   );
 }
@@ -4201,10 +4345,11 @@ function SlotCTA({ cta, onClick }) {
 
 // Sticky segmented control — shown only when the office has 2+ orderable slots.
 function SlotSegmented({ slots, selected, onSelect }) {
+  const { t } = wsUseT();
   if (!slots || slots.length < 2) return null;
   const active = slots.find((s) => s.slot_type === selected) || slots[0];
   return (
-    <div className="ws-slotseg" role="tablist" aria-label="Créneau de livraison">
+    <div className="ws-slotseg" role="tablist" aria-label={t('co.slot.title')}>
       <div className="ws-slotseg__tabs">
         {slots.map((s) => {
           const theme = (s.cta && s.cta.theme) || (s.slot_type === 'soir' ? 'evening' : 'lunch');
@@ -4220,7 +4365,7 @@ function SlotSegmented({ slots, selected, onSelect }) {
         })}
       </div>
       {active && active.cutoff_label && (
-        <div className="ws-slotseg__cutoff">Commande avant <strong>{active.cutoff_label}</strong></div>
+        <div className="ws-slotseg__cutoff">{t('co.slot.orderBefore')} <strong>{active.cutoff_label}</strong></div>
       )}
     </div>
   );
@@ -4228,17 +4373,18 @@ function SlotSegmented({ slots, selected, onSelect }) {
 
 // Confirmation modal — one cart = one route + one date. Lists removed items.
 function SlotChangeModal({ items, targetLabel, onConfirm, onCancel }) {
+  const { t } = wsUseT();
   return (
     <div className="ws-drawer is-open" onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-      <div className="ws-drawer__panel ws-slotchange" role="dialog" aria-label="Changer de créneau">
-        <h3 className="ws-co-step__title">Changer de créneau ?</h3>
+      <div className="ws-drawer__panel ws-slotchange" role="dialog" aria-label={t('co.slot.change')}>
+        <h3 className="ws-co-step__title">{t('co.slot.changeQ')}</h3>
         <p className="ws-co-step__lede">Un panier ne peut contenir qu'un seul créneau. Passer sur <strong>{targetLabel}</strong> retirera {items.length} article{items.length > 1 ? 's' : ''} indisponible{items.length > 1 ? 's' : ''} sur ce créneau :</p>
         <ul className="ws-slotchange__list">
           {items.map((l) => <li key={l.line}><span>{l.name}</span><span>×{l.qty}</span></li>)}
         </ul>
         <div className="ws-slotchange__actions">
-          <button type="button" className="ws-fid__cancel" onClick={onCancel}>Annuler</button>
-          <button type="button" className="ws-slotchange__confirm" onClick={onConfirm}>Retirer et continuer</button>
+          <button type="button" className="ws-fid__cancel" onClick={onCancel}>{t('common.cancel2')}</button>
+          <button type="button" className="ws-slotchange__confirm" onClick={onConfirm}>{t('co.slot.removeContinue')}</button>
         </div>
       </div>
     </div>
@@ -4246,6 +4392,7 @@ function SlotChangeModal({ items, targetLabel, onConfirm, onCancel }) {
 }
 
 function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
+  const { t, lang } = wsUseT();
   const [slots, setSlots] = React.useState([]);
   const [dateLabel, setDateLabel] = React.useState('');
   React.useEffect(() => {
@@ -4253,7 +4400,7 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
     (async () => {
       // Use the parent-selected date, not hardcoded today
       const d = date instanceof Date ? date : new Date();
-      setDateLabel(d.toLocaleDateString('fr-BE', { weekday: 'long', day: 'numeric', month: 'long' }));
+      setDateLabel(wsCap(d.toLocaleDateString(wsLocale(), { weekday: 'long', day: 'numeric', month: 'long' })));
       // Repli LOCAL, jamais UTC : toISOString() renvoie la veille pour une Date
       // à minuit en UTC+2.
       const isoFn = (window.WSAvailability || window.WSCalendar)?.isoOf
@@ -4265,17 +4412,20 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
       if (alive) setSlots(list || []);
     })();
     return () => { alive = false; };
-  }, [mode, shop?.id, date]);
+    // `lang` : la date longue (« Zondag 16 augustus ») est rendue par Intl
+    // dans la langue courante — sans cette dépendance, elle resterait dans la
+    // langue du premier affichage.
+  }, [mode, shop?.id, date, lang]);
 
   const selectedId = typeof slot === 'object' && slot ? slot.id : slot;
 
   return (
     <div className="ws-co-step">
-      <h3 className="ws-co-step__title">{mode === 'delivery' ? 'Créneau de livraison' : 'Créneau de collecte'}</h3>
+      <h3 className="ws-co-step__title">{t(mode === 'delivery' ? 'co.slot.titleDelivery' : 'co.slot.titleCollect')}</h3>
       <p className="ws-co-step__lede">
         {mode === 'delivery'
-          ? <>Tournée <strong>{tour?.name || '—'}</strong> · Livraison à <strong>{office?.name}</strong>, {office?.address || ''}.</>
-          : <>À retirer chez <strong>{shop.name}</strong>, {shop.address}.</>
+          ? <>{t('off.tour')} <strong>{tour?.name || '—'}</strong> · Livraison à <strong>{office?.name}</strong>, {office?.address || ''}.</>
+          : <>{t('co.pickup.at')} <strong>{shop.name}</strong>, {shop.address}.</>
         }
       </p>
       <div className="ws-co-day">
@@ -4286,8 +4436,9 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
           const id    = typeof s === 'object' ? s.id    : s;
           const label = typeof s === 'object' ? s.label : s;
           const full  = typeof s === 'object' && (s.available === false || s.current_orders >= s.capacity);
-          const remaining = (s.capacity && !full) ? s.capacity - (s.current_orders || 0) : null;
-          const nearFull  = remaining !== null && remaining <= 3 && remaining > 0;
+          {/* « X restants » retiré (23/08, même règle que les unités en stock) :
+              la capacité résiduelle est une donnée interne. Seul l'état
+              bloquant « Complet » s'affiche. */}
           return (
             <button key={id}
               className={`ws-slot${selectedId === id ? ' is-active' : ''}${full ? ' is-full' : ''}`}
@@ -4295,13 +4446,12 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
               title={full ? 'Créneau complet' : undefined}
               onClick={() => !full && setSlot({ id, label })}>
               <span className="ws-slot__lbl">{label}</span>
-              {full     && <span className="ws-slot__cap ws-slot__cap--full">Complet</span>}
-              {nearFull && <span className="ws-slot__cap ws-slot__cap--low">{remaining} restant{remaining > 1 ? 's' : ''}</span>}
+              {full && <span className="ws-slot__cap ws-slot__cap--full">{t('slot.full')}</span>}
             </button>
           );
         })}
       </div>
-      {mode === 'delivery' && <p className="ws-co-step__hint">Livraison incluse pour les bureaux desservis par votre tournée.</p>}
+      {mode === 'delivery' && <p className="ws-co-step__hint">{t('co.delivery.included')}</p>}
     </div>
   );
 }
@@ -4311,6 +4461,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
                          giftCode, onGift, giftEmail,
                          deliveryFee, deliveryFeeResult, deliveryFeeErr, profile, companyId, customerId,
                          paymentMethods }) {
+  const { t } = wsUseT();
   const [voucherErr, setVoucherErr] = useState(null);
   // Cadeau « achat cumulé » : code saisi + produit cadeau validé (ligne 0 €).
   const [giftInput, setGiftInput] = useState('');
@@ -4415,12 +4566,12 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
 
   return (
     <div className="ws-co-step">
-      <h3 className="ws-co-step__title">Paiement</h3>
-      <p className="ws-co-step__lede">Choisissez votre méthode de paiement et confirmez.</p>
+      <h3 className="ws-co-step__title">{t('sum.payment')}</h3>
+      <p className="ws-co-step__lede">{t('co.pay.subtitle')}</p>
 
       <div className="ws-co-voucher">
         <div className="ws-co-voucher__head">
-          <span className="ws-co-voucher__lbl">Code promo</span>
+          <span className="ws-co-voucher__lbl">{t('co.promo.title')}</span>
           {voucherApplied && voucherApplied.ok && (
             <span className="ws-co-voucher__badge">
               <Pict d={<path d="M5 12l4 4 10-10"/>} s={11}/> {voucherApplied.message}
@@ -4431,14 +4582,14 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
           <div className="ws-co-voucher__row ws-co-voucher__row--ok">
             <code className="ws-co-voucher__code">{voucherApplied.voucher.code}</code>
             <span className="ws-co-voucher__amt">−€{voucherDiscount.toFixed(2)}</span>
-            <button type="button" className="ws-co-voucher__remove" onClick={removeVoucher}>Retirer</button>
+            <button type="button" className="ws-co-voucher__remove" onClick={removeVoucher}>{t('common.remove')}</button>
           </div>
         ) : (
           <div className="ws-co-voucher__row">
             <input
               type="text"
               className="ws-co-voucher__input"
-              placeholder="Saisir un code (ex. BIENVENUE10)"
+              placeholder={t('co.promo.ph')}
               value={voucherInput}
               onChange={(e) => { setVoucherInput(e.target.value.toUpperCase()); setVoucherErr(null); }}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyVoucher(); } }}
@@ -4450,7 +4601,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
                 « [object Object] » et le code saisi n'était jamais lu. Aucun
                 code tapé à la main ne pouvait aboutir — seuls les bons cliqués
                 dans la liste fonctionnaient, eux qui passent leur code. */}
-            <button type="button" className="ws-co-voucher__apply" onClick={() => applyVoucher()} disabled={!voucherInput.trim() || voucherLoading}>{voucherLoading ? '…' : 'Appliquer'}</button>
+            <button type="button" className="ws-co-voucher__apply" onClick={() => applyVoucher()} disabled={!voucherInput.trim() || voucherLoading}>{voucherLoading ? '…' : t('co.apply')}</button>
           </div>
         )}
         {voucherErr && <div className="ws-co-voucher__err">{voucherErr}</div>}
@@ -4466,9 +4617,9 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
           <div className="ws-co-avail">
             <div className="ws-co-avail__head">
               <PortionGlyph size={13}/>
-              <span>{availVouchers.length > 1 ? 'Vos codes promo disponibles' : 'Vous avez un code promo'}</span>
+              <span>{t(availVouchers.length > 1 ? 'co.voucher.availableMany' : 'co.voucher.availableOne')}</span>
               {availVouchers.length > 1 && (
-                <span className="ws-co-avail__rule"> · un seul par commande</span>
+                <span className="ws-co-avail__rule"> · {t('co.voucher.onePerOrder')}</span>
               )}
             </div>
             <ul className="ws-co-avail__list">
@@ -4478,14 +4629,14 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
                 return (
                   <li key={v.code} className={'ws-co-avail__item' + (v.personal ? ' is-personal' : '')}>
                     <div className="ws-co-avail__info">
-                      <span className="ws-co-avail__label">{v.label}{v.personal && <span className="ws-co-avail__perso"> · rien qu’à vous</span>}</span>
+                      <span className="ws-co-avail__label">{v.label}{v.personal && <span className="ws-co-avail__perso"> · {t('co.voucher.personal')}</span>}</span>
                       <span className="ws-co-avail__code">{v.code}{v.hint ? ' · ' + v.hint : ''}</span>
                     </div>
                     <button type="button" className="ws-co-avail__apply"
                       disabled={isOn || !v.reachable || voucherLoading}
                       title={isOn ? 'Déjà appliqué' : (v.reachable ? 'Remplace le code en cours' : ('Applicable ' + v.hint))}
                       onClick={() => applyVoucher(v.code)}>
-                      {isOn ? 'Appliqué' : (v.reachable ? 'Appliquer' : v.hint)}
+                      {isOn ? t('co.applied') : (v.reachable ? t('co.apply') : v.hint)}
                     </button>
                   </li>
                 );
@@ -4498,29 +4649,29 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
       <div className="ws-co-gift">
         <div className="ws-co-gift__head">
           <GiftIcon size={15} className="ws-co-gift__ic"/>
-          <span className="ws-co-gift__lbl">Code cadeau</span>
+          <span className="ws-co-gift__lbl">{t('co.gift.title')}</span>
         </div>
         {giftReward ? (
           <div className="ws-co-gift__ok">
             <Pict d={<path d="M5 12l4 4 10-10"/>} s={12}/>
             <span className="ws-co-gift__okname">{giftReward.name || 'Cadeau'} ajouté à votre commande</span>
-            <button type="button" className="ws-co-gift__remove" onClick={removeGift}>Retirer</button>
+            <button type="button" className="ws-co-gift__remove" onClick={removeGift}>{t('common.remove')}</button>
           </div>
         ) : (
           <div className="ws-co-gift__row">
-            <input type="text" className="ws-co-gift__input" placeholder="Saisir votre code cadeau"
+            <input type="text" className="ws-co-gift__input" placeholder={t('co.gift.ph')}
               value={giftInput}
               onChange={(e) => { setGiftInput(e.target.value.toUpperCase()); setGiftErr(null); }}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyGift(); } }}
               autoComplete="off" spellCheck={false}/>
-            <button type="button" className="ws-co-gift__apply" onClick={applyGift} disabled={!giftInput.trim() || giftLoading}>{giftLoading ? '…' : 'Appliquer'}</button>
+            <button type="button" className="ws-co-gift__apply" onClick={applyGift} disabled={!giftInput.trim() || giftLoading}>{giftLoading ? '…' : t('co.apply')}</button>
           </div>
         )}
         {giftErr && <div className="ws-co-gift__err">{giftErr}</div>}
       </div>
 
       <div className="ws-co-summary">
-        <div className="ws-co-summary__h">Récapitulatif</div>
+        <div className="ws-co-summary__h">{t('co.summary.title')}</div>
         <ul className="ws-co-summary__list">
           {basket.map((l) => (
             <li key={l.line}>
@@ -4530,17 +4681,17 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
             </li>
           ))}
         </ul>
-        <div className="ws-co-summary__row"><span>Sous-total</span><span>€{subtotal.toFixed(2)}</span></div>
+        <div className="ws-co-summary__row"><span>{t('sum.subtotal')}</span><span>€{subtotal.toFixed(2)}</span></div>
         {totaux && totaux.croise > 0 && (
           <div className="ws-co-summary__row ws-co-summary__row--promo">
-            <span>Offre cumulable</span><span>−€{totaux.croise.toFixed(2)}</span></div>)}
+            <span>{t('sum.crossOffer')}</span><span>−€{totaux.croise.toFixed(2)}</span></div>)}
         {totaux && totaux.remise > 0 && (
           <div className="ws-co-summary__row ws-co-summary__row--promo">
             <span>Remise boutique{totaux.remisePct ? ` · ${totaux.remisePct} %` : ''}</span>
             <span>−€{totaux.remise.toFixed(2)}</span></div>)}
         {voucherDiscount > 0 && voucherApplied && (
           <div className="ws-co-summary__row ws-co-summary__row--promo">
-            <span>Code <strong>{voucherApplied.voucher.code}</strong></span>
+            <span>{t('sum.code')} <strong>{voucherApplied.voucher.code}</strong></span>
             <span>−€{voucherDiscount.toFixed(2)}</span>
           </div>
         )}
@@ -4563,7 +4714,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
         {mode === 'delivery' && deliveryFeeErr && (
           <p className="ws-co-error" role="alert">{deliveryFeeErr}</p>
         )}
-        <div className="ws-co-summary__row ws-co-summary__row--total"><span>Total TTC</span><span>€{total.toFixed(2)}</span></div>
+        <div className="ws-co-summary__row ws-co-summary__row--total"><span>{t('sum.total')}</span><span>€{total.toFixed(2)}</span></div>
       </div>
 
       <div className="ws-pay">
@@ -4592,11 +4743,11 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
           <div className="ws-co-invoice__row">
             <label className="ws-co-invoice__check">
               <input type="checkbox" checked={invoice} onChange={(e) => setInvoice(e.target.checked)}/>
-              <span>{isB2B ? 'Demander une facture' : 'Demander une facture nominative'}</span>
+              <span>{t(isB2B ? 'co.askInvoice' : 'co.askInvoiceNamed')}</span>
             </label>
             {!isB2B && (
               <button type="button" className={`ws-co-invoice__i${infoOpen ? ' is-open' : ''}`}
-                      aria-label="À propos de la facture nominative" aria-expanded={infoOpen}
+                      aria-label={t('co.invoice.about')} aria-expanded={infoOpen}
                       onClick={() => setInfoOpen((v) => !v)}>i</button>
             )}
           </div>
@@ -4608,7 +4759,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
         </div>
       )}
 
-      <p className="ws-co-step__hint">Paiement sécurisé · L'Atelier By ne stocke aucune donnée bancaire.</p>
+      <p className="ws-co-step__hint">{t('co.pay.secure')}</p>
     </div>
   );
 }
@@ -4637,6 +4788,7 @@ function bug(source, quoi, e) {
 }
 
 function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
+  const { t } = wsUseT();
   const swPanelRef = useSwipeDownToClose(onClose);
   if (!open) return null;
   const list = shops || [];
@@ -4645,23 +4797,23 @@ function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
       <div ref={swPanelRef} className="ws-modal__panel ws-modal__panel--switcher" onClick={(e) => e.stopPropagation()}>
         <span className="ws-modal__handle" aria-hidden="true"/>
         <button className="ws-modal__close" onClick={onClose}><Pict d={ICONS.close} s={14}/></button>
-        <p className="ws-modal__eyebrow">Choisissez votre boutique</p>
-        <h2 className="ws-modal__title">Trouvez <em>votre</em> Atelier.</h2>
-        <p className="ws-modal__lede">Chaque boutique a ses produits, ses horaires et ses créneaux. Sélectionnez celle où vous souhaitez retirer votre commande.</p>
+        <p className="ws-modal__eyebrow">{t('shoppick.title')}</p>
+        <h2 className="ws-modal__title">{tRich(t, 'shoppick.findTitle')}</h2>
+        <p className="ws-modal__lede">{t('shoppick.hint')}</p>
         <div className="ws-modal__grid">
           {list.map((s) => (
             <button key={s.id} className={`ws-shopcard${s.id === currentId ? ' is-current' : ''}`} onClick={() => { onPick(s.id); onClose(); }} style={{ '--accent': s.accent }}>
               <span className="ws-shopcard__bar"/>
               <div className="ws-shopcard__head">
                 <span className="ws-shopcard__city">{s.city}</span>
-                {s.id === currentId && <span className="ws-shopcard__active"><Pict d={ICONS.check} s={11}/> Actuelle</span>}
+                {s.id === currentId && <span className="ws-shopcard__active"><Pict d={ICONS.check} s={11}/> {t('shoppick.current')}</span>}
               </div>
               <div className="ws-shopcard__name">{s.name}</div>
               <div className="ws-shopcard__addr">{s.address}</div>
               <div className="ws-shopcard__svcs">
-                <span>Click & Collect</span>
+                <span>{t('nav.mode.collect')}</span>
                 <span>·</span>
-                <span>Livraison bureau</span>
+                <span>{t('shoppick.delivery')}</span>
               </div>
             </button>
           ))}
@@ -4675,6 +4827,7 @@ function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
 // SHOP FRAME — full storefront
 // =========================================================================
 function ShopFrame({ variant }) {
+  const { t, lang } = wsUseT();   // i18n réactif : coquille + rechargement des catégories
   // Deep-link: read URL params once at mount so admin direct links
   // (?shop=&mode=&voucher=&category=) preload the storefront state.
   const _deep = typeof parseDeepLink === 'function' ? parseDeepLink() : {};
@@ -4972,7 +5125,10 @@ function ShopFrame({ variant }) {
         .catch((e) => bug('catalogue', 'catégories indisponibles — la barre restera vide', e));
     }
     return () => { alive = false; };
-  }, [shopId, date]);
+    // `lang` dans les dépendances : les libellés de catégories sont résolus par
+    // le SERVEUR selon la langue, donc changer de langue doit les redemander —
+    // sinon la barre reste dans la langue du premier chargement.
+  }, [shopId, date, lang]);
 
   // Assortiments (saisons) — serveur uniquement.
   const [assortments, setAssortments] = React.useState([]);
@@ -5097,6 +5253,12 @@ function ShopFrame({ variant }) {
   // shopId nul en servant la premiere boutique par ordre alphabetique — donc
   // meme sans repli dans la resolution ci-dessus, l'ecran en aurait affiche une.
   const shop = shops.find((s) => String(s.id) === String(shopId) || s.slug === shopId) || null;
+  // Langue de la boutique : default_lang / languages (servis par /shops) →
+  // Halle ouvre en néerlandais, le sélecteur se limite aux langues offertes.
+  // N'impose la langue que si le visiteur n'a pas choisi lui-même (voir applyShop).
+  React.useEffect(() => {
+    if (shop && window.WSI18n && window.WSI18n.applyShop) window.WSI18n.applyShop(shop);
+  }, [shop && shop.id, shop && shop.default_lang, shop && shop.languages]);
   const isAssortment = typeof cat === 'string' && cat.startsWith('season:');
   const assortmentId = isAssortment ? cat.slice('season:'.length) : null;
   const assortment = assortmentId ? assortments.find((a) => a.id === assortmentId) : null;
@@ -5129,7 +5291,10 @@ function ShopFrame({ variant }) {
       if (alive && Array.isArray(list)) setAllProducts(list);
     })();
     return () => { alive = false; };
-  }, [shopId, mode, date]);
+    // `lang` : les NOMS de produits sont résolus par le serveur selon la
+    // langue — changer de langue doit redemander le catalogue, sinon la grille
+    // reste dans la langue du premier chargement.
+  }, [shopId, mode, date, lang]);
   // Source commune GRILLE + LIGNE DE NAV : le catalogue restreint au créneau
   // et à la date en cours. La règle d'affichage de la nav (« n'afficher que ce
   // qui contient au moins un produit disponible ») est ainsi exactement celle
@@ -5308,6 +5473,51 @@ function ShopFrame({ variant }) {
      bascule automatique de mode, panier vidé, boutique changée. Une app qui
      agit sans le dire oblige à deviner — et sur un panier perdu, à recommencer. */
   const [notice, setNotice] = React.useState(null);
+  /* RETOUR DE LA PAGE DE PAIEMENT Stripe (checkout_success / checkout_cancel →
+     ?paid=1 / ?canceled=1). La commande a été enregistrée AVANT la redirection ;
+     ici on accueille, on ne crée rien :
+       · paid=1     → toast de confirmation, données mémorisées au départ ;
+       · canceled=1 → avis persistant : la commande existe mais reste impayée.
+     Le retour du navigateur ne PROUVE pas l'encaissement (seul le webhook fait
+     foi, cf. config.php) : on annonce la commande, pas le paiement. Les
+     paramètres sont ensuite retirés de l'adresse — un rechargement ne doit pas
+     rejouer l'accueil. */
+  React.useEffect(() => {
+    let q;
+    try { q = new URLSearchParams(window.location.search); } catch (_) { return; }
+    const paid = q.get('paid') === '1';
+    const canceled = q.get('canceled') === '1';
+    if (!paid && !canceled) return;
+    let pend = null;
+    try {
+      pend = JSON.parse(sessionStorage.getItem('ws.pendingPay') || 'null');
+      sessionStorage.removeItem('ws.pendingPay');
+    } catch (_) {}
+    if (paid && pend && Number.isFinite(Number(pend.total))) {
+      setOrderToast({ orderRef: pend.orderRef, slot: pend.slot,
+                      paymentLabel: pend.paymentLabel, total: Number(pend.total), ts: Date.now() });
+      setTimeout(() => setOrderToast(null), 6500);
+    }
+    if (canceled) {
+      /* Le texte est CAPTURÉ ici — le rendu affiche notice.texte tel quel. Au
+         premier chargement, /i18n n'a souvent pas encore répondu : t() aurait
+         figé les clés brutes dans l'avis. On le pose quand le dictionnaire est
+         là (ou tout de suite s'il l'est déjà). */
+      const ref = (pend && pend.orderRef) || '';
+      const poser = () => setNotice({ titre: t('co.payCanceled'),
+                                      texte: t('co.payCanceledSub', { ref }) });
+      if (!window.WSI18n || !window.WSI18n.onChange || window.WSI18n.isLoaded()) poser();
+      else {
+        const off = window.WSI18n.onChange(() => { poser(); off(); });
+      }
+    }
+    try {
+      q.delete('paid'); q.delete('canceled');
+      const qs = q.toString();
+      window.history.replaceState(window.history.state, '',
+        window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+    } catch (_) {}
+  }, []);
   function refreshStock() {
     return window.WSCatalog.getStock({ shopId, date, mode }).then((m) => setProductStock(m || {}));
   }
@@ -5685,9 +5895,9 @@ function ShopFrame({ variant }) {
           {variant === 'C' && (
             <div className="ws-hero" style={{ '--shop-accent': shop.accent }}>
               <div className="ws-hero__copy">
-                <span className="ws-hero__eyebrow">Campagne · Printemps 2026</span>
+                <span className="ws-hero__eyebrow">{t('hero.eyebrow')}</span>
                 <h1 className="ws-hero__slogan">On prend.<br/>On divise.<br/><em style={{ color: 'var(--color-primary)' }}>On goûte.</em></h1>
-                <p className="ws-hero__lede">4 parts achetées · 1 offerte. Disponible en boutique pour la collecte aujourd'hui.</p>
+                <p className="ws-hero__lede">{t('hero.lede')}</p>
               </div>
               <div className="ws-hero__chip" style={{ background: 'var(--color-primary)' }}>
                 <span>{shop.name}</span>
@@ -5704,7 +5914,7 @@ function ShopFrame({ variant }) {
             <SlotSegmented slots={officeSlots} selected={selectedSlot} onSelect={(t) => requestSlotChange(t)}/>
           )}
           {mode === 'delivery' && officeSlots.length === 1 && officeSlots[0].slot_type === 'midi' && (
-            <p className="ws-slot-ask">Vous souhaitez la livraison du soir ? <button type="button" className="ws-linkbtn" onClick={() => window.WSSlots && window.WSSlots.requestEvening && window.WSSlots.requestEvening({ officeId: (user && user.officeId) || null })}>Faites-le nous savoir</button></p>
+            <p className="ws-slot-ask">{t('evening.q')} <button type="button" className="ws-linkbtn" onClick={() => window.WSSlots && window.WSSlots.requestEvening && window.WSSlots.requestEvening({ officeId: (user && user.officeId) || null })}>{t('evening.tellUs')}</button></p>
           )}
 
           <CategoryRow active={cat} sub={subCat} onSelect={selectCat} onSelectSub={selectSub} onBack={backToCats} navIcons={navIcons} accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'} tint={mode === 'delivery' ? 'invert(45%) sepia(60%) saturate(600%) hue-rotate(5deg)' : 'invert(15%) sepia(85%) saturate(2400%) hue-rotate(335deg)'} categories={navCats} assortments={seasonChips}/>
@@ -5721,7 +5931,7 @@ function ShopFrame({ variant }) {
         <button
           type="button"
           className="ws-scrollcue ws-scrollcue--up"
-          aria-label="Scroll up"
+          aria-label={t('scroll.upAria')}
           onClick={() => {
             const main = document.querySelector('.ws-main');
             if (!main) return;
@@ -5733,7 +5943,7 @@ function ShopFrame({ variant }) {
         <button
           type="button"
           className="ws-scrollcue ws-scrollcue--down"
-          aria-label="Scroll down"
+          aria-label={t('scroll.downAria')}
           onClick={() => {
             const main = document.querySelector('.ws-main');
             if (!main) return;
@@ -5748,17 +5958,17 @@ function ShopFrame({ variant }) {
       </div>
 
       {/* Mobile bottom tab bar — 2 buttons, 50/50 split */}
-      <nav className="ws-tabbar" aria-label="Navigation">
-        <button className="ws-tabbar__btn ws-tabbar__btn--cart" onClick={() => setCartDrawerOpen(true)} aria-label="Panier">
+      <nav className="ws-tabbar" aria-label={t('nav.navAria')}>
+        <button className="ws-tabbar__btn ws-tabbar__btn--cart" onClick={() => setCartDrawerOpen(true)} aria-label={t('nav.cart')}>
           <span className="ws-tabbar__cart-wrap">
             <Pict d={ICONS.bag} s={20}/>
             {cartCount > 0 && <span className="ws-tabbar__badge">{cartCount}</span>}
           </span>
-          <span className="ws-tabbar__label">Panier</span>
+          <span className="ws-tabbar__label">{t('nav.cart')}</span>
         </button>
-        <button className="ws-tabbar__btn ws-tabbar__btn--account" onClick={handleAccount} aria-label={user ? 'Profil' : 'Connexion'}>
+        <button className="ws-tabbar__btn ws-tabbar__btn--account" onClick={handleAccount} aria-label={user ? t('nav.profile') : t('nav.signin')}>
           <Pict d={ICONS.user} s={20}/>
-          <span className="ws-tabbar__label">{user ? 'Profil' : 'Connexion'}</span>
+          <span className="ws-tabbar__label">{user ? t('nav.profile') : t('nav.signin')}</span>
         </button>
       </nav>
 
@@ -5776,7 +5986,7 @@ function ShopFrame({ variant }) {
       {cartDrawerOpen && (
         <div className="ws-drawer is-open" onClick={(e) => { if (e.target === e.currentTarget) setCartDrawerOpen(false); }}>
           <div className="ws-drawer__panel">
-            <button className="ws-drawer__close" onClick={() => setCartDrawerOpen(false)} aria-label="Fermer">×</button>
+            <button className="ws-drawer__close" onClick={() => setCartDrawerOpen(false)} aria-label={t('common.close2')}>×</button>
             <div className="ws-drawer__handle" aria-hidden="true"/>
             <Basket shop={shop} mode={mode} basket={basket} onCheckout={() => { setCartDrawerOpen(false); handleCheckout(); }} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
           </div>
@@ -5826,13 +6036,13 @@ function ShopFrame({ variant }) {
         officeSites={officeSites} selectedSiteId={selectedSiteId} setSelectedSiteId={setSelectedSiteId}
       />
       {prefNudge && (
-        <div className="ws-pref-nudge" role="dialog" aria-label="Mettre à jour la boutique préférée">
+        <div className="ws-pref-nudge" role="dialog" aria-label={t('prefshop.title')}>
           <div className="ws-pref-nudge__body">
-            <div className="ws-pref-nudge__title">Faire de <em>{prefNudge.shopName}</em> votre boutique préférée ?</div>
-            <div className="ws-pref-nudge__sub">Cela définira <em>{prefNudge.shopName}</em> par défaut à votre prochaine connexion.</div>
+            <div className="ws-pref-nudge__title">{tRich(t, 'prefshop.q', { shop: prefNudge.shopName })}</div>
+            <div className="ws-pref-nudge__sub">{tRich(t, 'prefshop.sub', { shop: prefNudge.shopName })}</div>
           </div>
           <div className="ws-pref-nudge__btns">
-            <button type="button" className="ws-pref-nudge__no" onClick={() => setPrefNudge(null)}>Plus tard</button>
+            <button type="button" className="ws-pref-nudge__no" onClick={() => setPrefNudge(null)}>{t('common.later')}</button>
             <button type="button" className="ws-pref-nudge__yes" onClick={() => {
               if (user) {
                 const updated = { ...user, preferredShopId: prefNudge.shopId };
@@ -5843,7 +6053,7 @@ function ShopFrame({ variant }) {
                 }
               }
               setPrefNudge(null);
-            }}>Définir comme préférée</button>
+            }}>{t('prefshop.set')}</button>
           </div>
         </div>
       )}
@@ -5858,24 +6068,24 @@ function ShopFrame({ variant }) {
           </div>
           {/* « Fermer » EN BAS : à droite du texte, il comprimait le titre sur
               deux lignes et tombait haut dans l'écran, loin du pouce. */}
-          <button type="button" className="ws-toast__close" onClick={() => setNotice(null)}>Fermer</button>
+          <button type="button" className="ws-toast__close" onClick={() => setNotice(null)}>{t('common.close2')}</button>
         </div>
       )}
       {stockErr && (
         <div className="ws-toast ws-toast--err" role="alert" style={{ background: '#7a1f1f' }}>
           <div>
-            <div className="ws-toast__title">Stock non tenu</div>
+            <div className="ws-toast__title">{t('stock.untracked')}</div>
             <div className="ws-toast__sub">{stockErr}</div>
           </div>
           <button type="button" onClick={() => setStockErr('')}
-            style={{ marginLeft: 'auto', background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', font: '600 13px var(--font-ui)' }}>Fermer</button>
+            style={{ marginLeft: 'auto', background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', font: '600 13px var(--font-ui)' }}>{t('common.close2')}</button>
         </div>
       )}
       {orderToast && (
         <div className="ws-toast" role="status">
           <span className="ws-toast__check"><Pict d={<path d="M5 12l4 4 10-10"/>} s={14}/></span>
           <div>
-            <div className="ws-toast__title">Commande confirmée</div>
+            <div className="ws-toast__title">{t('order.confirmed')}</div>
             <div className="ws-toast__sub">Créneau {typeof orderToast.slot === 'object' ? orderToast.slot?.label : orderToast.slot} · {orderToast.paymentLabel || orderToast.payment} · €{orderToast.total.toFixed(2)}</div>
           </div>
         </div>

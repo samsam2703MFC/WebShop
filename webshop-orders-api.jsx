@@ -6,6 +6,7 @@
      window.WSOrders.endpoint = 'https://your-host/orders';
    Endpoints expected:
      POST {endpoint}                     -> { orderId, status, total, paymentUrl? }
+     POST {payEndpoint} {orderId}        -> { ok, checkoutUrl }   (paiement hébergé)
      GET  {endpoint}/:id                 -> Order
      GET  {endpoint}/me                  -> Order[]  (current customer)
      POST {endpoint}/:id/cancel          -> { ok }
@@ -35,6 +36,7 @@
 
   const api = {
     endpoint: null,
+    payEndpoint: null,   // POST /payments/checkout — session de paiement hébergée
 
     /* Place an order. Throws on network / server error. */
     async place(payload) {
@@ -61,6 +63,24 @@
       // Go-live : plus de simulation de commande. Sans API configurée, on
       // refuse — une commande ne peut jamais « réussir » à blanc.
       throw new Error('API commandes indisponible — commande non enregistrée.');
+    },
+
+    /* Démarre le PAIEMENT HÉBERGÉ (Stripe Checkout) d'une commande DÉJÀ
+       enregistrée par place(). Rend { ok, orderId, checkoutUrl } ; jette avec
+       le motif serveur sinon (503 Stripe non configuré, 502 échec Stripe).
+       Étape séparée de place() : l'enregistrement et l'encaissement sont deux
+       routes serveur distinctes, et seul le webhook Stripe marque « payé ». */
+    async pay(orderId) {
+      if (!orderId) throw new Error('orderId requis');
+      if (!api.payEndpoint) throw new Error('API paiement indisponible.');
+      const r = await fetch(api.payEndpoint, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ orderId }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j && j.checkoutUrl) return j;
+      throw new Error((typeof j.error === 'string' && j.error) || `Erreur ${r.status}`);
     },
 
     /* Fetch a single order (e.g. for the confirmation page). */

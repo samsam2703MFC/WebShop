@@ -119,24 +119,64 @@
 }
 
 /* Mode pills */
-.ws-modes { display: inline-flex; gap: 6px; }
-.ws-modes__indicator { display: none; }   /* indicator only used on mobile toggle */
+/* SÉLECTEUR DE MODE — un seul objet segmenté, sur bureau COMME sur mobile.
+   C'étaient deux pastilles indépendantes : rien ne disait qu'elles sont
+   EXCLUSIVES, elles ressemblaient à deux filtres cumulables. Or le mode
+   commande les prix, les créneaux et l'heure limite. Un curseur qui glisse
+   dans un rail unique le rend évident.
+   Même composant que le mobile (qui n'ajuste plus que les dimensions) : une
+   seule version à maintenir, et le même geste sur les deux écrans. */
+.ws-modewrap { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.ws-modes {
+  position: relative;
+  display: grid; grid-template-columns: 1fr 1fr;
+  height: 34px;
+  padding: 3px;
+  gap: 0;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.ws-modes__indicator {
+  display: block;
+  position: absolute;
+  top: 3px; bottom: 3px; left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 999px;
+  background: var(--color-surface);
+  box-shadow: 0 1px 3px rgba(0,0,0,.10), 0 0 0 1px rgba(0,0,0,.04);
+  transition: transform 260ms cubic-bezier(.2,.8,.2,1), background 200ms ease;
+  z-index: 0;
+}
+.ws-modes__indicator[data-mode="delivery"] { transform: translateX(100%); }
+/* Le curseur porte la couleur du mode — Ruby en collecte, Abricot en
+   livraison — - comme les anciennes pastilles pleines. */
+.ws[data-mode="collect"] .ws-modes__indicator {
+  background: color-mix(in oklab, var(--color-primary) 14%, var(--color-surface));
+}
+.ws[data-mode="delivery"] .ws-modes__indicator {
+  background: color-mix(in oklab, var(--color-secondary) 60%, var(--color-surface));
+}
+.ws[data-mode="collect"]  .ws-mode.is-active { color: var(--color-primary); }
+.ws[data-mode="delivery"] .ws-mode.is-active { color: var(--color-on-abricot); }
 .ws-mode {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 32px;
+  position: relative; z-index: 1;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 100%;
   padding: 0 14px;
   line-height: 1;
-  font-size: 12px;
   border-radius: 999px;
-  border: 1px solid var(--color-border-tertiary);
-  background: var(--color-surface);
+  border: 0;
+  background: transparent;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 500;
+  white-space: nowrap;
+  transition: color 200ms ease;
 }
+.ws-mode.is-active { font-weight: 600; }
 .ws-mode__lbl-mob { display: none; }      /* mobile-only short label, kept for legacy */
-.ws-mode--collect.is-active   { background: var(--color-primary);   border-color: var(--color-primary);   color: #fff; }
-.ws-mode--delivery.is-active  { background: var(--color-secondary); border-color: var(--color-collection-border); color: var(--color-on-abricot); }
 .ws-mode:disabled, .ws-mode.is-disabled { opacity: 0.45; cursor: not-allowed; }
 .ws-mode__cutoff { font-size: 10px; opacity: 0.8; }
 
@@ -159,11 +199,14 @@
   border-radius: 50%;
   text-decoration: none;
 }
-/* Vue mobile : pas de sélecteur de langue ; l'icône « i » prend sa place.
+/* Vue mobile : le sélecteur de langue RESTE visible. Il était masqué à l'époque
+   où l'icône « i » occupait ce coin ; le « i » est parti, et une boutique
+   bilingue (Halle : nl+fr) doit pouvoir changer de langue depuis un téléphone —
+   sans lui, un francophone à Halle n'avait aucun moyen de repasser en FR.
    Sélecteur descendant (.ws-nav__right …) pour l'emporter sur .ws-langchip
    défini plus tard dans webshop-i18n.css (spécificité égale sinon). */
 @media (max-width: 720px) {
-  .ws-nav__right .ws-nav__lang { display: none; }
+  .ws-nav__right .ws-nav__lang { display: inline-flex; }
   .ws-nav__right .ws-nav__info { display: inline-grid; }
 }
 .ws-nav__cart-badge {
@@ -2627,6 +2670,10 @@
   padding: 16px;
   background: var(--color-bg-secondary);
 }
+/* Respiration CONSTANTE entre deux tickets successifs : sans elle les cartes
+   se touchaient (gap réel 0), collées bord à bord — illisible sur une longue
+   liste d'achats. 10px = même rythme que les autres listes du compte. */
+.ws-acc__card + .ws-acc__card { margin-top: 10px; }
 .ws-acc__card--ok      { background: color-mix(in oklab, var(--color-secondary) 25%, var(--color-surface)); border-color: var(--color-collection-border); }
 .ws-acc__card--ok .ws-acc__badge--ok,
 .ws-acc__card--ok .ws-acc__unplug {
@@ -3405,32 +3452,28 @@
   /* ---- Hide old floating cart pill (replaced by tab bar) ---- */
   .ws-cartbar { display: none !important; }
 
-  /* ---- Mobile nav layout: SINGLE row — shop / mode / date ---- */
+  /* ---- Mobile nav layout ----
+     Ligne 1 : boutique + date + sélecteur de langue. Ligne 2 : sélecteur de mode
+     sur TOUTE la largeur du bandeau.
+     `display: contents` sur .ws-nav__left fait remonter ses enfants au niveau de
+     .ws-nav : les quatre éléments partagent alors le MÊME conteneur flex, donc
+     la barre de mode (flex-basis 100%) prend la largeur du bandeau entier et non
+     celle du bloc gauche. Sans ça, le bloc de droite réservait sa largeur sur les
+     deux lignes et tronquait le libellé (« Levering op kant… ») — la même
+     mécanique qui coupait le nom de la boutique. Le DOM reste celui du desktop. */
   .ws-nav {
     padding: 8px 10px;
     gap: 6px;
     row-gap: 0;
-    flex-wrap: nowrap;
-    align-items: center;
-  }
-  .ws-nav__left {
-    flex: 1 1 auto;
-    width: auto;
-    gap: 6px;
-    /* Le sélecteur de mode passe sur SA PROPRE LIGNE (voir .ws-modes plus bas).
-       Il était réduit à deux pictos de 16 px dans 76 px, sans un mot, alors
-       qu'il commande les prix, les créneaux et l'heure limite. wrap plutôt
-       qu'un second conteneur : le DOM reste celui du desktop, donc une seule
-       version du composant à maintenir. */
     flex-wrap: wrap;
-    row-gap: 0;
-    min-width: 0;          /* allow children to shrink */
     align-items: center;
   }
+  .ws-nav__left { display: contents; }
   .ws-nav__right {
     width: auto;
     gap: 6px;
     flex: 0 0 auto;
+    order: 3;              /* fin de la ligne 1, avant la barre de mode */
   }
 
   /* Brand & brand wrappers are not part of the 3-element row */
@@ -3449,7 +3492,7 @@
      .ws-nav__info de la barre rend déjà ce service en mobile.
      !important est nécessaire : ce span porte des styles EN LIGNE, qu'aucun
      sélecteur ne peut battre autrement — et le JSX est partagé avec le desktop. */
-  .ws-modes > span:last-child { display: none !important; }
+  .ws-modewrap > span:last-child { display: none !important; }
 
   /* Le fond du segment actif est l'INDICATEUR coulissant, pas le bouton.
      Sans cette neutralisation, la règle de base .ws-mode--collect.is-active
@@ -3459,11 +3502,15 @@
   .ws-modes .ws-mode.is-active { background: transparent; border-color: transparent; }
 
   /* Toggle-switch style segmented control — compact icon-only for single-row */
+  .ws-modewrap {
+    flex: 1 0 100%;                      /* ligne à part, pleine largeur du bandeau */
+    order: 4;                            /* après boutique, date et langue */
+    margin-top: 8px;
+  }
   .ws-modes {
     position: relative;
-    flex: 1 0 100%;                      /* ligne à part, pleine largeur */
-    order: 3;                            /* après la boutique et la date */
-    margin-top: 8px;
+    flex: 1 1 auto;
+    width: 100%;
     gap: 0;
     background: var(--color-bg, #faf7f2);
     border-radius: 999px;
@@ -3534,13 +3581,21 @@
     border: 1px solid var(--color-border-tertiary, rgba(0,0,0,.08));
     height: 32px;
     flex: 1 1 auto;
+    order: 1;              /* début de la ligne 1 */
     min-width: 0;
     gap: 5px;
   }
+  .ws-datepill { order: 2; flex: 0 0 auto; }
   .ws-nav__shopchip-dot { width: 7px; height: 7px; flex-shrink: 0; }
   .ws-nav__shopchip span:not(.ws-nav__shopchip-dot) {
     flex: 1 1 auto;
     min-width: 0;
+    /* Lève le max-width: 90px hérité de l'ancien bloc @media (max-width:720px) :
+       c'était LUI qui coupait le nom en « Atelier by Ber… », pas le manque de
+       place. Seul le bloc ≤380px le remettait à 100%, d'où un nom bridé à 90px
+       sur les écrans ~390-410px alors qu'il restait 170px de vide à droite.
+       flex:1 1 auto laisse le nom prendre la largeur libre de la ligne. */
+    max-width: none;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-weight: 500;
     text-align: left;

@@ -60,7 +60,12 @@
       // `date` : même filtre saisonnier que listProducts — une catégorie
       // entièrement hors saison ne doit pas rester dans la barre de navigation.
       const dateQs = date ? `&date=${encodeURIComponent(date)}` : '';
-      return await getJson(`${base}/categories?shopId=${encodeURIComponent(shopId || '')}${dateQs}`, 'Catégories');
+      // `lang` : le SERVEUR résout les libellés traduits (alias ERP). Sans
+      // alias pour cette langue, il renvoie le libellé source — le front ne
+      // traduit rien lui-même et n'a donc jamais de trou à combler.
+      const lg = (window.WSI18n && window.WSI18n.getLang && window.WSI18n.getLang()) || '';
+      const langQs = lg ? `&lang=${encodeURIComponent(lg)}` : '';
+      return await getJson(`${base}/categories?shopId=${encodeURIComponent(shopId || '')}${dateQs}${langQs}`, 'Catégories');
     },
 
     async listProducts({ shopId, cat, mode, date } = {}) {
@@ -72,8 +77,12 @@
       // pas à celle de la commande : on commande le 28 novembre pour le
       // 2 décembre, et la gamme de Noël doit alors être visible.
       const dateQs = date ? `&date=${encodeURIComponent(date)}` : '';
+      // `lang` : noms de produits traduits par le SERVEUR (alias ERP). Sans
+      // alias dans cette langue, il renvoie le nom source.
+      const lg = (window.WSI18n && window.WSI18n.getLang && window.WSI18n.getLang()) || '';
+      const langQs = lg ? `&lang=${encodeURIComponent(lg)}` : '';
       return await getJson(
-        `${base}/products?shopId=${encodeURIComponent(shopId || '')}&cat=${encodeURIComponent(cat || '')}${modeQs}${dateQs}`,
+        `${base}/products?shopId=${encodeURIComponent(shopId || '')}&cat=${encodeURIComponent(cat || '')}${modeQs}${dateQs}${langQs}`,
         'Catalogue'
       );
     },

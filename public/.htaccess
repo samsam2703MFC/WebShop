@@ -54,3 +54,12 @@
   RewriteEngine On
   RewriteRule ^inscription/?$ inscription.html [L,QSA]
 </IfModule>
+
+# Photos produit : le serveur servait les .webp SANS Content-Type (Apache ne le
+# mappe pas d'origine sur cette machine). Les navigateurs actuels devinent le
+# format dans <img>, mais un client strict — ou un proxy — peut refuser une
+# image sans type. On le déclare, c'est tout.
+<IfModule mod_mime.c>
+  AddType image/webp .webp
+  AddType image/avif .avif
+</IfModule>
