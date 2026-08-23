@@ -307,9 +307,18 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
     if (!$apiRec) fwrite(STDERR, "  ⚠ available (boutique $refShop) illisible — liens recette pris du réplica local seul\n");
   }
   $rows = [];
+  $dirPhotos = __DIR__ . '/../assets/product_pictures';
   foreach ($rows0 as [$pid, $ridLocal]) {
     $rid = $apiRec[(int) $pid] ?? (int) $ridLocal;   // l'API prime, le réplica complète
-    if ($rid > 0) $rows[] = [(int) $pid, $rid];
+    if ($rid > 0) { $rows[] = [(int) $pid, $rid]; continue; }
+    /* Produit actif SANS recette : le balayage ne le traite jamais, donc un
+       vieux fichier manuel y survivait indéfiniment (constaté : 6700098,
+       « Thon provençal »). Source unique oblige : on le retire ici — hors
+       --only/--limit, qui ne restreignent que les téléchargements. */
+    if (!$opt['dry'] && !$opt['only'] && ($f = spp_existing($dirPhotos, (int) $pid)) !== null) {
+      @unlink("$dirPhotos/$f");
+      fwrite(STDERR, "  produit $pid : sans recette ERP — fichier manuel retiré ($f)\n");
+    }
   }
   if ($opt['only']) $rows = array_values(array_filter($rows, fn ($r) => in_array((int) $r[0], $opt['only'], true)));
   if ($opt['limit'] > 0) $rows = array_slice($rows, 0, $opt['limit']);
