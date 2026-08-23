@@ -252,18 +252,51 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
     else fwrite(STDERR, "  ⚠ reconnexion ERP refusée — jeton statique utilisé en repli\n");
   }
 
-  /* Produits ACTIFS du webshop → leur recette. `product` est la table ERP de
-     la même base (lecture seule, cf. AUDIT_API_VS_DB.md §3) : c'est elle qui
-     porte id_recipe. Table absente → on le dit et on sort proprement. */
+  /* Produits ACTIFS du webshop → leur recette. Le lien produit→recette vient
+     de L'API D'ABORD (shops/{ref}/products/available, UN appel) : la table
+     locale `product` est un réplica, et il a déjà menti — constaté en
+     production sur « Salade Chèvre » (2130006) : recette liée dans tfbuddy à
+     11 h, réplica local encore à NULL, produit invisible pour la synchro
+     alors que sa photo attendait. Le réplica ne sert plus que de REPLI pour
+     les produits absents de la réponse API (ou si l'appel échoue). */
   try {
     $sql = "SELECT p.id, erp.id_recipe
               FROM ws_products p
-              JOIN product erp ON erp.id = p.id
-             WHERE p.active = 1 AND erp.id_recipe IS NOT NULL AND erp.id_recipe > 0";
-    $rows = $pdo->query($sql)->fetchAll(PDO::FETCH_NUM);
+              LEFT JOIN product erp ON erp.id = p.id
+             WHERE p.active = 1";
+    $rows0 = $pdo->query($sql)->fetchAll(PDO::FETCH_NUM);
   } catch (Throwable $e) {
-    fwrite(STDERR, "⚠ sync_product_photos : table `product` (ERP) illisible — " . $e->getMessage() . "\n");
+    fwrite(STDERR, "⚠ sync_product_photos : lecture ws_products/product impossible — " . $e->getMessage() . "\n");
     exit(0);
+  }
+  $apiRec = [];
+  // Boutique de référence pour l'appel available (le lien recette est commun
+  // à toutes) : erp_ref_shop si posé, sinon la première boutique webshop.
+  $refShop = (int) ($param('erp_ref_shop') ?: 0);
+  if ($refShop <= 0) {
+    try { $refShop = (int) $pdo->query("SELECT MIN(id) FROM shops WHERE webshop_enabled = 1")->fetchColumn(); }
+    catch (Throwable $e) { $refShop = 0; }
+  }
+  if ($refShop > 0) {
+    [$ac, $ab] = spp_http_get($base . '/shops/' . $refShop . '/products/available',
+                              array_merge($token !== '' ? ['Authorization: Bearer ' . $token] : [], ['Accept: application/json']), 30);
+    $al = ($ac === 200 && $ab !== null) ? json_decode($ab, true) : null;
+    if (is_array($al) && !array_is_list($al)) {
+      foreach (['data', 'items', 'results', 'products'] as $k) {
+        if (isset($al[$k]) && is_array($al[$k])) { $al = $al[$k]; break; }
+      }
+    }
+    if (is_array($al) && array_is_list($al)) {
+      foreach ($al as $pr) {
+        if (is_array($pr) && !empty($pr['id']) && !empty($pr['id_recipe'])) $apiRec[(int) $pr['id']] = (int) $pr['id_recipe'];
+      }
+    }
+    if (!$apiRec) fwrite(STDERR, "  ⚠ available (boutique $refShop) illisible — liens recette pris du réplica local seul\n");
+  }
+  $rows = [];
+  foreach ($rows0 as [$pid, $ridLocal]) {
+    $rid = $apiRec[(int) $pid] ?? (int) $ridLocal;   // l'API prime, le réplica complète
+    if ($rid > 0) $rows[] = [(int) $pid, $rid];
   }
   if ($opt['only']) $rows = array_values(array_filter($rows, fn ($r) => in_array((int) $r[0], $opt['only'], true)));
   if ($opt['limit'] > 0) $rows = array_slice($rows, 0, $opt['limit']);
