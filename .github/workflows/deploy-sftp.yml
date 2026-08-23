@@ -263,14 +263,7 @@ jobs:
           sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "if php -m | grep -qi pdo_mysql; then echo 'OK pdo_mysql deja present'; else \
-               PV=\$(php -r 'echo PHP_MAJOR_VERSION.\".\".PHP_MINOR_VERSION;'); \
-               echo \"pdo_mysql absent du PHP CLI \$PV — installation de php\$PV-mysql…\"; \
-               export DEBIAN_FRONTEND=noninteractive; \
-               (apt-get update -qq && apt-get install -y -qq php\$PV-mysql) \
-                 && php -m | grep -qi pdo_mysql && echo 'OK extension installee' \
-                 || echo 'ATTENTION installation impossible (droits ?) — les synchros photos resteront inertes'; \
-             fi"
+            "sh -s" < php-api/tools/ensure_php_mysql.sh
 
       # Photos produit ← API ERP : GET recipes/{id} rend une URL SIGNÉE (R2,
       # expire en 3600 s) — on la télécharge donc côté serveur vers
