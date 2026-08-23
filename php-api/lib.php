@@ -90,12 +90,17 @@ function auth_uid() {
   return verify_token(trim($h))['id'] ?? null;
 }
 
-/* Garde du back-office : jeton admin (X-Admin-Token ou Bearer). */
+/* Garde du back-office : jeton admin (X-Admin-Token, Bearer, ou ?token=).
+   Le repli ?token= suit la pratique déjà en place pour OUVRIR les consoles
+   (?token=<jeton admin>, mémorisé) : il permet de lire un endpoint admin
+   directement dans le navigateur — « endpoint direct » du Catalogue et
+   consorts. Même installation HTTP-sur-IP, même jeton, mêmes journaux. */
 function require_admin() {
   $expected = cfg()['admin_token'] ?? '';
   if ($expected === '') json_out(['error' => 'Admin non configuré (admin_token manquant)'], 503);
   $given = req_header('X-Admin-Token');
   if ($given === '') { $a = req_header('Authorization'); if (stripos($a, 'bearer ') === 0) $given = substr($a, 7); }
+  if ($given === '') $given = (string) ($_GET['token'] ?? '');
   if (!hash_equals($expected, trim($given))) json_out(['error' => 'Non autorisé'], 401);
 }
 
