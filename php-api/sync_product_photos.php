@@ -45,7 +45,7 @@
  */
 
 /* ── HTTP : curl si présent (honore les proxys d'environnement), sinon flux. ── */
-function spp_http_get($url, array $headers = [], $timeout = 20) {
+function spp_http_get($url, array $headers = [], $timeout = 20, $post = null) {
   if (function_exists('curl_init')) {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
@@ -53,6 +53,7 @@ function spp_http_get($url, array $headers = [], $timeout = 20) {
       CURLOPT_CONNECTTIMEOUT => 8, CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 3,
       CURLOPT_HTTPHEADER => $headers,
     ]);
+    if ($post !== null) curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $post]);
     $body = curl_exec($ch);
     $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err  = curl_error($ch);
@@ -60,10 +61,10 @@ function spp_http_get($url, array $headers = [], $timeout = 20) {
     if ($body === false) return [0, null, $err];
     return [$code, $body, ''];
   }
-  $ctx = stream_context_create(['http' => [
-    'method' => 'GET', 'timeout' => $timeout, 'ignore_errors' => true,
-    'header' => implode("\r\n", $headers),
-  ]]);
+  $opt = ['method' => $post !== null ? 'POST' : 'GET', 'timeout' => $timeout,
+          'ignore_errors' => true, 'header' => implode("\r\n", $headers)];
+  if ($post !== null) $opt['content'] = $post;
+  $ctx = stream_context_create(['http' => $opt]);
   $body = @file_get_contents($url, false, $ctx);
   if ($body === false) return [0, null, 'flux HTTP en échec'];
   $code = 0;
@@ -235,6 +236,20 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
   if ($base === '') {
     echo "sync_product_photos : API ERP non configurée (ws_param.erp_api_base) — rien à faire.\n";
     exit(0);
+  }
+  /* Reconnexion automatique (mêmes clés que erp_alias.php) : le jeton
+     consultant expire en 30 min, un jeton statique meurt donc vite. Si les
+     identifiants sont posés, un jeton FRAIS est pris pour ce balayage — le
+     statique reste le repli si la connexion échoue. */
+  $aph = (string) ($param('erp_auth_phone') ?: '');
+  $apw = (string) ($param('erp_auth_password') ?: '');
+  if ($aph !== '' && $apw !== '') {
+    [$lc, $lb] = spp_http_get($base . '/consultant/auth/login', ['Content-Type: application/json', 'Accept: application/json'], 15,
+                              json_encode(['phone' => $aph, 'password' => $apw]));
+    $ld = ($lc === 200 && $lb !== null) ? json_decode($lb, true) : null;
+    $fresh = is_array($ld) ? (string) ($ld['access_token'] ?? '') : '';
+    if ($fresh !== '') $token = $fresh;
+    else fwrite(STDERR, "  ⚠ reconnexion ERP refusée — jeton statique utilisé en repli\n");
   }
 
   /* Produits ACTIFS du webshop → leur recette. `product` est la table ERP de

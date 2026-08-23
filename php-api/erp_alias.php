@@ -43,12 +43,67 @@ function erp_cfg() {
       if ($t2 !== '') $tok  = $t2;
     } catch (Throwable $ex) { /* table absente : on garde config.php */ }
   }
+  /* Reconnexion AUTOMATIQUE (transitoire, en attendant le jeton d'intégration
+     permanent demandé à Franchise Buddy) : le jeton consultant expire en
+     30 minutes — un jeton statique posé dans erp_api_token meurt donc vite
+     (constaté en production : 401 sur les alias, traductions à zéro). Si
+     ws_param.erp_auth_phone / erp_auth_password sont posés, le serveur se
+     reconnecte tout seul (erp_token) et le jeton statique devient un simple
+     repli. À VIDER dès que le jeton permanent existe. */
+  $aph = ''; $apw = '';
+  if (function_exists('ws_param')) {
+    try {
+      $aph = (string) (ws_param('erp_auth_phone', '') ?: '');
+      $apw = (string) (ws_param('erp_auth_password', '') ?: '');
+    } catch (Throwable $ex) { /* table absente */ }
+  }
   return $c = [
     'base'    => rtrim($base, '/'),
     'token'   => $tok,
+    'auth_phone' => $aph,
+    'auth_pass'  => $apw,
     'timeout' => (int) ($e['timeout'] ?? 6) ?: 6,
     'ttl'     => (int) ($e['ttl'] ?? 300),
   ];
+}
+
+/* POST de connexion consultant → ['t' => jeton, 'ttl' => secondes] ou null.
+ * Volontairement muet sur le MOTIF détaillé (le mot de passe ne doit jamais
+ * fuiter dans un journal) : l'échec se voit dans erp_notes et /erp/probe. */
+function erp_login() {
+  $cfg = erp_cfg();
+  if ($cfg['base'] === '' || $cfg['auth_phone'] === '' || $cfg['auth_pass'] === '') return null;
+  $ctx = stream_context_create(['http' => [
+    'method' => 'POST', 'timeout' => $cfg['timeout'], 'ignore_errors' => true,
+    'header' => "Content-Type: application/json\r\nAccept: application/json\r\n",
+    'content' => json_encode(['phone' => $cfg['auth_phone'], 'password' => $cfg['auth_pass']]),
+  ]]);
+  $raw = @file_get_contents($cfg['base'] . '/consultant/auth/login', false, $ctx);
+  $d = ($raw !== false) ? json_decode($raw, true) : null;
+  $tok = is_array($d) ? (string) ($d['access_token'] ?? '') : '';
+  if ($tok === '') { erp_notes('ERP : reconnexion refusée (identifiants ?)'); return null; }
+  return ['t' => $tok, 'ttl' => max(120, (int) ($d['expires_in'] ?? 1800))];
+}
+
+/* Jeton Bearer COURANT : reconnexion automatique (mise en cache disque, marge
+ * de 60 s avant l'expiration), sinon le jeton statique de ws_param/config. */
+function erp_token($forceLogin = false) {
+  $cfg = erp_cfg();
+  if ($cfg['auth_phone'] !== '' && $cfg['auth_pass'] !== '') {
+    $f = sys_get_temp_dir() . '/ws_erp_tok_' . sha1($cfg['base'] . '|' . $cfg['auth_phone']) . '.json';
+    if (!$forceLogin) {
+      $c = is_file($f) ? json_decode((string) @file_get_contents($f), true) : null;
+      if (is_array($c) && ($c['exp'] ?? 0) > time() && ($c['tok'] ?? '') !== '') return (string) $c['tok'];
+    }
+    $l = erp_login();
+    if ($l !== null) {
+      @file_put_contents($f, json_encode(['tok' => $l['t'], 'exp' => time() + $l['ttl'] - 60]));
+      @chmod($f, 0600);
+      return $l['t'];
+    }
+    // reconnexion en échec → on tente le jeton statique, faute de mieux
+  }
+  return $cfg['token'];
 }
 
 function erp_enabled() { return erp_cfg()['base'] !== ''; }
@@ -73,19 +128,27 @@ function erp_get($path) {
     if (is_array($cached)) return $cached;
   }
 
-  $headers = "Accept: application/json\r\n";
-  if ($cfg['token'] !== '') $headers .= 'Authorization: Bearer ' . $cfg['token'] . "\r\n";
-  $ctx = stream_context_create(['http' => [
-    'method' => 'GET', 'header' => $headers,
-    'timeout' => $cfg['timeout'], 'ignore_errors' => true,
-  ]]);
-  $raw = @file_get_contents($url, false, $ctx);
-  if ($raw === false) { erp_notes('ERP injoignable : ' . $path); return null; }
-
-  $code = 0;
-  foreach (($http_response_header ?? []) as $h) {
-    if (preg_match('#^HTTP/\S+\s+(\d{3})#', $h, $m)) $code = (int) $m[1];
+  $tirer = static function ($tok) use ($url, $cfg) {
+    $headers = "Accept: application/json\r\n";
+    if ($tok !== '') $headers .= 'Authorization: Bearer ' . $tok . "\r\n";
+    $ctx = stream_context_create(['http' => [
+      'method' => 'GET', 'header' => $headers,
+      'timeout' => $cfg['timeout'], 'ignore_errors' => true,
+    ]]);
+    $raw = @file_get_contents($url, false, $ctx);
+    $code = 0;
+    foreach (($http_response_header ?? []) as $h) {
+      if (preg_match('#^HTTP/\S+\s+(\d{3})#', $h, $m)) $code = (int) $m[1];
+    }
+    return [$raw, $code];
+  };
+  [$raw, $code] = $tirer(erp_token());
+  if ($code === 401 && $cfg['auth_phone'] !== '' && $cfg['auth_pass'] !== '') {
+    // Jeton du cache périmé côté ERP avant notre marge : reconnexion forcée
+    // puis UN nouvel essai — jamais de boucle.
+    [$raw, $code] = $tirer(erp_token(true));
   }
+  if ($raw === false) { erp_notes('ERP injoignable : ' . $path); return null; }
   if ($code >= 400) { erp_notes('ERP HTTP ' . $code . ' sur ' . $path); return null; }
 
   $data = json_decode($raw, true);

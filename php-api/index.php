@@ -672,6 +672,10 @@ function dispatch($m, $p) {
       'configure'  => true,
       'base'       => $cfgE['base'],
       'jeton_pose' => $cfgE['token'] !== '',
+      // 'login-auto' = reconnexion consultant automatique (transitoire) ;
+      // 'jeton-statique' = erp_api_token seul — meurt en 30 min si consultant.
+      'auth'       => (($cfgE['auth_phone'] ?? '') !== '' && ($cfgE['auth_pass'] ?? '') !== '')
+                        ? 'login-auto' : ($cfgE['token'] !== '' ? 'jeton-statique' : 'aucun'),
       'langue'     => $lg,
       'produits_traduits'   => count($prod),
       'categories_traduites' => count($cat),
