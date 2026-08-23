@@ -724,19 +724,25 @@ function dispatch($m, $p) {
       [$dateX, $dateX, $modeX, $dowX, $placeX, $shopX, $shopX]);
     if (!$rules) json_out([]);
 
-    // Catégories des produits du panier — un déclencheur peut viser une
-    // catégorie entière (« tout sandwich ») plutôt qu'une liste à maintenir.
+    // Catégories et SOUS-catégories des produits du panier. Depuis le 23/08
+    // l'écran marque ajoute des déclencheurs au grain sous-catégorie
+    // (« Tartes », pas toute la Pâtisserie) ; les règles anciennes par
+    // catégorie entière continuent de se déclencher à l'identique.
     $ph   = implode(',', array_fill(0, count($inCart), '?'));
     $cats = array_map(fn ($x) => (int) $x['cat_id'],
                       rows("SELECT DISTINCT cat_id FROM ws_products WHERE id IN ($ph)", $inCart));
+    $hasSubT = col_exists('ws_cross_sell_trigger', 'sub_id');
+    $subsC = $hasSubT ? array_map(fn ($x) => (int) $x['sub_cat_id'],
+                      rows("SELECT DISTINCT sub_cat_id FROM ws_products WHERE id IN ($ph) AND sub_cat_id IS NOT NULL", $inCart)) : [];
     $out = []; $seen = [];
     foreach ($rules as $rl) {
-      $trig = rows("SELECT product_id, cat_id FROM ws_cross_sell_trigger WHERE rule_id = ?", [(int) $rl['id']]);
+      $trig = rows("SELECT product_id, cat_id" . ($hasSubT ? ", sub_id" : "") . " FROM ws_cross_sell_trigger WHERE rule_id = ?", [(int) $rl['id']]);
       if (!$trig) continue;
       $hit = 0;
       foreach ($trig as $t) {
         if (($t['product_id'] !== null && in_array((int) $t['product_id'], $inCart, true))
-         || ($t['cat_id']     !== null && in_array((int) $t['cat_id'],     $cats,   true))) $hit++;
+         || ($t['cat_id']     !== null && in_array((int) $t['cat_id'],     $cats,   true))
+         || ($hasSubT && ($t['sub_id'] ?? null) !== null && in_array((int) $t['sub_id'], $subsC, true))) $hit++;
       }
       // « au moins un » ou « tous », selon la règle.
       if ($rl['match_mode'] === 'all' ? ($hit < count($trig)) : ($hit === 0)) continue;
@@ -4233,15 +4239,17 @@ function dispatch($m, $p) {
        proposer, ou l'inverse. D'où la transaction. ── */
     if ($m === 'GET' && $p === '/franchisor/cross-sell') {
       if (!xsell_tbl('ws_cross_sell_rule')) json_out([]);
+      $hasSub8 = col_exists('ws_cross_sell_trigger', 'sub_id');
       $out = [];
       foreach (rows("SELECT * FROM ws_cross_sell_rule ORDER BY active DESC, id DESC") as $r) {
         $rid = (int) $r['id'];
         $nm  = fn ($ids) => $ids ? rows("SELECT id, name FROM ws_products WHERE id IN ("
                  . implode(',', array_fill(0, count($ids), '?')) . ") ORDER BY name", $ids) : [];
-        $tp  = []; $tc = [];
-        foreach (rows("SELECT product_id, cat_id FROM ws_cross_sell_trigger WHERE rule_id=?", [$rid]) as $t) {
+        $tp  = []; $tc = []; $ts = [];
+        foreach (rows("SELECT product_id, cat_id" . ($hasSub8 ? ", sub_id" : "") . " FROM ws_cross_sell_trigger WHERE rule_id=?", [$rid]) as $t) {
           if ($t['product_id'] !== null) $tp[] = (int) $t['product_id'];
           if ($t['cat_id']     !== null) $tc[] = (int) $t['cat_id'];
+          if ($hasSub8 && ($t['sub_id'] ?? null) !== null) $ts[] = (int) $t['sub_id'];
         }
         $tg = rows("SELECT t.product_id, t.sort_order, p.name
                       FROM ws_cross_sell_target t LEFT JOIN ws_products p ON p.id = t.product_id
@@ -4255,6 +4263,8 @@ function dispatch($m, $p) {
           'triggerProducts'   => $nm($tp),
           'triggerCategories' => $tc ? rows("SELECT id, label AS name FROM ws_categories WHERE id IN ("
                                      . implode(',', array_fill(0, count($tc), '?')) . ")", $tc) : [],
+          'triggerSubs'       => $ts ? rows("SELECT id, label AS name FROM ws_category_subs WHERE id IN ("
+                                     . implode(',', array_fill(0, count($ts), '?')) . ")", $ts) : [],
           'targets' => array_map(fn ($x) => ['id' => (int) $x['product_id'], 'name' => $x['name']], $tg),
           'shops'   => array_map(fn ($x) => (int) $x['shop_id'],
                                  rows("SELECT shop_id FROM ws_cross_sell_shop WHERE rule_id=?", [$rid])),
@@ -4273,11 +4283,14 @@ function dispatch($m, $p) {
       if ($name === '') json_out(['ok' => false, 'error' => 'Nom de la règle requis.'], 400);
       $trigP = array_values(array_filter(array_map('intval', (array) ($b['triggerProducts']   ?? []))));
       $trigC = array_values(array_filter(array_map('intval', (array) ($b['triggerCategories'] ?? []))));
+      $trigS = array_values(array_filter(array_map('intval', (array) ($b['triggerSubs']       ?? []))));
+      if ($trigS && !col_exists('ws_cross_sell_trigger', 'sub_id'))
+        json_out(['ok' => false, 'error' => 'Déclencheur sous-catégorie indisponible — migration 0085 non passée.'], 501);
       $targs = array_values(array_filter(array_map('intval', (array) ($b['targets']           ?? []))));
       // Une règle sans déclencheur ne se déclenche jamais ; sans suggestion elle
       // ne propose rien. Les deux cas sont des règles mortes : on refuse plutôt
       // que d'enregistrer quelque chose qui ne fera rien sans le dire.
-      if (!$trigP && !$trigC) json_out(['ok' => false, 'error' => 'Au moins un produit ou une catégorie déclencheur.'], 400);
+      if (!$trigP && !$trigC && !$trigS) json_out(['ok' => false, 'error' => 'Au moins un produit ou une sous-catégorie déclencheur.'], 400);
       if (!$targs)            json_out(['ok' => false, 'error' => 'Au moins un produit à suggérer.'], 400);
       $dOk = fn ($v) => (is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v)) ? $v : null;
       $hOk = fn ($v) => (is_string($v) && preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $v)) ? $v . ':00' : null;
@@ -4315,6 +4328,7 @@ function dispatch($m, $p) {
         }
         foreach ($trigP as $pid6) q("INSERT INTO ws_cross_sell_trigger (rule_id, product_id) VALUES (?,?)", [$rid, $pid6]);
         foreach ($trigC as $cid6) q("INSERT INTO ws_cross_sell_trigger (rule_id, cat_id) VALUES (?,?)", [$rid, $cid6]);
+        foreach ($trigS as $sid7) q("INSERT INTO ws_cross_sell_trigger (rule_id, sub_id) VALUES (?,?)", [$rid, $sid7]);
         foreach ($targs as $i6 => $pid6)
           q("INSERT INTO ws_cross_sell_target (rule_id, product_id, sort_order) VALUES (?,?,?)", [$rid, $pid6, $i6]);
         foreach (array_values(array_filter(array_map('intval', (array) ($b['shops'] ?? [])))) as $sid6)
