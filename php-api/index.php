@@ -68,24 +68,29 @@ function photos_exec_ok() {
   $off = array_map('trim', explode(',', strtolower((string) ini_get('disable_functions'))));
   return !in_array('exec', $off, true);
 }
+/* Lance le balayage photos EN ARRIÈRE-PLAN, tout de suite. Le tampon est posé
+   AVANT le lancement : c'est lui qui fait l'anti-rafale, y compris entre deux
+   requêtes simultanées (la fenêtre restante se compte en millisecondes, et
+   les scripts eux-mêmes sont idempotents). */
+function photos_refresh_spawn() {
+  $dir = __DIR__ . '/../assets/product_pictures';
+  if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
+  @touch($dir . '/.last_refresh');
+  $log = $dir . '/.refresh.log';
+  if (is_file($log) && filesize($log) > 262144) @file_put_contents($log, '');   // journal borné
+  $cmd = 'php ' . escapeshellarg(__DIR__ . '/sync_product_photos.php')
+       . ' >> ' . escapeshellarg($log) . ' 2>&1'
+       . ' && php ' . escapeshellarg(__DIR__ . '/sync_product_images.php')
+       . ' >> ' . escapeshellarg($log) . ' 2>&1';
+  @exec('nohup sh -c ' . escapeshellarg($cmd) . ' > /dev/null 2>&1 &');
+  return true;
+}
 function photos_refresh_async() {
   try {
     $ttl = (int) ws_param('photos_refresh_ttl', 900);
-    $dir = __DIR__ . '/../assets/product_pictures';
-    $stamp = $dir . '/.last_refresh';
+    $stamp = __DIR__ . '/../assets/product_pictures/.last_refresh';
     if (!photos_refresh_due($stamp, $ttl) || !photos_exec_ok()) return;
-    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return;
-    // Le tampon est posé AVANT le lancement : c'est lui qui fait l'anti-rafale,
-    // y compris entre deux requêtes simultanées (la fenêtre restante se compte
-    // en millisecondes, et les scripts eux-mêmes sont idempotents).
-    @touch($stamp);
-    $log = $dir . '/.refresh.log';
-    if (is_file($log) && filesize($log) > 262144) @file_put_contents($log, '');   // journal borné
-    $cmd = 'php ' . escapeshellarg(__DIR__ . '/sync_product_photos.php')
-         . ' >> ' . escapeshellarg($log) . ' 2>&1'
-         . ' && php ' . escapeshellarg(__DIR__ . '/sync_product_images.php')
-         . ' >> ' . escapeshellarg($log) . ' 2>&1';
-    @exec('nohup sh -c ' . escapeshellarg($cmd) . ' > /dev/null 2>&1 &');
+    photos_refresh_spawn();
   } catch (Throwable $e) { /* jamais au détriment de la réponse catalogue */ }
 }
 
@@ -690,6 +695,25 @@ function dispatch($m, $p) {
     ]);
   }
 
+  /* ── SYNCHRO PHOTOS À LA DEMANDE — « j'ai changé la photo, je veux la voir
+   * MAINTENANT ». GET /erp/photos-refresh lance le balayage tout de suite,
+   * sans attendre la fenêtre de 15 minutes des visites. Garde de 60 s contre
+   * le matraquage (le balayage fait ~50 appels ERP) ; le travail part en
+   * arrière-plan, la réponse dit quand revenir. ── */
+  if ($m === 'GET' && $p === '/erp/photos-refresh') {
+    if (!photos_exec_ok())
+      json_out(['declenche' => false,
+                'motif' => "exec indisponible sur ce PHP — la synchro ne tourne qu'au déploiement"], 503);
+    $stamp = __DIR__ . '/../assets/product_pictures/.last_refresh';
+    $age = is_file($stamp) ? time() - (int) filemtime($stamp) : PHP_INT_MAX;
+    if ($age < 60)
+      json_out(['declenche' => false, 'motif' => 'balayage déjà lancé il y a ' . $age . ' s',
+                'reessayer_dans_s' => 60 - $age]);
+    photos_refresh_spawn();
+    json_out(['declenche' => true,
+              'info' => 'balayage lancé — comptez ~30 s puis rechargez la page ; état détaillé : /erp/photos-report']);
+  }
+
   /* ── RAPPORT PHOTOS — l'état de CHAQUE produit actif, d'un seul regard. ──
    * GET /erp/photos-report
    * Né d'un vrai besoin : « je ne sais pas vérifier un par un ». Pour chaque
@@ -751,9 +775,10 @@ function dispatch($m, $p) {
       'produits_actifs' => count($prods),
       'resume' => array_map('count', $etats),
       'a_faire' => [
-        'prete_cote_erp'     => 'rien — la photo arrive au prochain balayage (≤ 15 min après une visite). Persistante ? la synchro a un problème.',
-        'recette_sans_photo' => 'poser la photo dans Franchise Buddy (shop_photo_path de préférence)',
-        'sans_recette'       => 'lier une recette dans Franchise Buddy, ou déposer un fichier {id}.jpg à la main',
+        'prete_cote_erp'     => 'rien — la photo arrive au prochain balayage (GET /erp/photos-refresh pour tout de suite). Persistante ? la synchro a un problème.',
+        'recette_sans_photo' => 'poser la photo dans Franchise Buddy (shop_photo_path de préférence) — source unique',
+        'sans_recette'       => 'lier une recette dans Franchise Buddy — source unique, plus de fichiers manuels',
+        'photo_manuelle'     => 'anomalie transitoire : fichier hors ERP, remplacé ou retiré au prochain balayage',
       ],
       'etats' => $etats,
       'incidents' => erp_notes(),

@@ -14,18 +14,18 @@
  *     → sync_product_images.php la câble dans ws_products.img.
  * À exécuter AVANT sync_product_images.php.
  *
- * RÈGLES (« aucune donnée inventée, aucun repli ») :
- *  - une photo DÉPOSÉE À LA MAIN fait autorité et n'est JAMAIS écrasée. Le
- *    tri se fait par le MANIFESTE (.erp_photos.json, dans le dossier des
- *    photos) : il liste les fichiers écrits par CE script et l'objet source
- *    (URL sans signature) dont chacun provient. Un fichier hors manifeste est
- *    manuel → intouchable, pas même un appel API. Un fichier du manifeste se
- *    RAFRAÎCHIT tout seul quand l'ERP change de photo — notamment le jour où
- *    shop_photo_path (prioritaire) apparaît sur une recette dont on n'avait
- *    que main_photo_path. Manifeste absent/illisible = tout est réputé manuel :
- *    l'erreur de lecture ne peut jamais provoquer un écrasement.
- *    --force écrase aussi les fichiers manuels ET les inscrit au manifeste
- *    (ils redeviennent gérés par l'ERP) — à réserver à une remise à zéro ;
+ * RÈGLES — L'ERP EST LA SOURCE UNIQUE (décision du 23/08 : « effacer tous
+ * les manuels, tout doit venir de l'ERP API ») :
+ *  - la photo d'un produit est celle de sa recette (shop_photo_path d'abord,
+ *    la vitrine, puis main_photo, puis photo_1..3) ;
+ *  - un fichier local qui ne correspond plus à l'ERP est REMPLACÉ ; un
+ *    fichier local dont l'ERP n'a PAS de photo est SUPPRIMÉ — l'écran montre
+ *    alors l'illustration de repli, et /erp/photos-report dit où poser la
+ *    photo (dans Franchise Buddy, nulle part ailleurs) ;
+ *  - le MANIFESTE (.erp_photos.json) mémorise l'objet source de chaque
+ *    fichier (URL sans signature) : tant que l'objet ERP ne change pas, rien
+ *    n'est retéléchargé ; un fichier hors manifeste est simplement adopté ;
+ *  - --force retélécharge tout, manifeste ignoré ;
  *  - un fichier n'est écrit QUE si le téléchargement aboutit ET que le
  *    contenu est réellement une image (signature JPEG/PNG/WebP) — jamais un
  *    HTML d'erreur enregistré en .jpg ; écriture atomique (tmp + rename) ;
@@ -34,11 +34,9 @@
  *  - API non configurée (ws_param.erp_api_base/erp_api_token absents et pas
  *    de WS_ERP_BASE/WS_ERP_TOKEN en env) → sortie propre, déploiement intact.
  *
- * COÛT : un appel API par recette (aucun endpoint en lot côté ERP —
- * cf. ENDPOINTS_WEBSHOP.md §C.6), SAUF pour les fichiers manuels, ignorés
- * sans appel. Les fichiers ERP sont recontrôlés à chaque exécution (c'est le
- * prix du rafraîchissement) ; le téléchargement de l'image, lui, n'a lieu que
- * si l'objet source a changé.
+ * COÛT : un appel API par recette et par balayage (aucun endpoint en lot
+ * côté ERP — cf. ENDPOINTS_WEBSHOP.md §C.6) ; le téléchargement de l'image,
+ * lui, n'a lieu que si l'objet source a changé.
  *
  * Options : --limit=N  --dry-run  --force  --only=6700106,6700237
  * Env     : WS_ERP_BASE, WS_ERP_TOKEN (priment sur ws_param — utile en test)
@@ -147,17 +145,14 @@ function spp_run(array $paires, $cfg) {
       . "<FilesMatch \"\\.(json|log)$\">\n  Require all denied\n</FilesMatch>\n");
   }
   $man = spp_manifest_load($dir);
-  $c = ['produits' => count($paires), 'manuels' => 0, 'a_jour' => 0, 'sans_photo' => 0,
-        'telecharges' => 0, 'rafraichis' => 0, 'disparues' => 0,
+  $c = ['produits' => count($paires), 'a_jour' => 0, 'sans_photo' => 0,
+        'telecharges' => 0, 'rafraichis' => 0, 'adoptes' => 0, 'supprimes' => 0,
         'echecs_api' => 0, 'echecs_dl' => 0, 'non_image' => 0];
   $auth = $cfg['token'] !== '' ? ['Authorization: Bearer ' . $cfg['token']] : [];
   foreach ($paires as [$pid, $rid]) {
     $pid = (int) $pid; $rid = (int) $rid;
-    $deja  = spp_existing($dir, $pid);
-    $gere  = isset($man[$pid]);                       // écrit par ce script ?
-    // Fichier MANUEL (présent, hors manifeste) : intouchable, pas même un
-    // appel API — sauf --force, qui le fait rentrer dans le rang.
-    if ($deja !== null && !$gere && !$cfg['force']) { $c['manuels']++; continue; }
+    $deja = spp_existing($dir, $pid);
+    $gere = isset($man[$pid]);                        // écrit par ce script ?
 
     [$code, $body] = $http($cfg['base'] . '/recipes/' . $rid, array_merge($auth, ['Accept: application/json']), 15);
     $rec = ($code === 200 && $body !== null) ? json_decode($body, true) : null;
@@ -168,21 +163,23 @@ function spp_run(array $paires, $cfg) {
     }
     $url = spp_photo_url($rec);
     if ($url === null) {
-      if ($deja !== null && $gere) {
-        // L'ERP ne sert PLUS de photo pour une image qu'il avait fournie : on
-        // GARDE le fichier (retirer la photo d'un produit en vente est une
-        // décision humaine, pas un effet de bord) et on le signale.
-        $c['disparues']++;
-        fwrite(STDERR, "  produit $pid : photo disparue côté ERP — fichier local conservé ($deja)\n");
+      // L'ERP n'a pas de photo pour ce produit : il n'y en a pas, point —
+      // un fichier local qui traîne (ancien manuel, photo retirée de l'ERP)
+      // est SUPPRIMÉ, l'illustration de repli prend la place.
+      if ($deja !== null) {
+        if (!$cfg['dry']) { @unlink("$dir/$deja"); unset($man[$pid]); }
+        $c['supprimes']++;
+        fwrite(STDERR, "  produit $pid : aucune photo côté ERP — fichier local retiré ($deja)\n");
       } else $c['sans_photo']++;
       continue;
     }
     $src = spp_src_id($url);
-    if ($deja !== null && $gere && ($man[$pid]['src'] ?? '') === $src) { $c['a_jour']++; continue; }
+    if (!$cfg['force'] && $deja !== null && $gere && ($man[$pid]['src'] ?? '') === $src) { $c['a_jour']++; continue; }
 
     if ($cfg['dry']) {
-      echo '  [dry-run] produit ' . $pid . ' : ' . ($deja === null ? 'nouvelle photo' : 'rafraîchissement') . "\n";
-      $deja === null ? $c['telecharges']++ : $c['rafraichis']++;
+      echo '  [dry-run] produit ' . $pid . ' : '
+         . ($deja === null ? 'nouvelle photo' : (!$gere ? 'fichier hors ERP à remplacer' : 'rafraîchissement')) . "\n";
+      $deja === null ? $c['telecharges']++ : (!$gere ? $c['adoptes']++ : $c['rafraichis']++);
       continue;
     }
     [$dcode, $img] = $http($url, [], 30);
@@ -205,7 +202,9 @@ function spp_run(array $paires, $cfg) {
       continue;
     }
     if ($deja !== null && $deja !== "$pid.$ext") @unlink("$dir/$deja");   // une seule photo par produit
-    $deja === null ? $c['telecharges']++ : $c['rafraichis']++;
+    if ($deja === null) $c['telecharges']++;
+    elseif (!$gere) $c['adoptes']++;              // fichier hors manifeste remplacé par l'ERP
+    else $c['rafraichis']++;
     $man[$pid] = ['file' => "$pid.$ext", 'src' => $src];
   }
   if (!$cfg['dry'] && !spp_manifest_save($dir, $man)) {
@@ -318,9 +317,9 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
   $c = spp_run($rows, ['base' => $base, 'token' => $token, 'dir' => __DIR__ . '/../assets/product_pictures',
                        'dry' => $opt['dry'], 'force' => $opt['force']]);
   if ($c === null) exit(1);
-  echo "sync_product_photos : {$c['produits']} produit(s) avec recette ; "
-     . "{$c['telecharges']} nouvelle(s) photo(s), {$c['rafraichis']} rafraîchie(s) (source ERP changée), {$c['a_jour']} à jour ; "
-     . "{$c['manuels']} photo(s) manuelle(s) intouchée(s) ; {$c['sans_photo']} recette(s) sans photo, {$c['disparues']} disparue(s) côté ERP (fichier conservé) ; "
+  echo "sync_product_photos (source unique : ERP) : {$c['produits']} produit(s) avec recette ; "
+     . "{$c['telecharges']} nouvelle(s), {$c['rafraichis']} rafraîchie(s), {$c['adoptes']} fichier(s) hors ERP remplacé(s), "
+     . "{$c['supprimes']} supprimé(s) (plus de photo côté ERP), {$c['a_jour']} à jour ; {$c['sans_photo']} recette(s) sans photo ; "
      . "échecs : {$c['echecs_api']} API, {$c['echecs_dl']} téléchargement, {$c['non_image']} contenu non-image.\n";
   echo "→ lancer ensuite sync_product_images.php pour câbler ws_products.img.\n";
 }
