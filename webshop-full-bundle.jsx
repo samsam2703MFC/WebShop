@@ -1384,10 +1384,13 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                 Ce produit n'est pas disponible en livraison · Retrait en boutique uniquement
               </div>
             )}
-            {!deliveryBlocked && deliveryStockLeft !== null && (
-              <div className="pdm-delivery-notice">
-                {deliveryStockLeft > 0 ? t(deliveryStockLeft > 1 ? 'pd.unitsLeftMany' : 'pd.unitsLeftOne', { n: deliveryStockLeft }) : t('pd.outOfStock')}
-              </div>
+            {/* Le NOMBRE d'unités restantes n'est plus affiché (retiré le 23/08,
+                comme le compteur des vignettes avant lui) : c'est une donnée
+                interne de stock, pas une information client. Seul l'état
+                bloquant reste visible — « Épuisé » — et la quantité demeure
+                plafonnée en silence par le sélecteur ci-dessous. */}
+            {!deliveryBlocked && deliveryStockLeft === 0 && (
+              <div className="pdm-delivery-notice">{t('pd.outOfStock')}</div>
             )}
             <div className="pdm-qty">
               <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.max(1, q - 1)))} disabled={qty <= 1} aria-label={t('qty.dec')}>−</button>
@@ -4433,8 +4436,9 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
           const id    = typeof s === 'object' ? s.id    : s;
           const label = typeof s === 'object' ? s.label : s;
           const full  = typeof s === 'object' && (s.available === false || s.current_orders >= s.capacity);
-          const remaining = (s.capacity && !full) ? s.capacity - (s.current_orders || 0) : null;
-          const nearFull  = remaining !== null && remaining <= 3 && remaining > 0;
+          {/* « X restants » retiré (23/08, même règle que les unités en stock) :
+              la capacité résiduelle est une donnée interne. Seul l'état
+              bloquant « Complet » s'affiche. */}
           return (
             <button key={id}
               className={`ws-slot${selectedId === id ? ' is-active' : ''}${full ? ' is-full' : ''}`}
@@ -4442,8 +4446,7 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
               title={full ? 'Créneau complet' : undefined}
               onClick={() => !full && setSlot({ id, label })}>
               <span className="ws-slot__lbl">{label}</span>
-              {full     && <span className="ws-slot__cap ws-slot__cap--full">{t('slot.full')}</span>}
-              {nearFull && <span className="ws-slot__cap ws-slot__cap--low">{remaining} restant{remaining > 1 ? 's' : ''}</span>}
+              {full && <span className="ws-slot__cap ws-slot__cap--full">{t('slot.full')}</span>}
             </button>
           );
         })}
