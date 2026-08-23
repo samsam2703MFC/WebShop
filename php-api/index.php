@@ -49,6 +49,46 @@ try {
    /webshop/assets/product_pictures/. Scandir une seule fois par requête : permet
    de résoudre l'image d'un produit PAR CONVENTION ({id}.png|jpg) sans dépendre de
    ws_products.img — toute photo déposée (git ou SFTP) apparaît automatiquement. */
+/* ── Rafraîchissement AUTOMATIQUE des photos ERP, déclenché par la navigation.
+ * Chaque affichage du catalogue relance la synchro photos (sync_product_photos
+ * puis sync_product_images) — EN ARRIÈRE-PLAN et AU PLUS une fois par fenêtre
+ * de `ws_param.photos_refresh_ttl` secondes (900 par défaut, 0 = coupé) : une
+ * photo ajoutée dans l'ERP apparaît donc sans attendre un déploiement, et un
+ * pic de visites ne déclenche qu'UN balayage. Le visiteur ne paie rien :
+ * exec() rend la main immédiatement (nohup … &), la réponse part sans délai.
+ * Si exec est indisponible sur ce PHP, on ne fait RIEN ici — /erp/probe le
+ * dit (photos.auto=false) et la synchro reste celle des déploiements. */
+function photos_refresh_due($stamp, $ttl) {
+  if ($ttl <= 0) return false;                                  // coupé volontairement
+  $age = is_file($stamp) ? time() - (int) filemtime($stamp) : PHP_INT_MAX;
+  return $age >= $ttl;
+}
+function photos_exec_ok() {
+  if (!function_exists('exec')) return false;
+  $off = array_map('trim', explode(',', strtolower((string) ini_get('disable_functions'))));
+  return !in_array('exec', $off, true);
+}
+function photos_refresh_async() {
+  try {
+    $ttl = (int) ws_param('photos_refresh_ttl', 900);
+    $dir = __DIR__ . '/../assets/product_pictures';
+    $stamp = $dir . '/.last_refresh';
+    if (!photos_refresh_due($stamp, $ttl) || !photos_exec_ok()) return;
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return;
+    // Le tampon est posé AVANT le lancement : c'est lui qui fait l'anti-rafale,
+    // y compris entre deux requêtes simultanées (la fenêtre restante se compte
+    // en millisecondes, et les scripts eux-mêmes sont idempotents).
+    @touch($stamp);
+    $log = $dir . '/.refresh.log';
+    if (is_file($log) && filesize($log) > 262144) @file_put_contents($log, '');   // journal borné
+    $cmd = 'php ' . escapeshellarg(__DIR__ . '/sync_product_photos.php')
+         . ' >> ' . escapeshellarg($log) . ' 2>&1'
+         . ' && php ' . escapeshellarg(__DIR__ . '/sync_product_images.php')
+         . ' >> ' . escapeshellarg($log) . ' 2>&1';
+    @exec('nohup sh -c ' . escapeshellarg($cmd) . ' > /dev/null 2>&1 &');
+  } catch (Throwable $e) { /* jamais au détriment de la réponse catalogue */ }
+}
+
 function product_photo_files() {
   static $map = null;
   if ($map !== null) return $map;
@@ -636,6 +676,12 @@ function dispatch($m, $p) {
       'produits_traduits'   => count($prod),
       'categories_traduites' => count($cat),
       'exemples'   => array_slice($prod, 0, 3, true),
+      'photos'     => (function () {
+        $stamp = __DIR__ . '/../assets/product_pictures/.last_refresh';
+        return ['auto' => photos_exec_ok(),
+                'ttl'  => (int) ws_param('photos_refresh_ttl', 900),
+                'dernier_declenchement_s' => is_file($stamp) ? time() - (int) filemtime($stamp) : null];
+      })(),
       'incidents'  => erp_notes(),
     ]);
   }
@@ -784,6 +830,7 @@ function dispatch($m, $p) {
   }
   if ($m === 'GET' && $p === '/catalog/products') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
+    photos_refresh_async();   // relance des photos ERP au fil des visites (throttlée, en arrière-plan)
     json_out(catalog_produits_servis($s, qp('mode'), qp('date'), qp('lang')));
   }
   /* ── VENTES CROISÉES — évaluation côté panier (migration 0056). ───────────
