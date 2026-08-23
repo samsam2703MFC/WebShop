@@ -20,7 +20,8 @@
 | `GET /i18n?scope=` | dictionnaire fr/nl (table `ws_i18n`) — chargé au boot, caché en localStorage | 593 |
 | `GET /shops` | annuaire des boutiques (`webshop_enabled=1`, avec `default_lang`/`languages`) | 549 |
 | `GET /brand?shopId=` | thème/branding de la boutique | 575 |
-| `GET /erp/probe?lang=` | diagnostic de la liaison ERP (traductions) | 620 |
+| `GET /erp/probe?lang=` | diagnostic de la liaison ERP (traductions, reconnexion, photos) | 620 |
+| `GET /erp/photos-report` | état photo de CHAQUE produit actif + quoi faire (vérification sans passer produit par produit) | ~700 |
 | `GET /webshop-link?clientId=` | lien retour depuis la PWA cliente | 653 |
 
 ### 2. Catalogue

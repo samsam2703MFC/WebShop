@@ -690,6 +690,76 @@ function dispatch($m, $p) {
     ]);
   }
 
+  /* ── RAPPORT PHOTOS — l'état de CHAQUE produit actif, d'un seul regard. ──
+   * GET /erp/photos-report
+   * Né d'un vrai besoin : « je ne sais pas vérifier un par un ». Pour chaque
+   * produit actif, le rapport dit OÙ il en est et QUOI faire :
+   *   photo_erp          — photo en ligne, gérée par la synchro ERP ;
+   *   photo_manuelle     — photo en ligne, déposée à la main (jamais écrasée) ;
+   *   prete_cote_erp     — photo posée dans Franchise Buddy, PAS ENCORE
+   *                        synchronisée : elle arrive au prochain balayage.
+   *                        Si elle reste ici d'un rapport à l'autre, la
+   *                        synchro a un problème ;
+   *   recette_sans_photo — recette liée mais aucune photo dans Franchise
+   *                        Buddy : c'est là-bas qu'il faut la poser ;
+   *   sans_recette       — pas de recette liée : lier la recette dans
+   *                        Franchise Buddy, ou déposer une photo à la main.
+   * Le lien produit→recette vient de l'API (available, boutique de référence),
+   * comme dans la synchro — le réplica local a déjà menti. Les recettes ne
+   * sont interrogées QUE pour les produits sans fichier (cache erp_get). */
+  if ($m === 'GET' && $p === '/erp/photos-report') {
+    if (!function_exists('erp_enabled') || !erp_enabled())
+      json_out(['error' => 'API ERP non configurée (ws_param.erp_api_base)'], 503);
+    $prods = rows("SELECT id, name, COALESCE(office_delivery,1) AS od" .
+                  (col_exists('ws_products', 'click_and_collect') ? ", COALESCE(click_and_collect,1) AS cc" : ", 1 AS cc") . "
+                    FROM ws_products WHERE active = 1 ORDER BY name");
+    $fichiers = product_photo_files();
+    $manif = [];
+    $mf = __DIR__ . '/../assets/product_pictures/.erp_photos.json';
+    if (is_file($mf)) { $mj = json_decode((string) @file_get_contents($mf), true); if (is_array($mj)) $manif = $mj; }
+    // Lien produit→recette : API d'abord (une requête, cache disque erp_get).
+    $refShop = (int) (ws_param('erp_ref_shop', 0) ?: (row("SELECT MIN(id) m FROM shops WHERE webshop_enabled=1")['m'] ?? 0));
+    $apiRec = [];
+    $av = $refShop > 0 ? erp_get('shops/' . $refShop . '/products/available') : null;
+    if (is_array($av)) {
+      $lst = array_is_list($av) ? $av : ($av['data'] ?? $av['items'] ?? []);
+      foreach ((array) $lst as $pr) if (is_array($pr) && !empty($pr['id']) && !empty($pr['id_recipe'])) $apiRec[(int) $pr['id']] = (int) $pr['id_recipe'];
+    }
+    $etats = ['photo_erp' => [], 'photo_manuelle' => [], 'prete_cote_erp' => [],
+              'recette_sans_photo' => [], 'sans_recette' => []];
+    foreach ($prods as $pr) {
+      $id = (int) $pr['id'];
+      $ligne = ['id' => $id, 'name' => $pr['name'],
+                'canaux' => trim(((int) $pr['cc'] ? 'click&collect ' : '') . ((int) $pr['od'] ? 'livraison' : '')) ?: 'aucun'];
+      if (isset($fichiers[$id]) || isset($fichiers[(string) $id])) {
+        $etats[isset($manif[$id]) || isset($manif[(string) $id]) ? 'photo_erp' : 'photo_manuelle'][] = $ligne;
+        continue;
+      }
+      $rid = $apiRec[$id] ?? 0;
+      if ($rid <= 0) { $etats['sans_recette'][] = $ligne; continue; }
+      $rec = erp_get('recipes/' . $rid);
+      $aPhoto = false;
+      if (is_array($rec)) {
+        foreach (['shop_photo_path', 'main_photo_path', 'photo_1_path', 'photo_2_path', 'photo_3_path'] as $k) {
+          if (!empty($rec[$k])) { $aPhoto = true; break; }
+        }
+      }
+      $ligne['recette'] = $rid;
+      $etats[$aPhoto ? 'prete_cote_erp' : 'recette_sans_photo'][] = $ligne;
+    }
+    json_out([
+      'produits_actifs' => count($prods),
+      'resume' => array_map('count', $etats),
+      'a_faire' => [
+        'prete_cote_erp'     => 'rien — la photo arrive au prochain balayage (≤ 15 min après une visite). Persistante ? la synchro a un problème.',
+        'recette_sans_photo' => 'poser la photo dans Franchise Buddy (shop_photo_path de préférence)',
+        'sans_recette'       => 'lier une recette dans Franchise Buddy, ou déposer un fichier {id}.jpg à la main',
+      ],
+      'etats' => $etats,
+      'incidents' => erp_notes(),
+    ]);
+  }
+
   /* ── Lien webshop du client PWA (footer PWA → boutique préférée) ──
    * GET /webshop-link?clientId=123
    *   → { url, shopId, slug }
