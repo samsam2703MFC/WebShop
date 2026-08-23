@@ -249,6 +249,29 @@ jobs:
             exit 1
           fi
 
+      # Les DEUX synchros ci-dessous tournent en PHP CLI, qui n'est pas le PHP
+      # d'Apache : constaté en production, php8.3 CLI n'avait PAS pdo_mysql et
+      # les deux scripts sortaient proprement à chaque déploiement sans rien
+      # faire — aucune photo n'arrivait, sans qu'aucun run ne soit rouge. On
+      # vérifie donc l'extension et on l'installe au besoin (paquet php<version
+      # CLI>-mysql, idempotent). Si l'utilisateur SSH ne peut pas installer,
+      # on le DIT et on n'échoue pas : le reste du déploiement est valide.
+      - name: PHP CLI — extension MySQL (requise par les synchros photos)
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "if php -m | grep -qi pdo_mysql; then echo 'OK pdo_mysql deja present'; else \
+               PV=\$(php -r 'echo PHP_MAJOR_VERSION.\".\".PHP_MINOR_VERSION;'); \
+               echo \"pdo_mysql absent du PHP CLI \$PV — installation de php\$PV-mysql…\"; \
+               export DEBIAN_FRONTEND=noninteractive; \
+               (apt-get update -qq && apt-get install -y -qq php\$PV-mysql) \
+                 && php -m | grep -qi pdo_mysql && echo 'OK extension installee' \
+                 || echo 'ATTENTION installation impossible (droits ?) — les synchros photos resteront inertes'; \
+             fi"
+
       # Photos produit ← API ERP : GET recipes/{id} rend une URL SIGNÉE (R2,
       # expire en 3600 s) — on la télécharge donc côté serveur vers
       # assets/product_pictures/{id}.{ext}. Idempotent : un fichier déjà présent
