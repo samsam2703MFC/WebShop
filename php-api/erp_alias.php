@@ -232,9 +232,12 @@ function erp_alias_map($path) {
 }
 
 /* Noms de PRODUITS dans la langue demandée : [id_produit => nom].
- * Source : GET {base}/products/aliases — un seul appel pour tout le catalogue
- * (jamais un appel par produit). Même règle que pour les catégories : sans
- * alias dans cette langue, l'appelant garde le nom SOURCE. */
+ * Source : GET {base}/products/aliases?lang_code=… — un seul appel pour tout
+ * le catalogue (jamais un appel par produit). ?lang_code est OBLIGATOIRE :
+ * vérifié jeton en main, sans lui l'ERP rend les mêmes lignes avec
+ * alias_value à null partout (771 lignes, 0 alias) — le résultat était un
+ * dictionnaire vide, silencieusement, tout restait en langue source.
+ * Sans alias dans cette langue, l'appelant garde le nom SOURCE. */
 function erp_product_labels($lang) {
   static $cache = [];
   $lang = strtolower(substr((string) $lang, 0, 2));
@@ -243,7 +246,7 @@ function erp_product_labels($lang) {
   if (!erp_enabled()) return $cache[$lang] = [];
 
   $out = [];
-  foreach (erp_alias_map('products/aliases') as $id => $byLang) {
+  foreach (erp_alias_map('products/aliases?lang_code=' . urlencode($lang)) as $id => $byLang) {
     if (isset($byLang[$lang]) && $byLang[$lang] !== '') $out[$id] = $byLang[$lang];
   }
   return $cache[$lang] = $out;
@@ -259,8 +262,10 @@ function erp_category_labels($lang) {
   if (!erp_enabled()) return $cache[$lang] = [];
 
   $out = [];
+  // ?lang_code obligatoire — même constat que pour les produits : sans lui,
+  // l'ERP rend les lignes avec alias_value à null et tout reste en source.
   foreach (['product-categories/aliases', 'product-category-groups/aliases'] as $path) {
-    foreach (erp_alias_map($path) as $id => $byLang) {
+    foreach (erp_alias_map($path . '?lang_code=' . urlencode($lang)) as $id => $byLang) {
       if (isset($byLang[$lang]) && $byLang[$lang] !== '') $out[$id] = $byLang[$lang];
     }
   }
