@@ -128,9 +128,9 @@ Transport : `erp_get()` (`php-api/erp_alias.php:65`) — Bearer, cache disque,
 
 **Photos — ce que le relevé impose.** L'URL étant signée et périssable, elle ne
 peut PAS être stockée dans `ws_products.img` ni servie telle quelle au
-navigateur : il faut un travail de synchronisation côté serveur qui télécharge
-vers `assets/product_pictures/{id_product}.jpg` — exactement ce que
-`sync_product_images.php` sait déjà consommer. Couverture observée (échantillon
+navigateur : `php-api/sync_product_photos.php` la télécharge côté serveur vers
+`assets/product_pictures/{id_product}.{ext}` (étape du déploiement, avant
+`sync_product_images.php` qui câble `ws_products.img`). Couverture observée (échantillon
 30 recettes, boutique 2) : 3 avec photo, 0 avec `shop_photo_path` ; 422 produits
 sur 575 ont une recette. Un appel PAR recette, pas de lot.
 

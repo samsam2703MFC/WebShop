@@ -249,6 +249,21 @@ jobs:
             exit 1
           fi
 
+      # Photos produit ← API ERP : GET recipes/{id} rend une URL SIGNÉE (R2,
+      # expire en 3600 s) — on la télécharge donc côté serveur vers
+      # assets/product_pictures/{id}.{ext}. Idempotent : un fichier déjà présent
+      # (photo déposée à la main) fait autorité et n'est jamais écrasé ; sans
+      # ws_param.erp_api_base le script sort proprement. À faire AVANT l'étape
+      # suivante, qui câble ces fichiers dans ws_products.img.
+      - name: Photos produit ← API ERP (recipes/{id}, idempotent)
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "php '${{ vars.WEB_ROOT || '/var/www/html' }}/api/sync_product_photos.php'"
+
       # Renseigne ws_products.img d'après les photos déposées sous assets/product_pictures/
       # (idempotent, non destructif). À FAIRE APRÈS le déploiement du front (les photos
       # arrivent avec dist/). Toute nouvelle photo {id}.png|jpg est ainsi câblée à son
