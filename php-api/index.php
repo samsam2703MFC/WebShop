@@ -8763,6 +8763,75 @@ function dispatch($m, $p) {
     // ── RÈGLES RÉSEAU ERP (lecture seule) : portions par produit. ──
     //    product_portion (même base) : tailles ACTIVES proposées au webshop,
     //    visualisées dans l'écran « Règles de prix » du BO franchisé.
+    /* ── FENÊTRES D'UNE TOURNÉE, à l'unité (pour l'atelier de paramétrage). ──
+     * GET  /franchisee/tour-windows?tourId=  → lignes BRUTES, une par
+     *      (jour × fenêtre). L'endpoint historique ws-tour-availability les
+     *      AGRÈGE par tournée (GROUP BY) et perd le détail que l'atelier
+     *      édite ; les deux coexistent, l'ancien écran garde le sien.
+     * POST /franchisee/tour-windows { tourId, fenetres:[…] } → remplace les
+     *      fenêtres de CETTE tournée, en une transaction. Ce qui n'est plus
+     *      envoyé est DÉSACTIVÉ (active=0), jamais effacé : des commandes
+     *      passées peuvent référencer ces lignes. */
+    if ($m === 'GET' && $p === '/franchisee/tour-windows') {
+      if (!$tblExists('ws_tour_availability') || !$tblExists('ws_tours')) json_out([]);
+      $tid = (int) qp('tourId');
+      $w = $tid ? ' AND av.tour_id = ' . $tid : '';
+      json_out(rows("SELECT av.id, av.tour_id AS tourId, t.name AS tour, av.delivery_day AS day,
+                            LOWER(av.window_label) AS label,
+                            TIME_FORMAT(av.delivery_start,'%H:%i') AS start,
+                            TIME_FORMAT(av.delivery_end,'%H:%i')   AS end,
+                            TIME_FORMAT(av.cutoff_time,'%H:%i')    AS cutoff,
+                            av.max_orders AS maxOrders, av.max_items AS maxItems
+                       FROM ws_tour_availability av JOIN ws_tours t ON t.id = av.tour_id
+                      WHERE " . $scope('av.shop_id') . " AND av.active = 1$w
+                      ORDER BY t.name, av.delivery_day, av.delivery_start LIMIT 500"));
+    }
+    if ($m === 'POST' && $p === '/franchisee/tour-windows') {
+      if (!$tblExists('ws_tour_availability')) json_out(['ok' => false, 'error' => 'table absente'], 400);
+      $b = body();
+      $tid = (int) ($b['tourId'] ?? 0);
+      if (!$tid) json_out(['ok' => false, 'error' => 'tourId requis'], 400);
+      $tr = row("SELECT id, shop_id FROM ws_tours WHERE id=?", [$tid]);
+      if (!$tr) json_out(['ok' => false, 'error' => 'tournée inconnue'], 404);
+      $sid = (int) $tr['shop_id'];
+      if ($shopId && $sid !== (int) $shopId) json_out(['ok' => false, 'error' => "tournée d'une autre boutique"], 403);
+      $t2s = fn ($v) => preg_match('/^(\d{1,2}):(\d{2})$/', trim((string) $v), $m2) ? sprintf('%02d:%02d:00', $m2[1], $m2[2]) : null;
+      $pdo = db(); $pdo->beginTransaction();
+      try {
+        $n = 0; $gardes = [];
+        foreach ((array) ($b['fenetres'] ?? []) as $f) {
+          if (!is_array($f)) continue;
+          $d = (int) ($f['day'] ?? 0);
+          $lab = in_array(strtolower((string) ($f['label'] ?? '')), ['afternoon', 'soir', 'evening', 'pm'], true) ? 'afternoon' : 'morning';
+          $st = $t2s($f['start'] ?? ''); $en = $t2s($f['end'] ?? ''); $cu = $t2s($f['cutoff'] ?? '');
+          if ($d < 1 || $d > 7 || !$st || !$en || !$cu) continue;
+          // Incohérences REFUSÉES ici aussi : l'atelier les bloque, mais l'API
+          // ne doit pas dépendre de son écran pour rester saine.
+          if ($cu >= $st || $en <= $st) continue;
+          q("INSERT INTO ws_tour_availability
+               (tour_id, shop_id, delivery_day, window_label, delivery_start, delivery_end, cutoff_time, max_orders, max_items, active)
+             VALUES (?,?,?,?,?,?,?,?,?,1)
+             ON DUPLICATE KEY UPDATE delivery_start=VALUES(delivery_start), delivery_end=VALUES(delivery_end),
+               cutoff_time=VALUES(cutoff_time), max_orders=VALUES(max_orders), max_items=VALUES(max_items), active=1",
+            [$tid, $sid, $d, $lab, $st, $en, $cu,
+             ($f['maxOrders'] ?? '') !== '' ? (int) $f['maxOrders'] : null,
+             ($f['maxItems'] ?? '') !== '' ? (int) $f['maxItems'] : null]);
+          $gardes[] = $d . '|' . $lab; $n++;
+        }
+        foreach (rows("SELECT id, delivery_day, LOWER(window_label) AS lab FROM ws_tour_availability
+                        WHERE tour_id=? AND shop_id=? AND active=1", [$tid, $sid]) as $a2) {
+          $k = ((int) $a2['delivery_day']) . '|' . ($a2['lab'] === 'morning' ? 'morning' : 'afternoon');
+          if (!in_array($k, $gardes, true)) q("UPDATE ws_tour_availability SET active=0 WHERE id=?", [(int) $a2['id']]);
+        }
+        $pdo->commit();
+        json_out(['ok' => true, 'fenetres' => $n]);
+      } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('[bo] tour-windows: ' . $e->getMessage());
+        json_out(['ok' => false, 'error' => 'Enregistrement refusé', 'detail' => mb_substr($e->getMessage(), 0, 200)], 500);
+      }
+    }
+
     /* ── SIMULATION DE TOURNÉE — « ce que le client verra ». ─────────────────
      * POST /franchisee/tour-simulate
      *   { jours: 7, tourId?: int, officeId?: int,
@@ -11932,7 +12001,7 @@ function bo_endpoint_section($name) {
     'ws-tours' => 'tournees', 'ws-tour-postcodes' => 'tournees', 'tour-dispatch' => 'tournees',
     'tour-dispatch-status' => 'tournees', 'drivers' => 'tournees',
     'fr-live-table' => 'suivi', 'fr-live-drivers' => 'suivi', 'fr-live-eta' => 'suivi',
-    'ws-tour-availability' => 'horaires', 'tour-simulate' => 'horaires',
+    'ws-tour-availability' => 'horaires', 'tour-simulate' => 'horaires', 'tour-windows' => 'horaires',
     'ws-tour-closures' => 'fermetures',
     'fr-incidents' => 'incidents', 'client-complaint' => 'incidents',
     'ws-delivery-fee-rules' => 'frais',
