@@ -8763,6 +8763,175 @@ function dispatch($m, $p) {
     // ── RÈGLES RÉSEAU ERP (lecture seule) : portions par produit. ──
     //    product_portion (même base) : tailles ACTIVES proposées au webshop,
     //    visualisées dans l'écran « Règles de prix » du BO franchisé.
+    /* ── SIMULATION DE TOURNÉE — « ce que le client verra ». ─────────────────
+     * POST /franchisee/tour-simulate
+     *   { jours: 7, tourId?: int, officeId?: int,
+     *     fenetres: [ { day:1..7, label:'morning'|'afternoon',
+     *                   start:'11:30', end:'13:30', cutoff:'09:30' }, … ],
+     *     officeDays?: [1,2,4], officeCutoff?: '09:00' }
+     *
+     * L'atelier de paramétrage envoie son BROUILLON (rien n'est encore
+     * enregistré) et reçoit, jour par jour, ce qu'un client verrait — plus les
+     * incohérences de configuration. Les règles appliquées sont EXACTEMENT
+     * celles de la commande (fuseau boutique, cut-off dépassé aujourd'hui,
+     * fermetures ws_tour_closures, restrictions du bureau) : une simulation qui
+     * réimplémenterait sa propre logique finirait par mentir, et un écran de
+     * réglage qui ment est pire que pas d'écran du tout.
+     *
+     * `fenetres` omis → on lit celles ENREGISTRÉES de la tournée : le même
+     * endpoint sert donc au diagnostic d'une tournée existante. */
+    if ($m === 'POST' && $p === '/franchisee/tour-simulate') {
+      $b = body();
+      $jours = max(1, min(14, (int) ($b['jours'] ?? 7)));
+      $tourId = (int) ($b['tourId'] ?? 0);
+      $officeId = (int) ($b['officeId'] ?? 0);
+      $LBL = ['morning' => 'Midi', 'afternoon' => 'Soirée', 'soir' => 'Soirée', 'evening' => 'Soirée', 'pm' => 'Soirée'];
+
+      // Bureau : ses restrictions PRIMENT sur celles de la tournée (jours
+      // autorisés, cut-off propre) — c'est ce que vit son personnel.
+      $offDays = null; $offCut = null;
+      if (is_array($b['officeDays'] ?? null)) $offDays = array_map('intval', $b['officeDays']);
+      if (!empty($b['officeCutoff'])) $offCut = substr((string) $b['officeCutoff'], 0, 5);
+      if ($officeId && $offDays === null) {
+        try {
+          $os = row("SELECT allowed_days, TIME_FORMAT(delivery_cutoff,'%H:%i') AS cut, tour_id
+                       FROM ws_office_delivery_settings WHERE office_id=? LIMIT 1", [$officeId]);
+          if ($os) {
+            $ad = json_decode((string) ($os['allowed_days'] ?? ''), true);
+            if (is_array($ad)) $offDays = array_map('intval', $ad);
+            if (!empty($os['cut'])) $offCut = $os['cut'];
+            if (!$tourId && !empty($os['tour_id'])) $tourId = (int) $os['tour_id'];
+          }
+        } catch (Throwable $e) { /* table absente : pas de restriction connue */ }
+      }
+      if ($officeId && !$tourId) {
+        $o = row("SELECT tour_id FROM ws_offices WHERE id=?", [$officeId]);
+        if ($o && !empty($o['tour_id'])) $tourId = (int) $o['tour_id'];
+      }
+
+      // Fenêtres : celles du brouillon, sinon celles enregistrées.
+      $wins = [];
+      if (is_array($b['fenetres'] ?? null)) {
+        foreach ($b['fenetres'] as $w) {
+          if (!is_array($w)) continue;
+          $d = (int) ($w['day'] ?? 0);
+          if ($d < 1 || $d > 7) continue;
+          $wins[] = ['day' => $d,
+                     'label' => strtolower((string) ($w['label'] ?? 'morning')),
+                     'start' => substr((string) ($w['start'] ?? ''), 0, 5),
+                     'end' => substr((string) ($w['end'] ?? ''), 0, 5),
+                     'cutoff' => substr((string) ($w['cutoff'] ?? ''), 0, 5)];
+        }
+      } elseif ($tourId) {
+        try {
+          foreach (rows("SELECT delivery_day AS day, window_label AS label,
+                                TIME_FORMAT(delivery_start,'%H:%i') AS start,
+                                TIME_FORMAT(delivery_end,'%H:%i')   AS end,
+                                TIME_FORMAT(cutoff_time,'%H:%i')    AS cutoff
+                           FROM ws_tour_availability
+                          WHERE tour_id=? AND active=1 ORDER BY delivery_day, delivery_start", [$tourId]) as $w) {
+            $w['label'] = strtolower((string) $w['label']);
+            $wins[] = $w;
+          }
+        } catch (Throwable $e) { /* table absente */ }
+      }
+
+      /* ERREURS DE CONFIGURATION — ce qui rend la tournée invendable, dit avec
+         le motif et l'endroit. Bloquantes : la publication les refuse. */
+      $err = [];
+      foreach ($wins as $w) {
+        $j = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'][$w['day'] - 1] ?? ('J' . $w['day']);
+        $nom = $LBL[$w['label']] ?? $w['label'];
+        if ($w['start'] === '' || $w['cutoff'] === '') {
+          $err[] = ['day' => $w['day'], 'label' => $w['label'],
+                    'msg' => "$j · $nom — heure de livraison ou cut-off manquant."];
+          continue;
+        }
+        if ($w['cutoff'] >= $w['start']) {
+          $err[] = ['day' => $w['day'], 'label' => $w['label'],
+                    'msg' => "$j · $nom — le cut-off ({$w['cutoff']}) est après le départ ({$w['start']}) : "
+                           . "un client pourrait commander une tournée déjà partie."];
+        }
+        if ($w['end'] !== '' && $w['end'] <= $w['start']) {
+          $err[] = ['day' => $w['day'], 'label' => $w['label'],
+                    'msg' => "$j · $nom — la fin de livraison ({$w['end']}) n'est pas après le départ ({$w['start']})."];
+        }
+      }
+      if (!$wins) $err[] = ['msg' => "Aucune fenêtre de livraison : la tournée ne serait proposée aucun jour."];
+      if ($offDays !== null && $wins) {
+        $joursTournee = array_unique(array_column($wins, 'day'));
+        $hors = array_values(array_diff($offDays, $joursTournee));
+        if ($hors) $err[] = ['msg' => "Le bureau autorise des jours que la tournée ne roule pas ("
+                                    . implode(', ', array_map(fn ($d) => ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'][$d - 1] ?? $d, $hors))
+                                    . ") — ces jours ne donneront aucun créneau."];
+      }
+
+      // Fuseau de la boutique — même résolution que tour_orderable().
+      $tzName = 'Europe/Brussels';
+      $shopId = 0;
+      if ($tourId) { $t = row("SELECT shop_id FROM ws_tours WHERE id=?", [$tourId]); $shopId = (int) ($t['shop_id'] ?? 0); }
+      if ($shopId && col_exists('shops', 'timezone')) {
+        $tzr = row("SELECT timezone FROM shops WHERE id=?", [$shopId]);
+        if ($tzr && !empty($tzr['timezone'])) $tzName = $tzr['timezone'];
+      }
+      try { $zone = new DateTimeZone($tzName); } catch (Throwable $e) { $zone = new DateTimeZone('Europe/Brussels'); }
+      $now = new DateTime('now', $zone);
+      $today = $now->format('Y-m-d');
+      $nowHm = $now->format('H:i');
+
+      // Fermetures ponctuelles de la tournée (mêmes lignes que la commande).
+      $ferme = [];
+      if ($tourId) {
+        try {
+          foreach (rows("SELECT closure_date FROM ws_tour_closures WHERE tour_id=?", [$tourId]) as $c)
+            $ferme[(string) $c['closure_date']] = true;
+        } catch (Throwable $e) { /* table absente */ }
+      }
+
+      $sortie = []; $commandables = 0;
+      $errDays = [];
+      foreach ($err as $e2) if (isset($e2['day'])) $errDays[$e2['day'] . '|' . ($e2['label'] ?? '')] = $e2['msg'];
+      for ($i = 0; $i < $jours; $i++) {
+        $d = (clone $now)->modify("+$i day");
+        $date = $d->format('Y-m-d');
+        $dow = (int) $d->format('N');
+        $creneaux = [];
+        foreach ($wins as $w) {
+          if ($w['day'] !== $dow) continue;
+          $soir = in_array($w['label'], ['afternoon', 'soir', 'evening', 'pm'], true);
+          $cle = $w['day'] . '|' . $w['label'];
+          $ligne = ['type' => $soir ? 'soir' : 'midi', 'nom' => $LBL[$w['label']] ?? $w['label'],
+                    'livraison' => $w['start'], 'cutoff' => $w['cutoff']];
+          if (isset($errDays[$cle]))            { $ligne['ok'] = false; $ligne['motif'] = $errDays[$cle]; }
+          elseif (isset($ferme[$date]))         { $ligne['ok'] = false; $ligne['motif'] = 'Tournée fermée ce jour (exception).'; }
+          elseif ($offDays !== null && !in_array($dow, $offDays, true))
+                                                { $ligne['ok'] = false; $ligne['motif'] = 'Jour non autorisé pour ce bureau.'; }
+          else {
+            $cut = ($offCut !== null && $offCut < $w['cutoff']) ? $offCut : $w['cutoff'];   // la plus stricte gagne
+            $ligne['cutoff'] = $cut;
+            if ($date === $today && $nowHm >= $cut) { $ligne['ok'] = false; $ligne['motif'] = "Cut-off dépassé (il est $nowHm)."; }
+            else { $ligne['ok'] = true; $commandables++; }
+          }
+          $creneaux[] = $ligne;
+        }
+        $sortie[] = ['date' => $date,
+                     'jour' => ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'][$dow - 1],
+                     'creneaux' => $creneaux];
+      }
+
+      json_out([
+        'jours' => $sortie,
+        'erreurs' => array_values(array_map(fn ($e2) => $e2['msg'], $err)),
+        'commandables' => $commandables,
+        // Publication autorisée : aucune erreur ET au moins un créneau
+        // réellement commandable sur la période — une tournée que personne ne
+        // peut commander n'est pas une tournée publiée, c'est un piège.
+        'publiable' => !$err && $commandables > 0,
+        'fuseau' => $tzName,
+        'maintenant' => $nowHm,
+      ]);
+    }
+
     if ($m === 'GET' && $p === '/franchisee/erp-portion-rules') {
       try {
         if (!row("SELECT 1 x FROM information_schema.tables
@@ -11763,7 +11932,7 @@ function bo_endpoint_section($name) {
     'ws-tours' => 'tournees', 'ws-tour-postcodes' => 'tournees', 'tour-dispatch' => 'tournees',
     'tour-dispatch-status' => 'tournees', 'drivers' => 'tournees',
     'fr-live-table' => 'suivi', 'fr-live-drivers' => 'suivi', 'fr-live-eta' => 'suivi',
-    'ws-tour-availability' => 'horaires',
+    'ws-tour-availability' => 'horaires', 'tour-simulate' => 'horaires',
     'ws-tour-closures' => 'fermetures',
     'fr-incidents' => 'incidents', 'client-complaint' => 'incidents',
     'ws-delivery-fee-rules' => 'frais',
