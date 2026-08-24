@@ -4657,23 +4657,31 @@ function dispatch($m, $p) {
          arrivent encore : la console marque les envoie peut-être toujours, et
          un 500 sur une colonne disparue serait une panne là où il n'y a qu'un
          écran à mettre à jour. */
-      $sets = []; $vals = [];
-      if (array_key_exists('active', $b))          { $sets[] = 'active=?';          $vals[] = !empty($b['active']) ? 1 : 0; }  // publié au catalogue (la bascule « Webshop » de la console écrit encore ce champ)
-      if (array_key_exists('office_delivery', $b)) { $sets[] = 'office_delivery=?'; $vals[] = !empty($b['office_delivery']) ? 1 : 0; }  // canal livraison bureau (« apricot »)
-      // Canal click & collect PAR PRODUIT — la cascade par catégorie l'acceptait
-      // déjà, le produit seul non : la console marque n'aurait pas pu fermer un
-      // seul produit au webshop sans le mettre en brouillon.
-      if (array_key_exists('click_and_collect', $b) && col_exists('ws_products', 'click_and_collect'))
-                                                   { $sets[] = 'click_and_collect=?'; $vals[] = !empty($b['click_and_collect']) ? 1 : 0; }
+      /* CANAUX GÉRÉS DANS L'ERP (23/08). Quand ws_param.channels_source vaut
+         'erp', publié/C&C/livraison sont pilotés par Franchise Buddy et le
+         miroir les réécrit à chaque balayage (≤ 60 s) : accepter ces champs
+         ici ferait CROIRE à une modification aussitôt écrasée — pire qu'un
+         refus. On les IGNORE en le DISANT dans la réponse ; la console peut
+         l'afficher. Le prix, le coût et les menus restent gérés ici. */
+      $canauxErp = strtolower((string) (ws_param('channels_source', '') ?: '')) === 'erp';
+      $sets = []; $vals = []; $ignores = [];
+      foreach (['active', 'office_delivery', 'click_and_collect'] as $flag) {
+        if (!array_key_exists($flag, $b)) continue;
+        if ($canauxErp) { $ignores[] = $flag; continue; }
+        if ($flag === 'click_and_collect' && !col_exists('ws_products', 'click_and_collect')) continue;
+        $sets[] = "$flag=?"; $vals[] = !empty($b[$flag]) ? 1 : 0;
+      }
       if (array_key_exists('price', $b))           { $sets[] = 'price=?';           $vals[] = (float) $b['price']; }
       if (array_key_exists('base_cost', $b))       { $sets[] = 'base_cost=?';       $vals[] = (float) $b['base_cost']; }
       if (array_key_exists('menu_override', $b))   { $sets[] = 'menu_override=?';    $vals[] = in_array($b['menu_override'], ['on','off'], true) ? $b['menu_override'] : null; }
+      if (!$sets && $ignores) json_out(['ok' => true, 'ignores' => $ignores,
+        'message' => 'Publié / Click & Collect / Livraison se gèrent désormais dans Franchise Buddy — champ(s) ignoré(s) ici.']);
       if (!$sets) json_out(['error' => 'rien à modifier'], 400);
       $vals[] = $id;
       q("UPDATE ws_products SET " . implode(', ', $sets) . " WHERE id=?", $vals);
       // CATÉGORIE AUTOMATIQUE : active dès qu'AU MOINS UN de ses produits est
       // en ligne, désactivée quand plus aucun ne l'est.
-      if (array_key_exists('active', $b)) {
+      if (!$canauxErp && array_key_exists('active', $b)) {
         $pc = row("SELECT cat_id FROM ws_products WHERE id=?", [$id]);
         if ($pc && $pc['cat_id'] !== null) {
           q("UPDATE ws_categories
@@ -4682,15 +4690,22 @@ function dispatch($m, $p) {
         }
       }
       $audit('product.update', 'ws_products', $id, null, $b);
-      json_out(['ok' => true]);
+      json_out($ignores
+        ? ['ok' => true, 'ignores' => $ignores,
+           'message' => 'Publié / Click & Collect / Livraison se gèrent désormais dans Franchise Buddy — champ(s) ignoré(s) ici.']
+        : ['ok' => true]);
     }
 
     // Catégorie : menu par défaut (+ cascade optionnelle des flags aux produits).
     if ($m === 'POST' && $p === '/franchisor/category') {
       $b = body(); $id = (int) ($b['id'] ?? 0);
       if (!$id) json_out(['error' => 'id requis'], 400);
-      // NB : le nom de catégorie vient de l'ERP (product_categories, lecture) —
-      // la console marque ne le renomme PAS. Pas de gestion du champ « name » ici.
+      /* Canaux gérés dans l'ERP : les cascades publié/C&C/livraison sont
+         IGNORÉES (et dites) quand channels_source='erp' — le miroir les
+         écraserait au balayage suivant. menu_default reste géré ici. */
+      $canauxErp = strtolower((string) (ws_param('channels_source', '') ?: '')) === 'erp';
+      $ignores = $canauxErp ? array_values(array_intersect(['active', 'office_delivery', 'click_and_collect'], array_keys($b))) : [];
+      if ($canauxErp) foreach ($ignores as $f) unset($b[$f]);
       if (array_key_exists('menu_default', $b)) q("UPDATE ws_categories SET menu_default=? WHERE id=?", [!empty($b['menu_default']) ? 1 : 0, $id]);
       // Cascades canaux : un produit OBLIGATOIRE garde toujours AU MOINS UN
       // canal ouvert (webshop OU livraison bureau) — la cascade qui fermerait
@@ -4725,7 +4740,10 @@ function dispatch($m, $p) {
             WHERE id=?", [$id]);
       }
       $audit('category.update', 'ws_categories', $id, null, $b);
-      json_out(['ok' => true]);
+      json_out($ignores
+        ? ['ok' => true, 'ignores' => $ignores,
+           'message' => 'Publié / Click & Collect / Livraison se gèrent désormais dans Franchise Buddy — cascade(s) ignorée(s) ici.']
+        : ['ok' => true]);
     }
 
     // Sous-catégorie : cascade des flags de pilotage aux produits de la sous-catégorie
@@ -4733,6 +4751,10 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/franchisor/subcategory') {
       $b = body(); $id = (int) ($b['id'] ?? ($b['sub_id'] ?? 0));
       if (!$id) json_out(['error' => 'id requis'], 400);
+      // Même règle que la catégorie : canaux dans l'ERP ⇒ cascades ignorées et dites.
+      $canauxErp = strtolower((string) (ws_param('channels_source', '') ?: '')) === 'erp';
+      $ignores = $canauxErp ? array_values(array_intersect(['active', 'office_delivery', 'click_and_collect'], array_keys($b))) : [];
+      if ($canauxErp) foreach ($ignores as $f) unset($b[$f]);
       if (array_key_exists('active', $b)) {
         q("UPDATE ws_products SET active=? WHERE sub_cat_id=?", [!empty($b['active']) ? 1 : 0, $id]);
         /* RESYNC DU CACHE, comme les routes produit et catégorie. Oubliée ici,
@@ -4748,7 +4770,10 @@ function dispatch($m, $p) {
                                                    q("UPDATE ws_products SET click_and_collect=? WHERE sub_cat_id=?", [!empty($b['click_and_collect']) ? 1 : 0, $id]); // canal C&C, même portée
       if (array_key_exists('menu_override', $b))   q("UPDATE ws_products SET menu_override=? WHERE sub_cat_id=?", [in_array($b['menu_override'], ['on','off'], true) ? $b['menu_override'] : null, $id]);
       $audit('subcategory.update', 'ws_category_subs', $id, null, $b);
-      json_out(['ok' => true]);
+      json_out($ignores
+        ? ['ok' => true, 'ignores' => $ignores,
+           'message' => 'Publié / Click & Collect / Livraison se gèrent désormais dans Franchise Buddy — cascade(s) ignorée(s) ici.']
+        : ['ok' => true]);
     }
 
     // Paramètre marque (ws_param).
@@ -10025,10 +10050,16 @@ function dispatch($m, $p) {
     // Créer / modifier un produit
     if ($m === 'POST' && $p === '/admin/products') {
       $b = body();
+      // Canaux dans l'ERP : `active` n'est plus écrit ici (le miroir l'écraserait
+      // en ≤ 60 s) — nom, prix et catégorie restent gérés.
+      $canauxErp = strtolower((string) (ws_param('channels_source', '') ?: '')) === 'erp';
       if (!empty($b['id'])) {
-        q("UPDATE ws_products SET name=?, price=?, cat_id=?, active=? WHERE id=?",
+        if ($canauxErp) q("UPDATE ws_products SET name=?, price=?, cat_id=? WHERE id=?",
+          [$b['name'], (float) $b['price'], $b['cat_id'] ?? null, $b['id']]);
+        else q("UPDATE ws_products SET name=?, price=?, cat_id=?, active=? WHERE id=?",
           [$b['name'], (float) $b['price'], $b['cat_id'] ?? null, !empty($b['active']) ? 1 : 0, $b['id']]);
-        json_out(['ok' => true, 'id' => (int) $b['id']]);
+        json_out(['ok' => true, 'id' => (int) $b['id']]
+          + ($canauxErp ? ['message' => 'Publié se gère désormais dans Franchise Buddy.'] : []));
       }
       if (empty($b['name'])) json_out(['error' => 'name requis'], 400);
       q("INSERT INTO ws_products (cat_id, name, price, active) VALUES (?,?,?,1)",
