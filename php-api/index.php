@@ -432,25 +432,32 @@ function ws_voucher_upsert(array $o) {
     }
     unset($x);
     // PORTIONS pilotées par l'ERP : candidats (product_portion) × PRIX PAR
-    // BOUTIQUE (shop_product_portion_price). Une portion n'est proposée que si
-    // elle a un prix ; l'ENTIÈRE est toujours proposée au prix de base. Sans
-    // lignes ERP → comportement historique (3 tailles × facteurs).
+    // BOUTIQUE (shop_product_portion_price). AFFICHÉ ⇔ COMMANDABLE : le badge
+    // « Disponible en portions » n'existe QUE si l'ERP offre au moins une
+    // portion AVEC prix — la commande refuse de toute façon une portion sans
+    // prix ERP (409). Le vieux drapeau ws_products.portions ne décide plus
+    // rien : constaté sur « Penne all'Arrabbiata » (2110020), il affichait des
+    // portions que l'ERP ne déclare pas et que la commande aurait refusées.
     try {
       $popts = erp_portion_options($s, array_map(fn ($x2) => (int) $x2['id'], $r));
-      if ($popts) {
-        foreach ($r as &$x) {
-          $cand = $popts[(int) $x['id']] ?? null;
-          if (!$cand) { $x['portionOptions'] = null; continue; }
-          $offered = array_values(array_filter($cand, fn ($c) => $c['price'] !== null));
-          $x['portionOptions'] = array_merge(
-            [['v' => 'entier', 'label' => 'Entière', 'price' => (float) $x['price']]],
-            array_map(fn ($c) => ['v' => $c['v'], 'label' => $c['label'], 'price' => (float) $c['price']], $offered));
-          $x['portionTypes'] = array_merge(['entier'], array_map(fn ($c) => $c['v'], $offered));
-          if ($offered) $x['portions'] = true;
-        }
-        unset($x);
+      foreach ($r as &$x) {
+        $cand = $popts[(int) $x['id']] ?? null;
+        $offered = $cand ? array_values(array_filter($cand, fn ($c) => $c['price'] !== null)) : [];
+        if (!$offered) { $x['portionOptions'] = null; $x['portions'] = false; continue; }
+        $x['portionOptions'] = array_merge(
+          [['v' => 'entier', 'label' => 'Entière', 'price' => (float) $x['price']]],
+          array_map(fn ($c) => ['v' => $c['v'], 'label' => $c['label'], 'price' => (float) $c['price']], $offered));
+        $x['portionTypes'] = array_merge(['entier'], array_map(fn ($c) => $c['v'], $offered));
+        $x['portions'] = true;
       }
-    } catch (Throwable $e) { /* portions ERP indisponibles — comportement historique */ }
+      unset($x);
+    } catch (Throwable $e) {
+      // Modèle portions illisible : on n'affirme rien — aucun badge plutôt
+      // qu'un badge invérifiable (la commande refuserait la portion).
+      foreach ($r as &$x) { $x['portionOptions'] = null; $x['portions'] = false; }
+      unset($x);
+      error_log('[ws] portions ERP indisponibles: ' . $e->getMessage());
+    }
     // Allergènes RÉELS (source de vérité = ERP, même base atelierby_db) : dérivés du
     // modèle recette → matières → allergènes. Clé de liaison : ws_products.id =
     // product.id. SÉMANTIQUE STRICTE (sécurité alimentaire, règle « vraies
