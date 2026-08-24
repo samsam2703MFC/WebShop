@@ -8763,6 +8763,123 @@ function dispatch($m, $p) {
     // ── RÈGLES RÉSEAU ERP (lecture seule) : portions par produit. ──
     //    product_portion (même base) : tailles ACTIVES proposées au webshop,
     //    visualisées dans l'écran « Règles de prix » du BO franchisé.
+    /* ── ÉDITION PONCTUELLE DEPUIS L'ATELIER. ───────────────────────────────
+     * POST /franchisee/atelier-save  { objet:'tour'|'postcodes'|'fee'|'office', … }
+     *
+     * Pourquoi une route à part plutôt que /franchisee/save : ce dernier a une
+     * sémantique de REMPLACEMENT (il reçoit la table entière et désactive ce
+     * qui manque). L'atelier n'édite qu'UN objet à la fois — lui faire poster
+     * une table partielle désactiverait tout le reste. Ici chaque appel touche
+     * exactement ce qu'il nomme, et rien d'autre.
+     *
+     * Portée : tout objet est vérifié comme appartenant à la boutique de la
+     * session avant écriture — une console de boutique ne règle pas les
+     * tournées ni les bureaux d'une autre. */
+    if ($m === 'POST' && $p === '/franchisee/atelier-save') {
+      $b = body();
+      $objet = (string) ($b['objet'] ?? '');
+      $mienne = function ($tid) use ($shopId) {          // tournée de MA boutique ?
+        $t = row("SELECT id, shop_id FROM ws_tours WHERE id=?", [(int) $tid]);
+        if (!$t) return null;
+        if ($shopId && (int) $t['shop_id'] !== (int) $shopId) return null;
+        return (int) $t['id'];
+      };
+      try {
+        /* Identité d'une tournée : nom, capacité. La ZONE n'est pas éditée ici —
+           elle vit dans ws_delivery_zones et se choisit dans l'écran Zones ;
+           l'atelier la montre, il ne la duplique pas. */
+        if ($objet === 'tour') {
+          $tid = $mienne($b['id'] ?? 0);
+          if (!$tid) json_out(['ok' => false, 'error' => 'tournée inconnue ou hors boutique'], 403);
+          $nom = trim((string) ($b['name'] ?? ''));
+          if ($nom === '') json_out(['ok' => false, 'error' => 'nom requis'], 400);
+          $cap = ($b['maxItems'] ?? '') !== '' ? (int) $b['maxItems'] : null;
+          q("UPDATE ws_tours SET name=?, max_items=? WHERE id=?", [$nom, $cap, $tid]);
+          json_out(['ok' => true]);
+        }
+        /* Codes postaux d'UNE tournée. Remplacement de SA liste seulement, et
+           borné à la chalandise attribuée à la boutique quand elle est connue :
+           servir un code postal hors chalandise promettrait une livraison que
+           le réseau n'a pas concédée. */
+        if ($objet === 'postcodes') {
+          if (!$tblExists('ws_tour_postcodes')) json_out(['ok' => false, 'error' => 'table absente'], 400);
+          $tid = $mienne($b['tourId'] ?? 0);
+          if (!$tid) json_out(['ok' => false, 'error' => 'tournée inconnue ou hors boutique'], 403);
+          $pool = [];
+          if ($tblExists('ws_franchisor_catchment')) {
+            $hasShopC = col_exists('ws_franchisor_catchment', 'shop_id');
+            foreach (rows("SELECT postcodes FROM ws_franchisor_catchment WHERE active=1"
+                          . ($hasShopC && $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "")) as $pr) {
+              foreach (preg_split('/[^0-9]+/', (string) $pr['postcodes'], -1, PREG_SPLIT_NO_EMPTY) as $one) $pool[$one] = true;
+            }
+          }
+          $veut = is_array($b['cps'] ?? null) ? $b['cps'] : preg_split('/[^0-9]+/', (string) ($b['cps'] ?? ''), -1, PREG_SPLIT_NO_EMPTY);
+          $pdo = db(); $pdo->beginTransaction();
+          try {
+            q("DELETE FROM ws_tour_postcodes WHERE tour_id=?", [$tid]);
+            $n = 0; $refuses = [];
+            foreach (array_unique(array_map('trim', (array) $veut)) as $cp1) {
+              if (!preg_match('/^[0-9]{4}$/', (string) $cp1)) continue;
+              if ($pool && !isset($pool[$cp1])) { $refuses[] = $cp1; continue; }
+              q("INSERT IGNORE INTO ws_tour_postcodes (tour_id, postcode) VALUES (?,?)", [$tid, $cp1]);
+              $n++;
+            }
+            $pdo->commit();
+            json_out(['ok' => true, 'codes' => $n, 'refuses' => $refuses]);
+          } catch (Throwable $e) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $e; }
+        }
+        /* Frais au niveau TOURNÉE (cascade site > bureau > tournée > boutique).
+           On n'écrit que la ligne de CETTE tournée ; les autres niveaux sont
+           réglés dans l'écran Frais, qui les montre tous ensemble. */
+        if ($objet === 'fee') {
+          if (!$tblExists('ws_delivery_fee_rules')) json_out(['ok' => false, 'error' => 'table absente'], 400);
+          $tid = $mienne($b['tourId'] ?? 0);
+          if (!$tid) json_out(['ok' => false, 'error' => 'tournée inconnue ou hors boutique'], 403);
+          $forfait = ($b['forfait'] ?? '') !== '' ? (float) $b['forfait'] : 0;
+          $franco  = ($b['franco'] ?? '') !== '' ? (float) $b['franco'] : 0;
+          $gratuit = !empty($b['gratuit']) ? 1 : 0;
+          $ex = row("SELECT id FROM ws_delivery_fee_rules WHERE level='Tournée' AND tour_id=? LIMIT 1", [$tid]);
+          if ($ex) q("UPDATE ws_delivery_fee_rules SET fee_amount=?, free_delivery_minimum=?, free_delivery=?, active=1 WHERE id=?",
+                     [$forfait, $franco, $gratuit, (int) $ex['id']]);
+          else     q("INSERT INTO ws_delivery_fee_rules (level, tour_id, shop_id, fee_amount, free_delivery_minimum, free_delivery, active)
+                      VALUES ('Tournée', ?, ?, ?, ?, ?, 1)", [$tid, $shopId ?: null, $forfait, $franco, $gratuit]);
+          json_out(['ok' => true]);
+        }
+        /* Réglages d'UN bureau : tournée, jours autorisés, cut-off propre.
+           Les jours vides = « ceux de la tournée » (pas « aucun ») : une liste
+           vide écrite telle quelle fermerait le bureau sans que personne l'ait
+           demandé. */
+        if ($objet === 'office') {
+          if (!$tblExists('ws_offices')) json_out(['ok' => false, 'error' => 'table absente'], 400);
+          $oid = (int) ($b['officeId'] ?? 0);
+          $off = $oid ? row("SELECT id, shop_id FROM ws_offices WHERE id=?", [$oid]) : null;
+          if (!$off) json_out(['ok' => false, 'error' => 'bureau inconnu'], 404);
+          if ($shopId && col_exists('ws_offices', 'shop_id') && $off['shop_id'] !== null
+              && (int) $off['shop_id'] !== (int) $shopId) json_out(['ok' => false, 'error' => 'bureau hors boutique'], 403);
+          $tid = ($b['tourId'] ?? '') !== '' ? $mienne($b['tourId']) : null;
+          if (($b['tourId'] ?? '') !== '' && !$tid) json_out(['ok' => false, 'error' => 'tournée inconnue ou hors boutique'], 403);
+          if (col_exists('ws_offices', 'tour_id')) q("UPDATE ws_offices SET tour_id=? WHERE id=?", [$tid, $oid]);
+          if ($tblExists('ws_office_delivery_settings')) {
+            $jours = array_values(array_filter(array_map('intval', (array) ($b['days'] ?? [])), fn ($d) => $d >= 1 && $d <= 7));
+            $cut = preg_match('/^(\d{1,2}):(\d{2})$/', trim((string) ($b['cutoff'] ?? '')), $mc)
+                   ? sprintf('%02d:%02d:00', $mc[1], $mc[2]) : null;
+            $sid = $shopId ?: ($off['shop_id'] ?: null);
+            $ex = row("SELECT id FROM ws_office_delivery_settings WHERE office_id=?" . ($sid ? " AND shop_id=" . (int) $sid : "") . " LIMIT 1", [$oid]);
+            $jsonJ = $jours ? json_encode($jours) : null;
+            if ($ex) q("UPDATE ws_office_delivery_settings SET tour_id=?, allowed_days=?, delivery_cutoff=?, active=1 WHERE id=?",
+                       [$tid, $jsonJ, $cut, (int) $ex['id']]);
+            elseif ($sid) q("INSERT INTO ws_office_delivery_settings (office_id, shop_id, tour_id, allowed_days, delivery_cutoff, active)
+                             VALUES (?,?,?,?,?,1)", [$oid, (int) $sid, $tid, $jsonJ, $cut]);
+          }
+          json_out(['ok' => true]);
+        }
+        json_out(['ok' => false, 'error' => 'objet inconnu'], 400);
+      } catch (Throwable $e) {
+        error_log('[bo] atelier-save: ' . $e->getMessage());
+        json_out(['ok' => false, 'error' => 'Enregistrement refusé', 'detail' => mb_substr($e->getMessage(), 0, 200)], 500);
+      }
+    }
+
     /* ── FENÊTRES D'UNE TOURNÉE, à l'unité (pour l'atelier de paramétrage). ──
      * GET  /franchisee/tour-windows?tourId=  → lignes BRUTES, une par
      *      (jour × fenêtre). L'endpoint historique ws-tour-availability les
@@ -12001,7 +12118,7 @@ function bo_endpoint_section($name) {
     'ws-tours' => 'tournees', 'ws-tour-postcodes' => 'tournees', 'tour-dispatch' => 'tournees',
     'tour-dispatch-status' => 'tournees', 'drivers' => 'tournees',
     'fr-live-table' => 'suivi', 'fr-live-drivers' => 'suivi', 'fr-live-eta' => 'suivi',
-    'ws-tour-availability' => 'horaires', 'tour-simulate' => 'horaires', 'tour-windows' => 'horaires',
+    'ws-tour-availability' => 'horaires', 'tour-simulate' => 'horaires', 'tour-windows' => 'horaires', 'atelier-save' => 'horaires',
     'ws-tour-closures' => 'fermetures',
     'fr-incidents' => 'incidents', 'client-complaint' => 'incidents',
     'ws-delivery-fee-rules' => 'frais',
