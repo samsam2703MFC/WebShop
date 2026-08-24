@@ -343,16 +343,48 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
     if ($erpOn === 0 && $wsOn > 0) {
       fwrite(STDERR, "  ⚠ canaux ERP : webshop_active=0 PARTOUT alors que $wsOn produit(s) sont actifs ici — miroir refusé (poser les bascules dans Franchise Buddy d'abord)\n");
     } else {
-      $upd = $pdo->prepare("UPDATE ws_products SET active = ?, click_and_collect = ?, office_delivery = ?
-                             WHERE id = ? AND (active <> ? OR COALESCE(click_and_collect,1) <> ? OR COALESCE(office_delivery,1) <> ?)");
-      $chg = 0;
+      /* Lignes EXISTANTES : canaux + nom source + taxonomie suivis. Le mapping
+         est celui relevé en production : id_category ERP = SOUS-catégorie
+         webshop (32100 Cookies…), category.groups[0].id = catégorie (26
+         Traiteur…) — mêmes espaces d'identifiants. */
+      $upd = $pdo->prepare("UPDATE ws_products
+                               SET active = ?, click_and_collect = ?, office_delivery = ?,
+                                   name = ?, cat_id = COALESCE(?, cat_id), sub_cat_id = COALESCE(?, sub_cat_id)
+                             WHERE id = ? AND (active <> ? OR COALESCE(click_and_collect,1) <> ? OR COALESCE(office_delivery,1) <> ?
+                                               OR name <> ? OR cat_id <> COALESCE(?, cat_id) OR COALESCE(sub_cat_id,0) <> COALESCE(?, sub_cat_id, 0))");
+      /* Produit FB ABSENT d'ici : CRÉÉ — c'est ce qui fait de l'ERP le
+         commandant de l'assortiment. price=0 volontaire : « prix non fixé »
+         masque le produit du catalogue ET le refuse à la commande (règle
+         prix_produits) — il apparaîtra tout seul dès qu'un prix sera posé.
+         /erp/photos-report les liste sous sans_prix. */
+      $ins = $pdo->prepare("INSERT INTO ws_products (id, name, price, active, click_and_collect, office_delivery, cat_id, sub_cat_id)
+                            VALUES (?, ?, 0, ?, ?, ?, ?, ?)");
+      $existe = [];
+      foreach ($pdo->query("SELECT id FROM ws_products")->fetchAll(PDO::FETCH_COLUMN) as $x) $existe[(int) $x] = true;
+      $chg = 0; $crees = 0;
       foreach ($apiRows as $pid => $pr) {
         if (!isset($pr['webshop_active'], $pr['click_and_collect'], $pr['office_delivery'])) continue;
         $a = (int) !!$pr['webshop_active']; $cc = (int) !!$pr['click_and_collect']; $od = (int) !!$pr['office_delivery'];
-        $upd->execute([$a, $cc, $od, (int) $pid, $a, $cc, $od]);
-        $chg += $upd->rowCount();
+        $nom = trim((string) ($pr['base_name'] ?? ($pr['name'] ?? '')));
+        $sub = !empty($pr['id_category']) ? (int) $pr['id_category'] : null;
+        $cat = (isset($pr['category']['groups'][0]['id'])) ? (int) $pr['category']['groups'][0]['id'] : null;
+        if (isset($existe[(int) $pid])) {
+          if ($nom === '') continue;
+          $upd->execute([$a, $cc, $od, $nom, $cat, $sub, (int) $pid, $a, $cc, $od, $nom, $cat, $sub]);
+          $chg += $upd->rowCount();
+        } elseif ($a && $nom !== '') {
+          try { $ins->execute([(int) $pid, $nom, $a, $cc, $od, $cat, $sub]); $crees++; }
+          catch (Throwable $e) { fwrite(STDERR, "  ⚠ création $pid impossible : " . $e->getMessage() . "\n"); }
+        }
       }
-      echo "canaux ERP → ws_products : $erpOn produit(s) webshop_active côté ERP, $chg ligne(s) mise(s) à jour.\n";
+      echo "assortiment ERP → ws_products : $erpOn webshop_active côté ERP, $chg mise(s) à jour, $crees créé(s) (masqués tant que sans prix).\n";
+      /* Actifs ICI absents de l'ERP : on ne les coupe PAS (porteurs de menus,
+         produits du jour locaux) mais on les NOMME — l'écart doit se voir. */
+      $orphelins = [];
+      foreach ($pdo->query("SELECT id, name FROM ws_products WHERE active = 1")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        if (!isset($apiRows[(int) $r['id']])) $orphelins[] = $r['id'] . ' ' . $r['name'];
+      }
+      if ($orphelins) echo "  actifs hors ERP (conservés, à créer dans Franchise Buddy si voulus là-bas) : " . implode(' · ', array_slice($orphelins, 0, 10)) . "\n";
     }
   }
 

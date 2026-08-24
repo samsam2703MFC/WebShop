@@ -52,7 +52,8 @@ try {
 /* ── Rafraîchissement AUTOMATIQUE des photos ERP, déclenché par la navigation.
  * Chaque affichage du catalogue relance la synchro photos (sync_product_photos
  * puis sync_product_images) — EN ARRIÈRE-PLAN et AU PLUS une fois par fenêtre
- * de `ws_param.photos_refresh_ttl` secondes (900 par défaut, 0 = coupé) : une
+ * de `ws_param.photos_refresh_ttl` secondes (60 par défaut — « à chaque refresh »,
+ * une visite par minute au plus déclenche ; 0 = coupé) : une
  * photo ajoutée dans l'ERP apparaît donc sans attendre un déploiement, et un
  * pic de visites ne déclenche qu'UN balayage. Le visiteur ne paie rien :
  * exec() rend la main immédiatement (nohup … &), la réponse part sans délai.
@@ -87,7 +88,7 @@ function photos_refresh_spawn() {
 }
 function photos_refresh_async() {
   try {
-    $ttl = (int) ws_param('photos_refresh_ttl', 900);
+    $ttl = (int) ws_param('photos_refresh_ttl', 60);   // 60 s : chaque visite rafraîchit (assortiment, canaux, photos)
     $stamp = __DIR__ . '/../assets/product_pictures/.last_refresh';
     if (!photos_refresh_due($stamp, $ttl) || !photos_exec_ok()) return;
     photos_refresh_spawn();
@@ -688,7 +689,7 @@ function dispatch($m, $p) {
       'photos'     => (function () {
         $stamp = __DIR__ . '/../assets/product_pictures/.last_refresh';
         return ['auto' => photos_exec_ok(),
-                'ttl'  => (int) ws_param('photos_refresh_ttl', 900),
+                'ttl'  => (int) ws_param('photos_refresh_ttl', 60),
                 'dernier_declenchement_s' => is_file($stamp) ? time() - (int) filemtime($stamp) : null];
       })(),
       'incidents'  => erp_notes(),
@@ -779,8 +780,12 @@ function dispatch($m, $p) {
         'recette_sans_photo' => 'poser la photo dans Franchise Buddy (shop_photo_path de préférence) — source unique',
         'sans_recette'       => 'lier une recette dans Franchise Buddy — source unique, plus de fichiers manuels',
         'photo_manuelle'     => 'anomalie transitoire : fichier hors ERP, remplacé ou retiré au prochain balayage',
+        'sans_prix'          => 'produit créé depuis Franchise Buddy, MASQUÉ tant que son prix n\'est pas posé (console marque) — jamais vendu à 0 €',
       ],
       'etats' => $etats,
+      // Produits pilotés par l'ERP mais sans prix local : actifs, INVISIBLES
+      // au catalogue par la règle « prix non fixé = pas vendable ».
+      'sans_prix' => rows("SELECT id, name FROM ws_products WHERE active = 1 AND price <= 0 ORDER BY name"),
       'incidents' => erp_notes(),
     ]);
   }
