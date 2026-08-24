@@ -412,7 +412,12 @@ function ws_voucher_upsert(array $o) {
        front l'affiche — c'est le choix assumé, pas de rémanence. Un produit
        local jamais créé dans l'ERP n'est plus servi. ── */
     if (function_exists('erp_catalog_enabled') && erp_catalog_enabled()) {
-      $av = erp_get('shops/' . (int) $s . '/products/available', 60);
+      /* Cache 10 s par défaut : « je change dans l'ERP, je recharge, je vois »
+         — un humain met plus de 10 s à changer de fenêtre, et un pic de
+         visiteurs ne frappe l'ERP qu'une fois par fenêtre. ws_param
+         catalog_direct_ttl le règle (0 = direct absolu, un appel ERP par vue). */
+      $av = erp_get('shops/' . (int) $s . '/products/available',
+                    max(0, (int) ws_param('catalog_direct_ttl', 10)));
       $lst = is_array($av) ? (array_is_list($av) ? $av : ($av['data'] ?? $av['items'] ?? null)) : null;
       if (!is_array($lst)) {
         json_out(['error' => 'Catalogue ERP injoignable — nouvel essai automatique, revenez dans un instant.'], 503);
