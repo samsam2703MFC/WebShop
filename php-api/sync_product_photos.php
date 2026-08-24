@@ -283,6 +283,7 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
     exit(0);
   }
   $apiRec = [];
+  $apiRows = [];   // lignes complètes de available — servent aussi au miroir des canaux
   // Boutique de référence pour l'appel available (le lien recette est commun
   // à toutes) : erp_ref_shop si posé, sinon la première boutique webshop.
   $refShop = (int) ($param('erp_ref_shop') ?: 0);
@@ -301,7 +302,9 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
     }
     if (is_array($al) && array_is_list($al)) {
       foreach ($al as $pr) {
-        if (is_array($pr) && !empty($pr['id']) && !empty($pr['id_recipe'])) $apiRec[(int) $pr['id']] = (int) $pr['id_recipe'];
+        if (!is_array($pr) || empty($pr['id'])) continue;
+        $apiRows[(int) $pr['id']] = $pr;
+        if (!empty($pr['id_recipe'])) $apiRec[(int) $pr['id']] = (int) $pr['id_recipe'];
       }
     }
     if (!$apiRec) fwrite(STDERR, "  ⚠ available (boutique $refShop) illisible — liens recette pris du réplica local seul\n");
@@ -322,6 +325,36 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
   }
   if ($opt['only']) $rows = array_values(array_filter($rows, fn ($r) => in_array((int) $r[0], $opt['only'], true)));
   if ($opt['limit'] > 0) $rows = array_slice($rows, 0, $opt['limit']);
+
+  /* ── MIROIR DES CANAUX (livraison Franchise Buddy du 23/08). L'ERP porte
+     désormais webshop_active / click_and_collect / office_delivery : quand
+     ws_param.channels_source vaut 'erp', ces trois bascules PILOTENT
+     ws_products (active, click_and_collect, office_delivery) — la console
+     marque cesse d'être l'écriture de référence sur ces colonnes.
+     GARDE-FOU : webshop_active naît à 0 côté ERP. Si le miroir devait
+     désactiver TOUT le catalogue (aucun webshop_active=1 alors que des
+     produits sont actifs ici), c'est que les bascules n'ont pas encore été
+     posées dans Franchise Buddy — on REFUSE et on le dit, plutôt que de
+     vider la boutique. Inerte tant que le paramètre n'est pas posé. ── */
+  if (!$opt['dry'] && !$opt['only'] && strtolower((string) ($param('channels_source') ?: '')) === 'erp' && $apiRows) {
+    $erpOn = 0;
+    foreach ($apiRows as $pr) if (!empty($pr['webshop_active'])) $erpOn++;
+    $wsOn = (int) $pdo->query("SELECT COUNT(*) FROM ws_products WHERE active = 1")->fetchColumn();
+    if ($erpOn === 0 && $wsOn > 0) {
+      fwrite(STDERR, "  ⚠ canaux ERP : webshop_active=0 PARTOUT alors que $wsOn produit(s) sont actifs ici — miroir refusé (poser les bascules dans Franchise Buddy d'abord)\n");
+    } else {
+      $upd = $pdo->prepare("UPDATE ws_products SET active = ?, click_and_collect = ?, office_delivery = ?
+                             WHERE id = ? AND (active <> ? OR COALESCE(click_and_collect,1) <> ? OR COALESCE(office_delivery,1) <> ?)");
+      $chg = 0;
+      foreach ($apiRows as $pid => $pr) {
+        if (!isset($pr['webshop_active'], $pr['click_and_collect'], $pr['office_delivery'])) continue;
+        $a = (int) !!$pr['webshop_active']; $cc = (int) !!$pr['click_and_collect']; $od = (int) !!$pr['office_delivery'];
+        $upd->execute([$a, $cc, $od, (int) $pid, $a, $cc, $od]);
+        $chg += $upd->rowCount();
+      }
+      echo "canaux ERP → ws_products : $erpOn produit(s) webshop_active côté ERP, $chg ligne(s) mise(s) à jour.\n";
+    }
+  }
 
   $c = spp_run($rows, ['base' => $base, 'token' => $token, 'dir' => __DIR__ . '/../assets/product_pictures',
                        'dry' => $opt['dry'], 'force' => $opt['force']]);

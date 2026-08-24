@@ -142,12 +142,17 @@ sur 575 ont une recette. Un appel PAR recette, pas de lot.
 Les cinq du mail envoyé (cf. `AUDIT_API_VS_DB.md` §6), plus un sixième né du
 relevé photos :
 
-1. `GET /shops/{id}/products/prices` — prix de vente EN LOT, pièce entière **et**
-   portions (le bloquant nº 1 : `/price` répond 404, `portions/prices` est à
-   l'unité) ;
+1. `GET /shops/{id}/products/prices` — prix de vente EN LOT, pièce entière et
+   portions. **Partiellement livré le 23/08** : `available?include=portions`
+   rend les portions AVEC prix boutique en lot — reste le prix de la PIÈCE
+   ENTIÈRE, toujours sans endpoint ;
 2. API clients finaux (création + lecture) ;
 3. API bons/promotions (lecture + rachat) ;
-4. périodes de disponibilité dans `products/available` ;
+4. ~~périodes de disponibilité dans `products/available`~~ — **livré le
+   23/08** (`include=availability_periods`, mêmes clés que la table locale) ;
+   s'y ajoutent les statuts de canaux (`webshop_active`, `click_and_collect`,
+   `office_delivery`) lisibles ET modifiables (`PATCH /products/{id}`) —
+   miroir webshop derrière `ws_param.channels_source='erp'` ;
 5. statut allergènes « évalué sans allergène » vs « non renseigné » ;
 6. **photos en lot et/ou stables** : soit `photo_url` directement dans
    `products/available`, soit un endpoint groupé — 573 appels `recipes/{id}`

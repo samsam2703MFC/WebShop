@@ -100,6 +100,39 @@ function erp_cat_map_product(array $p, $lang = '') {
     'ingredients' => (!empty($p['label_ingredients']) && is_string($p['label_ingredients']))
                        ? trim($p['label_ingredients']) : null,
     'is_vegetarian' => !empty($p['is_vegetarian']) ? 1 : 0,
+    /* CANAUX (livraison Franchise Buddy du 23/08) : l'ERP porte désormais les
+       trois bascules du webshop. webshop_active naît à 0 — tant que la marque
+       ne les a pas posées dans FB, ces valeurs ne pilotent RIEN ici (le
+       miroir est derrière ws_param.channels_source, cf. sync_product_photos). */
+    'webshop_active'    => isset($p['webshop_active']) ? (int) !!$p['webshop_active'] : null,
+    'click_and_collect' => isset($p['click_and_collect']) ? (int) !!$p['click_and_collect'] : null,
+    'office_delivery'   => isset($p['office_delivery']) ? (int) !!$p['office_delivery'] : null,
+    /* include=portions : portions actives AVEC prix boutique, EN LOT — la
+       réponse à « un appel par produit » (ENDPOINTS_WEBSHOP §C.1, partiel).
+       Même règle que erp_portion_prices : un montant n'est retenu que fixé
+       ET vendable ; sinon la portion est présente mais sans prix. */
+    'portionPrices' => (function () use ($p) {
+      if (empty($p['portions']) || !is_array($p['portions'])) return null;
+      $MAP = ['one_half' => 'demi', 'one_quarter' => 'quart', 'one_eighth' => 'huitieme'];
+      $out = [];
+      foreach ($p['portions'] as $po) {
+        if (!is_array($po) || (isset($po['is_active']) && !(int) $po['is_active'])) continue;
+        $v = $MAP[strtolower(trim((string) ($po['portion_type'] ?? '')))] ?? null;
+        if (!$v) continue;
+        $fixed = !empty($po['has_shop_price']);
+        if ($fixed && array_key_exists('is_ready_for_sale', $po)) $fixed = !empty($po['is_ready_for_sale']);
+        $raw = $po['shop_price_gross'] ?? ($po['shop_price'] ?? null);
+        $out[] = ['v' => $v, 'label' => (string) ($po['label'] ?? $v),
+                  'price' => ($fixed && is_numeric($raw) && (float) $raw > 0) ? (float) $raw : null,
+                  'pp_id' => (int) ($po['id'] ?? 0)];
+      }
+      return $out ?: null;
+    })(),
+    /* include=availability_periods : mêmes clés que la table locale
+       product_availability_period (from_md/to_md, is_recurring) — transmises
+       telles quelles, l'appelant décide. */
+    'availabilityPeriods' => (isset($p['availability_periods']) && is_array($p['availability_periods']))
+                               ? $p['availability_periods'] : null,
     // Stock du jour tel que l'ERP le connaît, en information : la réservation
     // reste gérée par le webshop.
     'erpInStock'  => $num($p['in_stock'] ?? null),
