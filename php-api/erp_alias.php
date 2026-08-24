@@ -117,13 +117,17 @@ function erp_notes($add = null) {
 }
 
 /* GET JSON sur l'API ERP, avec cache disque. Rend null en cas d'échec. */
-function erp_get($path) {
+/* $ttl : durée de cache disque pour CET appel (secondes) — null = celle de la
+ * config (300 s). Le catalogue en direct la raccourcit à 60 s : « retiré de
+ * l'ERP » doit disparaître à la minute, pas au quart d'heure. */
+function erp_get($path, $ttl = null) {
   $cfg = erp_cfg();
   if ($cfg['base'] === '') return null;
   $url = $cfg['base'] . '/' . ltrim($path, '/');
+  $ttl = $ttl === null ? (int) $cfg['ttl'] : (int) $ttl;
 
   $file = sys_get_temp_dir() . '/ws_erp_' . sha1($url) . '.json';
-  if ($cfg['ttl'] > 0 && is_file($file) && (time() - filemtime($file)) < $cfg['ttl']) {
+  if ($ttl > 0 && is_file($file) && (time() - filemtime($file)) < $ttl) {
     $cached = json_decode((string) @file_get_contents($file), true);
     if (is_array($cached)) return $cached;
   }
@@ -154,7 +158,7 @@ function erp_get($path) {
   $data = json_decode($raw, true);
   if (!is_array($data)) { erp_notes('ERP : JSON illisible sur ' . $path); return null; }
 
-  if ($cfg['ttl'] > 0) @file_put_contents($file, json_encode($data));
+  if ($ttl > 0) @file_put_contents($file, json_encode($data));
   return $data;
 }
 

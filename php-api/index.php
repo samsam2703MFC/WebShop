@@ -402,6 +402,40 @@ function ws_voucher_upsert(array $o) {
                  LEFT JOIN ws_season se ON se.id = p.season_id
                 WHERE p.active = 1$deliveryWhere$seasonWhere
                 ORDER BY c.sort_order, p.name", array_merge([$s], $seasonArgs));
+    /* ── ASSORTIMENT EN DIRECT DE L'ERP (décision du 24/08 : « pas de fallback
+       miroir, seulement l'API direct »). Quand ws_param.catalog_source vaut
+       'erp', la liste servie est l'INTERSECTION du SQL local (prix,
+       enrichissements) et de la réponse VIVANTE de l'ERP : un produit retiré
+       ou fermé dans Franchise Buddy disparaît à la minute (cache 60 s), sans
+       attendre le miroir. Les canaux affichés sont ceux de l'ERP à l'instant.
+       ERP injoignable après cache → 503 HONNÊTE : le bandeau d'erreur du
+       front l'affiche — c'est le choix assumé, pas de rémanence. Un produit
+       local jamais créé dans l'ERP n'est plus servi. ── */
+    if (function_exists('erp_catalog_enabled') && erp_catalog_enabled()) {
+      $av = erp_get('shops/' . (int) $s . '/products/available', 60);
+      $lst = is_array($av) ? (array_is_list($av) ? $av : ($av['data'] ?? $av['items'] ?? null)) : null;
+      if (!is_array($lst)) {
+        json_out(['error' => 'Catalogue ERP injoignable — nouvel essai automatique, revenez dans un instant.'], 503);
+      }
+      $aval = [];
+      foreach ($lst as $pr2) {
+        if (is_array($pr2) && !empty($pr2['id']) && !empty($pr2['webshop_active'])) $aval[(int) $pr2['id']] = $pr2;
+      }
+      $r = array_values(array_filter($r, fn ($x2) => isset($aval[(int) $x2['id']])));
+      foreach ($r as &$x) {
+        $pr2 = $aval[(int) $x['id']];
+        if (isset($pr2['click_and_collect'])) $x['click_and_collect'] = (int) !!$pr2['click_and_collect'];
+        if (isset($pr2['office_delivery']))   $x['office_delivery']   = (int) !!$pr2['office_delivery'];
+      }
+      unset($x);
+      // Le filtre de canal du mode se rejoue sur les valeurs VIVANTES (le
+      // WHERE SQL a filtré sur les colonnes locales, peut-être en retard).
+      if (in_array($mode, ['delivery', 'office', 'apricot'], true)) {
+        $r = array_values(array_filter($r, fn ($x2) => (int) $x2['office_delivery'] === 1));
+      } elseif ($mode === 'collect') {
+        $r = array_values(array_filter($r, fn ($x2) => (int) $x2['click_and_collect'] === 1));
+      }
+    }
     $photos = product_photo_files();
     foreach ($r as &$x) {
       // Image produit : la photo déposée (assets/product_pictures/{id}.png|jpg) FAIT

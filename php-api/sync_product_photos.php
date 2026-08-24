@@ -378,13 +378,20 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
         }
       }
       echo "assortiment ERP → ws_products : $erpOn webshop_active côté ERP, $chg mise(s) à jour, $crees créé(s) (masqués tant que sans prix).\n";
-      /* Actifs ICI absents de l'ERP : on ne les coupe PAS (porteurs de menus,
-         produits du jour locaux) mais on les NOMME — l'écart doit se voir. */
-      $orphelins = [];
+      /* Actifs ICI absents de l'ERP : DÉSACTIVÉS (décision du 24/08 — « pas de
+         fallback miroir, seulement l'API direct »). Un produit retiré de
+         Franchise Buddy disparaît donc aussi du chemin de COMMANDE, pas
+         seulement de l'affichage. Pour vendre un produit, il doit exister
+         dans l'ERP — les porteurs de menus (active=0) ne sont pas concernés. */
+      $off = 0;
+      $updOff = $pdo->prepare("UPDATE ws_products SET active = 0 WHERE id = ?");
       foreach ($pdo->query("SELECT id, name FROM ws_products WHERE active = 1")->fetchAll(PDO::FETCH_ASSOC) as $r) {
-        if (!isset($apiRows[(int) $r['id']])) $orphelins[] = $r['id'] . ' ' . $r['name'];
+        if (isset($apiRows[(int) $r['id']])) continue;
+        $updOff->execute([(int) $r['id']]);
+        $off++;
+        fwrite(STDERR, "  produit {$r['id']} « {$r['name']} » : absent de l'ERP — désactivé (le créer dans Franchise Buddy pour le vendre)\n");
       }
-      if ($orphelins) echo "  actifs hors ERP (conservés, à créer dans Franchise Buddy si voulus là-bas) : " . implode(' · ', array_slice($orphelins, 0, 10)) . "\n";
+      if ($off) echo "  $off produit(s) actif(s) absent(s) de l'ERP désactivé(s).\n";
     }
   }
 
