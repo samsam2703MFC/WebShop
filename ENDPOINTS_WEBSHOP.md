@@ -139,6 +139,10 @@ sur 575 ont une recette. Un appel PAR recette, pas de lot.
 
 ## C. Endpoints ERP à demander à Franchise Buddy
 
+> Liste consolidée et à jour dans **`ERP_GAP.md`** (relevé du 24/08, après la
+> bascule assortiment/canaux/photos). Ce qui suit reste la trace des demandes
+> telles qu'elles ont été formulées.
+
 Les cinq du mail envoyé (cf. `AUDIT_API_VS_DB.md` §6), plus un sixième né du
 relevé photos :
 
