@@ -4,6 +4,7 @@
 require __DIR__ . '/lib.php';
 require __DIR__ . '/promo_lib.php';
 require __DIR__ . '/erp_alias.php';
+require __DIR__ . '/erp_promos.php';
 
 /* CORS */
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -455,7 +456,7 @@ function ws_voucher_upsert(array $o) {
       // illustration de repli — ce que le commentaire promettait déjà.
       $x['img'] = $photos[$x['id']] ?? product_img_or_null($x['img'] ?? null);
       $x['portions'] = (bool) $x['portions'];
-      $x['cross_portion'] = (bool) $x['cross_portion'];
+      $x['cross_portion'] = (bool) $x['cross_portion'];   // périmètre ERP appliqué plus bas
       $x['has_menu_options'] = (bool) $x['has_menu_options'];
       $x['no_delivery'] = (bool) $x['no_delivery'];
       // Canal livraison bureau (« apricot ») : disponibilité produit dédiée,
@@ -578,6 +579,26 @@ function ws_voucher_upsert(array $o) {
     // prix effectif (magasin ERP, ou repli ws_) vaut 0 n'est pas vendable → masqué.
     // Appliqué APRÈS la surcharge du prix magasin pour couvrir les deux sources.
     $r = array_values(array_filter($r, static fn($x) => (float) $x['price'] > 0));
+
+    /* PÉRIMÈTRE DE LA PROMO CROISÉE. Quand la règle vient de l'ERP, c'est ELLE
+       qui dit quels produits comptent (listes de produits / catégories), pas
+       le drapeau local ws_products.cross_portion. On réécrit donc le drapeau
+       servi au front avec le MÊME test que la facturation
+       (cross_portion_eligible) : sans ça, le panier marquerait des lignes que
+       la commande ne remiserait pas — ou l'inverse. */
+    if ($r && function_exists('cross_portion_rule')) {
+      $cpr = cross_portion_rule($s);
+      if ($cpr && ($cpr['source'] ?? '') === 'erp') {
+        foreach ($r as &$xc) {
+          $xc['cross_portion'] = cross_portion_eligible($cpr, $xc['id'], $xc['cat_id'] ?? 0,
+                                                        $xc['sub_cat_id'] ?? 0, $xc['cross_portion']);
+        }
+        unset($xc);
+      } elseif (!$cpr && erp_promos_enabled()) {
+        // Source ERP activée mais aucune règle : aucun produit n'est éligible.
+        foreach ($r as &$xc) { $xc['cross_portion'] = false; } unset($xc);
+      }
+    }
 
     /* Noms traduits : alias servis par l'API ERP (products/aliases), résolus
        ICI — le navigateur ne traduit rien. Sans alias dans cette langue, ou
@@ -1404,12 +1425,14 @@ function dispatch($m, $p) {
 
   /* ── Promos / Vouchers ── */
   if ($m === 'GET' && $p === '/pricing/promos/cross-portion') {
-    $s = qp('shopId');
-    $r = row("SELECT x AS buy, y AS free, threshold, label FROM ws_pricing_rules
-               WHERE rule_type='cross_portion' AND active=1 AND (shop_id=? OR shop_id IS NULL)
-               ORDER BY shop_id IS NULL LIMIT 1", [$s]);
+    // RÉSOLVEUR UNIQUE (erp_promos.php) : la même fonction sert cet affichage
+    // ET la facturation dans POST /orders. Deux résolutions séparées
+    // finiraient par diverger — le client verrait une économie qu'on ne lui
+    // débiterait pas.
+    $r = cross_portion_rule(qp('shopId'));
     json_out($r ? ['active' => true, 'buy' => (int) $r['buy'], 'free' => (int) $r['free'],
-                   'threshold' => (int) $r['threshold'], 'scope' => 'crossPortion', 'label' => $r['label']]
+                   'threshold' => (int) $r['threshold'], 'scope' => 'crossPortion',
+                   'label' => $r['label'], 'source' => $r['source']]
                 : ['active' => false]);
   }
   // Bons DISPONIBLES pour ce client + cette boutique — outil marketing : le
@@ -2580,7 +2603,10 @@ function dispatch($m, $p) {
     $storePrices = prix_produits(array_map(static fn($it) => (int) ($it['productId'] ?? 0), $basket));
     $portPx = erp_portion_options($shop, array_map(static fn ($it2) => (int) ($it2['productId'] ?? 0), $basket));
     foreach ($basket as $it) {
-      $p2 = row("SELECT p.id, p.name, p.cross_portion
+      // cat_id / sub_cat_id : le périmètre d'une promo ERP raisonne par
+      // CATÉGORIE (« 4 Quarts + 1 Gratuit » vise « Tartes – Ø 28 cm »), pas
+      // par un drapeau produit. Sans eux, aucune ligne ne serait éligible.
+      $p2 = row("SELECT p.id, p.name, p.cross_portion, p.cat_id, p.sub_cat_id
                    FROM ws_products p
                   WHERE p.id=? AND p.active=1", [$it['productId'] ?? 0]);
       if (!$p2) continue;
@@ -2644,23 +2670,29 @@ function dispatch($m, $p) {
       $lines[] = ['productId' => $p2['id'], 'name' => $p2['name'], 'qty' => $qty,
                   'unit' => round($unit + $comp['modifier'], 2),
                   'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion'],
+                  'id' => (int) $p2['id'], 'cat_id' => (int) ($p2['cat_id'] ?? 0), 'sub_cat_id' => (int) ($p2['sub_cat_id'] ?? 0),
                   'bundleChoices' => $comp['choices'],
                   'note' => isset($it['note']) ? mb_substr((string) $it['note'], 0, 255) : null];
     }
     if (!count($lines)) json_out(['error' => 'aucun produit valide'], 400);
     $subtotal = round($subtotal, 2);
 
-    // 2. Promo croisée X+Y (ws_pricing_rules) : les Y les moins chers offerts par tranche de X.
+    /* 2. Promo croisée X+Y : les Y les moins chers offerts par tranche de X.
+       MÊME résolveur que l'affichage (cross_portion_rule) — c'est ce qui
+       garantit que le montant annoncé au panier est celui qu'on débite. Le
+       périmètre vient de la règle : drapeau ws_products.cross_portion pour la
+       règle locale, listes produits/catégories pour la règle ERP. */
     $promo = 0;
-    $rule = row("SELECT x, y, threshold FROM ws_pricing_rules
-                  WHERE rule_type='cross_portion' AND active=1 AND (shop_id=? OR shop_id IS NULL)
-                  ORDER BY shop_id IS NULL LIMIT 1", [$shop]);
-    if ($rule && (int) $rule['x'] > 0) {
+    $rule = cross_portion_rule($shop);
+    if ($rule && (int) $rule['buy'] > 0) {
       $units = [];
-      foreach ($lines as $l) if ($l['cross']) for ($k = 0; $k < $l['qty']; $k++) $units[] = $l['unit'];
+      foreach ($lines as $l) {
+        if (!cross_portion_eligible($rule, $l['id'] ?? 0, $l['cat_id'] ?? 0, $l['sub_cat_id'] ?? 0, $l['cross'])) continue;
+        for ($k = 0; $k < $l['qty']; $k++) $units[] = $l['unit'];
+      }
       if (count($units) >= (int) $rule['threshold']) {
         sort($units); // les moins chers d'abord
-        $freeCount = intdiv(count($units), (int) $rule['x']) * (int) $rule['y'];
+        $freeCount = intdiv(count($units), (int) $rule['buy']) * (int) $rule['free'];
         for ($k = 0; $k < $freeCount && $k < count($units); $k++) $promo += $units[$k];
       }
     }
