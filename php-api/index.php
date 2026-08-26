@@ -3376,9 +3376,32 @@ function dispatch($m, $p) {
          Volontairement APRÈS la création locale et sans test de retour : le
          compte webshop est déjà valide, un ERP en panne ne doit pas empêcher
          quelqu'un de s'inscrire. L'échec est journalisé, rien de plus. */
-      if (function_exists('erp_client_creer')) {
+      /* PAS DE MIROIR SI LA BOUTIQUE CONNAÎT DÉJÀ CE NUMÉRO. Le miroir créait
+         une SECONDE fiche pour quelqu'un qui en avait déjà une — un doublon
+         dans le fichier client, à chaque inscription d'un habitué du comptoir.
+         Deux cas, deux traitements :
+           • fiche existante → on ne crée rien ; le rattachement (0099) la
+             proposera, et c'est le franchisé qui tranchera. erp_client_id
+             reste NULL jusque-là : le lien doit être VALIDÉ, pas supposé ;
+           • personne inconnue → on crée, et on mémorise l'id sans arbitrage :
+             cette fiche-là, c'est nous qui venons de la faire, il n'y a aucune
+             question d'identité à trancher. */
+      if (!$dejaErp && function_exists('erp_client_creer')) {
         try {
-          erp_client_creer($shopI ?? null, ['phone' => $phone, 'name' => $first, 'surname' => $last, 'zip' => $zip]);
+          /* `name` = PRÉNOM et `surname` = NOM : c'est le sens réel côté ERP,
+             vérifié sur les 8156 fiches (name : Amandine, Claude… / surname :
+             COLARD, DURAND…). L'inverse paraît plus naturel en anglais et
+             c'est exactement l'erreur qui avait été commise dans le mappage
+             de lecture. */
+          $creee = erp_client_creer($shopI ?? null,
+                     ['phone' => $phone, 'name' => $first, 'surname' => $last, 'zip' => $zip]);
+          /* L'IDENTIFIANT DE LA FICHE, MÉMORISÉ. Il était jeté : le compte et
+             sa fiche ERP existaient tous les deux sans que rien ne dise qu'ils
+             désignent la même personne. C'est ce lien que lit la décision de
+             rattachement (0099), et c'est lui qu'exigera toute écriture vers
+             l'ERP le jour où leur PATCH acceptera autre chose que `status`. */
+          if (is_array($creee) && !empty($creee['id']) && col_exists('client', 'erp_client_id'))
+            q("UPDATE client SET erp_client_id=? WHERE id=?", [(int) $creee['id'], $id]);
         } catch (Throwable $e) { error_log('[ws] miroir ERP client: ' . $e->getMessage()); }
       }
     }
