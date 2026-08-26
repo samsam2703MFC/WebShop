@@ -82,7 +82,9 @@ société, TVA, adresse.
 
 - **Fidélité** : `fidelity_active`, `fidelity_linked_at`, `member_since`
 - **Facturation** : `invoice_name`, `invoice_address`, `invoice_postal_code`,
-  `invoice_city`, `iban`, `peppol_verified`, `billing_lines`
+  `invoice_city`, `iban`, `peppol_verified`, `billing_lines` — **la facturation
+  est gérée par l'ERP**, sur son propre endpoint. Le webshop n'a donc pas à
+  porter ces données : il transmet la commande, l'ERP facture.
 
 Ces dix champs ne sont pas des anomalies : ils vivront ailleurs. Ce qui reste à
 savoir, c'est **par quelle clé** ces endpoints rattacheront un client — voir §3.
@@ -112,18 +114,30 @@ deux (`erp_client_par_tel`, clé normalisée sur les 9 derniers chiffres).
   de livraison — **validée à la main par le franchisé** — sont des notions
   purement webshop.
 
-### 5. Vides et inexpliqués — les questions qui restent
+### 5. `preferred_shop_id` = `id_main_shop` — une redondance chez NOUS
 
-`preferred_shop_id`, `webshop_user`, `pwa_user` (le webshop écrit pourtant
-`preferred_shop_id` et `webshop_user=1` à l'inscription) · `blocked`, `status`,
-`verified_at`, `needs_profile_completion`, `merged_into_id` · `locale` (ce
-serait le bon endroit pour la langue du client) · `client_code`, `last_login_at`.
+Ce sont **deux noms pour la même notion** : la boutique du client. L'ERP n'en
+garde qu'un (`id_main_shop`, rempli sur les 8154) et laisse l'autre vide.
+
+Le webshop, lui, écrit **les deux avec la même valeur** à chaque inscription
+(`$shopI` dans les 7 `INSERT INTO client`), et six lectures interrogent
+`preferred_shop_id` — notamment `/webshop-link`, qui résout la boutique
+préférée d'un client venu de la PWA. Ça marche, mais c'est deux colonnes pour
+une seule idée : à unifier sur `id_main_shop` quand on y touchera, en vérifiant
+les six lectures d'abord.
+
+### 6. Vides et inexpliqués — les questions qui restent
+
+`webshop_user`, `pwa_user` (le webshop écrit pourtant `webshop_user=1` à
+l'inscription) · `blocked`, `status`, `verified_at`,
+`needs_profile_completion`, `merged_into_id` · `locale` (ce serait le bon
+endroit pour la langue du client) · `client_code`, `last_login_at`.
 
 Et les 5 champs de conditions B2B — `b2b_segment`, `b2b_credit_ceiling`,
 `b2b_payment_terms`, `b2b_web_discount`, `b2b_franco` : relèvent-ils de
 l'endpoint facturation, ou du client ?
 
-### 6. Ce qui est cassé
+### 7. Ce qui est cassé
 
 `GET` et `PATCH /shops/{id}/clients/{cid}` répondent **404
 CLIENT_NOT_ASSIGNED_TO_SHOP sur les 8154 clients** (12 tirés au hasard, 5
