@@ -60,6 +60,83 @@ part assumée du webshop.
 
 ---
 
+## Le modèle CLIENT, en détail (relevé du 25/08)
+
+`GET /shops/{id}/clients` rend **60 champs**. Ils se répartissent en quatre
+familles, et la distinction compte : un champ vide n'est pas forcément un
+défaut.
+
+### 1. Servis et exploitables — 18 champs
+
+`id`, `id_main_shop`, `active`, `create_timestamp`, `source_channel`,
+`invoice_country`, `phone_prefix` (8154/8154) · `phone` (8123) · `name` (7373)
+· `surname` (4231) · `company_name` + `is_b2b` (669) · `street`/`city`/`zip`
+(~670) · `tax_number` (640) · `email` (575) · `can_deferral` (342) ·
+`payment_terms` (234) · `updated_at` (224) · `personal_discount_percent` (7) ·
+`peppol_identifier` (4).
+
+C'est ce que l'index du webshop exploite : **un annuaire** — identité, contact,
+société, TVA, adresse.
+
+### 2. Vides PAR CONCEPTION — endpoints dédiés annoncés
+
+- **Fidélité** : `fidelity_active`, `fidelity_linked_at`, `member_since`
+- **Facturation** : `invoice_name`, `invoice_address`, `invoice_postal_code`,
+  `invoice_city`, `iban`, `peppol_verified`, `billing_lines`
+
+Ces dix champs ne sont pas des anomalies : ils vivront ailleurs. Ce qui reste à
+savoir, c'est **par quelle clé** ces endpoints rattacheront un client — voir §3.
+
+### 3. La clé de rapprochement : le TÉLÉPHONE
+
+`public_id` porte l'identifiant public côté ERP, et c'est **le numéro de
+téléphone**. Les chiffres le confirment : **8123 fiches sur 8154 ont un
+téléphone, 575 seulement un e-mail**. Un rapprochement par e-mail retrouverait
+7 % des clients ; par téléphone, 99,6 %.
+
+Conséquence pour les endpoints à venir (fidélité, facturation) : ils doivent
+accepter **l'id ERP ou le téléphone**, pas l'e-mail. Le webshop sait faire les
+deux (`erp_client_par_tel`, clé normalisée sur les 9 derniers chiffres).
+
+`public_id` est lui-même **vide sur les 8154** — le webshop normalise donc
+`phone` lui-même en attendant.
+
+### 4. Ce que l'ERP ne portera pas — et c'est structurant
+
+- **L'authentification** : `password_hash` (vide, et c'est sain), `preferred_auth_method`, `phone_e164`.
+  Le compte de connexion webshop (e-mail + mot de passe) reste au webshop : l'ERP
+  n'a pas d'identifiant de connexion pour ses 8154 fiches, dont 93 % n'ont pas
+  d'e-mail.
+- **Le lien BUREAU** : `office_id`, `office_delivery` sont vides sur les 8154.
+  Le rattachement d'un client à un bureau (`pwa_client_office`) et l'autorisation
+  de livraison — **validée à la main par le franchisé** — sont des notions
+  purement webshop.
+
+### 5. Vides et inexpliqués — les questions qui restent
+
+`preferred_shop_id`, `webshop_user`, `pwa_user` (le webshop écrit pourtant
+`preferred_shop_id` et `webshop_user=1` à l'inscription) · `blocked`, `status`,
+`verified_at`, `needs_profile_completion`, `merged_into_id` · `locale` (ce
+serait le bon endroit pour la langue du client) · `client_code`, `last_login_at`.
+
+Et les 5 champs de conditions B2B — `b2b_segment`, `b2b_credit_ceiling`,
+`b2b_payment_terms`, `b2b_web_discount`, `b2b_franco` : relèvent-ils de
+l'endpoint facturation, ou du client ?
+
+### 6. Ce qui est cassé
+
+`GET` et `PATCH /shops/{id}/clients/{cid}` répondent **404
+CLIENT_NOT_ASSIGNED_TO_SHOP sur les 8154 clients** (12 tirés au hasard, 5
+boutiques, deux jetons). Cause identifiée : la création écrit une **assignation**
+(`shop_assignment_created: true`) que les 8154 fiches historiques n'ont pas —
+`id_main_shop` ne suffit pas à la fiche unitaire. C'est une **reprise de données
+à faire côté ERP**, pas un correctif de code.
+
+En attendant, le webshop lit ses clients dans la LISTE (index local, 1,8 Mo,
+rafraîchi toutes les 15 min) — contournement documenté dans `erp_clients.php`.
+
+---
+
 ## Ce qui restera au webshop de toute façon
 
 Commandes (`ws_orders`), stock et réservations, créneaux et tournées, offices
