@@ -174,3 +174,60 @@ function erp_clients_etat($shopId) {
     'b2b'       => is_array($i) ? count(array_filter($i, fn ($c) => $c['b2b'])) : 0,
   ];
 }
+
+/* ── CRÉATION EN MIROIR ────────────────────────────────────────────────────
+ * Quand le webshop crée un compte, la fiche est créée AUSSI côté ERP.
+ * Deux raisons, et la seconde est la plus importante :
+ *   1. la boutique connaît son nouveau client dès l'inscription, sans attendre
+ *      sa première commande ;
+ *   2. la création écrit une ASSIGNATION boutique↔client — la ligne qui manque
+ *      aux 8154 fiches historiques et sans laquelle la fiche unitaire de l'ERP
+ *      répond 404. Un client créé par ce chemin est donc lisible partout,
+ *      contrairement aux anciens.
+ *
+ * Contrat mesuré : POST /shops/{id}/clients exige phone, name, surname — et
+ * rien d'autre. L'e-mail n'est PAS accepté : le compte de connexion reste au
+ * webshop (93 % des fiches ERP n'ont pas d'e-mail, ce n'est pas son métier).
+ *
+ * NE BLOQUE JAMAIS L'INSCRIPTION. Le compte webshop est déjà créé quand on
+ * arrive ici ; un ERP en panne ne doit pas empêcher un client de s'inscrire.
+ * Échec → false + incident journalisé, et la fiche ERP se créera à la
+ * première commande. */
+function erp_client_creer($shopId, array $c) {
+  if (!erp_clients_enabled() || !function_exists('erp_cfg')) return false;
+  $cfg = erp_cfg();
+  $tel = trim((string) ($c['phone'] ?? ''));
+  $nom = trim((string) ($c['name'] ?? ''));
+  $pre = trim((string) ($c['surname'] ?? ''));
+  // Les trois champs sont exigés par l'ERP : sans eux, l'appel est refusé —
+  // autant ne pas le faire plutôt que de fabriquer un « . » de remplissage.
+  if ($cfg['base'] === '' || !$shopId || $tel === '' || $nom === '' || $pre === '') return false;
+  $tok = function_exists('erp_token') ? erp_token() : '';
+  if ($tok === '') return false;
+
+  $charge = ['phone' => $tel, 'name' => $nom, 'surname' => $pre];
+  foreach (['street' => 'street', 'street_number' => 'street_number',
+            'zip' => 'zip', 'city' => 'city'] as $k => $v) {
+    if (!empty($c[$k])) $charge[$v] = (string) $c[$k];
+  }
+  $ctx = stream_context_create(['http' => [
+    'method' => 'POST', 'timeout' => 12, 'ignore_errors' => true,
+    'header' => "Content-Type: application/json\r\nAccept: application/json\r\nAuthorization: Bearer $tok\r\n",
+    'content' => json_encode($charge),
+  ]]);
+  $raw = @file_get_contents($cfg['base'] . '/shops/' . (int) $shopId . '/clients', false, $ctx);
+  $code = 0;
+  foreach (($http_response_header ?? []) as $h) if (preg_match('#^HTTP/\S+\s+(\d{3})#', $h, $m)) $code = (int) $m[1];
+  if ($raw === false || $code >= 400) {
+    if (function_exists('erp_notes')) erp_notes('ERP création client HTTP ' . $code);
+    return false;
+  }
+  $d = json_decode($raw, true);
+  $id = is_array($d) ? (int) ($d['data']['id'] ?? 0) : 0;
+  if ($id > 0) {
+    // L'index local est périmé d'une fiche : on le laisse expirer plutôt que
+    // de le reconstruire (14,5 Mo) pour un seul client.
+    return ['id' => $id, 'assignation' => !empty($d['shop_assignment_created'])];
+  }
+  return false;
+}

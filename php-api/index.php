@@ -3306,6 +3306,17 @@ function dispatch($m, $p) {
     // fusionne PAS — on renvoie 409 { exists:true } pour que le front propose de
     // définir/mettre à jour le mot de passe (endpoint /auth/set-password).
     $cl = row("SELECT id FROM client WHERE (? <> '' AND LOWER(TRIM(email))=?) OR (? <> '' AND (phone_e164=? OR phone=?)) LIMIT 1", [$mail, $mail, $phone, $e164, $phone]);
+    /* CONNU DE LA BOUTIQUE ? Un client qui achète au comptoir depuis des années
+       existe côté ERP — retrouvé par TÉLÉPHONE, la seule clé qui marche
+       (8123 fiches sur 8154 en ont un, 575 seulement ont un e-mail). On ne
+       bloque PAS l'inscription pour autant : il n'a pas de compte webshop,
+       c'est bien un compte qu'il vient créer. On le SIGNALE, pour que l'écran
+       puisse dire « nous vous connaissons » et que le franchisé sache que les
+       deux fiches désignent la même personne. */
+    $dejaErp = null;
+    if ($phone !== '' && function_exists('erp_client_par_tel')) {
+      try { $dejaErp = erp_client_par_tel($shopI ?? null, $phone); } catch (Throwable $e) { $dejaErp = null; }
+    }
     if ($cl) {
       json_out(['error' => 'Ce compte existe déjà. Connectez-vous ou définissez votre mot de passe.', 'exists' => true], 409);
     }
@@ -3335,8 +3346,24 @@ function dispatch($m, $p) {
           $hasLoc ? [$locality] : [],
           [$hash, $authM]));
       $id = db()->lastInsertId();
+      /* MIROIR ERP — la fiche existe côté réseau dès l'inscription, avec son
+         ASSIGNATION boutique (la ligne qui manque aux fiches historiques et
+         sans laquelle la fiche unitaire de l'ERP répond 404).
+         Volontairement APRÈS la création locale et sans test de retour : le
+         compte webshop est déjà valide, un ERP en panne ne doit pas empêcher
+         quelqu'un de s'inscrire. L'échec est journalisé, rien de plus. */
+      if (function_exists('erp_client_creer')) {
+        try {
+          erp_client_creer($shopI ?? null, ['phone' => $phone, 'name' => $first, 'surname' => $last, 'zip' => $zip]);
+        } catch (Throwable $e) { error_log('[ws] miroir ERP client: ' . $e->getMessage()); }
+      }
     }
-    json_out(['user' => user_payload($id), 'token' => sign_token(['id' => (int) $id, 'exp' => time() + 30 * 86400])], 201);
+    json_out(['user' => user_payload($id), 'token' => sign_token(['id' => (int) $id, 'exp' => time() + 30 * 86400]),
+              // Client déjà connu de la boutique (achats au comptoir) : l'écran
+              // peut l'accueillir en conséquence. Jamais de donnée personnelle
+              // au-delà du prénom — on confirme une reconnaissance, on ne
+              // divulgue pas une fiche à qui saisit un numéro.
+              'connuEnBoutique' => $dejaErp ? ['depuis' => true, 'prenom' => (string) ($dejaErp['prenom'] ?? '')] : null], 201);
   }
   /* ── CONNEXION TABLETTE BOUTIQUE par PIN (4 chiffres) ─────────────────────
      Ouvre une session LIMITÉE aux sections du compte (créé dans la console
