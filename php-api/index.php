@@ -8538,20 +8538,76 @@ function dispatch($m, $p) {
     /* PORTÉE RÉSEAU ASSUMÉE — écran « Stats réseau consolidées ». Ces quatre
        KPI comparent la boutique au réseau : les cloisonner les viderait de leur
        sens. Seuls des agrégats sortent d'ici, jamais une ligne nominative. */
+    /* ── STATS RÉSEAU — CA par boutique, Livraison et Webshop, semaine et mois.
+       Une ligne par boutique ACTIVE du réseau. Portée réseau assumée : ce sont
+       des agrégats, jamais une ligne nominative — ?shop= ne restreint pas.
+
+       SOURCE : ws_orders, et c'est un choix documenté, pas un défaut.
+       L'ERP (GET shops/{id}/transactions) a été sondé le 26/08 sur les quatre
+       boutiques : il couvre bien le comptoir, mais il ne peut servir NI l'une
+       NI l'autre de ces deux mesures —
+         • id_serving_method vaut 2 sur 100 % des lignes (275 le 26/08, 276 le
+           25/08, 119 en boutique 3, 108 en boutique 4) : aucune trace du mode
+           de service, donc pas de livraison ;
+         • order_ref et transaction_uuid sont nuls sur 100 % des lignes : aucun
+           marqueur d'origine webshop — normal, rien ne pousse les commandes du
+           site vers l'ERP, elles vivent ici.
+       La route est en outre JOURNALIÈRE (?date=YYYY-MM-DD ; date_from/from/
+       start_date sont ignorés SILENCIEUSEMENT, HTTP 200 et mêmes données) :
+       un mois coûterait 30 appels par boutique.
+
+       CE QUE LE CHIFFRE NE COUVRE PAS, ET IL FAUT LE SAVOIR : « livraison »
+       ne compte que les livraisons COMMANDÉES SUR LE SITE. Une livraison
+       commandée au comptoir n'est nulle part — ni ici, ni récupérable côté
+       ERP en l'état. Le chiffre est donc un plancher, pas le CA livraison de
+       la boutique. On ne comble pas ce trou par une estimation.
+
+       DEUX MESURES QUI SE RECOUPENT : la livraison est un SOUS-ENSEMBLE du
+       webshop. Les additionner compterait deux fois le même euro — c'est
+       pourquoi aucune ligne ne porte de total. ── */
     if ($m === 'GET' && $p === '/franchisee/fr-net-stats') {
-      if (!$hasOrders) json_out([]);
-      $d = row("SELECT COALESCE(SUM(total),0) ca, COUNT(*) n, COALESCE(AVG(total),0) pm,
-                       COALESCE(SUM(mode='delivery'),0) deliv
-                  FROM ws_orders WHERE status <> 'cancelled'
-                   AND created_at >= DATE_SUB(?, INTERVAL 30 DAY)", [$today]);
-      $shopsN = (int) (row("SELECT COUNT(*) n FROM $SHOPS WHERE active=1")['n'] ?? 0);
-      $pctLiv = ((int) $d['n']) > 0 ? round(100 * (int) $d['deliv'] / (int) $d['n']) : 0;
-      json_out([
-        ['k' => 'CA réseau (30 j)',   'v' => $eurk((float) $d['ca']),  'sub' => ((int) $d['n']) . ' commandes'],
-        ['k' => 'Boutiques actives',  'v' => (string) $shopsN,         'sub' => 'réseau'],
-        ['k' => 'Part livraison',     'v' => $pctLiv . ' %',           'sub' => 'vs retrait'],
-        ['k' => 'Panier moyen',       'v' => number_format((float) $d['pm'], 2, ',', ' ') . ' €', 'sub' => '30 jours'],
-      ]);
+      if (!$hasOrders) json_vide(['ws_orders']);
+      /* `mode` et NON `delivery_mode` : les deux colonnes existent (migration
+         0031) mais portent des vocabulaires différents — `mode` vaut
+         'collect'/'delivery', `delivery_mode` vaut 'collect'/'office_delivery'
+         (cf. l'INSERT de POST /orders). Comparer delivery_mode à 'delivery'
+         ne matche jamais et rend 0 sans rien signaler. */
+      $modeCol = col_exists('ws_orders', 'mode');
+      // Fenêtres GLISSANTES, décidées ici : 7 et 30 jours, comme la mesure
+      // qu'elles remplacent. La console ne les recalcule pas et ne les affiche
+      // pas — elle ne doit donc jamais avoir à les deviner.
+      $fen = function ($jours) use ($modeCol, $today) {
+        $liv = $modeCol ? "COALESCE(SUM(CASE WHEN o.mode='delivery' THEN o.total ELSE 0 END),0)" : "NULL";
+        return rows("SELECT o.shop_id, COALESCE(SUM(o.total),0) AS ws, $liv AS liv
+                       FROM ws_orders o
+                      WHERE o.status <> 'cancelled'
+                        AND o.created_at >= DATE_SUB(?, INTERVAL $jours DAY)
+                      GROUP BY o.shop_id", [$today]);
+      };
+      $par = ['sem' => [], 'mois' => []];
+      foreach (['sem' => 7, 'mois' => 30] as $k => $j)
+        foreach ($fen($j) as $r) $par[$k][(int) $r['shop_id']] = $r;
+
+      $out = [];
+      foreach (rows("SELECT id, name FROM $SHOPS WHERE active=1 ORDER BY name") as $sh) {
+        $sid = (int) $sh['id'];
+        $s = $par['sem'][$sid] ?? null; $mo = $par['mois'][$sid] ?? null;
+        /* ZÉRO ET NULL NE DISENT PAS LA MÊME CHOSE. Une boutique sans commande
+           sur la fenêtre a bien fait 0 € sur le webshop : c'est un chiffre, il
+           se calcule, il s'affiche. `null` est réservé à ce qui n'est PAS
+           calculable — ici la colonne `mode` absente du schéma, qui empêche de
+           distinguer une livraison. La console rend « — » et ne le remplace
+           jamais par 0. */
+        $out[] = [
+          'shop_id'           => $sid,
+          'shop_name'         => (string) $sh['name'],
+          'livraison_semaine' => ($modeCol && $s)  ? round((float) $s['liv'], 2)  : ($modeCol ? 0.0 : null),
+          'webshop_semaine'   => $s  ? round((float) $s['ws'], 2)  : 0.0,
+          'livraison_mois'    => ($modeCol && $mo) ? round((float) $mo['liv'], 2) : ($modeCol ? 0.0 : null),
+          'webshop_mois'      => $mo ? round((float) $mo['ws'], 2) : 0.0,
+        ];
+      }
+      json_out($out);
     }
 
     // ── Capacité / calendrier — RÉEL : créneaux (ws_slots) × réservations
