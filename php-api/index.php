@@ -382,7 +382,7 @@ function ws_voucher_upsert(array $o) {
                       p.cat_id AS cat, p.sub_cat_id AS subCat, c.label AS category,
                       p.name, p.description, p.img,
                       t.tag AS badge, t.slug AS tag_slug, t.bg_color AS tag_bg, t.text_color AS tag_text,
-                      se.slug AS season, se.name AS season_name, se.img AS season_img,
+                      NULL AS season, NULL AS season_name, NULL AS season_img,
                       p.portions, p.cross_portion,
                       -- Menu déclenché par la catégorie (menu_default), surchargé par
                       -- le produit (menu_override 'on'/'off'/NULL=hérite). has_menu_options
@@ -403,7 +403,6 @@ function ws_voucher_upsert(array $o) {
                  LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
                  LEFT JOIN ws_tags t ON t.id = p.tag_id
-                 LEFT JOIN ws_season se ON se.id = p.season_id
                 WHERE p.active = 1$deliveryWhere$seasonWhere
                 ORDER BY c.sort_order, p.name", array_merge([$s], $seasonArgs));
     /* ── ASSORTIMENT EN DIRECT DE L'ERP (décision du 24/08 : « pas de fallback
@@ -585,7 +584,7 @@ function ws_voucher_upsert(array $o) {
 
     /* GAMME DU PRODUIT servie par l'ERP. Le filtre de la barre matche
        product.season contre l'id de la vignette : si les vignettes viennent de
-       l'ERP et les produits de ws_season, le filtre ne trouve RIEN. On réécrit
+       l'ERP et les produits d'une table locale, le filtre ne trouve RIEN. On réécrit
        donc la gamme du produit depuis les périodes de l'ERP — un seul appel,
        celui du catalogue, qui les porte déjà (include=availability_periods).
        Un produit dans plusieurs gammes garde la plus COURTE : « Chandeleur »
@@ -608,9 +607,9 @@ function ws_voucher_upsert(array $o) {
         $xs['season']      = $g ? $g['id'] : null;
         $xs['season_name'] = $g ? $g['label'] : null;
         /* La photo de la gamme, DE L'ERP et d'elle seule (même règle que la
-           barre de gammes). Le repli sur l'icône locale de ws_season a été
-           retiré : il faisait cohabiter deux sources pour la même image, donc
-           une vignette locale périmée là où l'ERP avait changé la photo.
+           barre de gammes). Le repli sur une icône locale a été retiré : il
+           faisait cohabiter deux sources pour la même image, donc une vignette
+           locale périmée là où l'ERP avait changé la photo.
            Pas de photo côté ERP → null, et le front dessine son emoji. */
         $xs['season_img'] = $g ? $g['img'] : null;
       }
@@ -1441,9 +1440,9 @@ function dispatch($m, $p) {
   }
   if ($m === 'GET' && $p === '/catalog/assortments') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
-    // Saisons = ws_season (source unique, basée sur le slug). ws_assortments a
-    // été supprimée (doublon). chip.id = slug -> matché à product.season côté
-    // front, donc le filtre saison fonctionne. On n'expose qu'une saison ayant
+    // Saisons = périodes de l'ERP (source unique). ws_season et ws_assortments
+    // ont été supprimées. chip.id = slug -> matché à product.season côté front,
+    // donc le filtre saison fonctionne. On n'expose qu'une saison ayant
     // >=1 produit disponible dans la boutique (même règle que les catégories).
     /* Le JOIN sur ws_product_shops EXIGEAIT une ligne : une saison n'apparaissait
        que pour les produits explicitement inscrits à l'assortiment d'une
@@ -1496,12 +1495,12 @@ function dispatch($m, $p) {
       // Franchise Buddy, ou rattacher des produits à la gamme.
       json_out([]);
     }
-    json_out(rows("SELECT se.slug AS id, se.name AS label, se.img
-                     FROM ws_season se
-                    WHERE se.active = 1
-                      AND EXISTS (SELECT 1 FROM ws_products p
-                                   WHERE p.season_id = se.id AND p.active = 1)
-                    ORDER BY se.sort_order"));
+    /* PLUS DE REPLI LOCAL. ws_season a été supprimée (migration 0100) : l'ERP
+       est la source unique des gammes, comme il l'est déjà du catalogue.
+       Source ERP inactive → aucune gamme, et la barre le montre. Un repli sur
+       une table locale aurait servi des gammes que plus personne ne tient à
+       jour, ce qui est pire qu'une barre vide : c'est une barre fausse. */
+    json_out([]);
   }
 
   /* ── Promos / Vouchers ── */
@@ -4308,10 +4307,9 @@ function dispatch($m, $p) {
                               COALESCE(p.office_delivery,1) AS od,
                               " . (col_exists('ws_products', 'click_and_collect')
                                    ? "COALESCE(p.click_and_collect,1)" : "1") . " AS cc,
-                              p.sub_cat_id AS sub_id, sub.label AS sub, se.name AS saison
+                              p.sub_cat_id AS sub_id, sub.label AS sub, NULL AS saison
                          FROM ws_products p
                          LEFT JOIN ws_category_subs sub ON sub.id = p.sub_cat_id
-                         LEFT JOIN ws_season se ON se.id = p.season_id
                         WHERE p.cat_id = ? ORDER BY sub.sort_order, sub.label, p.name", [$c['id']]);
         $photos = product_photo_files();
         /* EN LIGNE OÙ ? La console marque est réseau : « en ligne » n'a de sens

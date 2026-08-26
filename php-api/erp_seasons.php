@@ -78,7 +78,8 @@ function erp_season_photo($id) {
 }
 
 /* Les gammes PUBLIÉES, dans la langue demandée.
- * Rend [] si la source est inerte ou l'API muette — l'appelant garde ws_season. */
+ * Rend [] si la source est inerte ou l'API muette — l'appelant sert alors une
+ * barre vide : depuis la 0100 il n'y a plus de table locale à laquelle revenir. */
 function erp_seasons($lang = '') {
   static $cache = [];
   $lg = strtolower(substr((string) $lang, 0, 2));

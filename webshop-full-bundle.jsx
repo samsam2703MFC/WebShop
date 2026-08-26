@@ -5395,7 +5395,7 @@ function ShopFrame({ variant }) {
     }
     if (cat === 'all') return src;
     if (isAssortment) {
-      // Filtre par SAISON réelle (product.season = slug ws_season).
+      // Filtre par SAISON réelle (product.season = slug de la gamme ERP).
       return src.filter((p) => (p.season || '') === assortmentId);
     }
     // Filtre par CATÉGORIE : l'API renvoie cat_id (num) ; fallback p.cat (seed).
