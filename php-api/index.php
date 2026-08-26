@@ -6,6 +6,7 @@ require __DIR__ . '/promo_lib.php';
 require __DIR__ . '/erp_alias.php';
 require __DIR__ . '/erp_promos.php';
 require __DIR__ . '/erp_seasons.php';
+require __DIR__ . '/erp_clients.php';
 
 /* CORS */
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -787,6 +788,7 @@ function dispatch($m, $p) {
       'produits_traduits'   => count($prod),
       'categories_traduites' => count($cat),
       'exemples'   => array_slice($prod, 0, 3, true),
+      'clients'    => function_exists('erp_clients_etat') ? erp_clients_etat(qp('shopId') ?: 2) : null,
       'photos'     => (function () {
         $stamp = __DIR__ . '/../assets/product_pictures/.last_refresh';
         return ['auto' => photos_exec_ok(),
