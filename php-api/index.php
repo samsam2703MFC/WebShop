@@ -5868,8 +5868,22 @@ function dispatch($m, $p) {
     if ($m === 'GET' && $p === '/franchisee/kpis') {
       if (!$hasOrders) json_out([]);
       $sw = $scope('shop_id');
+      /* PART LIVRAISON — comptée sur les DEUX colonnes, avec leurs vocabulaires
+         respectifs. `delivery_mode='delivery'` ne matchait JAMAIS : la colonne
+         vaut 'collect' ou 'office_delivery' (cf. l'INSERT de POST /orders),
+         jamais 'delivery' — c'est `mode` qui porte cette valeur-là. Le tableau
+         de bord affichait donc « 0 % de livraison » en permanence, et rien ne
+         pouvait le signaler : un SUM sur une comparaison fausse rend 0, pas
+         une erreur. Même expression qu'au suivi de tournée (~7931), pour que
+         les deux écrans ne puissent pas donner deux chiffres différents. */
+      $mCol = col_exists('ws_orders', 'mode');
+      $dCol = col_exists('ws_orders', 'delivery_mode');
+      $livExpr = implode(' OR ', array_filter([
+        $mCol ? "mode='delivery'" : null,
+        $dCol ? "delivery_mode='office_delivery'" : null,
+      ])) ?: '0';
       $d  = row("SELECT COALESCE(SUM(total),0) ca, COUNT(*) n, COALESCE(AVG(total),0) avg_basket,
-                        SUM(delivery_mode='delivery') AS deliv,
+                        SUM($livExpr) AS deliv,
                         SUM(status IN ('pending','confirmed','preparing')) AS to_prep
                    FROM ws_orders WHERE $sw AND delivery_date = ?", [$today]);
       $rup = $tblExists('ws_product_stock')
