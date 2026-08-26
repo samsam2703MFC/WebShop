@@ -3485,7 +3485,8 @@ function dispatch($m, $p) {
      { valid, data:{ vat, country, name, address, postalCode, city } } pour
      pré-remplir le formulaire de facturation exactement comme la PWA. ── */
   if ($m === 'GET' && ($mm = $match('/vies/:country/:vat'))) {
-    json_out(vies_lookup($mm['vat']));
+    // shopId : l'ERP cherche dans les clients de CETTE boutique avant VIES.
+    json_out(vies_lookup($mm['vat'], qp('shopId') ?: ($shopId ?? null)));
   }
   // SSO handoff PWA -> webshop. La PWA insère un jeton à usage unique dans
   // auth_handoff (token_hash = sha256 du jeton, + client_id + expires_at) puis
@@ -3512,7 +3513,11 @@ function dispatch($m, $p) {
      nettoyée. Badge et données restent ainsi identiques PWA ⇄ WS. */
   if ($m === 'POST' && $p === '/auth/billing-verify') {
     $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
-    $r = vies_lookup((string) (body()['vat'] ?? ''));
+    /* Boutique du client : elle sert à l'ERP pour chercher la société parmi
+       SES fiches avant d'appeler VIES. Absente → VIES direct, comme avant. */
+    $bShop = body()['shopId'] ?? null;
+    if (!$bShop) { $cs = row("SELECT id_main_shop FROM client WHERE id=?", [$id]); $bShop = $cs['id_main_shop'] ?? null; }
+    $r = vies_lookup((string) (body()['vat'] ?? ''), $bShop);
     if (empty($r['valid'])) json_out($r);
     $d = $r['data'];
     try {
@@ -12351,11 +12356,62 @@ function pwa_url() {
 /* Validation TVA via le service VIES (REST UE). Public, sans état. Renvoie la
  * raison sociale + l'adresse découpée (rue / code postal / ville), au format
  * attendu par le formulaire de facturation. Miroir exact du PWA vies_lookup. */
-function vies_lookup($rawVat) {
+/* Recherche TVA par l'ERP (POST shops/{id}/clients/vat-lookup, champ
+ * `vat_number`). L'ERP interroge D'ABORD sa base clients, PUIS VIES — il rend
+ * donc deux choses que notre appel direct à VIES ne pouvait pas donner :
+ *   • source:'database' + client_exists → la société est DÉJÀ connue du
+ *     réseau : on évite de créer un doublon d'une fiche existante ;
+ *   • source:'vies' → même service qu'avant, mais appelé par l'ERP.
+ * Rend null si indisponible : l'appelant retombe sur l'appel VIES direct.
+ * Ce n'est pas un repli inventé — c'est la même autorité, jointe autrement. */
+function erp_vat_lookup($shopId, $vat) {
+  if (!function_exists('erp_cfg')) return null;
+  $cfg = erp_cfg();
+  if ($cfg['base'] === '' || !$shopId) return null;
+  $tok = function_exists('erp_token') ? erp_token() : '';
+  if ($tok === '') return null;
+  $ctx = stream_context_create(['http' => [
+    'method' => 'POST', 'timeout' => 12, 'ignore_errors' => true,
+    'header' => "Content-Type: application/json\r\nAccept: application/json\r\nAuthorization: Bearer $tok\r\n",
+    'content' => json_encode(['vat_number' => $vat]),
+  ]]);
+  $raw = @file_get_contents($cfg['base'] . '/shops/' . (int) $shopId . '/clients/vat-lookup', false, $ctx);
+  $code = 0;
+  foreach (($http_response_header ?? []) as $h) if (preg_match('#^HTTP/\S+\s+(\d{3})#', $h, $m)) $code = (int) $m[1];
+  if ($raw === false || $code >= 400) {
+    if (function_exists('erp_notes')) erp_notes('ERP vat-lookup HTTP ' . $code);
+    return null;
+  }
+  $d = json_decode($raw, true);
+  if (!is_array($d) || empty($d['found']) || !is_array($d['data'] ?? null)) return null;
+  $x = $d['data'];
+  // Forme attendue par le front (identique à celle de VIES), enrichie de ce que
+  // seul l'ERP sait dire : la société est-elle déjà une fiche du réseau ?
+  $adresse = trim(trim((string) ($x['street'] ?? '')) . ' ' . trim((string) ($x['street_number'] ?? '')));
+  return [
+    'valid' => true,
+    'data' => [
+      'vat'        => (string) ($x['tax_number'] ?? $vat),
+      'country'    => substr((string) ($x['tax_number'] ?? $vat), 0, 2),
+      'name'       => (string) ($x['company_name'] ?? ''),
+      'address'    => $adresse,
+      'postalCode' => (string) ($x['zip'] ?? ''),
+      'city'       => (string) ($x['city'] ?? ''),
+    ],
+    'source'          => (string) ($d['source'] ?? 'erp'),
+    'clientExists'    => !empty($d['client_exists']),
+    'assignedToShop'  => !empty($d['assigned_to_shop']),
+    'erpClientId'     => isset($x['id']) ? (int) $x['id'] : null,
+  ];
+}
+
+function vies_lookup($rawVat, $shopId = null) {
   $vat = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string) $rawVat));
   if (strlen($vat) < 4 || !ctype_alpha(substr($vat, 0, 2))) {
     return ['valid' => false, 'error' => ['code' => 'invalid', 'message' => 'N° TVA invalide.']];
   }
+  // L'ERP d'abord : il ajoute la déduplication contre les fiches existantes.
+  if ($shopId) { $e = erp_vat_lookup($shopId, $vat); if ($e !== null) return $e; }
   $country = substr($vat, 0, 2);
   $number  = substr($vat, 2);
   $url = "https://ec.europa.eu/taxation_customs/vies/rest-api/ms/$country/vat/$number";
