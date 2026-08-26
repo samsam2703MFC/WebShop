@@ -313,7 +313,7 @@ jobs:
           sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "php '${{ vars.WEB_ROOT || '/var/www/html' }}/webshop/api/sync_season_photos.php'"
+            "php '${{ vars.WEB_ROOT || '/var/www/html' }}/api/sync_season_photos.php'"
 
       - name: Deploy B2B landing → /landing/b2b (alias → /var/www/latelierby-landing/b2b)
         env:
