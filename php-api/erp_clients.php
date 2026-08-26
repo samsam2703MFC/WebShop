@@ -108,7 +108,35 @@ function erp_clients_index($shopId, $force = false) {
   return $mem[$shopId] = $idx;
 }
 
+/* Téléphone NORMALISÉ — la clé de rapprochement réelle entre le webshop et
+ * l'ERP. Mesuré sur la production : 8123 clients sur 8154 ont un téléphone,
+ * 575 seulement ont un e-mail. Chercher par e-mail ne retrouverait donc que
+ * 7 % des fiches ; le téléphone en retrouve 99,6 %. (`public_id` porte la même
+ * notion côté ERP, mais il est vide sur les 8154 — on normalise nous-mêmes.)
+ *
+ * Les mêmes chiffres s'écrivent de six façons — 0495727667, +32495727667,
+ * 0032 495 72 76 67, 495727667… On compare donc les 9 derniers chiffres
+ * (numéro national belge sans le zéro de tête), ce qui rapproche toutes ces
+ * formes sans confondre deux abonnés différents. */
+function erp_tel_cle($tel) {
+  $d = preg_replace('/[^0-9]/', '', (string) $tel);
+  if ($d === '') return '';
+  if (str_starts_with($d, '0032')) $d = substr($d, 4);        // 0032… → national
+  elseif (str_starts_with($d, '32') && strlen($d) > 9) $d = substr($d, 2);
+  $d = ltrim($d, '0');                                        // 0495… → 495…
+  return strlen($d) >= 8 ? substr($d, -9) : $d;
+}
+
 /* Recherches — l'équivalent de la fiche unitaire, prise dans l'index. */
+function erp_client_par_tel($shopId, $tel) {
+  $i = erp_clients_index($shopId);
+  if (!$i) return null;
+  $k = erp_tel_cle($tel);
+  if ($k === '') return null;
+  foreach ($i as $c) if ($c['tel'] !== '' && erp_tel_cle($c['tel']) === $k) return $c;
+  return null;
+}
+
 function erp_client_par_id($shopId, $id) {
   $i = erp_clients_index($shopId);
   return $i[(string) (int) $id] ?? null;
@@ -140,6 +168,8 @@ function erp_clients_etat($shopId) {
     'clients'   => is_array($i) ? count($i) : 0,
     'age_s'     => is_file($f) ? time() - filemtime($f) : null,
     'ttl_s'     => (int) (function_exists('ws_param') ? (ws_param('clients_index_ttl', 900) ?: 900) : 900),
+    'avec_tel'  => is_array($i) ? count(array_filter($i, fn ($c) => $c['tel'] !== '')) : 0,
+    'avec_email' => is_array($i) ? count(array_filter($i, fn ($c) => $c['email'] !== '')) : 0,
     'avec_tva'  => is_array($i) ? count(array_filter($i, fn ($c) => $c['tva'] !== '')) : 0,
     'b2b'       => is_array($i) ? count(array_filter($i, fn ($c) => $c['b2b'])) : 0,
   ];
