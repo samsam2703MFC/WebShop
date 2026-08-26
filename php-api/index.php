@@ -5,6 +5,7 @@ require __DIR__ . '/lib.php';
 require __DIR__ . '/promo_lib.php';
 require __DIR__ . '/erp_alias.php';
 require __DIR__ . '/erp_promos.php';
+require __DIR__ . '/erp_seasons.php';
 
 /* CORS */
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -579,6 +580,38 @@ function ws_voucher_upsert(array $o) {
     // prix effectif (magasin ERP, ou repli ws_) vaut 0 n'est pas vendable → masqué.
     // Appliqué APRÈS la surcharge du prix magasin pour couvrir les deux sources.
     $r = array_values(array_filter($r, static fn($x) => (float) $x['price'] > 0));
+
+    /* GAMME DU PRODUIT servie par l'ERP. Le filtre de la barre matche
+       product.season contre l'id de la vignette : si les vignettes viennent de
+       l'ERP et les produits de ws_season, le filtre ne trouve RIEN. On réécrit
+       donc la gamme du produit depuis les périodes de l'ERP — un seul appel,
+       celui du catalogue, qui les porte déjà (include=availability_periods).
+       Un produit dans plusieurs gammes garde la plus COURTE : « Chandeleur »
+       informe le client, « Standard » ne dit rien. */
+    if ($r && function_exists('erp_seasons_enabled') && erp_seasons_enabled()) {
+      $pub = erp_seasons($lang);
+      $periodesPar = [];
+      if ($pub) {
+        $av = erp_get('shops/' . (int) $s . '/products/available?include=availability_periods', 60);
+        $lstAv = is_array($av) ? (array_is_list($av) ? $av : ($av['data'] ?? $av['items'] ?? null)) : null;
+        if (is_array($lstAv)) {
+          foreach ($lstAv as $pr3) {
+            if (is_array($pr3) && !empty($pr3['id']) && !empty($pr3['availability_periods']))
+              $periodesPar[(int) $pr3['id']] = $pr3['availability_periods'];
+          }
+        }
+      }
+      foreach ($r as &$xs) {
+        $g = $pub ? erp_season_principale($periodesPar[(int) $xs['id']] ?? [], $pub) : null;
+        $xs['season']      = $g ? $g['id'] : null;
+        $xs['season_name'] = $g ? $g['label'] : null;
+        // L'icône locale du slug si elle existe, sinon rien (le front dessine).
+        if ($g && empty($g['img'])) $xs['season_img'] = $xs['season_img'] ?? null;
+        elseif ($g) $xs['season_img'] = $g['img'];
+        else $xs['season_img'] = null;
+      }
+      unset($xs);
+    }
 
     /* PÉRIMÈTRE DE LA PROMO CROISÉE. Quand la règle vient de l'ERP, c'est ELLE
        qui dit quels produits comptent (listes de produits / catégories), pas
@@ -1415,6 +1448,27 @@ function dispatch($m, $p) {
        saisonniers en vente, dont la saison ne s'affichait pas dans le filtre.
        Le modèle tranche : tous les produits sont communs, l'assortiment par
        boutique n'existe plus. */
+    /* GAMMES DE L'ERP quand la source est basculée : nom traduit, description,
+       période — et surtout webshop_active, qui dit ce qui est PUBLIÉ (une
+       gamme peut tourner en magasin sans être une vitrine en ligne). L'icône
+       locale est reprise par SLUG quand elle existe : les dessins déjà faits
+       (ete.png, automne.png) valent mieux qu'un emoji. */
+    if (function_exists('erp_seasons_enabled') && erp_seasons_enabled()) {
+      $g = erp_seasons(qp('lang'));
+      if ($g) {
+        $icones = [];
+        try {
+          foreach (rows("SELECT slug, img FROM ws_season WHERE img IS NOT NULL AND img <> ''") as $ic)
+            $icones[(string) $ic['slug']] = $ic['img'];
+        } catch (Throwable $e) { /* table absente : emoji seul */ }
+        foreach ($g as &$g1) { if (isset($icones[$g1['id']])) $g1['img'] = $icones[$g1['id']]; }
+        unset($g1);
+        json_out($g);
+      }
+      // Source ERP activée mais aucune gamme publiée : barre vide, et c'est
+      // exact — cocher webshop_active dans Franchise Buddy.
+      json_out([]);
+    }
     json_out(rows("SELECT se.slug AS id, se.name AS label, se.img
                      FROM ws_season se
                     WHERE se.active = 1
