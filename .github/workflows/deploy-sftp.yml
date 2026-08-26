@@ -301,6 +301,20 @@ jobs:
       # shared fonts/img/assets, redirects) is owned by the `landing` repo — so
       # we deploy strictly into the b2b/ sub-folder and never touch the root,
       # otherwise the two deployments overwrite each other's files.
+      # PHOTOS DE GAMME ← API ERP. L'URL rendue par l'ERP est signée et expire
+      # en 1200 s : servie telle quelle au navigateur, la vignette serait morte
+      # vingt minutes plus tard. Le fichier est donc rapatrié ici, comme les
+      # photos produit. Idempotent : sans changement côté ERP, aucun octet ne
+      # transite (le manifeste compare l'objet R2, pas l'URL signée).
+      - name: Photos de gamme ← API ERP (product-availability-periods)
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e ssh -p ${{ vars.SSH_PORT || '22' }} \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "php '${{ vars.WEB_ROOT || '/var/www/html' }}/webshop/api/sync_season_photos.php'"
+
       - name: Deploy B2B landing → /landing/b2b (alias → /var/www/latelierby-landing/b2b)
         env:
           SSHPASS: ${{ secrets.SSH_PASSWORD }}

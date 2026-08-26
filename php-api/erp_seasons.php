@@ -59,6 +59,24 @@ function erp_season_slug($court) {
   return trim((string) $s, '-');
 }
 
+/* Le chemin PUBLIC de la photo d'une gamme, ou null.
+ * Lit le dossier une seule fois : la barre de gammes appelle ceci une fois par
+ * période, et un is_file() par extension et par gamme à chaque affichage de
+ * page se paie sur un catalogue à cache zéro. */
+function erp_season_photo($id) {
+  static $map = null;
+  if ($map === null) {
+    $map = [];
+    $dir = __DIR__ . '/../assets/season_pictures';
+    if (is_dir($dir)) {
+      foreach (scandir($dir) ?: [] as $f)
+        if (preg_match('/^(\d+)\.(png|jpe?g|webp)$/i', $f, $mm))
+          $map[$mm[1]] = 'assets/season_pictures/' . $f;
+    }
+  }
+  return $map[(string) $id] ?? null;
+}
+
 /* Les gammes PUBLIÉES, dans la langue demandée.
  * Rend [] si la source est inerte ou l'API muette — l'appelant garde ws_season. */
 function erp_seasons($lang = '') {
@@ -105,7 +123,12 @@ function erp_seasons($lang = '') {
       'fromMd'      => isset($r['from_md']) ? (int) $r['from_md'] : null,
       'toMd'        => isset($r['to_md'])   ? (int) $r['to_md']   : null,
       'recurring'   => !empty($r['is_recurring']),
-      'img'         => null,   // l'ERP n'expose pas encore de photo de gamme
+      /* La photo VENUE DE L'ERP, rapatriée par sync_season_photos.php. On ne
+         sert JAMAIS l'URL de l'ERP telle quelle : elle est signée et expire en
+         1200 s, la vignette serait morte vingt minutes après. On ne sert que
+         le fichier réellement présent — absent, `null`, et le front dessine
+         son emoji plutôt que de pointer une image manquante. */
+      'img'         => erp_season_photo($id),
     ];
   }
   return $cache[$lg] = $out;

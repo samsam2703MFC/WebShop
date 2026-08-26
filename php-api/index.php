@@ -607,10 +607,12 @@ function ws_voucher_upsert(array $o) {
         $g = $pub ? erp_season_principale($periodesPar[(int) $xs['id']] ?? [], $pub) : null;
         $xs['season']      = $g ? $g['id'] : null;
         $xs['season_name'] = $g ? $g['label'] : null;
-        // L'icône locale du slug si elle existe, sinon rien (le front dessine).
-        if ($g && empty($g['img'])) $xs['season_img'] = $xs['season_img'] ?? null;
-        elseif ($g) $xs['season_img'] = $g['img'];
-        else $xs['season_img'] = null;
+        /* La photo de la gamme, DE L'ERP et d'elle seule (même règle que la
+           barre de gammes). Le repli sur l'icône locale de ws_season a été
+           retiré : il faisait cohabiter deux sources pour la même image, donc
+           une vignette locale périmée là où l'ERP avait changé la photo.
+           Pas de photo côté ERP → null, et le front dessine son emoji. */
+        $xs['season_img'] = $g ? $g['img'] : null;
       }
       unset($xs);
     }
@@ -1453,21 +1455,15 @@ function dispatch($m, $p) {
        boutique n'existe plus. */
     /* GAMMES DE L'ERP quand la source est basculée : nom traduit, description,
        période — et surtout webshop_active, qui dit ce qui est PUBLIÉ (une
-       gamme peut tourner en magasin sans être une vitrine en ligne). L'icône
-       locale est reprise par SLUG quand elle existe : les dessins déjà faits
-       (ete.png, automne.png) valent mieux qu'un emoji. */
+       gamme peut tourner en magasin sans être une vitrine en ligne).
+       La PHOTO vient de l'ERP depuis le 26/08 (sync_season_photos.php).
+       Le report d'icône locale par slug a donc été retiré : deux sources pour
+       la même image, c'est la garantie qu'un jour l'une contredit l'autre —
+       une gamme dont la photo change côté ERP aurait gardé le vieux dessin
+       local, sans que rien ne le signale. L'ERP décide, point. */
     if (function_exists('erp_seasons_enabled') && erp_seasons_enabled()) {
       $g = erp_seasons(qp('lang'));
-      if ($g) {
-        $icones = [];
-        try {
-          foreach (rows("SELECT slug, img FROM ws_season WHERE img IS NOT NULL AND img <> ''") as $ic)
-            $icones[(string) $ic['slug']] = $ic['img'];
-        } catch (Throwable $e) { /* table absente : emoji seul */ }
-        foreach ($g as &$g1) { if (isset($icones[$g1['id']])) $g1['img'] = $icones[$g1['id']]; }
-        unset($g1);
-        json_out($g);
-      }
+      if ($g) json_out($g);
       // Source ERP activée mais aucune gamme publiée : barre vide, et c'est
       // exact — cocher webshop_active dans Franchise Buddy.
       json_out([]);
