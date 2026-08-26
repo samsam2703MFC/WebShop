@@ -36,6 +36,23 @@ SET @s := IF(@colonne > 0,
   'DO 0');
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
+-- LA CLÉ ÉTRANGÈRE D'ABORD. Premier passage : « ERROR 1828 — Cannot drop
+-- column 'season_id': needed in a foreign key constraint
+-- fk_ws_products_season ». Les lectures avaient été vérifiées dans le code,
+-- pas les contraintes du schéma. migrate.sh étant fail-fast, la migration
+-- n'avait pas été marquée appliquée : seul l'UPDATE ci-dessus était passé.
+-- Le nom n'est PAS écrit en dur : on le lit dans le schéma. Une base restaurée
+-- ailleurs peut porter un nom généré différent, et une migration qui ne
+-- retrouve pas SA contrainte échouerait au même endroit.
+SET @fk := (SELECT CONSTRAINT_NAME FROM information_schema.key_column_usage
+             WHERE table_schema = DATABASE() AND table_name = 'ws_products'
+               AND column_name = 'season_id' AND referenced_table_name IS NOT NULL
+             LIMIT 1);
+SET @s := IF(@fk IS NOT NULL,
+  CONCAT('ALTER TABLE ws_products DROP FOREIGN KEY `', @fk, '`'),
+  'DO 0');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
 -- Puis la colonne.
 SET @s := IF(@colonne > 0, 'ALTER TABLE ws_products DROP COLUMN season_id', 'DO 0');
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
