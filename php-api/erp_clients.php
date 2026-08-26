@@ -43,8 +43,13 @@ function erp_client_reduire(array $c) {
     'id'        => (int) $g('id'),
     'email'     => (string) ($g('email_norm') ?: strtolower(trim((string) $g('email')))),
     'emailAff'  => (string) $g('email'),
-    'nom'       => (string) $g('name'),
-    'prenom'    => (string) $g('surname'),
+    /* ATTENTION au sens des deux champs ERP, vérifié sur les 8156 fiches :
+       `name` porte le PRÉNOM (90 % remplies : Amandine, Béatrice, Claude…) et
+       `surname` le NOM (51 % : COLARD, DUFOUR, DURAND…). L'inverse paraît plus
+       naturel en anglais et c'est exactement l'erreur qui a été commise ici :
+       l'accueil du webshop disait « Bon retour, DUPONT ». */
+    'prenom'    => (string) $g('name'),
+    'nom'       => (string) $g('surname'),
     'tel'       => (string) ($g('phone_e164') ?: $g('phone')),
     'societe'   => (string) $g('company_name'),
     'tva'       => strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string) $g('tax_number'))),

@@ -67,13 +67,49 @@
             body: JSON.stringify({ email, phone, phonePrefix: phonePrefix || '+32', password, firstName, lastName, postalCode, locality, authMethod, shopId }),
           });
           const j = await r.json();
-          if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
+          // `connuEnBoutique` : la boutique reconnaît ce numéro. Transporté
+          // tel quel jusqu'à l'écran — il ne porte QUE le prénom et des
+          // libellés de corroboration, jamais la fiche (cf. erp_link.php).
+          if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user, connuEnBoutique: j.connuEnBoutique || null }; }
           // 409 { exists:true } -> le compte existe déjà (proposer set-password).
           return { ok: false, error: j.error || j.message || "Erreur lors de l'inscription.", exists: !!j.exists, status: r.status };
         } catch (_) {}
       }
       // Go-live : plus de creation de compte local fictif.
       return { ok: false, error: 'Service inscription indisponible — réessayez.' };
+    },
+
+    /* ── Rattachement à la fiche de la boutique ──────────────────────────
+       Le client qui achète au comptoir a une fiche chez son franchisé. La
+       relier à son compte lui rend son historique d'achats et sa fidélité.
+       Le webshop n'ayant aucune vérification d'identité, la demande est
+       ARBITRÉE par la boutique : ces trois appels déposent, consultent et
+       annulent une demande — aucun ne rattache quoi que ce soit.
+       La cible n'est jamais transmise : le serveur la retrouve depuis le
+       téléphone du compte connecté. */
+    async linkState() {
+      if (!api.endpoint) return { etat: 'indisponible' };
+      try {
+        const r = await fetch(`${api.endpoint}/account/link-request`, { headers: authHeaders() });
+        if (!r.ok) return { etat: 'indisponible' };
+        return await r.json();
+      } catch (_) { return { etat: 'indisponible' }; }
+    },
+    async linkAsk() {
+      if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
+      try {
+        const r = await fetch(`${api.endpoint}/account/link-request`, { method: 'POST', headers: authHeaders() });
+        const j = await r.json();
+        return r.ok ? { ok: true, etat: j.etat || 'pending' }
+                    : { ok: false, error: j.error || 'Demande impossible.' };
+      } catch (_) { return { ok: false, error: 'Réseau indisponible.' }; }
+    },
+    async linkCancel() {
+      if (!api.endpoint) return { ok: false };
+      try {
+        const r = await fetch(`${api.endpoint}/account/link-request`, { method: 'DELETE', headers: authHeaders() });
+        return { ok: r.ok };
+      } catch (_) { return { ok: false }; }
     },
 
     /* ── Set / update password (compte existant) ─────────────────────── */

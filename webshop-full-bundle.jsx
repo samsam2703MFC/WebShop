@@ -2420,6 +2420,11 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
   const [pwStep, setPwStep] = useState(false);   // panneau « compte existant -> mot de passe »
   const [newPw, setNewPw] = useState('');
   const [cpOpts, setCpOpts] = useState([]);      // localités du CP saisi (validation « localité choisie »)
+  /* Reconnaissance par la boutique : l'inscription a trouvé une fiche au même
+     numéro. On ne referme PAS la fenêtre tant que le client n'a pas répondu —
+     rattacher son historique d'achats est sa décision, pas la nôtre. */
+  const [connu, setConnu] = useState(null);      // { prenom, concordances[] } | null
+  const [lienEtat, setLienEtat] = useState('');  // '' | 'envoi' | 'pending' | 'refus'
   if (!open) return null;
   function set(k, v) { setForm((f) => ({ ...f, [k]: v })); setErr(''); }
   async function submit(e) {
@@ -2456,6 +2461,13 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
           if (r.exists) { setPwStep(true); return; }   // compte déjà présent -> set-password
           setErr(r.error || "Erreur lors de l'inscription."); return;
         }
+        /* Reconnu par la boutique : le compte est créé et valide, on le
+           signale à l'application — mais l'écran reste ouvert pour proposer
+           le rattachement. Refermer ici ferait disparaître la proposition
+           sans que personne ne l'ait vue. */
+        if (r.connuEnBoutique && r.connuEnBoutique.prenom) {
+          onRegister(r.user); setConnu(r.connuEnBoutique); return;
+        }
         onRegister(r.user); onClose();
       }
     } catch (_) {
@@ -2464,6 +2476,15 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
       setLoading(false);
     }
   }
+  /* Dépose la demande de rattachement. La boutique tranchera : le webshop
+     n'a aucun moyen de vérifier que ce numéro est bien celui du visiteur. */
+  async function demanderLien() {
+    setLienEtat('envoi');
+    const r = await window.WSAuth.linkAsk();
+    if (!r.ok) { setErr(r.error || 'Demande impossible.'); setLienEtat(''); return; }
+    setLienEtat('pending');
+  }
+
   async function submitSetPassword() {
     setErr('');
     if (!newPw || newPw.length < 6) { setErr('Mot de passe : 6 caractères minimum.'); return; }
@@ -2481,7 +2502,58 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
   return (
     <ModalShell onClose={onClose} narrow>
       <p className="ws-modal__eyebrow">{t('auth.myAccount')}</p>
-      {pwStep ? (
+      {connu ? (
+        /* ── RECONNU PAR LA BOUTIQUE ─────────────────────────────────────
+           Le compte est créé : cet écran ne conditionne rien, il PROPOSE.
+           On n'affiche que le prénom et des libellés de corroboration : la
+           fiche n'est jamais montrée à qui n'a pas encore prouvé qu'il est
+           son titulaire — sinon le formulaire d'inscription deviendrait un
+           moyen de consulter le fichier client en essayant des numéros. */
+        <>
+          <h2 className="ws-modal__title">Bon retour, {connu.prenom} 👋</h2>
+          {lienEtat === 'pending' ? (
+            <>
+              <p className="ws-modal__lede">
+                Votre demande est transmise à votre boutique, qui vérifie qu'il s'agit bien de vous.
+              </p>
+              <div className="ws-form">
+                <p style={{ margin: 0, fontSize: 13.5, opacity: .8 }}>
+                  Votre compte fonctionne déjà : vous pouvez commander dès maintenant.
+                  Le rattachement n'ajoute que votre historique et votre fidélité.
+                </p>
+                <button type="button" className="ws-cta ws-cta--block" onClick={onClose}>Continuer</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="ws-modal__lede">
+                Votre boutique a déjà une fiche à ce numéro. Souhaitez-vous la relier à votre compte&nbsp;?
+                Vous retrouveriez votre historique d'achats et votre fidélité.
+              </p>
+              <div className="ws-form">
+                {Array.isArray(connu.concordances) && connu.concordances.length > 0 && (
+                  <p style={{ margin: 0, fontSize: 13, opacity: .8 }}>
+                    Ce qui correspond&nbsp;: {connu.concordances.join(', ').toLowerCase()}.
+                  </p>
+                )}
+                {/* Dit sans détour ce que ça implique : c'est une donnée
+                    personnelle, et c'est un humain qui validera. */}
+                <p style={{ margin: 0, fontSize: 12.5, opacity: .7 }}>
+                  Votre boutique validera la demande avant tout rattachement.
+                </p>
+                {err && <p className="ws-form__err">{err}</p>}
+                <button type="button" className="ws-cta ws-cta--block" disabled={lienEtat === 'envoi'}
+                        onClick={demanderLien}>
+                  {lienEtat === 'envoi' ? 'Envoi…' : "C'est bien moi — relier mon compte"}
+                </button>
+                <button type="button" className="ws-linkbtn" onClick={onClose}>
+                  Non merci, garder un compte séparé
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      ) : pwStep ? (
         <>
           <h2 className="ws-modal__title">{tRich(t, 'auth.accountExists')}</h2>
           <p className="ws-modal__lede">{t('auth.setPassword')}</p>

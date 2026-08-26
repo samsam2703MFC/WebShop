@@ -7,6 +7,7 @@ require __DIR__ . '/erp_alias.php';
 require __DIR__ . '/erp_promos.php';
 require __DIR__ . '/erp_seasons.php';
 require __DIR__ . '/erp_clients.php';
+require __DIR__ . '/erp_link.php';
 
 /* CORS */
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -3364,6 +3365,109 @@ function dispatch($m, $p) {
               // au-delà du prénom — on confirme une reconnaissance, on ne
               // divulgue pas une fiche à qui saisit un numéro.
               'connuEnBoutique' => $dejaErp ? ['depuis' => true, 'prenom' => (string) ($dejaErp['prenom'] ?? '')] : null], 201);
+  }
+
+  /* ── RATTACHEMENT d'un compte webshop à une fiche client de la boutique ────
+     Le client qui achète au comptoir depuis des années a une fiche ERP ; son
+     compte webshop est neuf. Relier les deux lui rend son historique d'achats
+     et sa fidélité.
+
+     Ce n'est PAS automatique, et ça ne peut pas l'être : le webshop n'a aucune
+     vérification d'identité (ni OTP SMS ni e-mail — cf. l'avertissement sur
+     /auth/set-password). Le téléphone est la clé de recherche, pas une preuve
+     de possession. Une demande est donc déposée, et le FRANCHISÉ tranche : il
+     connaît ses clients, c'est la seule vérification dont on dispose.
+
+     La cible n'est jamais reçue de l'appelant. Le serveur la retrouve à partir
+     du téléphone DU COMPTE : un identifiant de fiche transmis par le navigateur
+     laisserait choisir la fiche à s'attribuer. ── */
+
+  // Le compte connecté, dans la forme que erp_link_* compare. Renvoie null si
+  // le jeton ne désigne aucun client actif.
+  $lienCompte = function () {
+    $uid = auth_uid();
+    if (!$uid) return null;
+    $c = row("SELECT id, name, surname, email, phone, phone_e164, zip,
+                     " . (col_exists('client', 'preferred_shop_id') ? 'preferred_shop_id' : 'NULL') . " AS pref,
+                     id_main_shop,
+                     " . (col_exists('client', 'erp_client_id') ? 'erp_client_id' : 'NULL') . " AS erp_client_id
+                FROM client WHERE id=? AND active=1", [(int) $uid]);
+    if (!$c) return null;
+    return [
+      'id'     => (int) $c['id'],
+      // Même sens qu'à l'inscription : `name` = prénom, `surname` = nom.
+      'prenom' => (string) $c['name'],
+      'nom'    => (string) $c['surname'],
+      'email'  => (string) $c['email'],
+      'tel'    => (string) ($c['phone_e164'] ?: $c['phone']),
+      'cp'     => (string) $c['zip'],
+      'shopId' => (int) ($c['pref'] ?: $c['id_main_shop']),
+      'erpId'  => $c['erp_client_id'] !== null ? (int) $c['erp_client_id'] : null,
+    ];
+  };
+
+  // Demande en cours de ce compte, ou null.
+  $lienEnCours = function ($cid) {
+    if (!col_exists('ws_client_link_requests', 'id')) return null;
+    return row("SELECT * FROM ws_client_link_requests WHERE client_id=? AND status='pending' LIMIT 1", [(int) $cid]);
+  };
+
+  /* État du rattachement pour l'écran « mon compte ». Sans effet de bord :
+     appelé à chaque affichage, il ne crée jamais de demande. */
+  if ($m === 'GET' && $p === '/account/link-request') {
+    $me = $lienCompte();
+    if (!$me) json_out(['error' => 'Connexion requise.'], 401);
+    if ($me['erpId']) json_out(['etat' => 'linked', 'fiche' => $me['erpId']]);
+    if (!col_exists('ws_client_link_requests', 'id'))
+      json_out(['etat' => 'indisponible', 'raison' => 'Table ws_client_link_requests absente (migration 0099).']);
+    if ($d = $lienEnCours($me['id']))
+      json_out(['etat' => 'pending', 'depuis' => (string) $d['created_at']]);
+    // Rien en cours : y a-t-il seulement quelque chose à proposer ?
+    $f = erp_link_candidate($me);
+    if (!$f) json_out(['etat' => 'aucune']);
+    $cmp = erp_link_comparer($me, $f);
+    json_out(['etat' => 'proposable', 'fiche' => erp_link_vue_client($f, $cmp)]);
+  }
+
+  /* Dépose la demande. Idempotent : rappelé alors qu'une demande est en cours,
+     il rend la demande existante plutôt que d'en empiler une seconde. */
+  if ($m === 'POST' && $p === '/account/link-request') {
+    $me = $lienCompte();
+    if (!$me) json_out(['error' => 'Connexion requise.'], 401);
+    if (!col_exists('ws_client_link_requests', 'id'))
+      json_out(['ok' => false, 'error' => 'Table ws_client_link_requests absente — demande non enregistrée (migration 0099).'], 501);
+    if ($me['erpId']) json_out(['ok' => true, 'etat' => 'linked']);
+    if ($lienEnCours($me['id'])) json_out(['ok' => true, 'etat' => 'pending']);
+    // Une demande toutes les 10 min par compte : sans cette borne, un compte
+    // pourrait sonder l'index client en boucle par la réponse « aucune ».
+    rate_limit('lienrattach', 6, 600);
+
+    $f = erp_link_candidate($me);
+    if (!$f) json_out(['ok' => false, 'error' => 'Aucune fiche de boutique ne correspond à ce compte.'], 404);
+
+    /* Une fiche déjà rattachée à un AUTRE compte ne se rattache pas deux fois.
+       Sans ce contrôle, deux comptes créés avec le même numéro se
+       partageraient un historique d'achats. */
+    if (col_exists('client', 'erp_client_id')
+        && row("SELECT 1 AS x FROM client WHERE erp_client_id=? AND id<>?", [(int) $f['id'], $me['id']]))
+      json_out(['ok' => false, 'error' => 'Cette fiche est déjà reliée à un autre compte. Contactez votre boutique.'], 409);
+
+    $cmp = erp_link_comparer($me, $f);
+    q("INSERT INTO ws_client_link_requests (client_id, erp_client_id, shop_id, match_json, status)
+       VALUES (?,?,?,?, 'pending')",
+      [$me['id'], (int) $f['id'], ($me['shopId'] ?: null), json_encode($cmp, JSON_UNESCAPED_UNICODE)]);
+    json_out(['ok' => true, 'etat' => 'pending'], 201);
+  }
+
+  /* Annulation par le client lui-même. Ne touche qu'une demande PENDANTE :
+     un rattachement déjà décidé se défait côté boutique, pas ici. */
+  if ($m === 'DELETE' && $p === '/account/link-request') {
+    $me = $lienCompte();
+    if (!$me) json_out(['error' => 'Connexion requise.'], 401);
+    if (!col_exists('ws_client_link_requests', 'id')) json_out(['ok' => true, 'etat' => 'aucune']);
+    q("UPDATE ws_client_link_requests SET status='canceled', decided_at=NOW()
+        WHERE client_id=? AND status='pending'", [$me['id']]);
+    json_out(['ok' => true, 'etat' => 'aucune']);
   }
   /* ── CONNEXION TABLETTE BOUTIQUE par PIN (4 chiffres) ─────────────────────
      Ouvre une session LIMITÉE aux sections du compte (créé dans la console
@@ -8084,6 +8188,104 @@ function dispatch($m, $p) {
     // Demandes de rattachement bureau — ws_office_join_requests (pending).
     // On identifie le DEMANDEUR (client.id, nom, e-mail) : sans lui, la
     // décision « Lier » ne sait pas qui rattacher — c'était le trou du flow.
+    /* ── RATTACHEMENTS de fiches : la liste que le franchisé arbitre ────────
+       Un compte webshop demande à être relié à une fiche client de la
+       boutique. Le webshop n'ayant aucune vérification d'identité, c'est le
+       franchisé qui tranche — il connaît ses clients.
+
+       On lui montre LES DEUX FICHES EN REGARD, et les concordances telles
+       qu'elles étaient AU DÉPÔT de la demande (match_json) : l'index ERP a un
+       TTL, la fiche peut avoir changé depuis, et il doit arbitrer sur ce qui a
+       été comparé. Les concordances ne sont pas un feu vert — sur ce parc,
+       seuls le téléphone (99 %) et le prénom (90 %) sont réellement remplis :
+       le code postal ne l'est que sur les 8 % de fiches B2B. ── */
+    if ($m === 'GET' && $p === '/franchisee/link-requests') {
+      if (!$tblExists('ws_client_link_requests')) json_vide(['ws_client_link_requests']);
+      $rs = rows("SELECT r.id, r.client_id, r.erp_client_id, r.match_json, r.created_at,
+                         c.name AS c_prenom, c.surname AS c_nom, c.email AS c_mail,
+                         COALESCE(c.phone_e164, c.phone) AS c_tel, c.zip AS c_cp
+                    FROM ws_client_link_requests r
+                    LEFT JOIN client c ON c.id = r.client_id
+                   WHERE " . $scope('r.shop_id') . " AND r.status='pending'
+                   ORDER BY r.created_at DESC LIMIT 50");
+      // L'index ERP est chargé UNE fois pour toute la liste : une lecture par
+      // demande relancerait 8156 fiches à chaque ligne.
+      $idx = function_exists('erp_clients_index') ? erp_clients_index($shopId) : null;
+      json_out(array_map(function ($r) use ($idx) {
+        $f = (is_array($idx) && isset($idx[(int) $r['erp_client_id']])) ? $idx[(int) $r['erp_client_id']] : null;
+        $cmp = json_decode((string) $r['match_json'], true);
+        return [
+          'id'      => (int) $r['id'],
+          'depuis'  => (string) $r['created_at'],
+          // Le compte webshop qui demande.
+          'compte'  => [
+            'id'     => (int) $r['client_id'],
+            'nom'    => trim(((string) $r['c_prenom']) . ' ' . ((string) $r['c_nom'])),
+            'email'  => (string) $r['c_mail'],
+            'tel'    => (string) $r['c_tel'],
+            'cp'     => (string) $r['c_cp'],
+          ],
+          /* La fiche visée. `null` quand l'index ERP est indisponible ou que la
+             fiche a disparu : l'écran doit le DIRE, pas afficher une colonne
+             vide qui ressemblerait à une fiche sans données. */
+          'fiche'   => $f ? [
+            'id'      => (int) $f['id'],
+            'nom'     => trim(((string) $f['prenom']) . ' ' . ((string) $f['nom'])),
+            'email'   => (string) $f['emailAff'],
+            'tel'     => (string) $f['tel'],
+            'cp'      => (string) $f['cp'],
+            'ville'   => (string) $f['ville'],
+            'societe' => (string) $f['societe'],
+            'tva'     => (string) $f['tva'],
+          ] : null,
+          'champs'  => is_array($cmp) ? ($cmp['champs'] ?? []) : [],
+        ];
+      }, $rs));
+    }
+
+    /* Décision. « Rattacher » ÉCRIT client.erp_client_id — c'est cette écriture
+       qui donne au compte son historique d'achats et sa fidélité. Elle échoue
+       explicitement plutôt que de marquer la demande « linked » sans avoir
+       rien rattaché. */
+    if ($m === 'POST' && $p === '/franchisee/link-decide') {
+      $b = body(); $id = (int) preg_replace('/\D/', '', (string) ($b['id'] ?? ''));
+      $act = (string) ($b['action'] ?? '');
+      if (!$id || !in_array($act, ['link', 'reject'], true))
+        json_out(['ok' => false, 'error' => 'id + action requis'], 400);
+      if (!$tblExists('ws_client_link_requests')) json_out(['ok' => false, 'error' => 'table absente (migration 0099)'], 501);
+      // Portée : une demande d'une autre boutique n'est pas arbitrable ici.
+      $sc = $shopId ? " AND shop_id=" . (int) $shopId : "";
+      $r  = row("SELECT * FROM ws_client_link_requests WHERE id=? AND status='pending'$sc", [$id]);
+      if (!$r) json_out(['ok' => false, 'error' => 'Demande introuvable, déjà traitée, ou hors de votre boutique.'], 404);
+      $par = $pinSes ? (string) ($pinSes['display_name'] ?? '') : '';
+
+      if ($act === 'reject') {
+        $why = mb_substr(trim((string) ($b['reason'] ?? '')), 0, 200);
+        q("UPDATE ws_client_link_requests SET status='rejected', decided_at=NOW(), decided_by=?, reject_reason=?
+            WHERE id=?", [($par ?: null), ($why !== '' ? $why : null), $id]);
+        json_out(['ok' => true, 'action' => 'reject']);
+      }
+
+      // ── Rattachement ──
+      $cid = (int) $r['client_id']; $eid = (int) $r['erp_client_id'];
+      if (!col_exists('client', 'erp_client_id'))
+        json_out(['ok' => false, 'error' => 'Colonne client.erp_client_id absente — jouez la migration 0099.'], 501);
+      // Le client doit être visible depuis cette boutique : même règle que
+      // partout ailleurs, ce qui n'est pas visible n'est pas modifiable.
+      $clientGuard($cid);
+      if (!row("SELECT 1 AS x FROM client WHERE id=? AND active=1", [$cid]))
+        json_out(['ok' => false, 'error' => 'Compte #' . $cid . ' introuvable ou inactif.'], 409);
+      // Course entre deux demandes visant la même fiche : la seconde échoue ici
+      // plutôt que d'écraser silencieusement le rattachement de la première.
+      if (row("SELECT 1 AS x FROM client WHERE erp_client_id=? AND id<>?", [$eid, $cid]))
+        json_out(['ok' => false, 'error' => 'Fiche #' . $eid . ' déjà reliée à un autre compte.'], 409);
+
+      q("UPDATE client SET erp_client_id=? WHERE id=?", [$eid, $cid]);
+      q("UPDATE ws_client_link_requests SET status='linked', decided_at=NOW(), decided_by=? WHERE id=?",
+        [($par ?: null), $id]);
+      json_out(['ok' => true, 'action' => 'link', 'clientId' => $cid, 'ficheId' => $eid]);
+    }
+
     if ($m === 'GET' && $p === '/franchisee/fr-join-requests') {
       if (!$tblExists('ws_office_join_requests')) json_vide(['ws_office_join_requests']);
       $hasCli  = col_exists('ws_office_join_requests', 'client_id');
@@ -12266,6 +12468,7 @@ function bo_endpoint_section($name) {
     'ws-office-emails' => 'emailsBureau', 'office-email' => 'emailsBureau',
     'fr-validations' => 'validations', 'validation-decide' => 'validations',
     'fr-join-requests' => 'demandesBureau', 'join-decide' => 'demandesBureau',
+    'link-requests' => 'demandesBureau', 'link-decide' => 'demandesBureau',
     // Disponibilité
     'ws-slots' => 'creneaux',
     'fr-capacity' => 'capacite',
