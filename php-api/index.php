@@ -1463,9 +1463,37 @@ function dispatch($m, $p) {
        local, sans que rien ne le signale. L'ERP décide, point. */
     if (function_exists('erp_seasons_enabled') && erp_seasons_enabled()) {
       $g = erp_seasons(qp('lang'));
-      if ($g) json_out($g);
-      // Source ERP activée mais aucune gamme publiée : barre vide, et c'est
-      // exact — cocher webshop_active dans Franchise Buddy.
+      /* MÊME RÈGLE QUE LES CATÉGORIES, et elle vaut aussi pour l'ERP : une
+         gamme n'est une vignette que si au moins un produit de la boutique la
+         porte. Sans ce filtre, publier dix gammes affichait dix vignettes dont
+         neuf ouvraient une grille VIDE — au 26/08, seule « Printanière »
+         portait des produits en vente, les neuf autres étaient hors saison.
+         L'appel produits est le MÊME que celui du catalogue (même chemin,
+         même TTL) : il est déjà en cache quand la page charge sa grille. */
+      if ($g) {
+        $porte = [];
+        $av = function_exists('erp_get')
+            ? erp_get('shops/' . (int) $s . '/products/available?include=availability_periods', 60) : null;
+        $lstAv = is_array($av) ? (array_is_list($av) ? $av : ($av['data'] ?? $av['items'] ?? null)) : null;
+        if (is_array($lstAv)) {
+          foreach ($lstAv as $pr4) {
+            if (!is_array($pr4) || empty($pr4['availability_periods'])) continue;
+            // La gamme RETENUE pour ce produit, pas toutes celles qu'il porte :
+            // c'est celle-là que la grille lui donnera, donc la seule sur
+            // laquelle le filtre trouvera quelque chose.
+            $gp = erp_season_principale($pr4['availability_periods'], $g);
+            if ($gp) $porte[$gp['id']] = true;
+          }
+          $g = array_values(array_filter($g, fn ($x) => isset($porte[$x['id']])));
+        }
+        /* Liste produits illisible : on ne filtre PAS. Une coupure de l'ERP
+           doit dégrader vers « toutes les gammes publiées », jamais vers une
+           barre vide qui ferait croire qu'il n'y a plus de gammes. */
+        if ($g) json_out($g);
+      }
+      // Source ERP activée mais aucune gamme publiée (ou aucune ne portant de
+      // produit) : barre vide, et c'est exact — cocher webshop_active dans
+      // Franchise Buddy, ou rattacher des produits à la gamme.
       json_out([]);
     }
     json_out(rows("SELECT se.slug AS id, se.name AS label, se.img
