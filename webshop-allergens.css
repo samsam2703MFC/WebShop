@@ -11,6 +11,19 @@
   color: var(--color-text-muted);
 }
 .al-row .al-icon { display: inline-block; flex: 0 0 auto; }
+/* Allergène SANS pictogramme : le libellé brut, affiché plutôt qu'écarté.
+   Une information réglementaire ne disparaît pas parce qu'un mot a changé
+   d'orthographe — voir le commentaire dans webshop-allergens.jsx. */
+.al-row__raw {
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 20px;
+  background: rgba(141, 29, 44, .08);
+  color: #8D1D2C;
+  white-space: nowrap;
+}
+
 .al-row__more {
   font-family: var(--font-ui);
   font-size: 10px;

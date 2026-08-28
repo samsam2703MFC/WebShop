@@ -16,17 +16,17 @@
   //     Synonyms (almond → nuts, peanut → peanuts, …) are absorbed here so the
   //     product data doesn't have to change.
   const ALLERGENS = [
-    { id: 'gluten',      label: 'Gluten',          aliases: ['gluten','wheat','ble','blé'] },
+    { id: 'gluten',      label: 'Gluten',          aliases: ['gluten','wheat','ble','blé', 'cereals_gluten', 'cereals containing gluten', 'céréales contenant du gluten', 'cereales contenant du gluten'] },
     { id: 'crustaceans', label: 'Crustacés',       aliases: ['crustacean','crustaceans','crustaces','crustacés','shrimp','crab'] },
-    { id: 'eggs',        label: 'Œufs',            aliases: ['egg','eggs','oeuf','oeufs'] },
+    { id: 'eggs',        label: 'Œufs',            aliases: ['egg','eggs','oeuf','oeufs', 'œufs', 'œuf'] },
     { id: 'fish',        label: 'Poisson',         aliases: ['fish','poisson'] },
     { id: 'peanuts',     label: 'Arachides',       aliases: ['peanut','peanuts','arachide','arachides'] },
     { id: 'soy',         label: 'Soja',            aliases: ['soy','soja','soya'] },
     { id: 'milk',        label: 'Lait',            aliases: ['milk','lait','dairy','lactose'] },
-    { id: 'nuts',        label: 'Fruits à coque',  aliases: ['nut','nuts','almond','almonds','amande','amandes','hazelnut','walnut','noix'] },
+    { id: 'nuts',        label: 'Fruits à coque',  aliases: ['nut','nuts','almond','almonds','amande','amandes','hazelnut','walnut','noix', 'fruits à coque', 'fruits a coque'] },
     { id: 'celery',      label: 'Céleri',          aliases: ['celery','celeri','céleri'] },
     { id: 'mustard',     label: 'Moutarde',        aliases: ['mustard','moutarde'] },
-    { id: 'sesame',      label: 'Sésame',          aliases: ['sesame','sésame'] },
+    { id: 'sesame',      label: 'Sésame',          aliases: ['sesame','sésame', 'sesame_seeds', 'graines de sesame', 'graines de sésame', 'sesame seeds'] },
     { id: 'sulphites',   label: 'Sulfites',        aliases: ['sulphite','sulphites','sulfite','sulfites','so2'] },
     { id: 'lupin',       label: 'Lupin',           aliases: ['lupin','lupine'] },
     { id: 'molluscs',    label: 'Mollusques',      aliases: ['mollusc','molluscs','mollusque','mollusques'] },
@@ -259,20 +259,37 @@
     if (!list || !list.length) return null;
     const ids = [];
     const seen = new Set();
+    /* CE QUI N'EST PAS RECONNU EST AFFICHÉ QUAND MÊME, EN TEXTE.
+       Avant, un libellé absent du référentiel était simplement ignoré : la
+       ligne s'affichait sans lui, sans erreur ni trace. C'est arrivé en
+       production — l'API sert `cereals_gluten` et `sesame_seeds` là où le
+       référentiel attendait `gluten` et `sesame` : le GLUTEN ne s'affichait
+       sur AUCUN des 42 produits qui en contiennent.
+       Les alias manquants sont corrigés, mais la règle compte plus que le
+       correctif : une information réglementaire (UE 1169/2011) ne doit jamais
+       disparaître parce qu'un mot a changé d'orthographe. Faute de
+       pictogramme, on montre le libellé brut. */
+    const inconnus = [];
     for (const raw of list) {
       const id = resolve(raw);
-      if (id && !seen.has(id)) { seen.add(id); ids.push(id); }
+      if (id) { if (!seen.has(id)) { seen.add(id); ids.push(id); } continue; }
+      const brut = String(raw || '').trim();
+      if (brut && !inconnus.includes(brut)) inconnus.push(brut);
     }
-    if (!ids.length) return null;
+    if (!ids.length && !inconnus.length) return null;
     const shown = ids.slice(0, max);
     const extra = ids.length - shown.length;
-    const labels = ids.map((i) => tAllergen(ALLERGENS.find((a) => a.id === i))).join(', ');
+    const labels = ids.map((i) => tAllergen(ALLERGENS.find((a) => a.id === i)))
+      .concat(inconnus).join(', ');
     return (
       <span className="al-row" aria-label={`Allergènes: ${labels}`}>
         {shown.map((id) => (
           <AllergenIcon key={id} name={id} size={size}/>
         ))}
         {extra > 0 && <span className="al-row__more">+{extra}</span>}
+        {inconnus.map((b) => (
+          <span key={b} className="al-row__raw" title={`Allergène : ${b}`}>{b}</span>
+        ))}
       </span>
     );
   }
