@@ -24,6 +24,10 @@
 
 ## Vague 1 — activer & vérifier (toi, en prod)
 
+> Mode d'emploi copier-coller (SQL, curl, cron, contrôles feu vert/rouge,
+> rollback) : **`RUNBOOK_VAGUE1.md`**. Aucune table à dropper ici — les
+> suppressions (0105) s'appliquent seules au déploiement via `migrate.sh`.
+
 - [ ] Déployer la branche ; `migrate.sh` applique 0103 → 0105 (contrôle : `tables_restantes = 0`)
 - [ ] **Vérifier le P0** : `ws_param.catalog_source` était-il déjà à `'erp'` ?
       Si oui, les prix servis jusqu'ici étaient les LOCAUX — contrôler quelques commandes récentes
