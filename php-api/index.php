@@ -4,6 +4,16 @@
 require __DIR__ . '/lib.php';
 require __DIR__ . '/promo_lib.php';
 require __DIR__ . '/erp_alias.php';
+/* erp_catalog.php N'ÉTAIT PAS CHARGÉ — découvert le 31/08 par la sonde de prix.
+   Le module était écrit, commenté et complet, mais aucun require ne le tirait :
+   erp_catalog_enabled() n'existait donc pas, et TOUTES les gardes
+   `function_exists('erp_catalog_enabled') && erp_catalog_enabled()` étaient
+   fausses depuis toujours. Le catalogue n'a jamais servi l'intersection ERP.
+   Ce qui le laissait croire : le miroir de sync_product_photos.php aligne
+   ws_products.active sur webshop_active à chaque déploiement — les produits
+   servis coïncidaient donc avec ceux de l'ERP sans qu'aucune intersection ne
+   tourne. Une coïncidence de données prise pour un comportement. */
+require __DIR__ . '/erp_catalog.php';
 require __DIR__ . '/erp_promos.php';
 require __DIR__ . '/erp_seasons.php';
 require __DIR__ . '/erp_clients.php';
