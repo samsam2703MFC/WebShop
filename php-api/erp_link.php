@@ -84,3 +84,66 @@ function erp_link_vue_client(array $fiche, array $cmp) {
     'concordances' => $sur,
   ];
 }
+
+/* ── LA CORRESPONDANCE client local ↔ fiche ERP ──────────────────────────────
+ * Neuf tables portent un identifiant client local (commandes, bureaux, sites,
+ * réservations, incidents, bons, handoff, demandes). Le jour où `client`
+ * disparaîtra au profit des endpoints, ces identifiants ne désigneront plus
+ * rien : il leur faut une clé ERP.
+ *
+ * Elle vit dans ws_client_erp_map (migration 0103) et NON dans une colonne par
+ * table : neuf copies du même fait, ce sont neuf endroits à tenir synchronisés.
+ * Et elle ne peut pas vivre dans `client` non plus — c'est justement la table
+ * qu'on veut supprimer, elle emporterait la correspondance avec elle.
+ *
+ * `client.erp_client_id` reste écrit en parallèle tant que la table existe :
+ * les deux disent la même chose, mais la map est celle qui survivra. Le jour de
+ * la bascule, on lit la map et on ne cherche plus ailleurs. ── */
+
+/* Enregistre (ou met à jour) le lien. `origine` dit COMMENT il a été établi —
+ * un lien supposé et un lien arbitré par le franchisé ne se valent pas, et
+ * après coup rien ne les distinguerait. */
+function erp_map_poser($clientId, $erpId, $origine = 'reprise') {
+  $cid = (int) $clientId; $eid = (int) $erpId;
+  if ($cid <= 0 || $eid <= 0) return false;
+  if (!function_exists('q')) return false;
+  try {
+    q("INSERT INTO ws_client_erp_map (client_id, erp_client_id, origine)
+       VALUES (?,?,?)
+       ON DUPLICATE KEY UPDATE erp_client_id = VALUES(erp_client_id),
+                               origine = VALUES(origine)",
+      [$cid, $eid, substr((string) $origine, 0, 16)]);
+    return true;
+  } catch (Throwable $e) {
+    /* La map est une PRÉPARATION, pas un chemin critique : son échec ne doit
+       jamais faire échouer l'inscription ou la décision qui l'a déclenchée.
+       Il se journalise, il ne remonte pas. */
+    error_log('[ws] map client↔ERP : ' . $e->getMessage());
+    return false;
+  }
+}
+
+/* L'identifiant ERP d'un client local, ou null. Source unique de la résolution :
+ * tout appelant passe par ici, personne ne rejoint la table à la main. */
+function erp_map_id($clientId) {
+  $cid = (int) $clientId;
+  if ($cid <= 0 || !function_exists('row')) return null;
+  try {
+    $r = row("SELECT erp_client_id FROM ws_client_erp_map WHERE client_id = ?", [$cid]);
+    return $r ? (int) $r['erp_client_id'] : null;
+  } catch (Throwable $e) { return null; }
+}
+
+/* État de la préparation, pour /erp/probe : combien de liens connus, et quelle
+ * proportion des commandes porte déjà sa fiche gelée. Un chantier de bascule
+ * qu'on ne peut pas mesurer est un chantier dont on ignore l'avancement. */
+function erp_map_etat() {
+  if (!function_exists('row')) return null;
+  $n = function ($sql) { try { $r = row($sql); return $r ? (int) array_values($r)[0] : 0; }
+                         catch (Throwable $e) { return null; } };
+  return [
+    'liens'              => $n("SELECT COUNT(*) FROM ws_client_erp_map"),
+    'commandes_liees'    => $n("SELECT COUNT(*) FROM ws_orders WHERE customer_erp_id IS NOT NULL"),
+    'commandes_a_lier'   => $n("SELECT COUNT(*) FROM ws_orders WHERE customer_id IS NOT NULL AND customer_erp_id IS NULL"),
+  ];
+}
