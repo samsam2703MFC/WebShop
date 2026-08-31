@@ -148,8 +148,56 @@ function product_img_or_null($img) {
  * PRIX <= 0 = « NON FIXÉ », pas « gratuit » : le produit est masqué du
  * catalogue ET refusé à la commande, au lieu d'être facturé 0 €.
  */
-function prix_produits(array $ids) {
+function prix_produits(array $ids, $shopId = null) {
   if (!$ids) return [];
+  /* SOURCE UNIQUE DU PRIX — affichage ET facturation.
+     Quand ws_param.catalog_source vaut 'erp', le prix de vente est
+     `portion_price_gross`, servi par shops/{id}/products/available. C'est
+     l'information de l'utilisateur du 28/08, et la donnée la corrobore :
+     ws_products.price portait 1,00 € sur 45 des 76 produits en vente — un
+     remplissage, pas un prix. L'ERP donne 2,80 € pour un Coca 50 cl, 2,90 €
+     pour un cookie.
+     LA MÊME FONCTION sert le catalogue et POST /orders : c'est ce qui garantit
+     que le prix annoncé est le prix débité. Les séparer, c'est afficher 2,80 €
+     et facturer 1,00 € — exactement ce que ce fichier interdit deux commentaires
+     plus loin.
+     Le prix ERP est PAR BOUTIQUE : sans portée, il ne peut pas être résolu. */
+  if ($shopId && function_exists('erp_catalog_enabled') && erp_catalog_enabled()) {
+    // MÊME appel, MÊME cache que le catalogue : une seule requête ERP par vue.
+    $av = erp_get('shops/' . (int) $shopId . '/products/available',
+                  max(0, (int) ws_param('catalog_direct_ttl', 0)));
+    $lst = is_array($av) ? (array_is_list($av) ? $av : ($av['data'] ?? $av['items'] ?? null)) : null;
+    if (is_array($lst)) {
+      $veut = array_flip(array_map('intval', $ids));
+      $out = [];
+      foreach ($lst as $pr) {
+        if (!is_array($pr) || empty($pr['id'])) continue;
+        $pid = (int) $pr['id'];
+        if (!isset($veut[$pid])) continue;
+        $px = $pr['portion_price_gross'] ?? ($pr['portion_price'] ?? null);
+        /* 0 ou absent = PRIX NON FIXÉ, pas gratuit. Le produit sort de la
+           carte : masqué du catalogue, refusé à la commande. Six produits
+           sont dans ce cas au 28/08 (Melocake, Abricot, Plateau Mini Wraps…). */
+        if (!is_numeric($px) || (float) $px <= 0) continue;
+        $out[$pid] = (float) $px;
+      }
+      return $out;
+    }
+    /* ERP muet APRÈS cache : on ne retombe pas sur les prix locaux, qui sont
+       justement ceux qu'on corrige. Rendre [] fait refuser la commande avec le
+       nom du produit — bruyant, et jamais au mauvais prix. */
+    if (function_exists('erp_notes')) erp_notes('prix : ERP injoignable, aucun prix résolu (boutique ' . (int) $shopId . ')');
+    return [];
+  }
+  /* Source locale : soit l'ERP n'est pas la source, soit l'appelant n'a pas de
+     boutique (écrans d'administration réseau). Dans ce second cas le prix ERP
+     est inatteignable par construction — on le journalise plutôt que de le
+     taire, parce qu'un écran qui affiche l'ancien prix pendant que la boutique
+     en facture un autre est exactement le genre d'écart qu'on ne voit pas. */
+  if (!$shopId && function_exists('erp_catalog_enabled') && erp_catalog_enabled()
+      && function_exists('erp_notes')) {
+    erp_notes('prix : appel sans boutique — prix LOCAL servi alors que la source est l\'ERP');
+  }
   $in = implode(',', array_map('intval', $ids));
   $out = [];
   try {
@@ -552,7 +600,7 @@ function ws_voucher_upsert(array $o) {
        webshop est là ou la base entière est tombée, ce que le reste signale
        déjà. */
     if ($r) {
-      $store = prix_produits(array_map(static fn($p2) => (int) $p2['id'], $r));
+      $store = prix_produits(array_map(static fn($p2) => (int) $p2['id'], $r), (int) $s);
       $sansPrix = [];
       foreach ($r as &$x) {
         if (isset($store[(int) $x['id']])) $x['price'] = $store[(int) $x['id']];
@@ -1130,7 +1178,7 @@ function dispatch($m, $p) {
         if ($modeX === 'delivery' && !(int) $prod['od']) continue;
         if (!product_available_on($tp, $dateX)) continue;        // gamme saisonnière
         if (!xsell_in_stock($tp, $shopX, $dateX, $modeX)) continue;
-        $px    = prix_produits([$tp]);
+        $px    = prix_produits([$tp], $shopX ?: null);
         $price = $px[$tp] ?? (float) $prod['price'];
         if ($price <= 0) continue;                                // sans prix magasin : non vendable
         $seen[$tp] = true; $kept++;
@@ -1208,7 +1256,7 @@ function dispatch($m, $p) {
         // diagnostic empilait deux replis — ws_product_prices puis
         // ws_products.price — et pouvait donc annoncer un prix que le
         // catalogue n'aurait pas servi.
-        $erpx = prix_produits([$id]);
+        $erpx = prix_produits([$id], $s ?: null);
         $final = $erpx[$id] ?? 0.0;
         $chk['5_prix_final'] = ($final > 0)
           ? ('OK — ' . number_format($final, 2, ',', ' ') . ' € (ws_products.price)')
@@ -1654,7 +1702,7 @@ function dispatch($m, $p) {
       // pas : la pièce ne compte pas dans l'assiette.
       $units = [];
       $scPid  = (int) $sc['scope_id_product'];
-      $scPx   = $vShop ? prix_produits([$scPid]) : [];
+      $scPx   = $vShop ? prix_produits([$scPid], (int) $vShop) : [];
       $scPort = $vShop ? erp_portion_options($vShop, [$scPid]) : [];
       foreach ((is_array($b['basket'] ?? null) ? $b['basket'] : []) as $l2) {
         if ((int) ($l2['productId'] ?? 0) !== $scPid) continue;
@@ -2680,7 +2728,7 @@ function dispatch($m, $p) {
     //    portion sans prix ERP de portion → idem. Le client ne paie jamais un
     //    montant que la boutique n'a pas réellement fixé.
     $subtotal = 0; $lines = [];
-    $storePrices = prix_produits(array_map(static fn($it) => (int) ($it['productId'] ?? 0), $basket));
+    $storePrices = prix_produits(array_map(static fn($it) => (int) ($it['productId'] ?? 0), $basket), (int) $shop);
     $portPx = erp_portion_options($shop, array_map(static fn ($it2) => (int) ($it2['productId'] ?? 0), $basket));
     foreach ($basket as $it) {
       // cat_id / sub_cat_id : le périmètre d'une promo ERP raisonne par
@@ -7035,7 +7083,7 @@ function dispatch($m, $p) {
       // Prix : ws_products.price, par la fonction partagée. La jointure sur
       // ws_product_prices a disparu avec le repli qu'elle alimentait.
       if ($products) {
-        $erpP = prix_produits(array_map(static fn ($x2) => (int) $x2['id'], $products));
+        $erpP = prix_produits(array_map(static fn ($x2) => (int) $x2['id'], $products), $shopId ? (int) $shopId : null);
         foreach ($products as &$pp3) { if (isset($erpP[(int) $pp3['id']])) $pp3['price'] = $erpP[(int) $pp3['id']]; $pp3['price'] = (float) $pp3['price']; }
         unset($pp3);
       }
@@ -9572,7 +9620,7 @@ function dispatch($m, $p) {
         // priorité) ; prix magasin ERP pour la pièce entière.
         $ids3 = array_map(fn ($r) => (int) $r['pid'], $rs);
         $popts2 = $shopId ? erp_portion_options((int) $shopId, $ids3) : [];
-        $erpPx = prix_produits($ids3);
+        $erpPx = prix_produits($ids3, $shopId ? (int) $shopId : null);
         $eur = fn ($v) => number_format((float) $v, 2, ',', ' ') . ' €';
         json_out(array_map(function ($r) use ($popts2, $erpPx, $eur) {
           $base = isset($erpPx[(int) $r['pid']]) ? $erpPx[(int) $r['pid']] : (float) $r['prix_base'];
@@ -9757,7 +9805,7 @@ function dispatch($m, $p) {
       // produits qui n'existent pas côté webshop.
       $tarife = [];
       if ($rs) {
-        foreach (prix_produits(array_map(static fn ($r) => (int) $r['pid'], $rs)) as $pid4 => $px4)
+        foreach (prix_produits(array_map(static fn ($r) => (int) $r['pid'], $rs), $shopId ? (int) $shopId : null) as $pid4 => $px4)
           $tarife[$pid4] = true;
       }
       /* LE VERDICT, pas seulement les ingrédients. L'écran montrait déjà
@@ -11806,7 +11854,7 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
       $okSaison[(int) $x['id']] = true;
   }
 
-  $prix = prix_produits($ids);
+  $prix = prix_produits($ids, $shopId ? (int) $shopId : null);
 
   $out = [];
   foreach ($rs as $r) {
