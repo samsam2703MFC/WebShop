@@ -2751,10 +2751,16 @@ function dispatch($m, $p) {
       }
       $unit = (float) $storePrices[(int) $p2['id']];
       $portion2 = mb_strtolower(trim((string) ($it['portion'] ?? '')));
+      /* Portion : on garde AUSSI l'id ERP (product_portion.id), résolu ici même
+         pour tarifer. La remontée des commandes vers l'ERP (client_order_product)
+         attend id_product_portion — ne stocker que le libellé obligeait à
+         re-déduire l'id à la remontée, fragile si la portion est désactivée ou
+         recréée entre-temps. NULL = pièce entière. */
+      $portionId = null;
       if ($portion2 !== '' && $portion2 !== 'entier') {
         $unitP = null;
         foreach (($portPx[(int) $p2['id']] ?? []) as $c2) {
-          if ($c2['v'] === $portion2 && $c2['price'] !== null) { $unitP = (float) $c2['price']; break; }
+          if ($c2['v'] === $portion2 && $c2['price'] !== null) { $unitP = (float) $c2['price']; $portionId = (int) $c2['pp_id']; break; }
         }
         if ($unitP === null) {
           json_out(['error' => 'Prix de portion indisponible pour « ' . trim((string) $p2['name'])
@@ -2797,7 +2803,7 @@ function dispatch($m, $p) {
       // (voir l'écriture des composants) — c'est là qu'ils sont lisibles.
       $lines[] = ['productId' => $p2['id'], 'name' => $p2['name'], 'qty' => $qty,
                   'unit' => round($unit + $comp['modifier'], 2),
-                  'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion'],
+                  'portion' => $it['portion'] ?? null, 'portionId' => $portionId, 'cross' => (int) $p2['cross_portion'],
                   'id' => (int) $p2['id'], 'cat_id' => (int) ($p2['cat_id'] ?? 0), 'sub_cat_id' => (int) ($p2['sub_cat_id'] ?? 0),
                   'bundleChoices' => $comp['choices'],
                   'note' => isset($it['note']) ? mb_substr((string) $it['note'], 0, 255) : null];
@@ -3188,10 +3194,20 @@ function dispatch($m, $p) {
       // Sans la colonne, on ne saurait pas les distinguer d'une ligne vendue et
       // ils fausseraient les compteurs de pièces — mieux vaut ne rien écrire.
       $hasParentCol = col_exists('ws_order_lines', 'parent_line_id');
+      // portion_id (0103) : id ERP de la portion vendue (product_portion.id),
+      // ce que la remontée ERP enverra en id_product_portion. Écrit seulement
+      // si la colonne existe — même garde-fou que parent_line_id pendant
+      // l'intervalle entre déploiement du code et passage de la migration.
+      $hasPortionCol = col_exists('ws_order_lines', 'portion_id');
       foreach ($lines as $l) {
         $pidL = is_numeric($l['productId'] ?? null) ? (int) $l['productId'] : null;
-        q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note) VALUES (?,?,?,?,?,?,?)",
-          [$oid, $pidL, $l['name'], $l['qty'], $l['unit'], $l['portion'], $l['note']]);
+        if ($hasPortionCol) {
+          q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, portion_id, note) VALUES (?,?,?,?,?,?,?,?)",
+            [$oid, $pidL, $l['name'], $l['qty'], $l['unit'], $l['portion'], $l['portionId'] ?? null, $l['note']]);
+        } else {
+          q("INSERT INTO ws_order_lines (order_id, product_id, product_name, qty, unit_price, `portion`, note) VALUES (?,?,?,?,?,?,?)",
+            [$oid, $pidL, $l['name'], $l['qty'], $l['unit'], $l['portion'], $l['note']]);
+        }
         /* COMPOSANTS DU MENU — UNE LIGNE PAR PRODUIT. Les choix du menu étaient
            jetés : la commande n'enregistrait que le produit déclencheur, et la
            boutique ne savait pas quoi préparer.
