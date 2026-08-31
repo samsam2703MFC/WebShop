@@ -59,6 +59,11 @@ serveur.
 
 ## 2. Verdict A — peut mourir MAINTENANT (vestiges)
 
+> ✅ **FAIT le 31/08** — migration `0105_drop_vestiges.sql` + code nettoyé
+> (repli géo retiré, JOIN BO re-pointés sur `client`, `basket_pa` réduit à
+> `no_delivery`, `/admin/price` supprimé, schéma et seed à jour). La version
+> actionnable de tout l'audit vit dans `CHECKLIST_ZERO_TABLE.md`.
+
 | Table | Réf. | Constat | Geste |
 |---|---|---|---|
 | `ws_customers` | 3 | repli legacy « si `client` n'existe pas » (`index.php:12424-12450`) ; `client` existe | retirer le repli, drop |

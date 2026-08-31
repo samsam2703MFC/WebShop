@@ -14,7 +14,6 @@ INSERT INTO ws_products (id, cat_id, name, description, price, portions, cross_p
   (2, 2, 'Tarte au riz', 'La classique', 14.00, 1, 1);
 
 INSERT INTO ws_product_shops (product_id, shop_id, no_delivery) VALUES (1, 2, 0), (2, 2, 1);
-INSERT INTO ws_product_prices (product_id, shop_id, price) VALUES (1, 2, 1.40);
 INSERT INTO ws_product_allergens (product_id, allergen) VALUES (1,'gluten'),(1,'milk'),(2,'gluten'),(2,'milk'),(2,'egg');
 INSERT INTO ws_product_stock (product_id, shop_id, date, mode, qty_total, qty_reserved, qty_sold) VALUES
   (1, 2, CURDATE(), 'collect', 120, 5, 15);
@@ -40,5 +39,5 @@ INSERT INTO ws_office_delivery_sites (id, office_client_id, name, address, shop_
 INSERT INTO ws_delivery_fee_rules (level, shop_id, fee_amount, free_delivery_minimum, payment_type) VALUES
   ('global', NULL, 7.00, 50.00, 'immediate'), ('shop', 2, 5.00, 40.00, 'immediate');
 
-INSERT INTO ws_customers (id, email, password_hash, first_name, last_name, preferred_shop_id) VALUES
-  (1, 'marie@example.be', '$2y$10$mock', 'Marie', 'Dupont', 2);
+-- Client de test : l'identité vit dans la table ERP `client`
+-- (ws_customers est morte — migration 0105).

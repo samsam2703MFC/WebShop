@@ -9643,13 +9643,14 @@ function dispatch($m, $p) {
       try {
         if (!row("SELECT 1 x FROM information_schema.tables
                    WHERE table_schema=DATABASE() AND table_name='product_portion'")) json_out([]);
+        // prix_base : simple REPLI d'affichage — le vrai prix vient de
+        // prix_produits() juste en dessous (ERP quand catalog_source='erp').
+        // ws_product_prices est morte (0105) : plus de prix local par boutique.
         $rs = rows("SELECT DISTINCT p.id AS pid, p.name AS produit, COALESCE(c.label,'Autres') AS cat,
-                           COALESCE(ppx.price, p.price) AS prix_base
+                           p.price AS prix_base
                       FROM product_portion pp
                       JOIN ws_products p ON p.id = pp.id_product AND p.active = 1
                       LEFT JOIN ws_categories c ON c.id = p.cat_id
-                      LEFT JOIN ws_product_prices ppx ON ppx.product_id = p.id AND ppx.active = 1" .
-                     ($shopId ? " AND ppx.shop_id = " . (int) $shopId : "") . "
                      WHERE pp.is_active = 1
                      ORDER BY cat, p.name LIMIT 300");
         // Prix EXPLICITES par portion (shop_product_portion_price, boutique en
@@ -10989,14 +10990,9 @@ function dispatch($m, $p) {
         [$b['cat_id'] ?? null, $b['name'], (float) ($b['price'] ?? 0)]);
       json_out(['ok' => true, 'id' => (int) db()->lastInsertId()], 201);
     }
-    // Prix par boutique
-    if ($m === 'POST' && $p === '/admin/price') {
-      $b = body();
-      q("INSERT INTO ws_product_prices (product_id, shop_id, price, active) VALUES (?,?,?,1)
-         ON DUPLICATE KEY UPDATE price=VALUES(price), active=1",
-        [$b['productId'], $b['shopId'], (float) $b['price']]);
-      json_out(['ok' => true]);
-    }
+    // /admin/price (écriture ws_product_prices) : SUPPRIMÉ avec la table
+    // (0105). Le prix de vente vient de l'ERP (prix_produits) ; aucun
+    // appelant front ne visait cette route (vérifié).
     // Stock du jour (ou date donnée)
     if ($m === 'POST' && $p === '/admin/stock') {
       $b = body();
@@ -11260,12 +11256,9 @@ function dispatch($m, $p) {
   }
 }
 
-/* Contrainte de date d'un panier, PAR MODE (collect/delivery).
-   Hiérarchie par produit : ws_product_availability → ws_category_availability.
-   Retourne [leadMax (jours), cutoffMin ('HH:MM:SS' ou null), tousDispo(bool)].
-   - lead : le produit le plus long impose son délai (max).
-   - cutoff : la limite la plus tôt s'impose (min).
-   - dispo : faux si un produit n'est pas activé dans ce mode. */
+/* Contrainte de date d'un panier, PAR MODE (collect/delivery) — voir
+   basket_pa() : réduit à ws_products.no_delivery depuis la suppression des
+   overlays jamais écrits (migration 0105). */
 /* Fenêtres de livraison (créneaux) d'un bureau pour une date, via SA tournée.
    Lit ws_tour_availability (une ligne par fenêtre : window_label morning/afternoon)
    pour le jour ISO de la date. Calcule `orderable` côté serveur d'après cutoff_time. */
@@ -11428,36 +11421,24 @@ function slots_for_office($officeId, $date) {
   return $out;
 }
 
+/* Contrainte de date d'un panier, PAR MODE (collect/delivery).
+   Contrat conservé : [leadMax (jours), cutoffMin ('HH:MM:SS' ou null),
+   tousDispo(bool)] — mais réduit à ws_products.no_delivery. Les overlays
+   ws_product_availability / ws_category_availability (délais et cut-off par
+   produit) n'ont JAMAIS eu d'écrivain : la route franchisée qui devait les
+   remplir est FERMÉE (« QUI DÉCIDE », /franchisee/product-availability) et
+   aucun autre code n'y insérait. Des LEFT JOIN sur des tables vides rendaient
+   déjà exactement ceci ; les tables sont supprimées (migration 0105). Le
+   paramètre $shop reste pour la stabilité de l'appelant. */
 function basket_pa($shop, $mode, $productIds) {
   if (!$productIds) return [0, null, true];
   $in = implode(',', array_fill(0, count($productIds), '?'));
-  $rs = rows("SELECT p.id, p.no_delivery,
-                     pa.collect_enabled p_ce, pa.delivery_enabled p_de,
-                     pa.collect_lead_time p_cl, pa.delivery_lead_time p_dl,
-                     pa.collect_cutoff_override p_cc, pa.delivery_cutoff_override p_dc,
-                     ca.collect_enabled c_ce, ca.delivery_enabled c_de,
-                     ca.collect_lead_time c_cl, ca.delivery_lead_time c_dl,
-                     ca.collect_cutoff_override c_cc, ca.delivery_cutoff_override c_dc
-                FROM ws_products p
-                LEFT JOIN ws_product_availability pa ON pa.product_id=p.id AND pa.shop_id=? AND pa.active=1
-                LEFT JOIN ws_category_availability ca ON ca.category_id=p.cat_id AND ca.shop_id=? AND ca.active=1
-               WHERE p.id IN ($in)", array_merge([$shop, $shop], $productIds));
-  $lead = 0; $cutoff = null; $enabled = true;
-  foreach ($rs as $r) {
-    if ($mode === 'delivery') {
-      $en = $r['p_de'] ?? $r['c_de'] ?? (int) !$r['no_delivery'];
-      $l  = $r['p_dl'] ?? $r['c_dl'] ?? null;
-      $c  = $r['p_dc'] ?? $r['c_dc'] ?? null;
-    } else {
-      $en = $r['p_ce'] ?? $r['c_ce'] ?? 1;
-      $l  = $r['p_cl'] ?? $r['c_cl'] ?? null;
-      $c  = $r['p_cc'] ?? $r['c_cc'] ?? null;
-    }
-    if (!$en) $enabled = false;
-    if ($l !== null) $lead = max($lead, (int) $l);
-    if ($c !== null) $cutoff = ($cutoff === null) ? $c : min($cutoff, $c);
+  $rs = rows("SELECT p.no_delivery FROM ws_products p WHERE p.id IN ($in)", $productIds);
+  $enabled = true;
+  if ($mode === 'delivery') {
+    foreach ($rs as $r) if ((int) $r['no_delivery']) $enabled = false;
   }
-  return [$lead, $cutoff, $enabled];
+  return [0, null, $enabled];
 }
 
 /* Normalise un moyen de paiement vers sa famille canonique. */
@@ -12428,8 +12409,8 @@ function col_exists($table, $col) {
 
 /* Particuliers de l'analyse géographique (franchisor + franchisee) — source :
  * l'identité unifiée `client` (zip + localité collectés partout : webshop, PWA,
- * modal de rattrapage), repli sur le CP de facturation quand zip est vide, et
- * repli complet sur la table legacy ws_customers si `client` n'existe pas.
+ * modal de rattrapage), repli sur le CP de facturation quand zip est vide.
+ * (Le repli legacy ws_customers est parti avec la table — migration 0105.)
  * Rattachement boutique : preferred_shop_id si défini, sinon id_main_shop —
  * c'est ce COALESCE qui sert aussi de filtre pour la vue cloisonnée franchisé. */
 function geo_private_clients($shopId = null) {
@@ -12451,11 +12432,6 @@ function geo_private_clients($shopId = null) {
                     FROM client c
                    WHERE COALESCE(c.active,1)=1 AND $notB2b" .
                  ($shopId ? " AND $shopExpr = " . (int) $shopId : "") . " LIMIT 3000");
-  } elseif ($tbl('ws_customers')) {
-    $priv = rows("SELECT c.id, c.first_name, c.last_name, c.invoice_postal_code AS cp, c.invoice_city AS city,
-                         c.preferred_shop_id AS shop_id,
-                         (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o WHERE o.customer_id = COALESCE(c.client_id, c.id)) AS ca
-                    FROM ws_customers c" . ($shopId ? " WHERE c.preferred_shop_id = " . (int) $shopId : "") . " LIMIT 3000");
   } else {
     return [];
   }

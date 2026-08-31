@@ -2,7 +2,7 @@
    WSCatalog — catalogue / assortiments / stock
    ---------------------------------------------------------------------
    GO-LIVE — SOURCE UNIQUE : l'API (tables ws_products, ws_categories,
-   ws_product_shops, ws_product_prices, prix magasin ERP…). Toute la
+   ws_product_shops, prix magasin ERP…). Toute la
    machinerie de seeds mémoire (window._CATALOG_SEED : produits, prix par
    boutique, assortiments, delivery_stock) a été SUPPRIMÉE, ainsi que les
    `catch` qui avalaient une panne serveur pour retomber dessus.

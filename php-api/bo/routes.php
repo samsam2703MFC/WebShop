@@ -60,10 +60,10 @@ function bo_resource_route($m, $bo, $rest) {
       json_out(rows(
         "SELECT o.id, o.order_ref, o.shop_id, o.mode, o.status, o.slot_label,
                 o.delivery_date, o.total, o.delivery_mode, o.created_at,
-                COALESCE(NULLIF(TRIM(CONCAT_WS(' ', c.first_name, c.last_name)),''), o.guest_name, o.guest_email, '—') AS client,
+                COALESCE(NULLIF(TRIM(CONCAT_WS(' ', c.name, c.surname)),''), o.guest_name, o.guest_email, '—') AS client,
                 (SELECT COUNT(*) FROM ws_order_lines l WHERE l.order_id = o.id) AS lines_count
            FROM ws_orders o
-           LEFT JOIN ws_customers c ON c.id = o.customer_id
+           LEFT JOIN client c ON c.id = o.customer_id
           WHERE $where ORDER BY o.created_at DESC LIMIT 300", $params));
     }
 
@@ -139,11 +139,11 @@ function bo_resource_route($m, $bo, $rest) {
         $zone = $t['zone_id'] ? row("SELECT name FROM ws_delivery_zones WHERE id = ?", [$t['zone_id']]) : null;
         $rws = rows(
           "SELECT o.office_client_id AS oid, f.name AS office_name, f.city AS ville,
-                  COALESCE(NULLIF(TRIM(CONCAT_WS(' ', c.first_name, c.last_name)),''), o.guest_name, 'Client') AS cust,
+                  COALESCE(NULLIF(TRIM(CONCAT_WS(' ', c.name, c.surname)),''), o.guest_name, 'Client') AS cust,
                   COUNT(*) AS cmd
              FROM ws_orders o
              LEFT JOIN ws_offices    f ON f.id = o.office_client_id
-             LEFT JOIN ws_customers  c ON c.id = o.customer_id
+             LEFT JOIN client        c ON c.id = o.customer_id
             WHERE o.tour_id = ? AND o.delivery_date = ?
             GROUP BY o.office_client_id, o.customer_id, cust, office_name, ville
             ORDER BY office_name", [(int) $t['id'], $date]);

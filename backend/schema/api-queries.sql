@@ -30,24 +30,22 @@ ORDER BY s.sort_order;
 SELECT p.id, p.cat_id, p.sub_cat_id, c.label AS categorie,
        p.name, p.description, p.badge,
        p.portions, p.cross_portion, p.has_menu_options,
-       COALESCE(pp.price, p.price) AS price,
+       p.price,                     -- repli local ; le prix servi vient de l'ERP
+                                    -- (prix_produits, portion_price_gross) quand
+                                    -- catalog_source='erp'. ws_product_prices : morte (0105).
        ps.no_delivery,
        (SELECT JSON_ARRAYAGG(allergen)
           FROM ws_product_allergens a WHERE a.product_id = p.id) AS allergens
 FROM ws_products p
 JOIN ws_product_shops ps
   ON ps.product_id = p.id AND ps.shop_id = 2 AND ps.active = 1
-LEFT JOIN ws_product_prices pp
-  ON pp.product_id = p.id AND pp.shop_id = 2 AND pp.active = 1
 LEFT JOIN ws_categories c ON c.id = p.cat_id
 WHERE p.active = 1
 ORDER BY c.sort_order, p.name;
 
 -- Un produit  →  GET /catalog/products/:id (?shopId=2)
-SELECT p.*, COALESCE(pp.price, p.price) AS shop_price
-FROM ws_products p
-LEFT JOIN ws_product_prices pp ON pp.product_id = p.id AND pp.shop_id = 2
-WHERE p.id = 14;
+-- (prix : repli local — le prix servi vient de l'ERP quand catalog_source='erp')
+SELECT p.* FROM ws_products p WHERE p.id = 14;
 
 -- Options d'un produit (+ choix)
 SELECT o.id AS option_id, o.label, o.required, o.sort_order,
@@ -125,9 +123,10 @@ ORDER BY FIELD(level, 'site', 'office', 'tour', 'shop', 'global')
 LIMIT 1;
 
 -- 11. AUTH / CUSTOMERS  →  POST /auth/login
-SELECT id, email, password_hash, first_name, last_name, phone,
-       office_id, preferred_shop_id, preferred_lang, is_business
-FROM ws_customers WHERE email = 'marie.dupont@example.be' AND active = 1;
+-- (identité unifiée : table ERP `client` — ws_customers est morte, 0105)
+SELECT id, email, password_hash, name, surname, phone,
+       office_id, preferred_shop_id
+FROM client WHERE email = 'marie.dupont@example.be' AND COALESCE(active,1) = 1;
 
 -- 12. ORDERS  →  POST /orders + GET /orders/:id
 INSERT INTO ws_orders

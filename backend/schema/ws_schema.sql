@@ -12,8 +12,6 @@ DROP TABLE IF EXISTS ws_delivery_fee_rules;
 DROP TABLE IF EXISTS ws_office_delivery_settings;
 DROP TABLE IF EXISTS ws_tour_availability;
 DROP TABLE IF EXISTS ws_slot_capacity;
-DROP TABLE IF EXISTS ws_category_availability;
-DROP TABLE IF EXISTS ws_product_availability;
 DROP TABLE IF EXISTS ws_shop_exceptions;
 DROP TABLE IF EXISTS ws_shop_availability;
 DROP TABLE IF EXISTS ws_stock_reservations;
@@ -25,7 +23,6 @@ DROP TABLE IF EXISTS ws_vouchers;
 DROP TABLE IF EXISTS ws_order_lines;
 DROP TABLE IF EXISTS ws_orders;
 DROP TABLE IF EXISTS ws_office_delivery_sites;
-DROP TABLE IF EXISTS ws_customers;
 DROP TABLE IF EXISTS ws_offices;
 DROP TABLE IF EXISTS ws_tours;
 DROP TABLE IF EXISTS ws_assortments;
@@ -34,7 +31,6 @@ DROP TABLE IF EXISTS ws_bundle_slots;
 DROP TABLE IF EXISTS ws_bundles;
 DROP TABLE IF EXISTS ws_product_option_choices;
 DROP TABLE IF EXISTS ws_product_options;
-DROP TABLE IF EXISTS ws_product_prices;
 DROP TABLE IF EXISTS ws_product_shops;
 DROP TABLE IF EXISTS ws_product_allergens;
 DROP TABLE IF EXISTS ws_products;
@@ -139,15 +135,9 @@ CREATE TABLE ws_product_shops (
   FOREIGN KEY (shop_id)    REFERENCES ws_shops(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE ws_product_prices (
-  product_id  INT,
-  shop_id     INT,
-  price       DECIMAL(10,2) NOT NULL,
-  active      BOOLEAN DEFAULT TRUE,
-  PRIMARY KEY (product_id, shop_id),
-  FOREIGN KEY (product_id) REFERENCES ws_products(id),
-  FOREIGN KEY (shop_id)    REFERENCES ws_shops(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- ws_product_prices : SUPPRIMÉE (migration 0105) — le prix de vente vient de
+-- l'ERP (portion_price_gross via prix_produits) ; le prix local par boutique
+-- n'a plus de lecteur.
 
 CREATE TABLE ws_product_options (
   id          INT AUTO_INCREMENT PRIMARY KEY,
@@ -280,33 +270,9 @@ CREATE TABLE ws_office_emails (
   FOREIGN KEY (office_id) REFERENCES ws_offices(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE ws_customers (
-  id                  INT AUTO_INCREMENT PRIMARY KEY,
-  email               VARCHAR(200) UNIQUE NOT NULL,
-  password_hash       VARCHAR(255) NOT NULL,
-  first_name          VARCHAR(100),
-  last_name           VARCHAR(100),
-  phone               VARCHAR(30),
-  client_id           INT,                        -- lien vers le client ERP (réf logique) — auth commune
-  office_id           INT,
-  preferred_shop_id   INT,
-  preferred_lang      VARCHAR(5)   DEFAULT 'fr',
-  is_business         BOOLEAN DEFAULT FALSE,
-  fidelity_active     BOOLEAN DEFAULT FALSE,
-  fidelity_linked_at  TIMESTAMP NULL DEFAULT NULL,
-  invoice_country     VARCHAR(5)   DEFAULT 'BE',
-  invoice_vat         VARCHAR(30),
-  invoice_name        VARCHAR(200),
-  invoice_address     VARCHAR(200),
-  invoice_postal_code VARCHAR(20),
-  invoice_city        VARCHAR(100),
-  active              BOOLEAN DEFAULT TRUE,
-  created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  KEY idx_customers_phone (phone),               -- login par téléphone
-  KEY idx_customers_client (client_id),
-  FOREIGN KEY (office_id)         REFERENCES ws_offices(id),
-  FOREIGN KEY (preferred_shop_id) REFERENCES ws_shops(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- ws_customers : SUPPRIMÉE (migration 0105) — l'identité client vit dans la
+-- table ERP `client` (fusion faite de longue date ; le dernier repli de code
+-- est parti avec la table).
 
 CREATE TABLE ws_office_delivery_sites (
   id               INT AUTO_INCREMENT PRIMARY KEY,
@@ -471,8 +437,8 @@ CREATE TABLE ws_stock_reservations (
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   KEY idx_stock_res_expiry (released, expires_at),
   FOREIGN KEY (product_id)  REFERENCES ws_products(id),
-  FOREIGN KEY (shop_id)     REFERENCES ws_shops(id),
-  FOREIGN KEY (customer_id) REFERENCES ws_customers(id)
+  FOREIGN KEY (shop_id)     REFERENCES ws_shops(id)
+  -- customer_id -> client(id) : réf logique, pas de FK (table ERP)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE ws_shop_availability (
@@ -515,44 +481,15 @@ CREATE TABLE ws_shop_exceptions (
   created_by           INT,
   created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_shop_exception (shop_id, exception_date),
-  FOREIGN KEY (shop_id)    REFERENCES ws_shops(id),
-  FOREIGN KEY (created_by) REFERENCES ws_customers(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE ws_product_availability (
-  id                       INT AUTO_INCREMENT PRIMARY KEY,
-  product_id               INT NOT NULL,
-  shop_id                  INT NOT NULL,
-  collect_enabled          BOOLEAN DEFAULT TRUE,
-  delivery_enabled         BOOLEAN DEFAULT TRUE,
-  collect_lead_time        SMALLINT DEFAULT 0,
-  delivery_lead_time       SMALLINT DEFAULT 0,
-  collect_cutoff_override  TIME,
-  delivery_cutoff_override TIME,
-  max_qty_per_day          INT,
-  max_qty_per_slot         INT,
-  active                   BOOLEAN DEFAULT TRUE,
-  UNIQUE KEY uq_prod_avail (product_id, shop_id),
-  KEY idx_prod_avail_shop (shop_id),
-  FOREIGN KEY (product_id) REFERENCES ws_products(id),
   FOREIGN KEY (shop_id)    REFERENCES ws_shops(id)
+  -- created_by : réf logique vers client(id) (table ERP), pas de FK
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE ws_category_availability (
-  id                       INT AUTO_INCREMENT PRIMARY KEY,
-  category_id              INT NOT NULL,
-  shop_id                  INT NOT NULL,
-  collect_enabled          BOOLEAN DEFAULT TRUE,
-  delivery_enabled         BOOLEAN DEFAULT TRUE,
-  collect_lead_time        SMALLINT DEFAULT 0,
-  delivery_lead_time       SMALLINT DEFAULT 0,
-  collect_cutoff_override  TIME,
-  delivery_cutoff_override TIME,
-  active                   BOOLEAN DEFAULT TRUE,
-  UNIQUE KEY uq_cat_avail (category_id, shop_id),
-  FOREIGN KEY (category_id) REFERENCES ws_categories(id),
-  FOREIGN KEY (shop_id)     REFERENCES ws_shops(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- ws_product_availability / ws_category_availability : SUPPRIMÉES (migration
+-- 0105) — overlays de disponibilité par produit/catégorie jamais écrits (la
+-- route franchisée qui devait les remplir est fermée : la MARQUE décide de
+-- l'assortiment). La dispo par mode se réduit à ws_products.no_delivery ; la
+-- dispo saisonnière vient de l'ERP (product_availability_period).
 
 CREATE TABLE ws_slot_capacity (
   id               INT AUTO_INCREMENT PRIMARY KEY,
