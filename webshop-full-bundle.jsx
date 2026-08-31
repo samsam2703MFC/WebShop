@@ -3817,12 +3817,14 @@ function FidelityLinkPanel({ open, user, onClose }) {
 // =========================================================================
 // CHECKOUT — slide-over 3-step wizard (Coordonnées · Créneau · Paiement)
 // Two flows: Click & Collect (logged-in) / Office Shop (delivery, logged-in).
-// Guest collect → forced login/register before continuing.
+// PAS de parcours invité : sans compte, l'étape 1 est un mur de connexion et
+// « Continuer » reste inactif — même règle que le serveur (POST /orders
+// répond 401 sans jeton). La remontée ERP exige un id_client par commande.
 // =========================================================================
 // Slots now come from WSCalendar.listSlots(). The deprecated stub was removed.
 //
 // Moyens de paiement : SOURCE UNIQUE = le serveur (/payment-methods), qui
-// applique les règles réelles (boutique × profil guest/registered/company, et
+// applique les règles réelles (boutique × profil registered/company, et
 // paiement différé selon ws_offices.deferred_billing_enabled). Les listes
 // codées en dur (bancontact/visa/apple, « paiement différé ») ont été
 // SUPPRIMÉES : elles proposaient au client des moyens de paiement qui ne sont
@@ -3836,7 +3838,7 @@ function usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId) 
     // `mode` était reçu par le hook et listé dans ses dépendances, mais jamais
     // transmis : la liste ne dépendait donc pas du mode, et « paiement en
     // boutique » apparaissait sur une livraison.
-    window.WSPayments.list({ shopId, profile: profile || 'guest', companyId, mode })
+    window.WSPayments.list({ shopId, profile: profile || 'registered', companyId, mode })
       .then((m) => {
         if (!alive) return;
         setMethods(Array.isArray(m) ? m.map((x) => ({ id: x.method, label: x.label || x.method, family: x.family || x.method, sub: '' })) : []);
@@ -3853,7 +3855,6 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
                           deliveryFeeResult, deliveryFeeErr, officeSites, selectedSiteId, setSelectedSiteId }) {
   const { t } = wsUseT();
   const [step, setStep] = useState(1);
-  const [forceAuth, setForceAuth] = useState(false);
   const [paying, setPaying] = useState(false);
   const [payErr, setPayErr] = useState(null);
   // Clé d'idempotence : STABLE tant que le tunnel reste ouvert, renouvelée à
@@ -3863,9 +3864,6 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const newPayKey = () => 'ws-' + Date.now().toString(36) + '-' +
     Math.random().toString(36).slice(2, 10);
   const [payKey, setPayKey] = useState(newPayKey);
-
-  // Guest contact (collect only)
-  const [contact, setContact] = useState({ firstName: '', lastName: '', email: '', phone: '' });
 
   // Slot
   const [slot, setSlot] = useState(null);
@@ -3917,7 +3915,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   // Reset when reopened
   useEffect(() => {
     if (open) {
-      setStep(1); setSlot(null); setInvoice(false); setVat(''); setForceAuth(false); setPaying(false); setPayErr(null);
+      setStep(1); setSlot(null); setInvoice(false); setVat(''); setPaying(false); setPayErr(null);
       setPayKey(newPayKey());
       setOrderNote(''); setPoNumber(''); setCompanyId(''); setOnAccount(false);
       setPayment((deliveryFeeResult && deliveryFeeResult.payment_type === 'deferred') ? 'deferred' : '');
@@ -3931,7 +3929,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   // dérivées plus bas ne sont pas encore disponibles à ce point du composant.
   const paymentMethods = usePaymentMethods(
     shop && shop.id, mode, deliveryFeeResult,
-    companyId ? 'company' : (user ? 'registered' : 'guest'),
+    companyId ? 'company' : 'registered',
     companyId || null);
 
   // Code cadeau « achat cumulé » appliqué (ajoute une ligne 0 € côté serveur).
@@ -3962,23 +3960,15 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const total = T.total;
 
   const isOffice = mode === 'delivery' && user && office;
-  const isGuest = !user;
   // Client relié à un B2B ? (a au moins une société liée, ou un id société ERP).
   const isB2B = companies.length > 0 || !!(user && user.companyClientId);
-  // Profil de paiement : société (companyId) > enregistré (user) > visiteur (guest).
-  const checkoutProfile = companyId ? 'company' : (user ? 'registered' : 'guest');
-  // Step 1 validity
-  function step1Valid() {
-    if (isOffice) return true;             // all read-only, valid
-    if (user)    return true;              // collect logged-in: prefilled
-    // E-mail FORMELLEMENT valide (il sert à la confirmation de commande) et
-    // téléphone contenant au moins des chiffres : l'ancien test «vérité»
-    // laissait passer une adresse malformée ou un téléphone sans chiffre,
-    // refusés ou inexploitables ensuite.
-    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(contact.email || '').trim());
-    const phoneOk = /\d{5,}/.test(String(contact.phone || '').replace(/\D/g, ''));
-    return Boolean(contact.firstName && contact.lastName && emailOk && phoneOk);
-  }
+  // Profil de paiement : société (companyId) > enregistré. Le profil guest a
+  // disparu avec le parcours invité (mur de connexion à l'étape 1).
+  const checkoutProfile = companyId ? 'company' : 'registered';
+  // Étape 1 : un COMPTE, rien d'autre — le formulaire de contact invité est
+  // supprimé. Sans connexion, CheckoutStep1 affiche le mur de connexion et ce
+  // test laisse « Continuer » inactif.
+  function step1Valid() { return Boolean(user); }
   function step2Valid() { return Boolean(slot); }
   // Étape 3 : un moyen de paiement doit être proposé ET choisi. Sans ce test, le
   // bouton « Payer » restait actif alors que l'écran affichait « moyens
@@ -4012,7 +4002,9 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         note: orderNote || null,
         companyId: companyId || null,
         onAccount: !!onAccount,
-        customer: user ? { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, phone: user.phone || null, officeId: user.officeId || null } : { ...contact },
+        // Toujours le COMPTE CONNECTÉ (l'étape 1 l'exige) ; le serveur relit de
+        // toute façon l'identité dans le jeton, jamais dans ce corps.
+        customer: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, phone: user.phone || null, officeId: user.officeId || null },
         payment: { method: payment },
         delivery: mode === 'delivery' && office ? {
           office_client_id:            office.id,
@@ -4133,8 +4125,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         {step === 1 && (
           <CheckoutStep1
             mode={mode} shop={shop} user={user} office={office} tour={tour}
-            contact={contact} setContact={setContact}
-            forceAuth={forceAuth} onLoginNow={() => onLogin()}
+            onLoginNow={() => onLogin()}
             officeSites={officeSites} selectedSiteId={selectedSiteId} setSelectedSiteId={setSelectedSiteId}
             deliveryFeeResult={deliveryFeeResult}
           />
@@ -4155,7 +4146,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
             voucherApplied={voucherApplied} setVoucherApplied={setVoucherApplied}
             voucherDiscount={voucherDiscount}
             giftCode={giftCode} onGift={setGiftCode}
-            giftEmail={user ? (user.email || null) : ((contact && contact.email) || null)}
+            giftEmail={(user && user.email) || null}
             customerId={user ? user.id : null}
           />
           {invoice && (
@@ -4272,7 +4263,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   );
 }
 
-function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, forceAuth, onLoginNow,
+function CheckoutStep1({ mode, shop, user, office, tour, onLoginNow,
                          officeSites, selectedSiteId, setSelectedSiteId, deliveryFeeResult }) {
   const { t } = wsUseT();
   // Office Shop: site selector + read-only delivery info
@@ -4352,41 +4343,18 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
     );
   }
 
-  // Guest collect — fields, then forced login at the gate
-  if (forceAuth) {
-    return (
-      <div className="ws-co-step">
-        <h3 className="ws-co-step__title">{t('co.auth.title')}</h3>
-        <p className="ws-co-step__lede">{t('co.auth.lede')}</p>
-        <div className="ws-co-authwall">
-          <button className="ws-cta ws-cta--block" onClick={onLoginNow}>{t('co.auth.signin')}</button>
-          <button className="ws-btn-ghost" onClick={onLoginNow}>{t('auth.createAccount')}</button>
-        </div>
-      </div>
-    );
-  }
-  // Guest collect — contact fields, optional login
+  // Sans compte : MUR DE CONNEXION. Le formulaire de contact invité est
+  // supprimé — plus de commande sans client identifié (le serveur répond 401,
+  // et la remontée ERP exige un id_client). Se connecter ou créer un compte
+  // recharge `user`, et cette étape se pré-remplit.
   return (
     <div className="ws-co-step">
-      <div className="ws-co-guest__banner">
-        <span className="ws-co-guest__check" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-        </span>
-        <div className="ws-co-guest__banner-copy">
-          <strong>{t('co.guest.title')}</strong>
-          <span>{t('co.guest.hint')}</span>
-        </div>
+      <h3 className="ws-co-step__title">{t('co.auth.title')}</h3>
+      <p className="ws-co-step__lede">{t('co.auth.lede')}</p>
+      <div className="ws-co-authwall">
+        <button className="ws-cta ws-cta--block" onClick={onLoginNow}>{t('co.auth.signin')}</button>
+        <button className="ws-btn-ghost" onClick={onLoginNow}>{t('auth.createAccount')}</button>
       </div>
-      <h3 className="ws-co-step__title">{t('co.contact.title')}</h3>
-      <div className="ws-form">
-        <div className="ws-form__row2">
-          <label className="ws-field"><span>{t('form.firstName')}</span><input value={contact.firstName} onChange={(e) => setContact((c) => ({ ...c, firstName: e.target.value }))} autoComplete="given-name"/></label>
-          <label className="ws-field"><span>{t('form.lastName')}</span><input value={contact.lastName} onChange={(e) => setContact((c) => ({ ...c, lastName: e.target.value }))} autoComplete="family-name"/></label>
-        </div>
-        <label className="ws-field"><span>{t('form.email')}</span><input type="email" value={contact.email} onChange={(e) => setContact((c) => ({ ...c, email: e.target.value }))} autoComplete="email"/></label>
-        <label className="ws-field"><span>{t('form.phone')}</span><input value={contact.phone} onChange={(e) => setContact((c) => ({ ...c, phone: e.target.value }))} autoComplete="tel"/></label>
-      </div>
-      <p className="ws-co-guest__login">{t('co.guest.already')} <button type="button" className="ws-linkbtn" onClick={onLoginNow}>{t('co.auth.signin')}</button> pour pré-remplir vos infos.</p>
     </div>
   );
 }

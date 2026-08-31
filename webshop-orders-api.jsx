@@ -2,6 +2,9 @@
    WSOrders — order placement API stub
    ---------------------------------------------------------------------
    The checkout wizard calls WSOrders.place(payload) to confirm an order.
+   Commander exige un COMPTE : place() part avec le jeton (Authorization) et
+   le serveur répond 401 sans lui — le parcours invité est supprimé, chaque
+   commande porte un client (l'id_client de la remontée ERP).
    To wire a real backend, set:
      window.WSOrders.endpoint = 'https://your-host/orders';
    Endpoints expected:

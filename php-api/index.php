@@ -2706,8 +2706,12 @@ function dispatch($m, $p) {
     /* L'identité vient de la SESSION (Authorization), JAMAIS du corps — même
        verrou que les réservations de stock : un customerId déclaré permettait
        de commander AU NOM d'un autre client (commande dans ses achats, ses
-       bons nominatifs consommés). Sans jeton valide : commande INVITÉ. */
+       bons nominatifs consommés). Le parcours INVITÉ est SUPPRIMÉ (front et
+       API) : chaque commande doit porter un client — c'est l'id_client
+       qu'exige la remontée ERP (client_order) — donc sans jeton valide : 401,
+       et le front affiche le mur de connexion. */
     $b['customerId']   = auth_uid() ?: null;
+    if (!$b['customerId']) json_out(['error' => 'Connexion requise pour commander', 'code' => 'auth_required'], 401);
     $b['email']        = $b['email']        ?? ($b['customer']['email'] ?? null);
     $b['paymentMethod']= $b['paymentMethod']?? ($b['payment']['method'] ?? null);
     $b['slotId']       = $b['slotId']       ?? ($b['slot']['slotId']    ?? null);
@@ -2965,8 +2969,9 @@ function dispatch($m, $p) {
     $officeClientId = $companyId ?? ($dl['officeClientId'] ?? null);
 
     // 4-ter. Profil de paiement + validation du moyen selon la config boutique.
-    //   profil : company (société) > registered (compte) > guest (visiteur).
-    $profile = $companyId ? 'company' : (!empty($b['customerId']) ? 'registered' : 'guest');
+    //   profil : company (société) > registered (compte). Le profil guest a
+    //   disparu avec le parcours invité (garde 401 en tête du handler).
+    $profile = $companyId ? 'company' : 'registered';
     $family  = payment_family($paymentMethod);
     $allowed = allowed_methods($shop, $profile);
     // Boutique qui n'offre RIEN à ce profil : la commande est refusée. Sans ce
@@ -2996,14 +3001,9 @@ function dispatch($m, $p) {
       json_out(['error' => 'Moyen de paiement non autorisé pour ce profil',
                 'profile' => $profile, 'allowed' => $allowed], 400);
     }
-    // Contact visiteur (guest) — enregistré seulement si pas de compte.
-    $guestEmail = empty($b['customerId']) ? (isset($b['email']) ? mb_substr((string) $b['email'], 0, 190) : null) : null;
-    $guestName  = empty($b['customerId']) ? (mb_substr(trim(($b['customer']['firstName'] ?? '') . ' ' . ($b['customer']['lastName'] ?? '')), 0, 190) ?: null) : null;
-    $guestPfx = '+32'; $guestPhone = null;
-    if (empty($b['customerId'])) {
-      [$guestPfx, $guestPhone] = norm_phone($b['customer']['phonePrefix'] ?? ($b['phonePrefix'] ?? '+32'), $b['customer']['phone'] ?? ($b['phone'] ?? ''));
-      if ($guestPhone === '') { $guestPhone = null; $guestPfx = null; }
-    }
+    // Le contact visiteur (guest_*) n'est PLUS écrit : le parcours invité est
+    // supprimé (garde 401 en tête du handler). Les colonnes restent en base
+    // pour l'historique des commandes déjà passées.
 
     // 4-quater-avant. Site absent du payload mais BUREAU connu : le front peut
     //   avoir une liste de sites vide au moment du checkout (cache, liaison
@@ -3160,8 +3160,7 @@ function dispatch($m, $p) {
       // l'INSERT (« Incorrect integer value 's-09' for column slot_id »).
       $intOrNull = fn ($v) => (isset($v) && is_numeric($v)) ? (int) $v : null;
       $ordVals = [
-        'order_ref' => $ref, 'shop_id' => $shop, 'customer_id' => $intOrNull($b['customerId'] ?? null),
-        'guest_email' => $guestEmail, 'guest_name' => $guestName, 'guest_phone' => $guestPhone, 'guest_phone_prefix' => $guestPfx,
+        'order_ref' => $ref, 'shop_id' => $shop, 'customer_id' => (int) $b['customerId'],
         'mode' => $mode, 'status' => $orderStatus,
         // delivery_date : jour envoyé par le front, sinon JOUR MÊME — plus
         // jamais de NULL (les filtres par jour du BO reposent dessus).
@@ -3275,8 +3274,7 @@ function dispatch($m, $p) {
       // la commande — le front pré-valide via POST /promo/redeem). Pas de décrément
       // de stock pour le cadeau (freebie promotionnel).
       if (!empty($b['giftCode'])) {
-        $giftRef = promo_customer_ref(!empty($b['customerId']) ? (int) $b['customerId'] : null,
-                                      empty($b['customerId']) ? $guestEmail : null);
+        $giftRef = promo_customer_ref((int) $b['customerId'], null);
         $g = $giftRef ? promo_gift_row((string) $b['giftCode']) : null;
         if ($g && promo_gift_redeemable($g, $giftRef, (int) $shop, promo_now())['ok']) {
           $rp = row("SELECT id, name FROM ws_products WHERE id = ?", [$g['reward_product_id']]);
