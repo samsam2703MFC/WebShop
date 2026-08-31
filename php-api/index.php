@@ -8,6 +8,7 @@ require __DIR__ . '/erp_promos.php';
 require __DIR__ . '/erp_seasons.php';
 require __DIR__ . '/erp_clients.php';
 require __DIR__ . '/erp_link.php';
+require __DIR__ . '/erp_orders.php';
 
 /* CORS */
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -3328,6 +3329,14 @@ function dispatch($m, $p) {
                 'detail' => mb_substr($e->getMessage(), 0, 300)], 500);
     }
 
+    /* Remontée ERP (client_order) — la commande NAÎT côté ERP dès qu'elle est
+       DÉFINITIVE : comptoir et sur-compte le sont dès l'enregistrement ; une
+       commande Stripe ne l'est qu'à l'ENCAISSEMENT (webhook → erp_order_push).
+       Meilleur effort : erp_order_push ne jette jamais — un ERP en panne
+       n'annule pas une commande enregistrée, l'échec part sur erp_push_error
+       et le cron erp-orders-push.php reprend. */
+    if ($family !== 'stripe') erp_order_push((int) $oid);
+
     // E-mail de confirmation (email fourni, ou celui du client connecté).
     $to = $b['email'] ?? null;
     if (!$to && !empty($b['customerId'])) {
@@ -4219,6 +4228,11 @@ function dispatch($m, $p) {
               . (col_exists('ws_orders', 'status') ? ", status = CASE WHEN status='pending' THEN 'confirmed' ELSE status END" : "")
               . " WHERE id=?", [(int) $ord['id']]);
             $applied = 'paid';
+            /* L'encaissement rend la commande DÉFINITIVE : c'est ICI qu'une
+               commande Stripe naît côté ERP (client_order). Meilleur effort —
+               erp_order_push ne jette jamais, un ERP en panne ne compromet
+               pas l'accusé au webhook (échec → erp_push_error + reprise cron). */
+            erp_order_push((int) $ord['id']);
           }
         }
       } elseif ($type === 'checkout.session.expired' || $type === 'checkout.session.async_payment_failed') {

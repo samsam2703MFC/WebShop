@@ -55,8 +55,14 @@ Comme tout est dans **une base**, deux mécanismes possibles — je recommande *
   insèrent 1 ligne dans **`fb_outbox`** (`entity`, `ref_id`, `op`, `created_at`, `processed_at`).
   Un **cron PHP** (`php-api/cron/sync-pull.php`) lit les lignes non traitées, **upsert** dans `ws_*`
   via le mapping du §1, marque `processed_at`. Idempotent, auditable.
-- **Montant ws→ERP** : à la validation d'une commande, insérer dans **`ws_outbox`** ; un cron
-  pousse vers l'ERP (INSERT dans la table commandes ERP, ou API si l'ERP en expose une).
+- **Montant ws→ERP — FAIT (31/08), sans outbox** : la commande est POSTée sur l'API ERP
+  (`POST /api/v1/client-orders`, tables `client_order`/`client_order_product`) dès qu'elle est
+  **définitive** — comptoir/sur-compte à l'enregistrement, Stripe à l'encaissement (webhook).
+  `inserted_id` est gardé dans `ws_orders.erp_order_id` (migration 0104, garde anti-doublon) ;
+  les échecs partent sur `erp_push_error` et `cron/erp-orders-push.php` reprend.
+  **Activation : `ws_param.orders_push = 'erp'`** (même patron que `catalog_source`).
+  Détails et choix de représentation (remises pro-rata, frais de livraison en commentaire,
+  composants de menu repliés) : `php-api/erp_orders.php`.
 
 ### B. Cron "full upsert" (plus simple, plus lourd)
 - Un cron relit **tout** `fb_*` et réécrit `ws_*` (upsert par `external_id`) toutes les N min.
@@ -66,8 +72,8 @@ Comme tout est dans **une base**, deux mécanismes possibles — je recommande *
 ```cron
 # Descendant ERP → webshop (catalogue, prix, stock, promos)
 */5 * * * *  php /var/www/atelierby/api/cron/sync-pull.php      >> /var/log/ws-sync.log 2>&1
-# Montant webshop → ERP (commandes)
-*/5 * * * *  php /var/www/atelierby/api/cron/sync-push.php      >> /var/log/ws-sync.log 2>&1
+# Montant webshop → ERP (commandes) — reprise des remontées en échec
+*/5 * * * *  php /var/www/atelierby/api/cron/erp-orders-push.php >> /var/log/ws-sync.log 2>&1
 # Nettoyage réservations de stock expirées (si tu utilises ws_stock_reservations)
 * * * * *    php /var/www/atelierby/api/cron/reservations-gc.php >> /var/log/ws-sync.log 2>&1
 ```
