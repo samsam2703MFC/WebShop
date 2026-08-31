@@ -839,6 +839,22 @@ function dispatch($m, $p) {
       'categories_traduites' => count($cat),
       'exemples'   => array_slice($prod, 0, 3, true),
       'clients'    => function_exists('erp_clients_etat') ? erp_clients_etat(qp('shopId') ?: 2) : null,
+      /* PRIX — diagnostic d'exécution. Ajouté le 31/08 : le résolveur ERP était
+         en place, déployé, et les prix servis restaient les prix locaux ; le
+         raisonnement statique ne suffisait plus à dire pourquoi. Ces trois
+         valeurs répondent en une requête : la source est-elle l'ERP, la porte
+         s'ouvre-t-elle, et que rend le résolveur pour un produit connu. */
+      'prix' => (function () {
+        $sp = (int) (qp('shopId') ?: 2);
+        $pid = (int) (qp('prixPid') ?: 6700092);   // Bouteille Coca-Cola 50cl
+        $r = ['shop' => $sp, 'produit' => $pid,
+              'catalog_source' => (string) ws_param('catalog_source', ''),
+              'erp_enabled' => function_exists('erp_enabled') ? (bool) erp_enabled() : null,
+              'catalog_enabled' => function_exists('erp_catalog_enabled') ? (bool) erp_catalog_enabled() : null];
+        try { $r['resolu'] = prix_produits([$pid], $sp); } catch (Throwable $e) { $r['resolu'] = 'exception: ' . $e->getMessage(); }
+        try { $r['sans_boutique'] = prix_produits([$pid], null); } catch (Throwable $e) { $r['sans_boutique'] = 'exception'; }
+        return $r;
+      })(),
       'photos'     => (function () {
         $stamp = __DIR__ . '/../assets/product_pictures/.last_refresh';
         return ['auto' => photos_exec_ok(),
