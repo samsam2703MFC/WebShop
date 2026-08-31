@@ -32,7 +32,7 @@ if ($origin && (in_array($origin, $allowed, true) || in_array('*', $allowed, tru
   // les tests. En production les deux sont sur la même origine, d'où un
   // défaut invisible jusqu'à ce qu'on essaie de tester autrement.
   header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Admin-Token, X-Pin-Token');
-  header('Access-Control-Allow-Methods: GET, POST, PATCH, OPTIONS');
+  header('Access-Control-Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS');
 }
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') { http_response_code(204); exit; }
 
@@ -5612,6 +5612,278 @@ function dispatch($m, $p) {
       // productId TOUJOURS rendu : à la création, c'est lui qui permet à
       // l'écran de remplacer son identifiant local par le vrai.
       json_out(['ok' => true, 'productId' => $pid]);
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       PARCOURS DE PRÉPARATION PRODUIT — configuration RÉSEAU (marque).
+       Défini par le franchiseur, partagé par toutes les boutiques : aucune
+       portée boutique, pas de seed (tables via migration 0104). Photos =
+       objets fichiers indépendants sous assets/preparation/, référencés par
+       clé dans l'étape ; la copie duplique les fichiers. Règles (batch, four)
+       appliquées ici, côté serveur, jamais seulement en base.
+       ══════════════════════════════════════════════════════════════════ */
+    $prepDir = __DIR__ . '/../assets/preparation';
+    // Sérialisation d'une étape (colonnes → forme d'API stable).
+    $prepStepOut = function ($s) {
+      $photos = [];
+      foreach ([1, 2, 3] as $slot) {
+        $k = $s['image_key_' . $slot] ?? null;
+        if ($k) $photos[] = ['slot' => $slot, 'key' => $k, 'url' => 'assets/preparation/' . $k];
+      }
+      return [
+        'id'              => (int) $s['id'],
+        'sortOrder'       => (int) $s['sort_order'],
+        'description'     => (string) ($s['description'] ?? ''),
+        'durationSeconds' => (int) $s['duration_seconds'],
+        'usesOven'        => (int) $s['uses_oven'] === 1,
+        'batchGroupId'    => $s['batch_group_id'] !== null ? (int) $s['batch_group_id'] : null,
+        'batchCapacity'   => $s['batch_capacity'] !== null ? (int) $s['batch_capacity'] : null,
+        'productsPerTray' => $s['products_per_tray'] !== null ? (int) $s['products_per_tray'] : null,
+        'traysPerOven'    => $s['trays_per_oven'] !== null ? (int) $s['trays_per_oven'] : null,
+        'photos'          => $photos,
+      ];
+    };
+    // Validation + normalisation d'un corps d'étape. $existing (row) permet le
+    // PATCH partiel : un champ absent garde sa valeur actuelle. Termine la
+    // requête en 400 si une règle est violée (jamais d'état incohérent en base).
+    $prepStepFields = function ($b, $existing = null) {
+      $get = function ($k, $def = null) use ($b, $existing) {
+        if (array_key_exists($k, $b)) return $b[$k];
+        if ($existing !== null && array_key_exists($k, $existing)) return $existing[$k];
+        return $def;
+      };
+      $nOrNull = function ($v) { return ($v === null || $v === '') ? null : (int) $v; };
+      $dur = (int) $get('duration_seconds', 0);
+      if ($dur < 0) json_out(['error' => 'duration_seconds doit être ≥ 0.'], 400);
+      $usesOven = !empty($get('uses_oven', 0)) ? 1 : 0;
+      $bg  = $nOrNull($get('batch_group_id'));
+      $cap = $nOrNull($get('batch_capacity'));
+      $ppt = $nOrNull($get('products_per_tray'));
+      $tpo = $nOrNull($get('trays_per_oven'));
+      // Règle batchable : batch_group_id ET batch_capacity ensemble, ou aucun.
+      if (($bg === null) !== ($cap === null))
+        json_out(['error' => 'Étape batchable : batch_group_id ET batch_capacity ; non batchable : ni l’un ni l’autre.'], 400);
+      if ($bg !== null && !row("SELECT 1 x FROM product_preparation_batch_group WHERE id=?", [$bg]))
+        json_out(['error' => 'batch_group_id inconnu.'], 400);
+      if ($cap !== null && $cap <= 0) json_out(['error' => 'batch_capacity doit être > 0.'], 400);
+      // Règle four : exige un batch + une capacité, et capacité = plaque × four.
+      if ($usesOven) {
+        if ($bg === null || $cap === null)
+          json_out(['error' => 'Étape four : un batch_group_id et une batch_capacity sont requis.'], 400);
+        if ($ppt === null || $tpo === null || $ppt <= 0 || $tpo <= 0)
+          json_out(['error' => 'Étape four : products_per_tray et trays_per_oven doivent être > 0.'], 400);
+        if ($cap !== $ppt * $tpo)
+          json_out(['error' => 'batch_capacity doit égaler products_per_tray × trays_per_oven.'], 400);
+      }
+      return ['description' => (string) $get('description', ''), 'duration_seconds' => $dur, 'uses_oven' => $usesOven,
+              'batch_group_id' => $bg, 'batch_capacity' => $cap, 'products_per_tray' => $ppt, 'trays_per_oven' => $tpo];
+    };
+    // Écrit une photo (base64 → fichier), renvoie sa clé « <32hex>.<ext> ». Le
+    // type est vérifié sur les OCTETS (getimagesizefromstring), jamais sur
+    // l'extension annoncée par le client. 10 Mo max.
+    $prepSavePhoto = function ($b) use ($prepDir) {
+      $data = (string) ($b['photo_base64'] ?? '');
+      if ($data === '') json_out(['error' => 'photo_base64 requis.'], 400);
+      $data = preg_replace('#^data:[^;]+;base64,#', '', trim($data));
+      $bin = base64_decode($data, true);
+      if ($bin === false) json_out(['error' => 'base64 invalide.'], 400);
+      if (strlen($bin) > 10 * 1024 * 1024) json_out(['error' => 'Image trop lourde (max 10 Mo).'], 400);
+      $info = @getimagesizefromstring($bin);
+      $extBy = [IMAGETYPE_JPEG => 'jpg', IMAGETYPE_PNG => 'png', IMAGETYPE_WEBP => 'webp'];
+      if (!$info || !isset($extBy[$info[2]])) json_out(['error' => 'Image non reconnue (JPEG, PNG ou WebP attendu).'], 400);
+      if (!is_dir($prepDir)) @mkdir($prepDir, 0755, true);
+      if (!is_dir($prepDir) || !is_writable($prepDir)) json_out(['error' => 'Stockage image indisponible.'], 500);
+      $key = bin2hex(random_bytes(16)) . '.' . $extBy[$info[2]];
+      if (file_put_contents($prepDir . '/' . $key, $bin) === false) json_out(['error' => 'Écriture image échouée.'], 500);
+      return $key;
+    };
+    // Supprime le fichier d'une clé (jamais hors du dossier : la clé est un nom
+    // simple validé, pas un chemin).
+    $prepDelPhoto = function ($key) use ($prepDir) {
+      if (is_string($key) && preg_match('#^[a-f0-9]{32}\.(jpg|png|webp)$#', $key)) @unlink($prepDir . '/' . $key);
+    };
+    // id du parcours d'un produit ; le crée à la demande ($create=true).
+    $prepPathId = function ($productId, $create = false) {
+      $r = row("SELECT id FROM product_preparation_path WHERE product_id=?", [$productId]);
+      if ($r) return (int) $r['id'];
+      if (!$create) return null;
+      q("INSERT INTO product_preparation_path (product_id) VALUES (?)", [$productId]);
+      return (int) db()->lastInsertId();
+    };
+    $prepProductOr404 = function ($productId) {
+      if (!$productId || !row("SELECT id FROM ws_products WHERE id=?", [$productId]))
+        json_out(['error' => 'Produit inconnu.'], 404);
+    };
+
+    /* ── Groupes de batch réseau ─────────────────────────────────────── */
+    if ($m === 'GET' && $p === '/franchisor/preparation-batch-groups') {
+      json_out(array_map(
+        fn ($g) => ['id' => (int) $g['id'], 'name' => $g['name']],
+        rows("SELECT id, name FROM product_preparation_batch_group ORDER BY name")));
+    }
+    if ($m === 'POST' && $p === '/franchisor/preparation-batch-groups') {
+      $b = body(); $name = trim((string) ($b['name'] ?? ''));
+      if ($name === '') json_out(['error' => 'name requis.'], 400);
+      q("INSERT INTO product_preparation_batch_group (name) VALUES (?)", [$name]);
+      $gid = (int) db()->lastInsertId();
+      $audit('prep.batchgroup.create', 'product_preparation_batch_group', $gid, null, ['name' => $name]);
+      json_out(['id' => $gid, 'name' => $name]);
+    }
+
+    /* ── IDs des produits ayant un parcours (aperçu : une seule requête) ── */
+    if ($m === 'GET' && $p === '/franchisor/preparation-paths/configured-product-ids') {
+      json_out(['productIds' => array_map(
+        fn ($r) => (int) $r['product_id'],
+        rows("SELECT product_id FROM product_preparation_path ORDER BY product_id"))]);
+    }
+
+    /* ── Ordre des étapes (AVANT la route :stepId, sinon « order » y tombe) ── */
+    if ($m === 'PATCH' && ($mm = $match('/franchisor/products/:pid/preparation-path/steps/order'))) {
+      $pid = (int) $mm['pid']; $prepProductOr404($pid);
+      $b = body();
+      $order = $b['order'] ?? ($b['stepIds'] ?? null);
+      if (!is_array($order)) json_out(['error' => 'order (liste d’ids d’étapes) requis.'], 400);
+      $pathId = $prepPathId($pid, false);
+      if ($pathId === null) json_out(['error' => 'Aucun parcours pour ce produit.'], 404);
+      $owned = array_map(fn ($r) => (int) $r['id'], rows("SELECT id FROM product_preparation_step WHERE path_id=?", [$pathId]));
+      $wanted = array_map('intval', $order);
+      sort($owned); $chk = $wanted; sort($chk);
+      if ($owned !== $chk) json_out(['error' => 'La liste doit contenir exactement les étapes du parcours.'], 400);
+      db()->beginTransaction();
+      try {
+        foreach ($wanted as $i => $sid)
+          q("UPDATE product_preparation_step SET sort_order=? WHERE id=? AND path_id=?", [$i, $sid, $pathId]);
+        db()->commit();
+      } catch (Throwable $e) { db()->rollBack(); json_out(['error' => 'Réordonnancement échoué.'], 500); }
+      $audit('prep.steps.reorder', 'product_preparation_path', $pathId, null, ['order' => $wanted]);
+      json_out(['ok' => true]);
+    }
+
+    /* ── Photo d'une étape : POST (upload/replace) / DELETE, slot 1–3 ── */
+    if (($m === 'POST' || $m === 'DELETE')
+        && ($mm = $match('/franchisor/products/:pid/preparation-path/steps/:sid/photos/:slot'))) {
+      $pid = (int) $mm['pid']; $sid = (int) $mm['sid']; $slot = (int) $mm['slot'];
+      $prepProductOr404($pid);
+      if ($slot < 1 || $slot > 3) json_out(['error' => 'slot doit être 1, 2 ou 3.'], 400);
+      $pathId = $prepPathId($pid, false);
+      $s = $pathId !== null ? row("SELECT * FROM product_preparation_step WHERE id=? AND path_id=?", [$sid, $pathId]) : null;
+      if (!$s) json_out(['error' => 'Étape inconnue pour ce produit.'], 404);
+      $col = 'image_key_' . $slot;
+      $old = $s[$col];
+      if ($m === 'DELETE') {
+        $prepDelPhoto($old);
+        q("UPDATE product_preparation_step SET $col=NULL WHERE id=?", [$sid]);
+        $audit('prep.photo.delete', 'product_preparation_step', $sid, null, ['slot' => $slot]);
+        json_out(['ok' => true]);
+      }
+      $key = $prepSavePhoto(body());          // écrit le nouveau AVANT d'effacer l'ancien
+      $prepDelPhoto($old);
+      q("UPDATE product_preparation_step SET $col=? WHERE id=?", [$key, $sid]);
+      $audit('prep.photo.set', 'product_preparation_step', $sid, null, ['slot' => $slot]);
+      json_out(['slot' => $slot, 'key' => $key, 'url' => 'assets/preparation/' . $key]);
+    }
+
+    /* ── Une étape : PATCH (update) / DELETE ── */
+    if (($m === 'PATCH' || $m === 'DELETE')
+        && ($mm = $match('/franchisor/products/:pid/preparation-path/steps/:sid'))) {
+      $pid = (int) $mm['pid']; $sid = (int) $mm['sid'];
+      $prepProductOr404($pid);
+      $pathId = $prepPathId($pid, false);
+      $s = $pathId !== null ? row("SELECT * FROM product_preparation_step WHERE id=? AND path_id=?", [$sid, $pathId]) : null;
+      if (!$s) json_out(['error' => 'Étape inconnue pour ce produit.'], 404);
+      if ($m === 'DELETE') {
+        foreach ([1, 2, 3] as $slot) $prepDelPhoto($s['image_key_' . $slot]);
+        q("DELETE FROM product_preparation_step WHERE id=?", [$sid]);
+        $audit('prep.step.delete', 'product_preparation_step', $sid, null, null);
+        json_out(['ok' => true]);
+      }
+      $f = $prepStepFields(body(), $s);        // PATCH partiel sur base de l'existant
+      q("UPDATE product_preparation_step
+            SET description=?, duration_seconds=?, uses_oven=?, batch_group_id=?, batch_capacity=?,
+                products_per_tray=?, trays_per_oven=? WHERE id=?",
+        [$f['description'], $f['duration_seconds'], $f['uses_oven'], $f['batch_group_id'],
+         $f['batch_capacity'], $f['products_per_tray'], $f['trays_per_oven'], $sid]);
+      $audit('prep.step.update', 'product_preparation_step', $sid, null, $f);
+      json_out($prepStepOut(row("SELECT * FROM product_preparation_step WHERE id=?", [$sid])));
+    }
+
+    /* ── Créer une étape ── */
+    if ($m === 'POST' && ($mm = $match('/franchisor/products/:pid/preparation-path/steps'))) {
+      $pid = (int) $mm['pid']; $prepProductOr404($pid);
+      $f = $prepStepFields(body(), null);
+      $pathId = $prepPathId($pid, true);       // crée le parcours si absent
+      $next = (int) (row("SELECT COALESCE(MAX(sort_order)+1,0) n FROM product_preparation_step WHERE path_id=?", [$pathId])['n'] ?? 0);
+      q("INSERT INTO product_preparation_step
+           (path_id, sort_order, description, duration_seconds, uses_oven, batch_group_id, batch_capacity, products_per_tray, trays_per_oven)
+           VALUES (?,?,?,?,?,?,?,?,?)",
+        [$pathId, $next, $f['description'], $f['duration_seconds'], $f['uses_oven'],
+         $f['batch_group_id'], $f['batch_capacity'], $f['products_per_tray'], $f['trays_per_oven']]);
+      $sid = (int) db()->lastInsertId();
+      $audit('prep.step.create', 'product_preparation_step', $sid, null, $f);
+      json_out($prepStepOut(row("SELECT * FROM product_preparation_step WHERE id=?", [$sid])));
+    }
+
+    /* ── Copier le parcours d'un autre produit (remplace la cible) ── */
+    if ($m === 'POST' && ($mm = $match('/franchisor/products/:pid/preparation-path/copy-from/:src'))) {
+      $pid = (int) $mm['pid']; $src = (int) $mm['src'];
+      $prepProductOr404($pid); $prepProductOr404($src);
+      if ($pid === $src) json_out(['error' => 'Source et cible identiques.'], 400);
+      $srcPath = $prepPathId($src, false);
+      if ($srcPath === null) json_out(['error' => 'Le produit source n’a pas de parcours.'], 404);
+      $srcSteps = rows("SELECT * FROM product_preparation_step WHERE path_id=? ORDER BY sort_order, id", [$srcPath]);
+      db()->beginTransaction();
+      try {
+        // Efface la cible (fichiers photos compris) puis recrée à l'identique.
+        $tgtPath = $prepPathId($pid, true);
+        foreach (rows("SELECT * FROM product_preparation_step WHERE path_id=?", [$tgtPath]) as $old)
+          foreach ([1, 2, 3] as $slot) $prepDelPhoto($old['image_key_' . $slot]);
+        q("DELETE FROM product_preparation_step WHERE path_id=?", [$tgtPath]);
+        foreach ($srcSteps as $i => $st) {
+          // Photos : objets INDÉPENDANTS — on duplique chaque fichier sous une
+          // nouvelle clé (la source et la cible ne partagent aucun fichier).
+          $keys = [null, null, null];
+          foreach ([1, 2, 3] as $slot) {
+            $k = $st['image_key_' . $slot];
+            if ($k && preg_match('#^[a-f0-9]{32}\.(jpg|png|webp)$#', $k, $km) && is_file($prepDir . '/' . $k)) {
+              $nk = bin2hex(random_bytes(16)) . '.' . $km[1];
+              if (@copy($prepDir . '/' . $k, $prepDir . '/' . $nk)) $keys[$slot - 1] = $nk;
+            }
+          }
+          q("INSERT INTO product_preparation_step
+               (path_id, sort_order, description, duration_seconds, uses_oven, batch_group_id, batch_capacity,
+                products_per_tray, trays_per_oven, image_key_1, image_key_2, image_key_3)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            [$tgtPath, $i, $st['description'], $st['duration_seconds'], $st['uses_oven'], $st['batch_group_id'],
+             $st['batch_capacity'], $st['products_per_tray'], $st['trays_per_oven'], $keys[0], $keys[1], $keys[2]]);
+        }
+        db()->commit();
+      } catch (Throwable $e) { db()->rollBack(); json_out(['error' => 'Copie échouée.'], 500); }
+      $audit('prep.path.copy', 'product_preparation_path', $pid, null, ['from' => $src, 'steps' => count($srcSteps)]);
+      json_out(['ok' => true, 'steps' => count($srcSteps)]);
+    }
+
+    /* ── Lire / supprimer le parcours d'un produit ── */
+    if (($m === 'GET' || $m === 'DELETE') && ($mm = $match('/franchisor/products/:pid/preparation-path'))) {
+      $pid = (int) $mm['pid']; $prepProductOr404($pid);
+      $pathId = $prepPathId($pid, false);
+      if ($m === 'GET') {
+        if ($pathId === null) json_out(['configured' => false, 'productId' => $pid, 'steps' => []]);
+        $steps = array_map($prepStepOut,
+          rows("SELECT * FROM product_preparation_step WHERE path_id=? ORDER BY sort_order, id", [$pathId]));
+        json_out(['configured' => true, 'productId' => $pid, 'steps' => $steps]);
+      }
+      // DELETE : parcours complet + ses photos.
+      if ($pathId === null) json_out(['ok' => true]);   // déjà absent → idempotent
+      db()->beginTransaction();
+      try {
+        foreach (rows("SELECT * FROM product_preparation_step WHERE path_id=?", [$pathId]) as $st)
+          foreach ([1, 2, 3] as $slot) $prepDelPhoto($st['image_key_' . $slot]);
+        q("DELETE FROM product_preparation_step WHERE path_id=?", [$pathId]);
+        q("DELETE FROM product_preparation_path WHERE id=?", [$pathId]);
+        db()->commit();
+      } catch (Throwable $e) { db()->rollBack(); json_out(['error' => 'Suppression échouée.'], 500); }
+      $audit('prep.path.delete', 'product_preparation_path', $pathId, null, ['productId' => $pid]);
+      json_out(['ok' => true]);
     }
 
     json_out(['error' => 'Not found', 'path' => $p], 404);
