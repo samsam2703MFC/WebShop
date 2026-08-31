@@ -9,6 +9,14 @@ require __DIR__ . '/erp_seasons.php';
 require __DIR__ . '/erp_clients.php';
 require __DIR__ . '/erp_link.php';
 require __DIR__ . '/erp_orders.php';
+/* erp_catalog.php n'était REQUIS NULLE PART : toutes ses gardes
+   (`function_exists('erp_catalog_enabled')`) tombaient donc à false, et les
+   bascules « assortiment en direct » (6edd47a) et « prix de vente ERP »
+   (96a703e) étaient LETTRE MORTE au runtime — catalog_source='erp' posé en
+   base ne changeait rien, prix et assortiment restaient locaux. Le require
+   est inerte tant que le paramètre n'est pas posé : le fichier ne définit
+   que des fonctions. */
+require __DIR__ . '/erp_catalog.php';
 
 /* CORS */
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
