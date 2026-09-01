@@ -275,3 +275,107 @@ function erp_catalog_enabled() {
   try { return strtolower((string) (ws_param('catalog_source', '') ?: '')) === 'erp'; }
   catch (Throwable $e) { return false; }
 }
+
+/* ── LA RÉPONSE BRUTE DE shops/{id}/products/available ────────────────────────
+ * Trois besoins tirent de la même réponse : les allergènes, les gammes de
+ * disponibilité et les portions. Un seul appel, mis en cache par (boutique,
+ * langue, include) : trois appels séparés donneraient trois vérités possibles
+ * à quelques secondes d'écart. */
+function erp_available_brut($shopId, $include = '', $lang = 'fr') {
+  static $cache = [];
+  $shopId = (int) $shopId;
+  if ($shopId <= 0) return null;
+  $lg = strtolower(substr((string) $lang, 0, 2)) ?: 'fr';
+  $ck = $shopId . '|' . $lg . '|' . $include;
+  if (array_key_exists($ck, $cache)) return $cache[$ck];
+  if (!function_exists('erp_enabled') || !erp_enabled()) return $cache[$ck] = null;
+
+  $path = 'shops/' . $shopId . '/products/available?lang_code=' . urlencode($lg)
+        . ($include !== '' ? '&include=' . urlencode($include) : '');
+  $data = erp_get($path, (int) (function_exists('ws_param') ? ws_param('catalog_direct_ttl', 60) : 60));
+  if (!is_array($data)) return $cache[$ck] = null;
+  $list = array_is_list($data) ? $data : null;
+  if ($list === null) foreach (['data','items','results','products'] as $k)
+    if (isset($data[$k]) && is_array($data[$k]) && array_is_list($data[$k])) { $list = $data[$k]; break; }
+  if ($list === null) {
+    if (function_exists('erp_notes')) erp_notes('ERP available : forme inattendue sur ' . $path);
+    return $cache[$ck] = null;
+  }
+  $out = [];
+  foreach ($list as $r) if (is_array($r) && !empty($r['id'])) $out[(int) $r['id']] = $r;
+  return $cache[$ck] = $out;
+}
+
+/* ── ALLERGÈNES, PAR L'ENDPOINT ──────────────────────────────────────────────
+ * Remplace un calcul SQL local sur product → flattened_recipe_ingredient →
+ * allergen. Cette copie locale s'est révélée PÉRIMÉE : sur les 81 produits
+ * servis, elle documentait 42 produits et en laissait 29 inconnus, là où
+ * l'endpoint en documente 49 et n'en laisse que 10. En sécurité alimentaire,
+ * la source la plus complète et la plus fraîche gagne.
+ *
+ * TROIS ÉTATS, jamais confondus — c'est la règle de ce dépôt et elle compte
+ * ici plus qu'ailleurs :
+ *   liste  = allergènes connus ;
+ *   []     = recette évaluée, réellement aucun ;
+ *   null   = NON RENSEIGNÉ.
+ * Le second se distingue du troisième par `label_ingredients` : une recette
+ * dont les ingrédients sont écrits a été évaluée. Sans ce signal positif, on
+ * rend null — annoncer « aucun allergène » sans preuve serait le seul mensonge
+ * vraiment dangereux de cet écran.
+ *
+ * `grouped_allergens` arrive en clair et dans la langue demandée
+ * (« Céréales contenant du gluten, Œufs, Lait ») ; le module d'allergènes du
+ * front résout ces libellés comme il résout les codes. */
+function erp_allergenes($shopId, $lang = 'fr') {
+  $rows = erp_available_brut($shopId, 'availability_periods', $lang);
+  if (!is_array($rows)) return null;          // ERP muet : on ne conclut rien
+  $out = [];
+  foreach ($rows as $pid => $r) {
+    $g = trim((string) ($r['grouped_allergens'] ?? ''));
+    if ($g !== '') {
+      $l = array_values(array_filter(array_map('trim', explode(',', $g)), 'strlen'));
+      $out[$pid] = $l ?: null;
+      continue;
+    }
+    $evalue = trim((string) ($r['label_ingredients'] ?? '')) !== '';
+    $out[$pid] = $evalue ? [] : null;
+  }
+  return $out;
+}
+
+/* ── GAMMES DE DISPONIBILITÉ, PAR L'ENDPOINT ─────────────────────────────────
+ * Rend, pour une date, l'ensemble des produits VENDABLES ce jour-là selon
+ * leurs périodes. Un produit sans période reste disponible : c'est la règle de
+ * l'ancien SQL (« NOT EXISTS … OR EXISTS … ») et la changer retirerait de la
+ * vente tout ce que l'ERP ne classe pas.
+ *
+ * Rend null si l'ERP est muet — l'appelant doit alors NE PAS filtrer, plutôt
+ * que masquer tout le catalogue sur une panne réseau. */
+function erp_produits_de_saison($shopId, $date = null, $lang = 'fr') {
+  $rows = erp_available_brut($shopId, 'availability_periods', $lang);
+  if (!is_array($rows)) return null;
+  $d  = (is_string($date) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) ? $date : date('Y-m-d');
+  $md = (int) (substr($d, 5, 2) . substr($d, 8, 2));   // MMJJ, comme l'ancien SQL
+  $ok = [];
+  foreach ($rows as $pid => $r) {
+    $per = $r['availability_periods'] ?? null;
+    if (!is_array($per) || !$per) { $ok[$pid] = true; continue; }   // sans période : toujours
+    $actives = false; $dedans = false;
+    foreach ($per as $p) {
+      if (!is_array($p) || (isset($p['is_active']) && !(int) $p['is_active'])) continue;
+      $actives = true;
+      if (empty($p['is_recurring'])) {
+        $s = (string) ($p['start_date'] ?? ''); $e = (string) ($p['end_date'] ?? '');
+        if ($s !== '' && $e !== '' && $d >= $s && $d <= $e) { $dedans = true; break; }
+      } else {
+        $a = (int) ($p['from_md'] ?? 0); $b = (int) ($p['to_md'] ?? 0);
+        if ($a === 0 && $b === 0) continue;
+        /* Une période à cheval sur le nouvel an (novembre → février) a
+           from_md > to_md : le test devient une union, pas un intervalle. */
+        if ($a <= $b ? ($md >= $a && $md <= $b) : ($md >= $a || $md <= $b)) { $dedans = true; break; }
+      }
+    }
+    $ok[$pid] = $actives ? $dedans : true;
+  }
+  return $ok;
+}

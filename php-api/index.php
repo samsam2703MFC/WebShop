@@ -572,38 +572,21 @@ function ws_voucher_upsert(array $o) {
     //   • recette liée ET ≥1 ingrédient, 0 code → [] (évaluée : aucun) ;
     //   • pas de recette / recette vide         → null (NON RENSEIGNÉ — l'ancien
     //     comportement affichait ces produits comme « sans allergène »).
-    // Un id absent de `product` conserve l'état issu du réplica ws_ (liste ou null).
-    if ($r) {
-      $ids = array_map(static fn($p2) => (int) $p2['id'], $r);
-      $in = implode(',', $ids);
-      try {
-        $erp = rows("SELECT erp.id AS pid, erp.id_recipe,
-                            COUNT(fri.id_material)            AS nb_ing,
-                            GROUP_CONCAT(DISTINCT al.code)    AS codes
-                       FROM product erp
-                       LEFT JOIN flattened_recipe_ingredient fri ON fri.id_recipe = erp.id_recipe
-                       LEFT JOIN material_allergen_connection mac ON mac.id_material = fri.id_material
-                       LEFT JOIN allergen al ON al.id = mac.id_allergen
-                      WHERE erp.id IN ($in)
-                      GROUP BY erp.id, erp.id_recipe");
-        $byId = [];
-        foreach ($erp as $a) {
-          if ($a['codes'] !== null) {
-            $byId[(int) $a['pid']] = array_values(array_filter(array_map('trim', explode(',', (string) $a['codes'])), 'strlen'));
-          } else {
-            $evaluated = !empty($a['id_recipe']) && (int) $a['nb_ing'] > 0;
-            $byId[(int) $a['pid']] = $evaluated ? [] : null;
-          }
-        }
+    // SOURCE : L'ENDPOINT, plus la copie locale des tables de l'ERP.
+    // Le calcul SQL qui vivait ici (product → flattened_recipe_ingredient →
+    // allergen) lisait une copie PÉRIMÉE : sur les 81 produits servis, elle
+    // documentait 42 produits et en laissait 29 inconnus, là où
+    // `grouped_allergens` en documente 49 et n'en laisse que 10. En sécurité
+    // alimentaire, la source la plus fraîche et la plus complète gagne.
+    // ERP muet ou produit absent de sa réponse : l'état reste celui d'avant
+    // (null « non renseigné »), jamais « aucun allergène ».
+    if ($r && function_exists('erp_allergenes')) {
+      $alg = erp_allergenes($s, $lang ?: 'fr');   /* $lang peut être '' : l'elvis, pas le ?? */
+      if (is_array($alg)) {
         foreach ($r as &$x) {
-          if (array_key_exists((int) $x['id'], $byId)) $x['allergens'] = $byId[(int) $x['id']];
+          if (array_key_exists((int) $x['id'], $alg)) $x['allergens'] = $alg[(int) $x['id']];
         }
         unset($x);
-      } catch (Throwable $e) {
-        // Modèle allergènes ERP indisponible (table absente, id_recipe manquant…) :
-        // on garde l'état du réplica ws_ (liste réelle ou null « non renseigné »).
-        // Le catalogue n'est jamais cassé, mais rien n'est affirmé à tort.
-        error_log('[ws] allergènes ERP indisponibles: ' . $e->getMessage());
       }
     }
     /* PRIX — ws_products.price, lu par la MÊME fonction que le panier et la
