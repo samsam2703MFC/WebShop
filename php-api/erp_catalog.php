@@ -363,6 +363,16 @@ function erp_produits_de_saison($shopId, $date = null, $lang = 'fr') {
     $actives = false; $dedans = false;
     foreach ($per as $p) {
       if (!is_array($p) || (isset($p['is_active']) && !(int) $p['is_active'])) continue;
+      /* SEULES LES GAMMES PUBLIÉES AU WEBSHOP FILTRENT LE WEBSHOP.
+         Trois « périodes » de l'ERP ne sont pas des saisons mais des
+         regroupements — « Gamme Bureau », « Gamme B.-2-B. », « Gamme
+         Standard » — et deux d'entre elles portent une fenêtre dégénérée
+         (101→101, 317→317 : un seul jour). Les traiter comme des saisons a
+         retiré quatre boissons de la vente 364 jours sur 365, ce qui est
+         arrivé en production. Elles se distinguent par webshop_active = 0 :
+         une gamme que le webshop ne publie pas n'a pas à en retirer des
+         produits. Les onze vraies gammes saisonnières portent toutes 1. */
+      if (array_key_exists('webshop_active', $p) && !(int) $p['webshop_active']) continue;
       $actives = true;
       if (empty($p['is_recurring'])) {
         $s = (string) ($p['start_date'] ?? ''); $e = (string) ($p['end_date'] ?? '');
