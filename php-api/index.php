@@ -826,6 +826,54 @@ function dispatch($m, $p) {
    * traduits » se diagnostique à l'aveugle : on ne sait pas distinguer une
    * adresse absente d'un jeton refusé ou d'une réponse de forme inattendue.
    * Le jeton n'est jamais renvoyé — seulement le fait qu'il soit posé. */
+  /* ── ÉTAT DU MIROIR PRODUITS ────────────────────────────────────────────
+   * Le catalogue et les prix viennent désormais de l'ERP. Des tables locales
+   * en gardent pourtant une copie. Avant d'en supprimer une seule, il faut
+   * savoir CE QUI EXISTE VRAIMENT en base : ce matin, une migration a échoué
+   * parce que j'avais vérifié les lectures du code sans regarder les
+   * contraintes du schéma. Ce diagnostic répond à trois questions par table :
+   * existe-t-elle, combien de lignes porte-t-elle, et qui la retient par une
+   * clé étrangère.
+   *
+   * Réservé à l'administrateur : des volumes de tables internes n'ont pas à
+   * être publics. */
+  if ($m === 'GET' && $p === '/erp/miroir') {
+    require_admin();
+    $tables = ['ws_products','ws_categories','ws_category_subs','ws_product_stock',
+               'ws_product_stock_defaults','ws_product_shops','ws_product_prices',
+               'ws_product_allergens','shop_product_portion_price','product_portion',
+               'product_availability_period_connection','ws_i18n','ws_shop_availability',
+               'ws_product_translations','product','ws_season'];
+    $out = [];
+    foreach ($tables as $t) {
+      if (!tbl_exists($t)) { $out[$t] = ['existe' => false]; continue; }
+      $n = null;
+      try { $r = row("SELECT COUNT(*) AS n FROM `$t`"); $n = $r ? (int) $r['n'] : null; }
+      catch (Throwable $e) { $n = null; }
+      /* Qui pointe vers elle : une table retenue par une clé étrangère ne peut
+         pas être supprimée sans traiter d'abord la contrainte. */
+      $ref = [];
+      try {
+        foreach (rows("SELECT table_name AS t, constraint_name AS c
+                         FROM information_schema.key_column_usage
+                        WHERE table_schema = DATABASE() AND referenced_table_name = ?", [$t]) as $k)
+          $ref[] = $k['t'] . '.' . $k['c'];
+      } catch (Throwable $e) {}
+      /* Et ce qu'elle retient elle-même. */
+      $sort = [];
+      try {
+        foreach (rows("SELECT referenced_table_name AS t, constraint_name AS c
+                         FROM information_schema.key_column_usage
+                        WHERE table_schema = DATABASE() AND table_name = ?
+                          AND referenced_table_name IS NOT NULL", [$t]) as $k)
+          $sort[] = $k['t'] . '.' . $k['c'];
+      } catch (Throwable $e) {}
+      $out[$t] = ['existe' => true, 'lignes' => $n,
+                  'retenue_par' => $ref ?: null, 'retient' => $sort ?: null];
+    }
+    json_out(['miroir' => $out, 'catalog_source' => ws_param('catalog_source', '')]);
+  }
+
   if ($m === 'GET' && $p === '/erp/probe') {
     $lg  = strtolower(substr((string) (qp('lang') ?: 'nl'), 0, 2));
     $cfgE = function_exists('erp_cfg') ? erp_cfg() : ['base' => '', 'token' => ''];
