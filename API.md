@@ -1394,3 +1394,33 @@ https://atelier.be/?shop=chatelain&mode=collect&voucher=BIENVENUE10&category=tar
 | `open=product` | Opens the product detail drawer |
 
 Note: the voucher in the URL is still validated server-side via `POST /vouchers/redeem` at quote time.
+
+---
+
+## Product preparation paths — `/franchisor/preparation-*`
+
+Network-wide production-preparation **configuration** defined by the brand and shared by all shops (no shop scope, no `id_brand`). Config only — it does not compute a schedule. Backed by migration `0104_product_preparation_paths.sql` (three tables, **no seed**). All endpoints require the network admin token (`X-Admin-Token`, or `Authorization: Bearer <admin>`), like the rest of `/franchisor/*`.
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/franchisor/preparation-batch-groups` | List reusable batch groups. |
+| POST | `/franchisor/preparation-batch-groups` | Create a batch group (`{name}`). |
+| GET | `/franchisor/preparation-paths/configured-product-ids` | `{productIds:[…]}` — products having a path (one call). |
+| GET | `/franchisor/products/:pid/preparation-path` | Read a path. `{configured:false,…}` when absent. |
+| DELETE | `/franchisor/products/:pid/preparation-path` | Delete the whole path and its photo files (idempotent). |
+| POST | `/franchisor/products/:pid/preparation-path/steps` | Create a step (creates the path if needed). |
+| PATCH | `/franchisor/products/:pid/preparation-path/steps/order` | Persist step order (`{order:[stepId,…]}`, must list exactly the path's steps). |
+| PATCH | `/franchisor/products/:pid/preparation-path/steps/:sid` | Update a step (partial). |
+| DELETE | `/franchisor/products/:pid/preparation-path/steps/:sid` | Delete a step and its photos. |
+| POST | `/franchisor/products/:pid/preparation-path/steps/:sid/photos/:slot` | Upload/replace photo slot 1–3. |
+| DELETE | `/franchisor/products/:pid/preparation-path/steps/:sid/photos/:slot` | Delete photo slot 1–3. |
+| POST | `/franchisor/products/:pid/preparation-path/copy-from/:src` | Replace the target path with an independent copy of `:src` (photos duplicated). |
+
+**Step body** — `description`, `duration_seconds` (≥0), `uses_oven` (bool), `batch_group_id`, `batch_capacity`, `products_per_tray`, `trays_per_oven`. Rules enforced server-side:
+- Batchable step ⇒ **both** `batch_group_id` **and** `batch_capacity` (>0); non-batchable ⇒ neither.
+- Oven step ⇒ requires a batch group + capacity, and `batch_capacity == products_per_tray × trays_per_oven`.
+- At most three photos per step.
+
+**Photo body** — `photo_base64` (raw base64 or a `data:` URI). The type is validated on the bytes (JPEG/PNG/WebP), ≤10 MB. Stored as an independent file under `assets/preparation/<key>`; the response returns `{slot,key,url}`. Copying a path duplicates each photo under a fresh key.
+
+Step response shape (camelCase): `{id, sortOrder, description, durationSeconds, usesOven, batchGroupId, batchCapacity, productsPerTray, traysPerOven, photos:[{slot,key,url}]}`.
