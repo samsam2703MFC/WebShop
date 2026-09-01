@@ -53,17 +53,23 @@ PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 -- LA COMMANDE GARDE SA FICHE. Renseigné à la création (POST /orders) ; NULL sur
 -- les commandes antérieures, ce qui est exact — on ne sait pas contre quelle
 -- fiche ERP elles ont été passées, et l'inventer serait pire que l'ignorer.
-SET @s := (SELECT IF(COUNT(*) = 0,
-  'ALTER TABLE ws_orders ADD COLUMN customer_erp_id INT NULL',
-  'DO 0')
+--
+-- Garde de TABLE (@ord), comme 0085_ticket : ws_orders est absente du socle
+-- minimal (elle vient de l'ERP, pas des migrations), ce qui faisait échouer le
+-- rejeu CI. Présente en prod, chaque opération ws_orders s'exécute à
+-- l'identique ; absente, elle est simplement inerte.
+SET @ord := (SELECT COUNT(*) FROM information_schema.tables
+              WHERE table_schema = DATABASE() AND table_name = 'ws_orders');
+
+SET @s := (SELECT IF(@ord = 0 OR COUNT(*) > 0, 'DO 0',
+  'ALTER TABLE ws_orders ADD COLUMN customer_erp_id INT NULL')
   FROM information_schema.columns
   WHERE table_schema = DATABASE() AND table_name = 'ws_orders'
     AND column_name = 'customer_erp_id');
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
-SET @s := (SELECT IF(COUNT(*) = 0,
-  'ALTER TABLE ws_orders ADD INDEX idx_orders_cerp (customer_erp_id)',
-  'DO 0')
+SET @s := (SELECT IF(@ord = 0 OR COUNT(*) > 0, 'DO 0',
+  'ALTER TABLE ws_orders ADD INDEX idx_orders_cerp (customer_erp_id)')
   FROM information_schema.statistics
   WHERE table_schema = DATABASE() AND table_name = 'ws_orders'
     AND index_name = 'idx_orders_cerp');
@@ -82,7 +88,13 @@ SET @s := (SELECT IF(COUNT(*) = 2,
       OR (table_name = 'client'    AND column_name = 'erp_client_id')));
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
--- Où en est la couverture, dit dans la sortie de migrate.sh.
-SELECT (SELECT COUNT(*) FROM ws_client_erp_map)                              AS liens_connus,
-       (SELECT COUNT(*) FROM ws_orders WHERE customer_erp_id IS NOT NULL)    AS commandes_liees,
-       (SELECT COUNT(*) FROM ws_orders WHERE customer_id IS NOT NULL)        AS commandes_avec_client;
+-- Où en est la couverture, dit dans la sortie de migrate.sh. Gardé par @ord :
+-- sur un socle sans ws_orders on ne rapporte que les liens connus (les deux
+-- compteurs de commandes valent alors NULL, ce n'est pas une erreur).
+SET @s := IF(@ord = 0,
+  'SELECT (SELECT COUNT(*) FROM ws_client_erp_map) AS liens_connus,
+          NULL AS commandes_liees, NULL AS commandes_avec_client',
+  'SELECT (SELECT COUNT(*) FROM ws_client_erp_map) AS liens_connus,
+          (SELECT COUNT(*) FROM ws_orders WHERE customer_erp_id IS NOT NULL) AS commandes_liees,
+          (SELECT COUNT(*) FROM ws_orders WHERE customer_id IS NOT NULL) AS commandes_avec_client');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;

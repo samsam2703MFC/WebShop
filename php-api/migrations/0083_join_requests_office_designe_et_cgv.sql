@@ -15,20 +15,25 @@
 -- cgv_accepted_at : la case CGV d'inscription.html était exigée à l'écran
 -- mais jamais transmise ni stockée — aucun moyen de prouver l'acceptation.
 --
--- IDEMPOTENTE : chaque ADD ne s'exécute que si la colonne manque.
+-- IDEMPOTENTE : chaque ADD ne s'exécute que si la TABLE existe ET que la colonne
+-- manque. La garde de table (comme 0081 et 0085_ticket) laisse le rejeu tourner
+-- sur un socle minimal qui ne porte pas ws_office_join_requests : sur la prod la
+-- table est là, l'ADD s'exécute donc à l'identique ; sur une base sans elle, il
+-- est simplement inerte au lieu d'échouer sur « table doesn't exist ».
 
-SET @s := (SELECT IF(COUNT(*)=0,
+SET @t := (SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema=DATABASE() AND table_name='ws_office_join_requests');
+
+SET @c := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE()
+            AND table_name='ws_office_join_requests' AND column_name='office_id');
+SET @s := IF(@t=0 OR @c>0, 'DO 0',
   "ALTER TABLE ws_office_join_requests ADD COLUMN office_id int(11) NULL
-     COMMENT 'bureau DÉSIGNÉ par le jeton d''invitation (≠ resolved_office_id, décidé à la validation)'",
-  'DO 0')
-  FROM information_schema.columns WHERE table_schema=DATABASE()
-   AND table_name='ws_office_join_requests' AND column_name='office_id');
+     COMMENT 'bureau DÉSIGNÉ par le jeton d''invitation (≠ resolved_office_id, décidé à la validation)'");
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
-SET @s := (SELECT IF(COUNT(*)=0,
+SET @c := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE()
+            AND table_name='ws_office_join_requests' AND column_name='cgv_accepted_at');
+SET @s := IF(@t=0 OR @c>0, 'DO 0',
   "ALTER TABLE ws_office_join_requests ADD COLUMN cgv_accepted_at timestamp NULL
-     COMMENT 'horodatage du consentement CGV coché à l''inscription'",
-  'DO 0')
-  FROM information_schema.columns WHERE table_schema=DATABASE()
-   AND table_name='ws_office_join_requests' AND column_name='cgv_accepted_at');
+     COMMENT 'horodatage du consentement CGV coché à l''inscription'");
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
