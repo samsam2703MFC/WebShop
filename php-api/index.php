@@ -18,6 +18,7 @@ require __DIR__ . '/erp_promos.php';
 require __DIR__ . '/erp_seasons.php';
 require __DIR__ . '/erp_clients.php';
 require __DIR__ . '/erp_link.php';
+require __DIR__ . '/sms.php';
 
 /* CORS */
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -854,6 +855,9 @@ function dispatch($m, $p) {
          chantier qu'on ne peut pas mesurer est un chantier dont on ignore où
          il en est. */
       'bascule' => function_exists('erp_map_etat') ? erp_map_etat() : null,
+      /* Le SMS : configuré ? joignable ? combien de points restants ? Un code
+         qui ne part plus faute de crédit doit se voir avant les plaintes. */
+      'sms' => function_exists('sms_etat') ? sms_etat() : null,
       /* PRIX — diagnostic d'exécution. Ajouté le 31/08 : le résolveur ERP était
          en place, déployé, et les prix servis restaient les prix locaux ; le
          raisonnement statique ne suffisait plus à dire pourquoi. Ces trois
@@ -3723,6 +3727,15 @@ function dispatch($m, $p) {
     // connaître l'email de quelqu'un suffisait à voler son compte.
     // TODO produit : ajouter un OTP email/SMS pour couvrir aussi ce cas résiduel.
     rate_limit('setpw', 5, 900);
+    /* DÈS QUE LE SMS EST DISPONIBLE, cette porte se ferme : elle ne vérifie
+       aucune identité, et laisser les deux chemins ouverts reviendrait à
+       n'avoir posé aucune serrure. Tant que le jeton SMSAPI n'est pas réglé,
+       l'ancien comportement subsiste — c'est l'état actuel de la production,
+       et le fermer sans remplaçant enfermerait dehors les comptes sans mot de
+       passe, c'est-à-dire tout le monde. */
+    if (sms_enabled())
+      json_out(['error' => "Pour définir votre mot de passe, confirmez votre numéro par SMS.",
+                'code' => 'otp_requis'], 409);
     $b = body();
     $mail = strtolower(trim($b['email'] ?? ''));
     [, $phoneNat, $phoneE164] = norm_phone($b['phonePrefix'] ?? '+32', $b['phone'] ?? '');
@@ -3767,6 +3780,83 @@ function dispatch($m, $p) {
   // SSO handoff PWA -> webshop. La PWA insère un jeton à usage unique dans
   // auth_handoff (token_hash = sha256 du jeton, + client_id + expires_at) puis
   // redirige vers /webshop?handoff=<jeton>. Ici on le vérifie et on ouvre la session.
+
+  /* ── CODE À USAGE UNIQUE : PROUVER QU'ON EST BIEN LE TITULAIRE DU NUMÉRO ────
+   * 8 178 fiches, aucun mot de passe. Sans preuve, `/auth/set-password` laisse
+   * réclamer le compte d'autrui en tapant son numéro — et l'emporte pour de
+   * bon, puisque la garde « pas d'écrasement » se referme derrière le premier
+   * arrivé. Le code SMS est cette preuve.
+   *
+   * Le compte se résout EXACTEMENT comme à la connexion : l'e-mail prime, un
+   * téléphone partagé par plusieurs comptes est refusé au lieu d'en choisir un
+   * au hasard. Deux résolutions divergentes seraient deux vérités — le piège
+   * qui a déjà coûté cher ici. */
+  $otpResoudre = function ($b) {
+    $ident = strtolower(trim($b['identifier'] ?? $b['email'] ?? $b['phone'] ?? ''));
+    if ($ident === '') return ['err' => 'Indiquez votre e-mail ou votre téléphone.', 'http' => 400];
+    [, $nat, $e164] = norm_phone($b['phonePrefix'] ?? '+32', $ident);
+    $u = row("SELECT id, email, phone, phone_e164, password_hash FROM client
+               WHERE LOWER(TRIM(email)) = ? AND active = 1 ORDER BY id LIMIT 1", [$ident]);
+    if (!$u && $e164 !== '') {
+      $c = rows("SELECT id, email, phone, phone_e164, password_hash FROM client
+                  WHERE (phone_e164 = ? OR phone = ? OR phone = ?) AND active = 1 ORDER BY id",
+                [$e164, $nat, $ident]);
+      if (count($c) > 1) return ['err' => 'Plusieurs comptes utilisent ce numéro. Utilisez votre e-mail.',
+                                 'code' => 'phone_ambigu', 'http' => 409];
+      $u = $c[0] ?? null;
+    }
+    if (!$u) return ['err' => "Aucun compte ne correspond.", 'code' => 'inconnu', 'http' => 404];
+    /* Le code part au numéro DE LA FICHE, jamais à celui qui vient d'être tapé :
+       sinon la preuve ne prouverait rien — on se l'enverrait à soi-même. */
+    $tel = (string) ($u['phone_e164'] ?: $u['phone'] ?: '');
+    if (trim($tel) === '') return ['err' => "Ce compte n'a pas de numéro de téléphone. Contactez la boutique.",
+                                   'code' => 'sans_tel', 'http' => 409];
+    [, , $telE164] = norm_phone('+32', $tel);
+    return ['u' => $u, 'tel' => $telE164 ?: $tel];
+  };
+
+  /* Étape 1 : envoyer le code. */
+  if ($m === 'POST' && $p === '/auth/otp-request') {
+    rate_limit('otpreq', 5, 900);
+    if (!sms_enabled()) json_out(['error' => "L'envoi de code est indisponible.", 'code' => 'sms_off'], 503);
+    $r = $otpResoudre(body());
+    if (isset($r['err'])) json_out(['error' => $r['err'], 'code' => $r['code'] ?? null], $r['http']);
+    /* Limite AUSSI par numéro : sans elle, changer d'IP suffirait à faire
+       sonner le téléphone de quelqu'un en boucle — et chaque SMS est payant. */
+    rate_limit('otpnum:' . substr(sha1($r['tel']), 0, 16), 3, 900);
+    if (!sms_otp_envoyer($r['tel'])) {
+      /* La CAUSE reste côté serveur. « Plus de points sur le compte SMSAPI »
+         est un fait d'exploitation : il regarde la boutique, pas le client, et
+         le lui montrer révélerait l'état interne à qui tape un numéro au
+         hasard. Il se journalise, et /erp/probe le rend au diagnostic. */
+      error_log('[ws] OTP : ' . implode(' | ', sms_notes()));
+      json_out(['error' => "Le code n'a pas pu être envoyé. Réessayez ou contactez la boutique.",
+                'code' => 'envoi_echoue'], 502);
+    }
+    json_out(['sent' => true, 'phoneMasked' => sms_masque($r['tel']), 'expiresIn' => 180]);
+  }
+
+  /* Étape 2 : code + mot de passe EN UN SEUL APPEL. Un appel unique n'a pas
+   * d'état intermédiaire à garder : rien à stocker, rien à expirer, et aucune
+   * fenêtre entre « code validé » et « mot de passe posé » où quelqu'un
+   * pourrait s'intercaler. */
+  if ($m === 'POST' && $p === '/auth/otp-set-password') {
+    rate_limit('otpset', 8, 900);
+    $b = body();
+    $pass = (string) ($b['password'] ?? '');
+    if (strlen($pass) < 6) json_out(['error' => 'Mot de passe trop court (min. 6 caractères).'], 400);
+    if (!sms_enabled()) json_out(['error' => "L'envoi de code est indisponible.", 'code' => 'sms_off'], 503);
+    $r = $otpResoudre($b);
+    if (isset($r['err'])) json_out(['error' => $r['err'], 'code' => $r['code'] ?? null], $r['http']);
+    $v = sms_otp_verifier($r['tel'], $b['code'] ?? '');
+    if ($v === 'perime')        json_out(['error' => 'Code expiré, demandez-en un nouveau.', 'code' => 'perime'], 401);
+    if ($v === 'indisponible')  json_out(['error' => "Vérification indisponible.", 'code' => 'sms_off'], 503);
+    if ($v !== 'ok')            json_out(['error' => 'Code incorrect.', 'code' => 'faux'], 401);
+    $id = (int) $r['u']['id'];
+    q("UPDATE client SET password_hash = ? WHERE id = ?", [password_hash($pass, PASSWORD_BCRYPT), $id]);
+    json_out(['user' => user_payload($id), 'token' => sign_token(['id' => $id, 'exp' => time() + 30 * 86400])]);
+  }
+
   if ($m === 'POST' && $p === '/auth/handoff') {
     $token = (string) (body()['token'] ?? '');
     if ($token === '') json_out(['error' => 'Jeton manquant.'], 400);
