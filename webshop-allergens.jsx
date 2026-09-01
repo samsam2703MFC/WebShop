@@ -49,7 +49,7 @@
   function tAllergen(a) { return t('allergen.' + a.id, a.label); }
   /* Titre à emphase : une phrase = UNE clé, l'accent porté par des marqueurs
      __…__ (même convention que le reste du webshop) plutôt qu'un découpage en
-     morceaux — l'ordre des mots change d'une langue à l'autre. */
+     morceaux : l'ordre des mots change d'une langue à l'autre. */
   function tRichAl(key, fallback) {
     const raw = t(key, fallback);
     const out = [];
@@ -243,10 +243,10 @@
   }
 
   // ---------------------------------------------------------------------
-  // <AllergensRow list={['gluten','milk']}/>  — drop-in replacement for dots
+  // <AllergensRow list={['gluten','milk']}/>, drop-in replacement for dots
   // ---------------------------------------------------------------------
   /* Re-rend au changement de langue : ces libellés viennent de la table i18n,
-     pas des props — sans abonnement, la modale resterait dans la langue du
+     pas des props : sans abonnement, la modale resterait dans la langue du
      premier rendu. */
   function useLangTick() {
     const [, force] = React.useState(0);
@@ -262,7 +262,7 @@
     /* CE QUI N'EST PAS RECONNU EST AFFICHÉ QUAND MÊME, EN TEXTE.
        Avant, un libellé absent du référentiel était simplement ignoré : la
        ligne s'affichait sans lui, sans erreur ni trace. C'est arrivé en
-       production — l'API sert `cereals_gluten` et `sesame_seeds` là où le
+       production : l'API sert `cereals_gluten` et `sesame_seeds` là où le
        référentiel attendait `gluten` et `sesame` : le GLUTEN ne s'affichait
        sur AUCUN des 42 produits qui en contiennent.
        Les alias manquants sont corrigés, mais la règle compte plus que le
@@ -295,7 +295,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // Navbar trigger button — opens the modal.
+  // Navbar trigger button : opens the modal.
   // <AllergenNavButton onClick={...}/>
   // ---------------------------------------------------------------------
   function AllergenNavButton({ onClick }) {
@@ -308,7 +308,7 @@
         title={t('allergen.title2', 'Allergènes')}
         onClick={onClick}
       >
-        {/* Wheat-ear glyph from the design system — the canonical allergen pictogram */}
+        {/* Wheat-ear glyph from the design system, the canonical allergen pictogram */}
         <AllergenIcon name="gluten" size={16} strokeWidth={1.6} title={t('allergen.title2', 'Allergènes')}/>
       </button>
     );
@@ -374,7 +374,7 @@
           </div>
 
           <footer className="al-modal__foot">
-            <span>{t('allergen.foot', 'Règlement UE n° 1169/2011 — substances ou produits provoquant des allergies ou intolérances.')}</span>
+            <span>{t('allergen.foot', 'Règlement UE n° 1169/2011 : substances ou produits provoquant des allergies ou intolérances.')}</span>
           </footer>
         </div>
       </div>

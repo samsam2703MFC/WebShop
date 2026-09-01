@@ -1,5 +1,5 @@
 /* =====================================================================
-   webshop-promo-api.jsx — Campagnes « objectif d'achat cumulé → cadeau ».
+   webshop-promo-api.jsx : Campagnes « objectif d'achat cumulé → cadeau ».
    =====================================================================
    Exposé en global window.WSPromo AVANT webshop-full-bundle.jsx (comme les
    autres stubs). En mode live, api-config.js pose window.WSPromo.endpoint
@@ -11,7 +11,7 @@
      POST {endpoint}/:id/claim                 -> Progress   (idempotent)
      POST {endpoint}/redeem  {code,shopId}     -> { valid, reward? , reason? }
 
-   Auth : identique aux autres services — jeton Bearer (ws_auth_token) pour
+   Auth : identique aux autres services, jeton Bearer (ws_auth_token) pour
    le client connecté ; sinon guestEmail. credentials:'include' en secours.
    ===================================================================== */
 (function () {
@@ -64,7 +64,7 @@
         } catch (_) {}
         return [];
       }
-      return [];  // go-live : plus de campagne démo « Été gourmand » — vide si non câblé.
+      return [];  // go-live : plus de campagne démo « Été gourmand », vide si non câblé.
     },
 
     async progress(campaignId, { guestEmail } = {}) {

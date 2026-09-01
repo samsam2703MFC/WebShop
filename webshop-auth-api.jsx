@@ -1,8 +1,8 @@
 /* =====================================================================
-   WSAuth — authentification / session : SERVEUR UNIQUEMENT
+   WSAuth : authentification / session : SERVEUR UNIQUEMENT
    ---------------------------------------------------------------------
    Go-live : aucun store local, aucun repli. Sans endpoint (ou en cas de
-   panne réseau), les helpers renvoient une erreur explicite — jamais une
+   panne réseau), les helpers renvoient une erreur explicite, jamais une
    session fabriquée. Câblage :
      window.WSAuth.endpoint = 'https://your-host/auth';
    Endpoints expected:
@@ -36,12 +36,12 @@
     authHeaders,
 
     /* ── Login (identifiant = email OU téléphone) ──────────────────── */
-    // Go-live : SERVEUR UNIQUEMENT. Aucun repli sur un store local — un échec
+    // Go-live : SERVEUR UNIQUEMENT. Aucun repli sur un store local, un échec
     // réseau doit dire « réseau », jamais « identifiants incorrects » (le repli
     // faisait passer une panne pour un mauvais mot de passe).
     async login({ identifier, email, password, phonePrefix, authMethod }) {
       const ident = (identifier || email || '').trim();
-      if (!api.endpoint) return { ok: false, error: 'Service de connexion non configuré — please debug.' };
+      if (!api.endpoint) return { ok: false, error: 'Service de connexion non configuré, please debug.' };
       try {
         const r = await fetch(`${api.endpoint}/login`, {
           method: 'POST', credentials: 'include',
@@ -53,7 +53,7 @@
         // Compte existant sans mot de passe -> le front bascule sur "définir un mot de passe".
         return { ok: false, needsPassword: !!j.needsPassword, error: j.message || j.error?.message || 'Identifiants incorrects.' };
       } catch (_) {
-        return { ok: false, error: 'Réseau indisponible — connexion impossible.' };
+        return { ok: false, error: 'Réseau indisponible, connexion impossible.' };
       }
     },
 
@@ -68,7 +68,7 @@
           });
           const j = await r.json();
           // `connuEnBoutique` : la boutique reconnaît ce numéro. Transporté
-          // tel quel jusqu'à l'écran — il ne porte QUE le prénom et des
+          // tel quel jusqu'à l'écran : il ne porte QUE le prénom et des
           // libellés de corroboration, jamais la fiche (cf. erp_link.php).
           if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user, connuEnBoutique: j.connuEnBoutique || null }; }
           // 409 { exists:true } -> le compte existe déjà (proposer set-password).
@@ -76,7 +76,7 @@
         } catch (_) {}
       }
       // Go-live : plus de creation de compte local fictif.
-      return { ok: false, error: 'Service inscription indisponible — réessayez.' };
+      return { ok: false, error: 'Service inscription indisponible, réessayez.' };
     },
 
     /* ── Rattachement à la fiche de la boutique ──────────────────────────
@@ -84,7 +84,7 @@
        relier à son compte lui rend son historique d'achats et sa fidélité.
        Le webshop n'ayant aucune vérification d'identité, la demande est
        ARBITRÉE par la boutique : ces trois appels déposent, consultent et
-       annulent une demande — aucun ne rattache quoi que ce soit.
+       annulent une demande : aucun ne rattache quoi que ce soit.
        La cible n'est jamais transmise : le serveur la retrouve depuis le
        téléphone du compte connecté. */
     async linkState() {
@@ -114,7 +114,7 @@
 
     /* ── CODE SMS : prouver qu'on est bien le titulaire du numéro ─────
        Le serveur envoie le code au numéro DE LA FICHE, pas à celui qui vient
-       d'être saisi — sinon la preuve ne prouverait rien. Il ne rend jamais le
+       d'être saisi : sinon la preuve ne prouverait rien. Il ne rend jamais le
        code ; on n'obtient ici que le numéro masqué, à afficher pour que la
        personne sache sur quel téléphone regarder. */
     async otpRequest({ identifier, phonePrefix }) {
@@ -150,7 +150,7 @@
     /* ── Set / update password (compte existant) ─────────────────────── */
     /* Chemin SANS preuve d'identité. Le serveur le refuse (409 otp_requis)
        dès que le SMS est configuré ; il ne subsiste que tant qu'il ne l'est
-       pas, faute de quoi les comptes sans mot de passe — c'est-à-dire tous —
+       pas, faute de quoi les comptes sans mot de passe, c'est-à-dire tous
        resteraient dehors. L'appelant doit traiter 'otp_requis'. */
     async setPassword({ email, phone, phonePrefix, identifier, password }) {
       if (api.endpoint) {
@@ -188,7 +188,7 @@
       return { ok: false, error: 'Service indisponible.' };
     },
 
-    /* ── Vérification TVA + liaison société (persistée) — miroir de la PWA
+    /* ── Vérification TVA + liaison société (persistée) : miroir de la PWA
        POST /client/billing : VIES côté serveur, puis raison sociale/adresse/
        verified_at écrits sur la fiche client partagée. */
     async billingVerify({ vat, country }) {
@@ -207,8 +207,8 @@
       }
     },
 
-    /* ── Bureau (site de livraison) — liste par shop + liaison (parité PWA) ── */
-    // q : terme de recherche. Le serveur ne rend RIEN sans lui — on retrouve son
+    /* ── Bureau (site de livraison) : liste par shop + liaison (parité PWA) ── */
+    // q : terme de recherche. Le serveur ne rend RIEN sans lui, on retrouve son
     // bureau parce qu'on le connaît, on ne feuillette pas le carnet d'adresses
     // B2B de la boutique.
     async listOfficeSites({ shopId, q }) {
@@ -240,7 +240,7 @@
     /* ── Config front (ws_param en liste blanche) : flag onglet Fidélité,
        icônes des deux touches de première position de la nav catégories…
        GO-LIVE : plus de repli codé en dur. L'ancien FALLBACK forçait
-       fidelityTabEnabled:true — un onglet pouvait donc s'afficher alors que
+       fidelityTabEnabled:true, un onglet pouvait donc s'afficher alors que
        la boutique l'a désactivé en base. Sans config serveur on renvoie {} :
        l'UI applique ses propres règles d'absence, aucune option n'est
        inventée. ── */
@@ -341,8 +341,8 @@
           if (r.status === 401) setToken(null); // stale/expired token
           // Toute autre réponse était avalée : une session perdue pour cause de
           // panne serveur ressemblait trait pour trait à « pas de session ».
-          else console.error('[auth] session non restaurée — /me a répondu HTTP ' + r.status);
-        } catch (e) { console.error('[auth] session non restaurée — /me injoignable', e); }
+          else console.error('[auth] session non restaurée, /me a répondu HTTP ' + r.status);
+        } catch (e) { console.error('[auth] session non restaurée, /me injoignable', e); }
         return null;
       }
       return null; // No session in demo mode
@@ -361,7 +361,7 @@
         } catch (_) {}
       }
       // Go-live : plus de mutation d'un store local fictif.
-      return { ok: false, error: 'Service profil indisponible — réessayez.' };
+      return { ok: false, error: 'Service profil indisponible, réessayez.' };
     },
 
     /* ── Password reset ─────────────────────────────────────────────── */

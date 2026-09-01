@@ -1,6 +1,6 @@
 
 // ===== webshop.jsx (full-bleed) =====
-// webshop.jsx — L'Atelier By customer-facing webshop
+// webshop.jsx : L'Atelier By customer-facing webshop
 // Three variants of how the active shop is anchored in the chrome.
 
 const { useState, useMemo, useEffect } = React;
@@ -14,7 +14,7 @@ document.addEventListener('touchstart', function () {}, { passive: true });
 // doivent donc plus attendre la fin d'une animation qui n'existe plus.
 const IS_TOUCH = window.matchMedia && window.matchMedia('(hover: none)').matches;
 
-// Version servie : visible en console et dans l'encadré ?tapdebug=1 — pour
+// Version servie : visible en console et dans l'encadré ?tapdebug=1, pour
 // distinguer « le correctif ne marche pas » de « le téléphone sert encore
 // l'ancien bundle » (service worker). Et rafraîchissement agressif du SW :
 // vérification de mise à jour au retour d'onglet et toutes les 60 s.
@@ -30,10 +30,10 @@ if ('serviceWorker' in navigator) {
 /* ── TAP FIABLE, GÉNÉRALISÉ ────────────────────────────────────────────────
    L'action part au relâchement (pointerup/touchend) comme en natif, même
    quand le navigateur retient le click (tap qui stoppe l'inertie du scroll,
-   geste requalifié). L'état vit SUR LE NŒUD DOM : chaque élément a le sien —
+   geste requalifié). L'état vit SUR LE NŒUD DOM : chaque élément a le sien
    un tap sur B ne peut jamais être mangé par la dédup d'un tap sur A (le
    verrou partagé de l'ancienne version mangeait le 2e tap < 400 ms).
-   opts.open : marque un dépliage/une ouverture — arme la fenêtre anti-clic-
+   opts.open : marque un dépliage/une ouverture, arme la fenêtre anti-clic-
    fantôme (le click synthétisé du MÊME tap atterrit sur le contenu qui vient
    d'apparaître : il arrive en « orphelin », sans appui vu sur sa cible, et
    la fenêtre le neutralise ; un clic clavier, orphelin aussi, passe hors
@@ -46,7 +46,7 @@ function wsShield() { __wsOpenedAt = performance.now(); }
 /* BOUCLIER GLOBAL. Quand une action change la mise en page SOUS le doigt
    (dépliage, fermeture de la fiche, panier → checkout, commande passée), le
    click synthétisé du même tap atterrit sur ce qui vient d'apparaître à cet
-   endroit — constaté : « Commander » posait le clic sur « Se connecter » du
+   endroit : constaté : « Commander » posait le clic sur « Se connecter » du
    checkout, d'où une demande de connexion à chaque validation. Signature
    infaillible d'un fantôme : sa cible n'a reçu AUCUN appui (pointerdown) de
    ce geste. Un vrai tap suivant a toujours son propre appui : il passe. */
@@ -65,7 +65,7 @@ function wsTap(fn, opts) {
      produit : les événements natifs d'un tap ATTEIGNENT l'élément et
      remontent jusqu'à la racine (sondes posées à chaque étage), mais la
      délégation synthétique de React n'invoquait AUCUN gestionnaire de la
-     carte tapée — alors qu'un click dispatché par script passait. Plutôt que
+     carte tapée : alors qu'un click dispatché par script passait. Plutôt que
      de dépendre de cette dispatche défaillante, chaque élément reçoit ses
      écouteurs natifs via ref. La closure du DERNIER rendu est rejouée
      (el.__wsTapConf.fn), les écouteurs ne sont posés qu'une fois par nœud,
@@ -124,7 +124,7 @@ function wsTap(fn, opts) {
 
 
 // Diagnostic terrain : ?tapdebug=1 affiche les derniers événements tactiles
-// (type + cible) dans un coin de l'écran — pour voir ce que LE téléphone fait
+// (type + cible) dans un coin de l'écran : pour voir ce que LE téléphone fait
 // réellement d'un tap qui « ne marche pas », sans outillage branché.
 if (/[?&]tapdebug=1/.test(location.search)) {
   const box = document.createElement('div');
@@ -146,7 +146,7 @@ if (/[?&]tapdebug=1/.test(location.search)) {
 // =========================================================================
 // Go-live : AUCUNE boutique en dur. Les boutiques viennent exclusivement de
 // l'API /shops (table `shops`) ; si elle est injoignable, l'UI affiche une
-// erreur — jamais de données de démo (« Maison Châtelain » et consorts).
+// erreur : jamais de données de démo (« Maison Châtelain » et consorts).
 // L'objet global window.W_SHOPS a été supprimé : tant qu'il existait, un
 // repli pouvait y puiser une liste de boutiques fictive.
 
@@ -184,7 +184,7 @@ const W_PRODUCTS = [];
 const W_PRODUCT_PRICES = {};
 const W_SHOP_PRODUCTS = {};
 
-// Go-live : window._CATALOG_SEED n’est plus exposé — le catalogue vient
+// Go-live : window._CATALOG_SEED n’est plus exposé, le catalogue vient
 // exclusivement de l'API /catalog ; en cas d'échec, l'UI reste vide/erreur.
 
 
@@ -195,7 +195,7 @@ const W_SHOP_PRODUCTS = {};
 // =========================================================================
 // Go-live : AUCUN store local. Utilisateurs (WSAuth), bureaux (WSOffices) et
 // tournées (WSTours) viennent du serveur ; sans lui, l'écran affiche une erreur.
-const SRV_REQUIRED = (what) => ({ ok: false, error: 'Service ' + what + ' indisponible — please debug.' });
+const SRV_REQUIRED = (what) => ({ ok: false, error: 'Service ' + what + ' indisponible, please debug.' });
 
 // =========================================================================
 // SHARED PRIMITIVES
@@ -224,9 +224,9 @@ const ICONS = {
 };
 
 // =========================================================================
-// DATE PILL — date picker with popover calendar
+// DATE PILL : date picker with popover calendar
 // =========================================================================
-/* Noms de jours et de mois : rendus par Intl DANS LA LANGUE COURANTE — jamais
+/* Noms de jours et de mois : rendus par Intl DANS LA LANGUE COURANTE, jamais
    des tableaux français en dur (une boutique néerlandophone affichait « Dim. »
    à côté de libellés en NL). Ils n'ont pas leur place dans la table de
    traduction : le navigateur les connaît pour toutes les langues, et une copie
@@ -266,8 +266,8 @@ function wsUseT() {
         setLang: (l) => { if (window.WSI18n) window.WSI18n.setLang(l); } };
 }
 /* Rendu RICHE d'un libellé traduit : une phrase = UNE clé, même quand une
-   partie est mise en valeur. Le texte en base porte des marqueurs —
-   **fort** → <strong>, __accent__ → <em> — au lieu d'être coupé en morceaux
+   partie est mise en valeur. Le texte en base porte des marqueurs
+   **fort** → <strong>, __accent__ → <em>, au lieu d'être coupé en morceaux
    par le JSX. Découper « Bon retour <em>parmi nous</em>. » en deux clés
    rendait la phrase intraduisible : l'ordre des mots change d'une langue à
    l'autre, et le traducteur doit pouvoir DÉPLACER l'emphase. */
@@ -293,7 +293,7 @@ function DatePill({ mode, value, onChange, shopId,
   const { t } = wsUseT();
   const [open, setOpen] = React.useState(false);
   const [view, setView] = React.useState(() => new Date(value.getFullYear(), value.getMonth(), 1));
-  // dayMap: { 'YYYY-MM-DD': { available, reason } } — populated per visible month
+  // dayMap: { 'YYYY-MM-DD': { available, reason } }, populated per visible month
   const [dayMap, setDayMap] = React.useState({});
   const [loadingDays, setLoadingDays] = React.useState(false);
   const wrapRef = React.useRef(null);
@@ -434,20 +434,20 @@ function DatePill({ mode, value, onChange, shopId,
   );
 }
 
-/* CHOIX D'UN BUREAU — recherche, jamais liste déroulante.
+/* CHOIX D'UN BUREAU : recherche, jamais liste déroulante.
    Une déroulante oblige à parcourir l'inventaire pour retrouver un nom déjà
    connu, et se prête mal au pouce. La saisie NE CRÉE RIEN : seules les sociétés
    déjà validées par l'Atelier apparaissent ; l'absente passe par la demande
    d'ajout, seul chemin qui fasse valider un bureau.
    UN SEUL composant pour les DEUX écrans qui choisissent un bureau. Ils avaient
-   chacun leur liste déroulante, et corriger l'une laissait l'autre en arrière —
+   chacun leur liste déroulante, et corriger l'une laissait l'autre en arrière
    c'est exactement ce qui vient de se produire. */
-/* RECHERCHE D'UN BUREAU — le serveur ne répond qu'à une question posée.
+/* RECHERCHE D'UN BUREAU : le serveur ne répond qu'à une question posée.
    Aucune liste n'est affichée tant que rien n'est saisi : le carnet d'adresses
    B2B d'une boutique n'a pas à être feuilleté par n'importe quel visiteur
    connecté. On retrouve son employeur parce qu'on le connaît ; on ne découvre
    pas ceux des autres.
-   Seuls les bureaux RÉELLEMENT LIVRABLES remontent — leur site porte une
+   Seuls les bureaux RÉELLEMENT LIVRABLES remontent, leur site porte une
    tournée active. Les autres ne sont pas montrés « avec leur motif » : un
    « bureau sans société rattachée » décrit un état interne du back-office, que
    le client ne peut ni comprendre ni corriger. C'est au franchisé de les
@@ -516,7 +516,7 @@ function OfficeSearchPicker({ chercher, value, onPick, label }) {
   );
 }
 
-// Mode pill — Ruby (collect) / Abricot (delivery)
+// Mode pill : Ruby (collect) / Abricot (delivery)
 function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel }) {
   const { t } = wsUseT();
   const [hover, setHover] = React.useState(false);
@@ -539,7 +539,7 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
         {collectCutoffPassed && <span className="ws-mode__cutoff"> · {t('nav.mode.closed')}</span>}
       </button>
       {/* Pas d'attribut `disabled` : un bouton désactivé n'émet aucun clic, donc
-          le motif du refus ne pouvait jamais s'afficher — on retombait sur le
+          le motif du refus ne pouvait jamais s'afficher : on retombait sur le
           bouton qui « ne fait rien ». L'apparence reste celle d'une option
           indisponible (is-disabled) et aria-disabled l'annonce aux lecteurs
           d'écran, mais le clic sert enfin à dire POURQUOI. */}
@@ -581,7 +581,7 @@ function ModePills({ mode, onChange, collectCutoffPassed, collectCutoffLabel, de
   );
 }
 
-// Allergen badges — uses AllergensRow from webshop-allergens.jsx (line-art icons).
+// Allergen badges : uses AllergensRow from webshop-allergens.jsx (line-art icons).
 function Allergens({ list }) {
   if (!list || !list.length) return null;
   if (window.AllergensRow) return <window.AllergensRow list={list} size={14} max={5}/>;
@@ -589,7 +589,7 @@ function Allergens({ list }) {
 }
 
 // =========================================================================
-// SPECIAL OFFER LOGIC — buy_x_get_y_free  &  second_at_pct
+// SPECIAL OFFER LOGIC : buy_x_get_y_free  &  second_at_pct
 // =========================================================================
 // Unified portion accounting: a quarter is the atomic portion unit.
 //   1 quart   = 1 portion
@@ -598,7 +598,7 @@ function Allergens({ list }) {
 // All bundle progression, free-item awards, and cross-product offers
 // count in portion-units when offer.unit === 'portion'.
 // TODO[BACKEND]: portion-unit conversion is a backend rule (varies by product
-// type — 6-piece cake vs 4-piece tart). Surface via product schema (e.g.
+// type : 6-piece cake vs 4-piece tart). Surface via product schema (e.g.
 // `product.portionUnits = { quart: n, demi: n, entier: n }`) returned by
 // WSCatalog. The constant below is a global fallback only.
 const PORTION_UNITS = { quart: 1, demi: 2, entier: 4 };
@@ -620,7 +620,7 @@ function computeOffer(offer, qty, unit, ctx = {}) {
     const effectiveQty = isPortion
       ? qty * portionUnitsFor(ctx.portion)
       : qty;
-    // La pièce offerte vaut le prix RÉEL de la ligne — le ×0.27 (« un quart »)
+    // La pièce offerte vaut le prix RÉEL de la ligne, le ×0.27 (« un quart »)
     // était un facteur qui n'existe nulle part côté serveur ni en base.
     const freebieValue = unit;
 
@@ -744,7 +744,7 @@ function OfferStrip({ offer, qty, unit, calc, onAddOne }) {
   );
 }
 
-// Portion glyph shapes (1/8, 1/4, 1/2, entier) — shared by card hint + modal
+// Portion glyph shapes (1/8, 1/4, 1/2, entier) : shared by card hint + modal
 // options. Glyphes d'affichage uniquement : les PRIX de portion viennent
 // exclusivement de l'ERP (shop_product_portion_price via le catalogue).
 const PORTION_SHAPES = [
@@ -755,9 +755,9 @@ const PORTION_SHAPES = [
 ];
 
 // Options de portion d'un produit : UNIQUEMENT les prix explicites de l'ERP
-// (product.portionOptions = [{v,label,price}] servis par le catalogue —
+// (product.portionOptions = [{v,label,price}] servis par le catalogue
 // shop_product_portion_price). Go-live « vraies données ou bug » : le repli
-// « prix de base × facteur (0.27/0.52/0.15) » est SUPPRIMÉ — il affichait et
+// « prix de base × facteur (0.27/0.52/0.15) » est SUPPRIMÉ, il affichait et
 // facturait des prix de portion que la boutique n'a jamais fixés. Sans prix
 // ERP de portion, seule la pièce ENTIÈRE (prix réel) est proposée.
 function portionOptionList(p) {
@@ -771,13 +771,13 @@ function portionOptionList(p) {
   return [{ v: 'entier', d: entier.d, name: entier.name, price: p?.price || 0 }];
 }
 
-// Libellé des portions d'une carte produit — types proposés avec le PRIX de
+// Libellé des portions d'une carte produit : types proposés avec le PRIX de
 // chaque portion : ex. « Entière €24.00 · 1/2 €14.90 · 1/4 €8.90 ».
 function portionPriceHint(p) {
   return portionOptionList(p).map((o) => `${o.name} €${o.price.toFixed(2)}`).join(' · ');
 }
 
-// Single "portions available" glyph used on the product card — a quartered
+// Single "portions available" glyph used on the product card, a quartered
 // disc that hints at the slicing without committing to a specific portion.
 function PortionGlyph({ size = 14 }) {
   return (
@@ -789,7 +789,7 @@ function PortionGlyph({ size = 14 }) {
   );
 }
 
-// Portion option list inside the product modal — same toggle/button UX as
+// Portion option list inside the product modal, same toggle/button UX as
 // other option groups (pdm-optrow + pdm-seg). Each button shows icon +
 // portion name + computed price.
 function PortionOptions({ value, onChange, product }) {
@@ -827,7 +827,7 @@ function PortionOptions({ value, onChange, product }) {
 }
 
 // =========================================================================
-// PRODUCT DETAIL MODAL — options, upsells, bundles
+// PRODUCT DETAIL MODAL : options, upsells, bundles
 // =========================================================================
 function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   const { t, lang } = wsUseT();
@@ -864,7 +864,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     // la première formule dans la langue précédente.
   }, [product, lang]);
 
-  // Reset state when the product changes — and auto-open required option groups + auto-pick recommended bundle.
+  // Reset state when the product changes, and auto-open required option groups + auto-pick recommended bundle.
   React.useEffect(() => {
     setSel(initSelections);
     setUpsellIds({});
@@ -886,7 +886,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
       setActiveOpt(null);
     }
     // Formule présélectionnée : la recommandée, SINON l'unique formule s'il
-    // n'y en a qu'une — ses étapes s'ouvrent d'emblée. Sur mobile, le tap
+    // n'y en a qu'une : ses étapes s'ouvrent d'emblée. Sur mobile, le tap
     // « pour rien » qui ne faisait qu'ouvrir la carte passait pour un raté
     // (constaté : « je dois cliquer plusieurs fois pour que ça s'ouvre »).
     const rec = product?.available_bundles?.find((b) => b.recommended)
@@ -1005,7 +1005,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   }
   function setSlot(slotId, choiceId) { setBundleSlots((s) => ({ ...s, [slotId]: choiceId })); }
   // Rubrique multi (« 2 choix ») : le tap AJOUTE ou RETIRE, il ne remplace
-  // pas — c'était le blocage constaté : le 2e choix écrasait le 1er et la
+  // pas : c'était le blocage constaté : le 2e choix écrasait le 1er et la
   // formule ne se complétait jamais. Plafond = max_select.
   function toggleSlotMulti(slotId, choiceId, maxSel) {
     setBundleSlots((s) => {
@@ -1022,7 +1022,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   }
   // Ne scrolle que si l'élément déborde de la zone visible. Le glissement
   // systématique déplaçait le contenu SOUS LE DOIGT juste après un tap : le
-  // tap suivant tombait à côté — la cause des « miss-clicks » constatés sur
+  // tap suivant tombait à côté : la cause des « miss-clicks » constatés sur
   // téléphone. Une cible déjà visible reste où elle est.
   function glideIfHidden(el, sc, computeTarget) {
     if (!el || !sc) return;
@@ -1096,14 +1096,14 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
       productId: product.id,
       // Libellé dérivé de la portion RÉSOLUE (portOpt) : cohérent avec le prix.
       // Pas de suffixe pour l'Entière.
-      name: product.name + (portOpt && portOpt.v !== 'entier' ? ' — ' + portOpt.name : ''),
+      name: product.name + (portOpt && portOpt.v !== 'entier' ? ', ' + portOpt.name : ''),
       qty,
       price: qty > 0 ? total / qty : (unit + bundleDelta + upsellDelta),
       options: optionLabels.map((label) => ({ label })),
       /* Composition du menu par IDENTIFIANTS, en plus des libelles d'affichage.
          Elle restait dans le composeur : le panier ne portait que des libelles,
          et la commande ne pouvait donc ecrire aucune ligne pour les choix du
-         menu — la boutique voyait « Menu » sans savoir quoi preparer.
+         menu : la boutique voyait « Menu » sans savoir quoi preparer.
          C'est le serveur qui resout ces identifiants en produits ; le navigateur
          ne decide pas de ce qui est vendu. */
       bundleId: activeBundle ? activeBundle.id : null,
@@ -1175,7 +1175,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
               <p className="pdm-eyebrow">{product.cat === 'sandwiches' ? t('pd.eyebrow.sandwich') : product.cat === 'plats' ? t('pd.eyebrow.dish') : t('pd.eyebrow.selection')}</p>
               <h2 className="pdm-title">{product.name}</h2>
               {product.description ? <p className="pdm-desc">{product.description}</p> : null}
-              {/* Allergènes — 3 états distincts (sécurité alimentaire) :
+              {/* Allergènes : 3 états distincts (sécurité alimentaire) :
                   liste = connus · [] = recette évaluée, aucun · null = NON
                   RENSEIGNÉ (on le dit, on ne laisse jamais croire « aucun »). */}
               {Array.isArray(product.allergens) && product.allergens.length > 0 && (
@@ -1334,7 +1334,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                                       {slotIsMulti(slot)
                                         ? <span className={'pdm-opt__req' + (slot.required ? '' : ' pdm-opt__req--soft')} style={{ marginLeft: 8 }}>
                                             {slotPicked(slot).length}/{Math.max(1, slot.max_select || 1)}
-                                            {slot.required ? ' — choisissez ' + Math.max(1, slot.min_select || 1) : ''}
+                                            {slot.required ? ', choisissez ' + Math.max(1, slot.min_select || 1) : ''}
                                           </span>
                                         : slot.required && <span className="pdm-opt__req" style={{ marginLeft: 8 }}>{t('pd.required')}</span>}
                                     </span>
@@ -1387,7 +1387,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
             {/* Le NOMBRE d'unités restantes n'est plus affiché (retiré le 23/08,
                 comme le compteur des vignettes avant lui) : c'est une donnée
                 interne de stock, pas une information client. Seul l'état
-                bloquant reste visible — « Épuisé » — et la quantité demeure
+                bloquant reste visible : « Épuisé », et la quantité demeure
                 plafonnée en silence par le sélecteur ci-dessous. */}
             {!deliveryBlocked && deliveryStockLeft === 0 && (
               <div className="pdm-delivery-notice">{t('pd.outOfStock')}</div>
@@ -1461,7 +1461,7 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
           }}
         />
       </div>
-      {/* Meta strip BELOW the (1:1) photo — allergens, info, add */}
+      {/* Meta strip BELOW the (1:1) photo, allergens, info, add */}
       <div className="ws-card__metaStrip">
         <Allergens list={p.allergens}/>
         <div className="ws-card__icons">
@@ -1488,7 +1488,7 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
         <div className="ws-card__name">{p.name}</div>
         <div className="ws-card__meta">
           <span className="ws-card__price">€{price.toFixed(2)}{hasOptions && <span className="ws-card__from"> · {t('card.fromPrice')}</span>}</span>
-          {/* Compteur « X dispo » retiré des vignettes (demandé le 15/08) — il
+          {/* Compteur « X dispo » retiré des vignettes (demandé le 15/08) : il
               exposait le stock restant sur la grille. « Épuisé » reste : c'est
               une contrainte que le client doit voir avant d'ajouter. */}
           {stockExhausted && <span className="ws-card__stock ws-card__stock--out">{t('pd.soldOutDelivery')}</span>}
@@ -1502,7 +1502,7 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
 // BASKET PANEL (right side)
 // =========================================================================
 // =========================================================================
-// CROSS-CATEGORY PORTION OFFER — basket-level
+// CROSS-CATEGORY PORTION OFFER, basket-level
 // =========================================================================
 // Scans the basket for any line marked `crossPortion: true` and totals its
 // portion-units (quart=1, demi=2, entier=4). Every X portion-units earns Y
@@ -1518,10 +1518,10 @@ function computeCrossPortionOffer(basket, rule) {
   /* MIROIR EXACT du calcul de POST /orders. C'est le serveur qui facture :
      tout ce qui s'en écarte promet au client une économie qu'il ne recevra pas.
      Ses trois règles, telles qu'elles sont écrites en PHP :
-       • UNE entrée par PIÈCE (qty), pas par unité de portion — un demi compte
+       • UNE entrée par PIÈCE (qty), pas par unité de portion, un demi compte
          pour un, comme un quart ;
        • valorisée au PRIX RÉEL de la ligne (prix ERP de la portion), et non à
-         27 % du prix du produit entier — ce pourcentage n'existe nulle part
+         27 % du prix du produit entier, ce pourcentage n'existe nulle part
          dans la base ;
        • le nombre d'offerts est floor(nb / x) × y, sous réserve d'atteindre le
          seuil (threshold) ; ce sont les MOINS CHERS qui sont offerts. */
@@ -1561,7 +1561,7 @@ function computeCrossPortionOffer(basket, rule) {
 /* ── LES TOTAUX ────────────────────────────────────────────────────────────
    Une seule fonction, parce qu'il n'y a qu'une addition qui compte : celle du
    serveur (POST /orders). Le panier, le tunnel et la confirmation la lisaient
-   chacun à leur façon — le client voyait donc trois montants pour une seule
+   chacun à leur façon : le client voyait donc trois montants pour une seule
    commande, dont aucun n'était forcément celui facturé.
 
    Formule du serveur, à la ligne près :
@@ -1660,7 +1660,7 @@ function CrossPortionStrip({ calc }) {
    produits à proposer, DÉJÀ filtrés sur l'assortiment de la boutique, la gamme
    saisonnière à la date de retrait et le stock du jour : le navigateur ne
    décide de rien. L'heure comparée est celle du CRÉNEAU DE RETRAIT, pas de la
-   commande — on commande le soir pour le lendemain midi.
+   commande : on commande le soir pour le lendemain midi.
    Aucune suggestion → aucun bloc : pas de rubrique vide. */
 function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
   const { t } = wsUseT();
@@ -1678,7 +1678,7 @@ function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
     })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((list) => { if (alive) setItems(Array.isArray(list) ? list : []); })
-      // Une panne de suggestions ne doit RIEN casser du panier — mais elle se
+      // Une panne de suggestions ne doit RIEN casser du panier, mais elle se
       // trace, sinon « aucune suggestion » et « serveur muet » se ressemblent.
       .catch((e) => { if (alive) { setItems([]); bug('cross-sell', 'suggestions indisponibles', e); } });
     return () => { alive = false; };
@@ -1723,7 +1723,7 @@ function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
 
 function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, notesEnabled, deliveryFeeResult,
                   date, slotTime, onCrossAdd }) {
-  /* Les totaux affichés sont un APERÇU, calculé par wsTotaux() — miroir exact
+  /* Les totaux affichés sont un APERÇU, calculé par wsTotaux() : miroir exact
      de l'addition du serveur, seule à faire foi. La commande, elle, est
      recalculée serveur depuis les prix ERP : c'est son total qui s'affiche à
      la confirmation. (L'ancienne « réduction Webshop · 5 % » codée en dur a
@@ -1868,27 +1868,27 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
 }
 
 // =========================================================================
-// CATEGORY ROW — SINGLE LINE, TWO LEVELS
+// CATEGORY ROW : SINGLE LINE, TWO LEVELS
 // -------------------------------------------------------------------------
 // One line of choices, always in the same place; its CONTENT switches level.
 // Never two stacked rows.
 //   Level "cats":  [Tout] [catégories…] | [saisons…]
 //   Level "subs":  [← Nom de la catégorie] [sous-catégories…]
 // The first slot is therefore always occupied, by a different key per level.
-// `Tout` and `← Catégorie` are NOT categories: no `category` row backs them —
+// `Tout` and `← Catégorie` are NOT categories: no `category` row backs them
 // their icons come from ws_param (via /config), their labels from i18n.
 // The back key carries the current category NAME on purpose: once the line
-// switches to subcategories, that name would otherwise vanish from screen —
+// switches to subcategories, that name would otherwise vanish from screen
 // the key both says where you are and lets you leave.
 // A category with NO subcategory never switches level: there is nothing to
-// switch to. A category with ONE does switch — its subcategory carries a
+// switch to. A category with ONE does switch, its subcategory carries a
 // label and an illustration of its own, and hiding it made the second level
 // vanish for a whole shop. "A single choice is not a choice" was reasoning
 // about a filter; a subcategory is also a signpost, and a shop whose entire
 // catalogue sits under one of them showed no second level at all.
 // =========================================================================
 function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint, categories, assortments, navIcons }) {
-  // i18n : hook global (webshop-i18n-react, chargé avant ce bundle) — un
+  // i18n : hook global (webshop-i18n-react, chargé avant ce bundle), un
   // repli direct sur WSI18n.t couvre le cas où le hook n'est pas monté.
   const { t, tCategory } = window.useT
     ? window.useT()
@@ -1899,7 +1899,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
   const subs = activeCat?.subs || [];
   /* Niveau sous-catégories dès qu'il y en a UNE. Le seuil était à deux, au
      motif qu'« un choix unique n'est pas un choix » : vrai d'un filtre, faux
-     d'un repère. Relevé en production — Biscuiterie, Boulangerie et
+     d'un repère. Relevé en production, Biscuiterie, Boulangerie et
      Pâtisserie n'ont qu'une sous-catégorie peuplée chacune, et une boutique
      dont tout le catalogue tient dans l'une d'elles n'avait aucun second
      niveau. Les sous-catégories vides, elles, sont déjà écartées en amont
@@ -1914,8 +1914,8 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
   React.useEffect(() => { setShowAllSubs(false); }, [active]);
 
   // Accessibilité : au CHANGEMENT de niveau (pas au premier rendu), le focus
-  // se pose sur la première touche de la nouvelle ligne — sinon il retombe en
-  // haut de page — et la zone aria-live annonce le nouveau contenu (la ligne
+  // se pose sur la première touche de la nouvelle ligne, sinon il retombe en
+  // haut de page : et la zone aria-live annonce le nouveau contenu (la ligne
   // se transforme sans qu'aucun élément n'apparaisse ailleurs : rien ne le
   // signalerait par défaut aux lecteurs d'écran).
   const stripRef = React.useRef(null);
@@ -1939,7 +1939,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
            aria-label={subLevel ? t('nav.category.subsOf', { category: catName }) : t('nav.category.cats')}>
         {!subLevel && (
           <>
-            {/* Première position — état « Tout » (icône ws_param, libellé i18n) */}
+            {/* Première position : état « Tout » (icône ws_param, libellé i18n) */}
             <button key="all" className={`ws-cat${active === 'all' ? ' is-active' : ''}`}
                     {...wsTap(() => onSelect('all'))} style={active === 'all' ? activeStyle : {}}>
               <span className="ws-cat__tile">{icons.all ? <img src={icons.all} alt=""/> : null}</span>
@@ -1957,7 +1957,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
                 </button>
               );
             })}
-            {/* Seasonal assortments — same badge style, but distinct shape (notched corner) */}
+            {/* Seasonal assortments : same badge style, but distinct shape (notched corner) */}
             {assorts.length > 0 && <div className="ws-cats__sep" aria-hidden="true"/>}
             {assorts.map((a) => {
               const isOn = active === `season:${a.id}`;
@@ -1975,7 +1975,7 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
 
         {subLevel && (
           <>
-            {/* Première position — état « retour », porteur du nom de la
+            {/* Première position : état « retour », porteur du nom de la
                 catégorie courante (dire où on est + permettre d'en sortir). */}
             <button key="back" className="ws-cat ws-cat--back" onClick={onBack}>
               <span className="ws-cat__tile">{icons.back ? <img src={icons.back} alt=""/> : null}</span>
@@ -2006,15 +2006,15 @@ function CategoryRow({ active, sub, onSelect, onSelectSub, onBack, accent, tint,
 }
 
 // =========================================================================
-// NAVBAR — three variants share the same internals but wrap differently
+// NAVBAR : three variants share the same internals but wrap differently
 // =========================================================================
 
-// Variant A — Subtle: small shop chip after brand
+// Variant A : Subtle: small shop chip after brand
 // ── Bandeau « objectif d'achat cumulé → produit cadeau » (haut de boutique) ──
 // Lit WSPromo.active(shop) puis la progression du client. Barre de progression,
 // message « plus que X € », et à l'objectif : produit cadeau + code (récupéré via
 // claim, idempotent). Masqué si aucune campagne / pas d'identité (invité non
-// connecté) — l'invité applique son code au checkout.
+// connecté) : l'invité applique son code au checkout.
 function GiftIcon({ size = 22, className }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -2152,7 +2152,7 @@ function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, us
   );
 }
 
-// Variant B — Medium: full colored brand bar above navbar
+// Variant B : Medium: full colored brand bar above navbar
 function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens,
                    collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays }) {
   const { t } = wsUseT();
@@ -2193,7 +2193,7 @@ function NavbarB({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
   );
 }
 
-// Variant C — Strong: full per-shop accent. Brand wordmark, navbar background, CTA, focus rings all picked up.
+// Variant C : Strong: full per-shop accent. Brand wordmark, navbar background, CTA, focus rings all picked up.
 function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, onAllergens,
                    collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays }) {
   const { t } = wsUseT();
@@ -2231,12 +2231,12 @@ function NavbarC({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, on
 }
 
 // =========================================================================
-// AUTH MODALS — login / register, account, office request
+// AUTH MODALS : login / register, account, office request
 // =========================================================================
 function useSwipeDownToClose(onClose, scrollEl) {
   /* Ref-CALLBACK, pas effet : les panneaux qui utilisent ce hook rendent null
      tant qu'ils sont fermés. L'ancien useEffect (deps [onClose]) tournait au
-     premier montage — panneau absent, rien à écouter — et ne se rejouait à
+     premier montage : panneau absent, rien à écouter, et ne se rejouait à
      l'ouverture QUE si l'identité d'onClose changeait : le geste de fermeture
      n'était branché qu'au gré des re-rendus du parent. Le ref-callback, lui,
      s'exécute précisément quand le nœud apparaît/disparaît. */
@@ -2253,7 +2253,7 @@ function useSwipeDownToClose(onClose, scrollEl) {
       // produit : .pdm est overflow:hidden, c'est .pdm-scroll qui défile).
       // Lire scrollTop sur le panneau armait le drag À CHAQUE toucher :
       // remonter dans la fiche tirait la bottom-sheet au lieu de défiler, et
-      // au-delà de 110 px la fermait — configuration perdue.
+      // au-delà de 110 px la fermait, configuration perdue.
       const sc = (scrollEl && scrollEl.current) || el;
       state.atTop = sc.scrollTop <= 0;
       // Allow dragging when starting at scroll-top OR on the handle itself
@@ -2345,7 +2345,7 @@ const PHONE_PREFIXES = [
 
 // ── Collecte du code postal client (obligatoire partout) ────────────────
 // Dès que 4 chiffres sont saisis, la LOCALITÉ correspondante s'affiche
-// (référentiel /geo/postcodes) — liste déroulante quand un même code couvre
+// (référentiel /geo/postcodes), liste déroulante quand un même code couvre
 // plusieurs localités (ex. 1300 → Limal · Wavre). La localité confirmée est
 // envoyée au serveur avec le code postal.
 const CP_RE = /^[1-9][0-9]{3}$/;             // format belge : 4 chiffres
@@ -2421,7 +2421,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
   const [newPw, setNewPw] = useState('');
   const [cpOpts, setCpOpts] = useState([]);      // localités du CP saisi (validation « localité choisie »)
   /* Reconnaissance par la boutique : l'inscription a trouvé une fiche au même
-     numéro. On ne referme PAS la fenêtre tant que le client n'a pas répondu —
+     numéro. On ne referme PAS la fenêtre tant que le client n'a pas répondu
      rattacher son historique d'achats est sa décision, pas la nôtre. */
   const [connu, setConnu] = useState(null);      // { prenom, concordances[] } | null
   const [lienEtat, setLienEtat] = useState('');  // '' | 'envoi' | 'pending' | 'refus'
@@ -2461,7 +2461,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
         onLogin(r.user); onClose();
       } else {
         if (!form.firstName || !form.lastName) { setErr('Prénom et nom requis.'); return; }
-        // L'inscription se fait par email (le téléphone est optionnel) — le
+        // L'inscription se fait par email (le téléphone est optionnel), le
         // serveur n'a jamais accepté l'inscription par téléphone seul, le
         // formulaire ne doit pas la promettre.
         if (!form.email) { setErr('Email requis.'); return; }
@@ -2478,7 +2478,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
           setErr(r.error || "Erreur lors de l'inscription."); return;
         }
         /* Reconnu par la boutique : le compte est créé et valide, on le
-           signale à l'application — mais l'écran reste ouvert pour proposer
+           signale à l'application : mais l'écran reste ouvert pour proposer
            le rattachement. Refermer ici ferait disparaître la proposition
            sans que personne ne l'ait vue. */
         if (r.connuEnBoutique && r.connuEnBoutique.prenom) {
@@ -2516,7 +2516,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
   async function submitSetPassword() {
     setErr('');
     if (!newPw || newPw.length < 6) { setErr('Mot de passe : 6 caractères minimum.'); return; }
-    /* PHASE 2 — le code est saisi : code et mot de passe partent ensemble. */
+    /* PHASE 2 : le code est saisi : code et mot de passe partent ensemble. */
     if (otpPhase === 'code') {
       if (!/^\d{4,8}$/.test(otpCode.trim())) { setErr('Saisissez le code reçu par SMS.'); return; }
       setLoading(true);
@@ -2533,7 +2533,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
       return;
     }
 
-    /* PHASE 1 — ON DEMANDE LE CODE D'ABORD, ET C'EST LE SERVEUR QUI TRANCHE.
+    /* PHASE 1 : ON DEMANDE LE CODE D'ABORD, ET C'EST LE SERVEUR QUI TRANCHE.
        Le front n'a pas à savoir si le SMS est configuré : il essaie, et ne
        retombe sur le chemin sans preuve que si le serveur répond 'sms_off'.
        Le jour où le jeton SMSAPI est posé, cet écran devient sûr tout seul,
@@ -2561,7 +2561,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
            Le compte est créé : cet écran ne conditionne rien, il PROPOSE.
            On n'affiche que le prénom et des libellés de corroboration : la
            fiche n'est jamais montrée à qui n'a pas encore prouvé qu'il est
-           son titulaire — sinon le formulaire d'inscription deviendrait un
+           son titulaire : sinon le formulaire d'inscription deviendrait un
            moyen de consulter le fichier client en essayant des numéros. */
         <>
           <h2 className="ws-modal__title">Bon retour, {connu.prenom} 👋</h2>
@@ -2598,7 +2598,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
                 {err && <p className="ws-form__err">{err}</p>}
                 <button type="button" className="ws-cta ws-cta--block" disabled={lienEtat === 'envoi'}
                         onClick={demanderLien}>
-                  {lienEtat === 'envoi' ? 'Envoi…' : "C'est bien moi — relier mon compte"}
+                  {lienEtat === 'envoi' ? 'Envoi…' : "C'est bien moi, relier mon compte"}
                 </button>
                 <button type="button" className="ws-linkbtn" onClick={onClose}>
                   Non merci, garder un compte séparé
@@ -2710,9 +2710,9 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
 }
 
 // =========================================================================
-// MON COMPTE — onglets. Le toggle DÉRIVE ses positions de cette liste (jamais
+// MON COMPTE : onglets. Le toggle DÉRIVE ses positions de cette liste (jamais
 // en dur) : un onglet s'ajoute sans refonte. La visibilité de « Fidélité » est
-// pilotée par ws_param.fidelity_tab_enabled (GET /config) — masquable en prod
+// pilotée par ws_param.fidelity_tab_enabled (GET /config) : masquable en prod
 // et révélable sans redéploiement. L'onglet actif survit au rafraîchissement.
 // =========================================================================
 const ACCOUNT_TABS = [
@@ -2722,7 +2722,7 @@ const ACCOUNT_TABS = [
 ];
 const ACCOUNT_TAB_LS = 'ws.accountTab';
 
-// Onglet Fidélité : coquille volontairement explicite — pas d'écran nu ni de
+// Onglet Fidélité : coquille volontairement explicite, pas d'écran nu ni de
 // compteur à zéro qui laisserait croire que le client a perdu ses points.
 function FideliteShell() {
   const { t } = wsUseT();
@@ -2737,9 +2737,9 @@ function FideliteShell() {
 }
 
 // =========================================================================
-// MON COMPTE — onglet « Mes achats » : UNE liste qui fusionne tickets et
+// MON COMPTE : onglet « Mes achats » : UNE liste qui fusionne tickets et
 // factures. Une même ligne = ticket, ticket avec facture demandée, ou facture
-// (état enrichi du même achat — jamais une seconde entrée). Le webshop n'émet
+// (état enrichi du même achat : jamais une seconde entrée). Le webshop n'émet
 // AUCUNE facture : il écrit to_invoice + le destinataire, et affiche ce que
 // l'ERP du franchisé a poussé (numéro, PDF). Le contrôle de demande n'apparaît
 // que si la colonne to_invoice existe en base (capacité serveur).
@@ -2781,7 +2781,7 @@ function AccountPurchases({ user }) {
     setBusyRef(it.ref); setErr('');
     // Destinataire : société liée par défaut, sinon l'utilisateur lui-même
     // (un particulier peut demander une facture à son nom). Jamais de saisie
-    // libre — le serveur re-vérifie l'appartenance.
+    // libre : le serveur re-vérifie l'appartenance.
     const be = want ? (beOverride || it.billingEntityId || user.companyClientId || user.id) : null;
     const r = await window.WSAuth.requestInvoice({ ref: it.ref, want, billingEntityId: be });
     setBusyRef('');
@@ -2789,7 +2789,7 @@ function AccountPurchases({ user }) {
       setItems((list) => list.map((x) => (x.ref === it.ref
         ? { ...x, state: want ? 'requested' : 'open', toInvoice: want ? 1 : 0, billingEntityId: want ? be : null }
         : x)));
-      // Dit AU MOMENT de la demande — la facture n'apparaît qu'au batch mensuel.
+      // Dit AU MOMENT de la demande, la facture n'apparaît qu'au batch mensuel.
       if (want && r.notice) setNotice(r.notice);
     } else {
       setErr(r.error || 'Échec de la demande.');
@@ -2817,7 +2817,7 @@ function AccountPurchases({ user }) {
   return (
     <div className="ws-acc__section">
       <div className="ws-acc__section-h">{t('acc.purchases')}</div>
-      {/* Filtre discret — remplace un onglet « Mes factures » : le client qui
+      {/* Filtre discret : remplace un onglet « Mes factures » : le client qui
           veut ses factures pour son comptable filtre sur « Facturé ». */}
       <div className="ws-toggle" role="tablist" aria-label={t('acc.filterPurchases')}>
         {PURCHASE_FILTERS.map((f) => (
@@ -2843,7 +2843,7 @@ function AccountPurchases({ user }) {
             <span className="ws-acc__v">{fmtEur(it.invoiceTotal != null ? it.invoiceTotal : it.total)}</span>
           </div>
           {/* Ticket de caisse FISCAL rattaché à la commande (édité à la
-              validation). N'apparaît que s'il est renseigné — jamais inventé. */}
+              validation). N'apparaît que s'il est renseigné : jamais inventé. */}
           {it.fiscalTicketNo && (
             <div className="ws-acc__card-row"><span className="ws-acc__k">{t('acc.fiscalTicket')}</span>
               <span className="ws-acc__v">{it.fiscalTicketNo}{it.fiscalTicketUrl ? <> · <a href={it.fiscalTicketUrl} target="_blank" rel="noopener">PDF</a></> : null}</span></div>
@@ -2852,8 +2852,8 @@ function AccountPurchases({ user }) {
             <div className="ws-acc__card-row"><span className="ws-acc__k">{t('acc.invoice')}</span>
               <span className="ws-acc__v">{it.invoiceNo}{it.hasInvoicePdf ? ' · PDF sur demande' : ''}</span></div>
           )}
-          {/* Statut Peppol — transmission gérée par l'ERP ; le webshop affiche
-              ce qu'il pousse. « — » tant que rien n'est renseigné. */}
+          {/* Statut Peppol : transmission gérée par l'ERP ; le webshop affiche
+              ce qu'il pousse. « : » tant que rien n'est renseigné. */}
           {it.state === 'invoiced' && it.peppolStatus && (
             <div className="ws-acc__card-row"><span className="ws-acc__k">{t('acc.peppol')}</span>
               <span className="ws-acc__v">{peppolBadge(it.peppolStatus)}{it.peppolAt ? ' · ' + fmtDate(it.peppolAt) : ''}</span></div>
@@ -2897,7 +2897,7 @@ function AccountPurchases({ user }) {
 // CP, localité affichée immédiatement pour confirmation, bouton Valider qui
 // enregistre (PATCH /auth/me) et ferme. Jamais affichée si le CP est déjà
 // connu ; ne réapparaît plus une fois enregistré. « Plus tard » referme pour
-// cette session — elle reviendra à la prochaine connexion.
+// cette session : elle reviendra à la prochaine connexion.
 function PostcodeCatchupModal({ user, onUpdateUser }) {
   const { t } = wsUseT();
   const [cp, setCp] = useState('');
@@ -2976,13 +2976,13 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   const [savedFlash, setSavedFlash] = useState(false);
   const [profileErr, setProfileErr] = React.useState('');
   // Statut VIES : si la société est déjà liée en base (verified_at côté client),
-  // on affiche le badge « vérifié » d'office — comme la carte VIES de la PWA.
+  // on affiche le badge « vérifié » d'office : comme la carte VIES de la PWA.
   const [vies, setVies] = useState(() => (user?.invoice?.viesVerified
     ? { status: 'ok', message: 'TVA vérifiée (VIES)' }
     : { status: 'idle', message: '' })); // idle | loading | ok | invalid | unavailable
   const [fidOpen, setFidOpen] = useState(false);
   // Comptes entreprise (livraison bureau) rattachés à l'e-mail du client
-  // (ws_office_emails → ws_offices) — affichés en lecture seule, comme la PWA.
+  // (ws_office_emails → ws_offices), affichés en lecture seule, comme la PWA.
   const [linkedCompanies, setLinkedCompanies] = useState([]);
   // Office unplug/reconnect flow: 'idle' | 'confirm' | 'ask' | 'pick' | 'add'
   const [officeStep, setOfficeStep] = useState('idle');
@@ -3014,7 +3014,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   const [tab, setTab] = useState(() => {
     try { return localStorage.getItem(ACCOUNT_TAB_LS) || 'profil'; } catch (_) { return 'profil'; }
   });
-  // Sociétés de facturation : flux d'ajout (VIES ou sans TVA) — jamais
+  // Sociétés de facturation : flux d'ajout (VIES ou sans TVA), jamais
   // d'édition en place d'une société existante.
   const [companyStep, setCompanyStep] = useState('idle'); // 'idle' | 'vies' | 'novat'
   const [addVat, setAddVat] = useState({ country: 'BE', vat: '' });
@@ -3066,7 +3066,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
     }
   }
   async function removeCompany() {
-    // Archivage : on délie seulement — la fiche société reste en base (les
+    // Archivage : on délie seulement, la fiche société reste en base (les
     // factures émises la référencent et doivent rester lisibles).
     setCompanyBusy(true);
     const r = await window.WSAuth.unlinkCompany();
@@ -3132,7 +3132,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   // shouldn't wait for the global "Enregistrer" button.
   // Persistance serveur ATTENDUE : renvoie {ok, error}. L'ancien
   // fire-and-forget appliquait l'état localement même si le serveur refusait
-  // (409) — le client croyait son bureau/sa boutique rattachés. On applique
+  // (409) : le client croyait son bureau/sa boutique rattachés. On applique
   // d'abord l'optimiste (réactivité), mais on rend le verdict serveur pour que
   // l'appelant affiche l'erreur et, au besoin, revienne en arrière.
   async function persistPartial(patch) {
@@ -3148,14 +3148,14 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         const r = await window.WSAuth.updateMe(patch);
         if (r && r.ok && r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
         return r || { ok: false, error: 'Réponse serveur vide.' };
-      } catch (e) { return { ok: false, error: 'Serveur injoignable — non enregistré.' }; }
+      } catch (e) { return { ok: false, error: 'Serveur injoignable, non enregistré.' }; }
     }
-    return { ok: false, error: 'Service de compte indisponible — non enregistré.' };
+    return { ok: false, error: 'Service de compte indisponible, non enregistré.' };
   }
 
   // Toggle app fidélité. L'état réel vit en base (fidelity_active, écrit par le
   // PWA lors de la liaison) ; la boutique le reflète seulement.
-  //  • OFF→ON : ouvre la modale QR vers le PWA (pas d'activation locale — c'est
+  //  • OFF→ON : ouvre la modale QR vers le PWA (pas d'activation locale, c'est
   //    dans le PWA que ça se lie ; on ne coche donc pas le toggle).
   //  • ON→OFF : délie côté boutique (état local jusqu'au prochain reload).
   function toggleFidelity(next) {
@@ -3173,7 +3173,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   // votre boutique préférée » et ne pouvait pas se rattacher.
   const officeShopId = form.preferredShopId || currentShopId;
   async function loadApprovedOffices() {
-    if (!window.WSOffices) { setOfficeErr('Service bureaux indisponible — please debug.'); return; }
+    if (!window.WSOffices) { setOfficeErr('Service bureaux indisponible, please debug.'); return; }
     const shopId = officeShopId; // boutique préférée, sinon celle consultée
     setOfficeBusy(true);
     try {
@@ -3191,7 +3191,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       // L'échec est VISIBLE : sans lui, la liste restait vide sans explication
       // et l'utilisateur croyait qu'aucun bureau n'existait.
       setApprovedOffices([]);
-      setOfficeErr(e && e.message ? e.message : 'Bureaux indisponibles — please debug.');
+      setOfficeErr(e && e.message ? e.message : 'Bureaux indisponibles, please debug.');
     } finally { setOfficeBusy(false); }
   }
   // ── Bureau « site de livraison » (parité PWA) : lier / changer / délier ──
@@ -3215,20 +3215,20 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       setSiteErr(r.error || 'Échec de la liaison.');
     }
   }
-  /* Déliement — opération UNIQUE. Les deux boutons « Délier ce bureau » de cet
+  /* Déliement : opération UNIQUE. Les deux boutons « Délier ce bureau » de cet
      écran appelaient deux choses différentes : celui-ci supprimait la liaison
      PWA, l'autre vidait client.office_id. Or le serveur résout le bureau par
      une chaîne de replis : effacer une source laissait l'autre en fournir un
      AUTRE aussitôt, et le client croyait à une résurrection. POST /auth/office
      avec un site vide coupe désormais les deux d'un coup.
-     L'échec était muet — pas de branche else : on cliquait, l'écran avançait,
+     L'échec était muet : pas de branche else : on cliquait, l'écran avançait,
      et le bureau restait rattaché en base sans un mot. */
   async function doUnlink() {
     setSiteBusy(true); setOfficeErr('');
     const r = await window.WSAuth.setOfficeSite(null);
     setSiteBusy(false);
     if (!r || !r.ok) {
-      setOfficeErr((r && r.error) || 'Déliement impossible — le bureau est toujours rattaché.');
+      setOfficeErr((r && r.error) || 'Déliement impossible : le bureau est toujours rattaché.');
       return false;
     }
     if (r.user && typeof onUpdateUser === 'function') onUpdateUser({ ...user, ...r.user });
@@ -3334,7 +3334,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       window.WSI18n.setCustomer({ ...existing, ...updated });
     }
     // Persist to the backend (customer profile) when the API is wired.
-    // « Enregistré » ne s'affiche QUE si le serveur a accepté — l'ancien code
+    // « Enregistré » ne s'affiche QUE si le serveur a accepté, l'ancien code
     // le montrait toujours, même sur un rejet (400/500 avalé) : perte
     // silencieuse. On applique aussi l'état renvoyé par le serveur, pas
     // l'optimiste local.
@@ -3351,10 +3351,10 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           setProfileErr((r && r.error) || 'Enregistrement refusé par le serveur.');
         }
       } catch (e) {
-        setProfileErr('Serveur injoignable — modifications NON enregistrées.');
+        setProfileErr('Serveur injoignable : modifications NON enregistrées.');
       }
     } else {
-      setProfileErr('Service de compte indisponible — modifications NON enregistrées.');
+      setProfileErr('Service de compte indisponible, modifications NON enregistrées.');
     }
   }
   return (
@@ -3363,7 +3363,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       <h2 className="ws-modal__title">{tRich(t, 'acc.hello', { name: form.firstName || user.firstName })}</h2>
       <p className="ws-modal__lede">{user.email}</p>
 
-      {/* Onglets — positions dérivées d'ACCOUNT_TABS, actif persisté. */}
+      {/* Onglets : positions dérivées d'ACCOUNT_TABS, actif persisté. */}
       <div className="ws-toggle" role="tablist" aria-label={t('acc.sectionsAria')}>
         {visibleTabs.map((t) => (
           <button key={t.key} type="button" role="tab" aria-selected={activeTab === t.key}
@@ -3418,7 +3418,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           <label className="ws-acc__field ws-acc__field--full">
             <span className="ws-acc__field-label">{t('form.emailLong')}</span>
             {/* LECTURE SEULE, honnêtement : le champ était éditable mais la
-                sauvegarde ne l'envoyait jamais — « ✓ Enregistré » mentait, et
+                sauvegarde ne l'envoyait jamais : « ✓ Enregistré » mentait, et
                 l'email sert d'identifiant (connexion, rattachement bureau). */}
             <input type="email" className="ws-acc__input" value={form.email} readOnly disabled
               title={t('acc.emailIsLogin')} />
@@ -3441,7 +3441,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       </form>
 
       {/* ── Sociétés de facturation ─────────────────────────────────────
-          Données IMPORTÉES (VIES ou saisie encadrée à l'AJOUT) — jamais de
+          Données IMPORTÉES (VIES ou saisie encadrée à l'AJOUT) : jamais de
           champs de saisie pour une société existante : présentation en
           lecture seule, règle appliquée aussi côté serveur (PATCH /auth/me
           ignore ces clés). Retrait = archivage, la fiche reste en base. */}
@@ -3677,7 +3677,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         )}
 
 
-        {/* Sélecteur de bureau (sites de livraison du shop — même liste que la PWA) */}
+        {/* Sélecteur de bureau (sites de livraison du shop : même liste que la PWA) */}
         {siteStep === 'pick' && (
           <div className="ws-acc__card">
             <div className="ws-acc__row-title" style={{ marginBottom: 6 }}>
@@ -3685,7 +3685,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             </div>
             {/* Plus de chargement de liste à l'ouverture : le serveur ne répond
                 qu'à une recherche. L'affichage ne dépend donc plus d'un
-                inventaire préchargé — il dépend de ce que le client tape. */}
+                inventaire préchargé : il dépend de ce que le client tape. */}
             <OfficeSearchPicker
               chercher={(q) => (window.WSAuth && window.WSAuth.listOfficeSites)
                 ? window.WSAuth.listOfficeSites({
@@ -3826,12 +3826,12 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
 }
 
 // =========================================================================
-// FIDELITY APP LINK — QR modal
+// FIDELITY APP LINK : QR modal
 // Shown when the user toggles the fidelity-app setting from OFF to ON.
 // =========================================================================
 function FidelityQR({ payload }) {
   const { t } = wsUseT();
-  // Vrai QR scannable (window.QR, fourni par qr.jsx). Rendu « classique » —
+  // Vrai QR scannable (window.QR, fourni par qr.jsx). Rendu « classique »
   // modules pleins, sombres, marge complète : le style brandé (points ronds
   // bordeaux, finders arrondis) n'est pas lu par tous les scanners.
   const svg = React.useMemo(() => {
@@ -3851,7 +3851,7 @@ function FidelityQR({ payload }) {
   // Encodeur indisponible : lien direct plutôt qu'un faux QR illisible.
   return (
     <p className="ws-fid__hint">
-      QR indisponible — ouvrez directement{' '}
+      QR indisponible : ouvrez directement{' '}
       <a href={payload} target="_blank" rel="noopener noreferrer">{payload}</a>
     </p>
   );
@@ -3862,7 +3862,7 @@ function FidelityLinkPanel({ open, user, onClose }) {
   // Modale QR-only : elle montre l'adresse du PWA (user.fidelityApp.installUrl,
   // servi par le backend depuis ws_param.pwa_url). L'activation réelle de l'app
   // fidélité se fait DANS le PWA (il écrit fidelity_active en base) ; la boutique
-  // ne fait que refléter cet état — pas de fausse liaison locale ici.
+  // ne fait que refléter cet état, pas de fausse liaison locale ici.
   const payload = React.useMemo(() => {
     if (!open || !user) return '';
     return (user.fidelityApp && user.fidelityApp.installUrl) || '';
@@ -3896,10 +3896,10 @@ function FidelityLinkPanel({ open, user, onClose }) {
   );
 }
 
-// OfficeRequestModal removed — superseded by AccountModal's inline office add flow
+// OfficeRequestModal removed : superseded by AccountModal's inline office add flow
 
 // =========================================================================
-// CHECKOUT — slide-over 3-step wizard (Coordonnées · Créneau · Paiement)
+// CHECKOUT : slide-over 3-step wizard (Coordonnées · Créneau · Paiement)
 // Two flows: Click & Collect (logged-in) / Office Shop (delivery, logged-in).
 // Guest collect → forced login/register before continuing.
 // =========================================================================
@@ -3911,7 +3911,7 @@ function FidelityLinkPanel({ open, user, onClose }) {
 // codées en dur (bancontact/visa/apple, « paiement différé ») ont été
 // SUPPRIMÉES : elles proposaient au client des moyens de paiement qui ne sont
 // pas forcément configurés pour sa boutique. Sans réponse du serveur la liste
-// reste VIDE et l'étape Paiement affiche une erreur — jamais d'option inventée.
+// reste VIDE et l'étape Paiement affiche une erreur, jamais d'option inventée.
 function usePaymentMethods(shopId, mode, deliveryFeeResult, profile, companyId) {
   const [methods, setMethods] = React.useState([]);
   React.useEffect(() => {
@@ -3941,7 +3941,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const [paying, setPaying] = useState(false);
   const [payErr, setPayErr] = useState(null);
   // Clé d'idempotence : STABLE tant que le tunnel reste ouvert, renouvelée à
-  // chaque réouverture. Deux clics — ou un renvoi après une erreur réseau —
+  // chaque réouverture. Deux clics, ou un renvoi après une erreur réseau
   // portent donc la même clé, et le serveur renvoie la commande déjà créée au
   // lieu d'en enregistrer une seconde.
   const newPayKey = () => 'ws-' + Date.now().toString(36) + '-' +
@@ -3958,7 +3958,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   const [invoice, setInvoice] = useState(false);
   const [vat, setVat] = useState('');
 
-  // Payment — reset to 'deferred' for deferred sites, 'bancontact' otherwise
+  // Payment : reset to 'deferred' for deferred sites, 'bancontact' otherwise
   // Aucun moyen par défaut inventé : « bancontact » n'existe pas côté serveur
   // (les méthodes réelles sont stripe / shop / deferred). La sélection est
   // posée par l'effet dès que /payment-methods a répondu.
@@ -4008,7 +4008,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
     }
   }, [open]);
 
-  // Moyens de paiement : chargés ICI, AVANT tout return conditionnel — un hook
+  // Moyens de paiement : chargés ICI, AVANT tout return conditionnel, un hook
   // placé après « if (!open) return null » change le nombre de hooks entre deux
   // rendus, ce que React refuse (écran blanc à l'ouverture du tunnel).
   // Le profil est recalculé en ligne : companyId/user suffisent, et les valeurs
@@ -4020,11 +4020,11 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
 
   // Code cadeau « achat cumulé » appliqué (ajoute une ligne 0 € côté serveur).
   // DOIT rester AVANT le `return null` ci-dessous, et DANS ce composant : place
-  // plus bas, ce hook n'était appelé que le tunnel ouvert — React comptait un
+  // plus bas, ce hook n'était appelé que le tunnel ouvert, React comptait un
   // hook de plus a l'ouverture (erreur #310) et le paiement devenait
   // inaccessible.
   const [giftCode, setGiftCode] = useState(null);
-  /* L'offre croisée : le panier la déduisait, le tunnel l'ignorait — le total
+  /* L'offre croisée : le panier la déduisait, le tunnel l'ignorait, le total
      REMONTAIT donc au passage au paiement. Même règle, même source (la règle
      serveur), aux deux endroits. Hook AVANT le `return null`, comme celui
      ci-dessus : un hook conditionnel casse le tunnel (React #310). */
@@ -4119,7 +4119,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       // commande était absent : le client voyait une confirmation pour une
       // commande qui n'existait nulle part. Sans module → erreur, jamais de
       // confirmation inventée.
-      if (!window.WSOrders) throw new Error('Service de commande indisponible — commande non enregistrée.');
+      if (!window.WSOrders) throw new Error('Service de commande indisponible, commande non enregistrée.');
       const result = await window.WSOrders.place(payload);
       // Compatibilité : si un jour POST /orders rend lui-même l'URL de paiement.
       if (result && result.checkoutUrl) {
@@ -4128,7 +4128,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
       }
       /* PAIEMENT EN LIGNE (famille « stripe », servie par /payment-methods).
          La commande vient d'être ENREGISTRÉE ; l'encaissement se fait sur la
-         page Stripe hébergée, créée par POST /payments/checkout — et seul le
+         page Stripe hébergée, créée par POST /payments/checkout, et seul le
          webhook Stripe marque « payé ». Sans cet appel, une commande « carte »
          était confirmée à l'écran sans qu'aucun paiement n'ait jamais lieu :
          POST /orders ne rend pas d'URL de paiement, et rien n'appelait la
@@ -4141,7 +4141,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         try {
           sess = await window.WSOrders.pay(result.orderId);
         } catch (pe) {
-          /* La commande EXISTE déjà — le dire, et dire que réessayer est sûr :
+          /* La commande EXISTE déjà : le dire, et dire que réessayer est sûr :
              la clé d'idempotence fait reprendre LA MÊME commande, jamais une
              seconde. Un « Erreur 503 » nu ferait recommander le panier. */
           throw new Error(t('co.payStartFail',
@@ -4162,7 +4162,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         return;
       }
       // Le LIBELLÉ vient de la liste serveur : la confirmation annonçait
-      // « Bancontact » pour toute méthode non reconnue — donc aussi pour un
+      // « Bancontact » pour toute méthode non reconnue, donc aussi pour un
       // paiement en boutique ou sur compte, que le client n'a pas fait.
       const payLabel = (paymentMethods.find((x) => x.id === payment) || {}).label || payment;
       /* Le total du SERVEUR, pas celui du navigateur. L'ancien ordre
@@ -4365,7 +4365,7 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
     const feeResult = deliveryFeeResult;
     // Un complément d'adresse réduit à un tiret n'est pas un complément : c'est
     // un placeholder saisi ou repris comme donnée. Il était concaténé tel quel
-    // et l'adresse s'affichait « … Louvain-la-Neuve · — ».
+    // et l'adresse s'affichait « … Louvain-la-Neuve ·, ».
     const complement = (v) => {
       const s = String(v == null ? '' : v).trim();
       return (s === '' || s === '—' || s === '-' || s === '–') ? '' : s;
@@ -4436,7 +4436,7 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
     );
   }
 
-  // Guest collect — fields, then forced login at the gate
+  // Guest collect : fields, then forced login at the gate
   if (forceAuth) {
     return (
       <div className="ws-co-step">
@@ -4449,7 +4449,7 @@ function CheckoutStep1({ mode, shop, user, office, tour, contact, setContact, fo
       </div>
     );
   }
-  // Guest collect — contact fields, optional login
+  // Guest collect : contact fields, optional login
   return (
     <div className="ws-co-step">
       <div className="ws-co-guest__banner">
@@ -4487,7 +4487,7 @@ function SlotIcon({ name, size = 15 }) {
   );
 }
 
-// Single derived CTA — renders ONLY what the server returns in `cta`
+// Single derived CTA : renders ONLY what the server returns in `cta`
 // (label/theme/icon). No horaire, couleur, or libellé hardcoded here.
 function SlotCTA({ cta, onClick }) {
   if (!cta) return null;
@@ -4499,7 +4499,7 @@ function SlotCTA({ cta, onClick }) {
   );
 }
 
-// Sticky segmented control — shown only when the office has 2+ orderable slots.
+// Sticky segmented control : shown only when the office has 2+ orderable slots.
 function SlotSegmented({ slots, selected, onSelect }) {
   const { t } = wsUseT();
   if (!slots || slots.length < 2) return null;
@@ -4527,7 +4527,7 @@ function SlotSegmented({ slots, selected, onSelect }) {
   );
 }
 
-// Confirmation modal — one cart = one route + one date. Lists removed items.
+// Confirmation modal : one cart = one route + one date. Lists removed items.
 function SlotChangeModal({ items, targetLabel, onConfirm, onCancel }) {
   const { t } = wsUseT();
   return (
@@ -4569,7 +4569,7 @@ function CheckoutStep2({ mode, shop, office, tour, slot, setSlot, date }) {
     })();
     return () => { alive = false; };
     // `lang` : la date longue (« Zondag 16 augustus ») est rendue par Intl
-    // dans la langue courante — sans cette dépendance, elle resterait dans la
+    // dans la langue courante : sans cette dépendance, elle resterait dans la
     // langue du premier affichage.
   }, [mode, shop?.id, date, lang]);
 
@@ -4687,8 +4687,8 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
   async function applyVoucher(forcedCode) {
     setVoucherErr(null);
     // Un « code forcé » ne peut être qu'une chaîne (ou un nombre). Tout autre
-    // type est un appel mal câblé — typiquement un événement de clic passé par
-    // React — et doit retomber sur la saisie, pas être converti en
+    // type est un appel mal câblé, typiquement un événement de clic passé par
+    // React : et doit retomber sur la saisie, pas être converti en
     // « [object Object] » puis envoyé au serveur comme un vrai code.
     const forced = (typeof forcedCode === 'string' || typeof forcedCode === 'number') ? String(forcedCode) : null;
     const code = (forced != null ? forced : (voucherInput || '')).trim();
@@ -4755,19 +4755,19 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
             {/* onClick={applyVoucher} passait l'ÉVÉNEMENT de clic en premier
                 argument, donc en « code forcé » : String(event) valait
                 « [object Object] » et le code saisi n'était jamais lu. Aucun
-                code tapé à la main ne pouvait aboutir — seuls les bons cliqués
+                code tapé à la main ne pouvait aboutir, seuls les bons cliqués
                 dans la liste fonctionnaient, eux qui passent leur code. */}
             <button type="button" className="ws-co-voucher__apply" onClick={() => applyVoucher()} disabled={!voucherInput.trim() || voucherLoading}>{voucherLoading ? '…' : t('co.apply')}</button>
           </div>
         )}
         {voucherErr && <div className="ws-co-voucher__err">{voucherErr}</div>}
 
-        {/* Bons DISPONIBLES — marketing : le client applique en un clic sans retaper. */}
+        {/* Bons DISPONIBLES : marketing : le client applique en un clic sans retaper. */}
         {/* La liste reste VISIBLE une fois un code appliqué. Auparavant elle
             disparaissait entièrement : impossible de voir les autres bons ni
             d'en choisir un autre sans passer par « Retirer », ce qui donnait
             l'impression que le choix était définitif. Un seul code par commande
-            (le serveur n'en accepte qu'un) — c'est désormais écrit, et cliquer
+            (le serveur n'en accepte qu'un) : c'est désormais écrit, et cliquer
             un autre bon le remplace directement. */}
         {availVouchers.length > 0 && (
           <div className="ws-co-avail">
@@ -4879,7 +4879,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
           // d'afficher des options inventées (règle go-live « vraies données »).
           <p className="ws-co-error" role="alert">
             Moyens de paiement indisponibles pour cette boutique. La commande ne peut pas être
-            finalisée — réessayez dans un instant ou contactez la boutique.
+            finalisée : réessayez dans un instant ou contactez la boutique.
           </p>
         ) : paymentMethods.map((p) => (
           <label key={p.id} className={`ws-pay__opt${payment === p.id ? ' is-active' : ''}`}>
@@ -4909,7 +4909,7 @@ function CheckoutStep3({ basket, subtotal, totaux, total, payment, setPayment, i
           </div>
           {!isB2B && infoOpen && (
             <div className="ws-co-invoice__tip" role="note">
-              Ticket au format A4, présenté comme une facture — établi à votre nom (facture nominative).
+              Ticket au format A4, présenté comme une facture, établi à votre nom (facture nominative).
             </div>
           )}
         </div>
@@ -4932,14 +4932,14 @@ function ReadRow({ k, v }) {
 // =========================================================================
 // SHOP SWITCHER MODAL
 // =========================================================================
-/* bug() — un échec d'API se DIT à l'écran, il ne se range pas dans la console.
+/* bug() : un échec d'API se DIT à l'écran, il ne se range pas dans la console.
    Le webshop n'avait que des console.error : dix appels échouaient en silence
    pour qui ne garde pas l'inspecteur ouvert, et une grille vide ressemblait
    exactement à une boutique sans produit. Le bandeau (webshop-bug-banner)
    l'annonce ; la console garde l'objet d'erreur complet, qui sert au débogage
    mais n'a rien à faire sous les yeux d'un client. */
 function bug(source, quoi, e) {
-  try { if (window.WSBug) window.WSBug.note(source, quoi + (e && e.message ? ' — ' + e.message : '')); } catch (_) {}
+  try { if (window.WSBug) window.WSBug.note(source, quoi + (e && e.message ? ', ' + e.message : '')); } catch (_) {}
   console.error('[' + source + '] ' + quoi, e || '');
 }
 
@@ -4980,7 +4980,7 @@ function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
 }
 
 // =========================================================================
-// SHOP FRAME — full storefront
+// SHOP FRAME : full storefront
 // =========================================================================
 function ShopFrame({ variant }) {
   const { t, lang } = wsUseT();   // i18n réactif : coquille + rechargement des catégories
@@ -5003,7 +5003,7 @@ function ShopFrame({ variant }) {
        LU au chargement puis rangé dans localStorage, et jamais réaffiché. Trois
        conséquences, toutes constatées :
          · on ne pouvait pas savoir quelle boutique on regardait ;
-         · un lien copié ne portait pas la boutique — le destinataire tombait
+         · un lien copié ne portait pas la boutique, le destinataire tombait
            sur la sienne, ou sur celle que le repli avait choisie ;
          · comparer le webshop et la console franchisé (qui, elle, affiche
            ?shop=2) demandait de deviner.
@@ -5029,7 +5029,7 @@ function ShopFrame({ variant }) {
   const [subCat, setSubCat] = useState(_deep.sub != null ? _deep.sub : null);
   const [basket, setBasket] = useState([]);
   const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
-  // Voucher state — may be pre-filled by deep link
+  // Voucher state : may be pre-filled by deep link
   const [voucherInput, setVoucherInput] = useState(_deep.voucher || '');
   const [voucherApplied, setVoucherApplied] = useState(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -5042,8 +5042,8 @@ function ShopFrame({ variant }) {
   }, []);
   const todayMidnight = React.useMemo(() => { const t = new Date(); t.setHours(0,0,0,0); return t; }, []);
   const isToday = (d) => d && d.toDateString() === todayMidnight.toDateString();
-  // Cutoff times loaded from API per shop — defaults until API responds.
-  /* Cut-offs : null tant que le serveur n'a pas répondu — JAMAIS une valeur
+  // Cutoff times loaded from API per shop, defaults until API responds.
+  /* Cut-offs : null tant que le serveur n'a pas répondu, JAMAIS une valeur
      inventée. Les anciens défauts 11h00/16h00 gouvernaient l'écran (blocage
      « Fermé · commandez pour demain », tooltips) avec des horaires que la
      boutique n'avait pas fixés, dès que l'appel échouait ou tardait. Tant que
@@ -5056,7 +5056,7 @@ function ShopFrame({ variant }) {
   // ── DELIVERY SLOTS (midi / soir) ────────────────────────────────────
   // The slot is an ATTRIBUTE of the order, resolved server-side from the
   // route that serves the office. Front only renders /slots + /next-slot.
-  // Déclaré AVANT le slot-effect ci-dessous (qui lit `user` dans ses deps) — sinon TDZ.
+  // Déclaré AVANT le slot-effect ci-dessous (qui lit `user` dans ses deps), sinon TDZ.
   const [user, setUser] = useState(null);
   // SSO handoff PWA -> webshop : si l'URL porte ?handoff=<jeton>, on l'échange
   // contre une session webshop, puis on retire le jeton de l'URL (usage unique,
@@ -5082,7 +5082,7 @@ function ShopFrame({ variant }) {
     let cleaned = true;
     try { cleaned = sessionStorage.getItem(CLEAN_FLAG) === '1'; } catch (_) { cleaned = true; }
     if (!cleaned) {
-      // 1er passage : purge la session résiduelle + hard refresh — mais UNIQUEMENT
+      // 1er passage : purge la session résiduelle + hard refresh, mais UNIQUEMENT
       // si le drapeau one-shot a bien pu être persisté (sinon on boucle à l'infini).
       let persisted = false;
       try { sessionStorage.setItem(CLEAN_FLAG, '1'); persisted = sessionStorage.getItem(CLEAN_FLAG) === '1'; } catch (_) {}
@@ -5118,7 +5118,7 @@ function ShopFrame({ variant }) {
   // Restauration de la session au chargement. Le jeton était bien écrit dans
   // localStorage à la connexion et WSAuth.me() existait pour le revalider, mais
   // RIEN ne l'appelait : après le moindre rechargement, le client redevenait
-  // invité — aucun maintien de stock, et un checkout traité en visiteur alors
+  // invité : aucun maintien de stock, et un checkout traité en visiteur alors
   // qu'il a un compte.
   React.useEffect(() => {
     let alive = true;
@@ -5225,7 +5225,7 @@ function ShopFrame({ variant }) {
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [orderToast, setOrderToast] = useState(null);
 
-  // Shops directory — sourced from API stub (or remote endpoint when wired).
+  // Shops directory : sourced from API stub (or remote endpoint when wired).
   const [shops, setShops] = useState(() => (window.WSShops ? window.WSShops.getCacheSync() : []));
   const [shopsFailed, setShopsFailed] = React.useState(false);
   React.useEffect(() => {
@@ -5247,24 +5247,24 @@ function ShopFrame({ variant }) {
     if (m) { if (m.id !== shopId) setShopId(m.id); }
     else {
       /* AUCUN REPLI. On ne choisit PAS de boutique à la place du visiteur.
-         Le code prenait shops[0] — et /shops trie PAR NOM, donc ce n'était même
+         Le code prenait shops[0] : et /shops trie PAR NOM, donc ce n'était même
          pas « la boutique par défaut » mais la première par ordre alphabétique.
          Relevé en production : un visiteur sans ?shop= atterrissait sur
          « Atelier by - Halle » (id 4) pendant que la console franchisé montrait
          « Atelier by Berlo - Corbais » (id 2). Deux catalogues différents, et
-         rien à l'écran pour le dire — on a cherché une heure un produit
+         rien à l'écran pour le dire : on a cherché une heure un produit
          manquant qui n'a jamais manqué.
 
          Une boutique servie à la place d'une autre est une donnée fausse, pas
          un moindre mal. On rend donc la main : shopId reste nul, et l'écran
          demande de choisir. */
       if (shopId != null) console.warn('[webshop] boutique « ' + shopId +
-        ' » inconnue de /shops — aucun repli : le visiteur choisit.');
+        ' » inconnue de /shops : aucun repli : le visiteur choisit.');
       setShopId(null);
     }
   }, [shops]);
 
-  // Catégories — serveur uniquement (window._CATALOG_SEED n'existe plus).
+  // Catégories : serveur uniquement (window._CATALOG_SEED n'existe plus).
   // L'échec est tracé : sans ça, la boutique s'affichait vide sans un mot.
   const [categories, setCategories] = React.useState([]);
   React.useEffect(() => {
@@ -5278,15 +5278,15 @@ function ShopFrame({ variant }) {
         : (date || '');
       window.WSCatalog.listCategories({ shopId, date: dIso })
         .then((c) => { if (alive && Array.isArray(c)) setCategories(c); })
-        .catch((e) => bug('catalogue', 'catégories indisponibles — la barre restera vide', e));
+        .catch((e) => bug('catalogue', 'catégories indisponibles : la barre restera vide', e));
     }
     return () => { alive = false; };
     // `lang` dans les dépendances : les libellés de catégories sont résolus par
-    // le SERVEUR selon la langue, donc changer de langue doit les redemander —
+    // le SERVEUR selon la langue, donc changer de langue doit les redemander
     // sinon la barre reste dans la langue du premier chargement.
   }, [shopId, date, lang]);
 
-  // Assortiments (saisons) — serveur uniquement.
+  // Assortiments (saisons) : serveur uniquement.
   const [assortments, setAssortments] = React.useState([]);
   React.useEffect(() => {
     let alive = true;
@@ -5298,14 +5298,14 @@ function ShopFrame({ variant }) {
     return () => { alive = false; };
   }, [shopId]);
 
-  // Logged-in user's office + tour — loaded async whenever officeId changes.
+  // Logged-in user's office + tour : loaded async whenever officeId changes.
   const [userOffice, setUserOffice] = React.useState(null);
   const [userTour, setUserTour] = React.useState(null);
   React.useEffect(() => {
     let alive = true;
     async function load() {
       if (!user || !user.officeId) { setUserOffice(null); setUserTour(null); return; }
-      // Serveur uniquement : sans WSOffices/WSTours, pas de bureau — l'écran
+      // Serveur uniquement : sans WSOffices/WSTours, pas de bureau, l'écran
       // « Mon bureau » affichera l'absence, jamais un bureau fabriqué.
       const office = window.WSOffices
         ? await window.WSOffices.get(user.officeId).catch((e) => { bug('bureau', 'fiche bureau indisponible', e); return null; })
@@ -5348,28 +5348,28 @@ function ShopFrame({ variant }) {
     [officeSites, selectedSiteId]
   );
 
-  // Delivery fee — recomputed whenever basket subtotal or selected site changes.
+  // Delivery fee : recomputed whenever basket subtotal or selected site changes.
   const subtotalForFee = basket.reduce((t, l) => t + l.price * l.qty, 0);
   const [deliveryFeeResult, setDeliveryFeeResult] = React.useState(null);
   // L'échec du calcul des frais était AVALÉ (.catch(() => {})). Conséquences :
   // frais de livraison facturés 0 €, ligne « Frais de livraison » masquée, et
-  // payment_type retombant sur 'immediate' — donc un bureau en facturation
+  // payment_type retombant sur 'immediate', donc un bureau en facturation
   // différée se voyait demander un paiement immédiat. On garde l'erreur et la
   // commande est refusée en mode livraison tant qu'elle n'est pas résolue.
   const [deliveryFeeErr, setDeliveryFeeErr] = React.useState('');
   React.useEffect(() => {
     let alive = true;
     if (mode !== 'delivery' || !userOffice) { setDeliveryFeeResult(null); setDeliveryFeeErr(''); return; }
-    if (!window.WSDeliveryFees) { setDeliveryFeeResult(null); setDeliveryFeeErr('Frais de livraison indisponibles — please debug.'); return; }
+    if (!window.WSDeliveryFees) { setDeliveryFeeResult(null); setDeliveryFeeErr('Frais de livraison indisponibles, please debug.'); return; }
     window.WSDeliveryFees.quote({
       siteId:          selectedSite ? selectedSite.id          : null,
       officeClientId:  userOffice.id,
       tourneeId:       selectedSite ? selectedSite.tournee_id  : (userOffice.tourId || null),
       shopId:          shop ? shop.id : shopId,
       subtotal:        subtotalForFee,
-    }).then((r) => { if (!alive) return; setDeliveryFeeResult(r); setDeliveryFeeErr(r ? '' : 'Frais de livraison indisponibles — please debug.'); })
-      .catch((e) => { if (!alive) return; setDeliveryFeeResult(null); bug('frais de livraison', 'calcul indisponible — aucun montant affiché', e);
-                      setDeliveryFeeErr('Frais de livraison indisponibles — commande impossible. ' + (e && e.message ? e.message : '')); });
+    }).then((r) => { if (!alive) return; setDeliveryFeeResult(r); setDeliveryFeeErr(r ? '' : 'Frais de livraison indisponibles, please debug.'); })
+      .catch((e) => { if (!alive) return; setDeliveryFeeResult(null); bug('frais de livraison', 'calcul indisponible : aucun montant affiché', e);
+                      setDeliveryFeeErr('Frais de livraison indisponibles, commande impossible. ' + (e && e.message ? e.message : '')); });
     return () => { alive = false; };
   }, [mode, userOffice?.id, selectedSite?.id, subtotalForFee, shopId]);
 
@@ -5406,7 +5406,7 @@ function ShopFrame({ variant }) {
 
   // Deep-link peut passer un id numérique (en string) OU un slug → match souple.
   // `|| shops[0]` retiré : le meme repli, une seconde fois. Il rattrapait un
-  // shopId nul en servant la premiere boutique par ordre alphabetique — donc
+  // shopId nul en servant la premiere boutique par ordre alphabetique, donc
   // meme sans repli dans la resolution ci-dessus, l'ecran en aurait affiche une.
   const shop = shops.find((s) => String(s.id) === String(shopId) || s.slug === shopId) || null;
   // Langue de la boutique : default_lang / languages (servis par /shops) →
@@ -5430,17 +5430,17 @@ function ShopFrame({ variant }) {
     (async () => {
       if (!window.WSCatalog) return;
       // On passe le `mode` : en livraison bureau, l'API renvoie DÉJÀ la liste
-      // filtrée (produits éligibles) — filtre partagé, identique online et après
+      // filtrée (produits éligibles) : filtre partagé, identique online et après
       // handoff PWA, sans dépendre de l'état client. Le filtre client résiduel
       // (slotFiltered) reste comme repli (seed/démo ou API sans le paramètre).
       // `date` : les gammes saisonnières sont évaluées à la date de retrait /
-      // livraison. Formatage LOCAL — toISOString() décalerait d'un jour en
+      // livraison. Formatage LOCAL : toISOString() décalerait d'un jour en
       // soirée (heure belge d'été), et on interrogerait la mauvaise saison.
       const dIso = date instanceof Date
         ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
         : (date || '');
       const list = await window.WSCatalog.listProducts({ shopId, mode, date: dIso });
-      // Une liste VIDE est une réponse valable — c'est le catalogue de cette
+      // Une liste VIDE est une réponse valable, c'est le catalogue de cette
       // date. L'ancien test `list.length` conservait la liste précédente, donc
       // des produits d'une autre date/saison restaient affichés. Un échec HTTP
       // lève déjà une exception : ici, vide veut bien dire vide.
@@ -5448,13 +5448,13 @@ function ShopFrame({ variant }) {
     })();
     return () => { alive = false; };
     // `lang` : les NOMS de produits sont résolus par le serveur selon la
-    // langue — changer de langue doit redemander le catalogue, sinon la grille
+    // langue : changer de langue doit redemander le catalogue, sinon la grille
     // reste dans la langue du premier chargement.
   }, [shopId, mode, date, lang]);
   // Source commune GRILLE + LIGNE DE NAV : le catalogue restreint au créneau
   // et à la date en cours. La règle d'affichage de la nav (« n'afficher que ce
   // qui contient au moins un produit disponible ») est ainsi exactement celle
-  // de la grille — même source, jamais deux vérités.
+  // de la grille : même source, jamais deux vérités.
   const slotFiltered = useMemo(() => {
     let src = allProducts;
     if (mode === 'delivery') {
@@ -5514,7 +5514,7 @@ function ShopFrame({ variant }) {
   }, [slotFiltered, assortments]);
 
   // ── Nav catégories : icônes des touches « Tout » / retour (ws_param via
-  //    /config — pas de fichier en dur dans le composant), et synchro URL. ──
+  //    /config : pas de fichier en dur dans le composant), et synchro URL. ──
   const [navIcons, setNavIcons] = React.useState({ all: null, back: null });
   React.useEffect(() => {
     let alive = true;
@@ -5527,10 +5527,10 @@ function ShopFrame({ variant }) {
   }, []);
 
   // L'URL est la vérité partageable : category= / sub= (fusionnés dans la
-  // query existante — shop, mode, voucher… restent intacts). Les BASCULES de
+  // query existante : shop, mode, voucher… restent intacts). Les BASCULES de
   // niveau créent une étape d'historique (pushState) ; les changements de
   // filtre au sein d'un niveau la remplacent (replaceState). Le « précédent »
-  // du navigateur remonte donc d'un cran, comme la touche de retour — il ne
+  // du navigateur remonte donc d'un cran, comme la touche de retour, il ne
   // quitte pas la boutique tant qu'il reste des étapes.
   const syncCatUrl = React.useCallback((nextCat, nextSub, push) => {
     try {
@@ -5565,7 +5565,7 @@ function ShopFrame({ variant }) {
     syncCatUrl(cat, sid, false);         // même niveau : pas d'étape
   }, [syncCatUrl, cat]);
   React.useEffect(() => {
-    // Retour navigateur : mêmes étapes que la touche de retour — l'état suit
+    // Retour navigateur : mêmes étapes que la touche de retour, l'état suit
     // l'URL de l'étape sur laquelle on retombe.
     const onPop = () => {
       try {
@@ -5580,7 +5580,7 @@ function ShopFrame({ variant }) {
   React.useEffect(() => {
     // Cohérence après un changement de créneau/date : si la catégorie ou la
     // sous-catégorie active n'a plus de produit disponible, on ne filtre pas
-    // à l'aveugle — retour à un état visible. Gardé silencieux tant que les
+    // à l'aveugle : retour à un état visible. Gardé silencieux tant que les
     // données ne sont pas chargées (sinon un chargement lent « reset » l'URL).
     if (!slotFiltered.length || !(categories || []).length) return;
     if (cat === 'all' || isAssortment) return;
@@ -5610,12 +5610,12 @@ function ShopFrame({ variant }) {
      • OU le bureau lié porte lui-même une tournée active (user.officeSite.tourId).
      Le second manquait. Or c'est celui que suit le rattachement depuis le
      profil : la liste ne propose QUE des bureaux desservis, mais la porte
-     n'acceptait que la chaîne ERP — souvent vide. Le client liait un bureau
+     n'acceptait que la chaîne ERP, souvent vide. Le client liait un bureau
      desservi et se voyait refuser la livraison faute de « bureau lié ». */
   const siteTour = !!(user && user.officeSite && user.officeSite.tourId);
   const userCanDeliver = !!((userOffice && userOffice.status === 'validated' && userTour) || siteTour);
 
-  // Maintien de stock (15 min) — clients connectés. Trois corrections :
+  // Maintien de stock (15 min) : clients connectés. Trois corrections :
   //  • l'échec n'est plus avalé : il est affiché (sinon le produit était au
   //    panier SANS être tenu, et le client l'apprenait au paiement) ;
   //  • la date était calculée en UTC (toISOString) : après 22 h en heure belge
@@ -5627,7 +5627,7 @@ function ShopFrame({ variant }) {
   /* MOTIF DE CE QUE L'APP VIENT DE FAIRE, ou de ce qu'elle refuse. Toute
      action décidée à la place du client s'annonce ici : refus de la livraison,
      bascule automatique de mode, panier vidé, boutique changée. Une app qui
-     agit sans le dire oblige à deviner — et sur un panier perdu, à recommencer. */
+     agit sans le dire oblige à deviner, et sur un panier perdu, à recommencer. */
   const [notice, setNotice] = React.useState(null);
   /* RETOUR DE LA PAGE DE PAIEMENT Stripe (checkout_success / checkout_cancel →
      ?paid=1 / ?canceled=1). La commande a été enregistrée AVANT la redirection ;
@@ -5636,7 +5636,7 @@ function ShopFrame({ variant }) {
        · canceled=1 → avis persistant : la commande existe mais reste impayée.
      Le retour du navigateur ne PROUVE pas l'encaissement (seul le webhook fait
      foi, cf. config.php) : on annonce la commande, pas le paiement. Les
-     paramètres sont ensuite retirés de l'adresse — un rechargement ne doit pas
+     paramètres sont ensuite retirés de l'adresse : un rechargement ne doit pas
      rejouer l'accueil. */
   React.useEffect(() => {
     let q;
@@ -5655,7 +5655,7 @@ function ShopFrame({ variant }) {
       setTimeout(() => setOrderToast(null), 6500);
     }
     if (canceled) {
-      /* Le texte est CAPTURÉ ici — le rendu affiche notice.texte tel quel. Au
+      /* Le texte est CAPTURÉ ici : le rendu affiche notice.texte tel quel. Au
          premier chargement, /i18n n'a souvent pas encore répondu : t() aurait
          figé les clés brutes dans l'avis. On le pose quand le dictionnaire est
          là (ou tout de suite s'il l'est déjà). */
@@ -5679,11 +5679,11 @@ function ShopFrame({ variant }) {
   }
   function stockReserve(productId, qty = 1, lineId = null) {
     // Visiteur non connecté : aucun maintien possible (pas d'identité à qui le
-    // rattacher). On le TRACE — sans ça, l'absence de réservation était
+    // rattacher). On le TRACE : sans ça, l'absence de réservation était
     // indiscernable d'une panne, y compris en test.
     if (!user) { console.info('[stock] pas de maintien : client non connecté (panier invité)'); return; }
     if (!window.WSCatalog || !window.WSCatalog.reserve) {
-      setStockErr('Service stock indisponible — please debug.'); return;
+      setStockErr('Service stock indisponible : please debug.'); return;
     }
     const iso = date instanceof Date ? isoLocal(date) : (date || '');
     window.WSCatalog.reserve({ productId, shopId, date: iso, mode, qty, customerId: user.id })
@@ -5693,7 +5693,7 @@ function ShopFrame({ variant }) {
         // cette trace, une table de réservations vide restait inexplicable.
         console.info('[stock] réponse réservation', r);
         if (r && r.ok !== false && !r.reservationId) {
-          console.info('[stock] aucun maintien créé — raison :', (r && r.reason) || 'non précisée');
+          console.info('[stock] aucun maintien créé, raison :', (r && r.reason) || 'non précisée');
         }
         // On rattache le maintien à SA ligne de panier : sans cet identifiant,
         // le retrait d'une ligne libérait toutes les réservations du même
@@ -5702,11 +5702,11 @@ function ShopFrame({ variant }) {
         if (r && r.reservationId && lineId != null) {
           setBasket((b) => b.map((l) => (l.line === lineId ? { ...l, reservationId: r.reservationId } : l)));
         }
-        setStockErr(r && r.ok === false ? (r.error || 'Stock non tenu — please debug.') : '');
+        setStockErr(r && r.ok === false ? (r.error || 'Stock non tenu : please debug.') : '');
         return refreshStock();
       })
       .catch((e) => { bug('stock', 'réservation refusée', e);
-                      setStockErr('Stock non tenu : ' + (e && e.message ? e.message : 'erreur serveur') + ' — la disponibilité sera revérifiée au paiement.');
+                      setStockErr('Stock non tenu : ' + (e && e.message ? e.message : 'erreur serveur') + ', la disponibilité sera revérifiée au paiement.');
                       refreshStock().catch(() => {}); });
   }
   // reservationId connu → on ne libère QUE ce maintien. Sinon (réservation non
@@ -5717,7 +5717,7 @@ function ShopFrame({ variant }) {
     // appelée (session perdue, module absent) et la table restait à
     // released_at NULL sans le moindre message, alors que TOUT le reste de la
     // chaîne était tracé.
-    if (!user) { console.info('[stock] pas de libération : client non connecté — le maintien expirera seul'); return; }
+    if (!user) { console.info('[stock] pas de libération : client non connecté, le maintien expirera seul'); return; }
     if (!window.WSCatalog || !window.WSCatalog.release) {
       bug('stock', 'pas de libération : module catalogue absent'); return;
     }
@@ -5726,7 +5726,7 @@ function ShopFrame({ variant }) {
         : { customerId: user.id, productId })
       .then((r) => {
         if (r && r.ok !== false && !r.released) {
-          console.info('[stock] aucun maintien libéré — rien ne correspondait côté serveur');
+          console.info('[stock] aucun maintien libéré, rien ne correspondait côté serveur');
         }
         return refreshStock();
       })
@@ -5742,7 +5742,7 @@ function ShopFrame({ variant }) {
     const lineId = Date.now();
     setBasket((b) => [...b, {
       line: lineId, productId: p.id,
-      name: p.name + (portion === 'demi' ? ' — 1/2' : portion === 'quart' ? ' — 1/4' : ''),
+      name: p.name + (portion === 'demi' ? ', 1/2' : portion === 'quart' ? ', 1/4' : ''),
       qty: 1, price: p.price, options: [],
       portion: portion || null, cat: p.cat, crossPortion: !!p.crossPortion,
       lead_time: p.lead_time || 0, no_delivery: !!p.no_delivery,
@@ -5824,11 +5824,11 @@ function ShopFrame({ variant }) {
     stockReserve(line.productId, line.qty || 1, lineId);
   }
 
-  /* Heure de RETRAIT du créneau choisi — décision validée : c'est elle que les
+  /* Heure de RETRAIT du créneau choisi, décision validée : c'est elle que les
      règles de ventes croisées comparent, jamais l'heure de la commande.
      Les créneaux sont libellés « 12:00 – 12:30 » ; on en prend le début.
      Tant qu'aucun créneau n'est choisi (cas du panier, avant le paiement),
-     l'heure reste inconnue et la contrainte horaire ne s'applique pas — à
+     l'heure reste inconnue et la contrainte horaire ne s'applique pas : à
      l'étape de paiement, où le créneau est choisi, elle s'applique exactement. */
   const crossSlotTime = React.useMemo(() => {
     const hit = (officeSlots || []).find((s) => s.slot_type === selectedSlot || s.id === selectedSlot);
@@ -5837,7 +5837,7 @@ function ShopFrame({ variant }) {
   }, [officeSlots, selectedSlot]);
 
   /* Ajout depuis une suggestion « Panier Croisé ». On passe par le MÊME chemin
-     qu'un ajout ordinaire — réservation de stock comprise — pour qu'un produit
+     qu'un ajout ordinaire : réservation de stock comprise, pour qu'un produit
      suggéré ne soit pas un citoyen de seconde zone dans le panier. */
   function handleCrossAdd(it) {
     const p = allProducts.find((x) => String(x.id) === String(it.productId));
@@ -5871,7 +5871,7 @@ function ShopFrame({ variant }) {
 
   // Design system rule: changing mode OR date clears the basket instantly.
   /* POURQUOI la livraison au bureau est refusée. Cinq situations distinctes
-     menaient au même geste muet — ouverture du panneau compte, ou rien du tout
+     menaient au même geste muet, ouverture du panneau compte, ou rien du tout
      dans le cas de l'heure limite. Le client voyait son écran changer sans
      comprendre, et n'avait aucun moyen de savoir quoi corriger.
      Chaque cas dit donc CE QUI MANQUE et CE QU'IL FAUT FAIRE. Aucun n'est
@@ -5907,7 +5907,7 @@ function ShopFrame({ variant }) {
     if (next === 'delivery' && !userCanDeliver) {
       const why = deliveryBlockReason();
       setNotice(why);
-      // On ouvre l'écran où l'action se fait — mais seulement quand il y a une
+      // On ouvre l'écran où l'action se fait : mais seulement quand il y a une
       // action possible. Attendre une validation ou une tournée ne se règle pas
       // depuis le compte : y renvoyer ferait chercher un réglage inexistant.
       if (!user) setAuthOpen(true);
@@ -5915,7 +5915,7 @@ function ShopFrame({ variant }) {
       return;
     }
     // Livraison le jour même : refusée passé l'heure limite. Ce cas ne faisait
-    // RIEN — le bouton semblait cassé.
+    // RIEN : le bouton semblait cassé.
     if (next === 'delivery' && deliveryCutoffPassed) {
       setNotice({
         titre: 'Livraison du jour clôturée',
@@ -5966,7 +5966,7 @@ function ShopFrame({ variant }) {
     setUser(u);
     // Preferred shop: if the user has one, adopt it as the active shop on login
     // (rule: "On login, load the preferred shop automatically").
-    // Don't reset cart — spec says "Do not reset cart unless the shop change requires it".
+    // Don't reset cart : spec says "Do not reset cart unless the shop change requires it".
     if (u && u.preferredShopId && u.preferredShopId !== shopId) {
       const cible = (shops || []).find((x) => String(x.id) === String(u.preferredShopId));
       setShopId(u.preferredShopId);
@@ -6000,7 +6000,7 @@ function ShopFrame({ variant }) {
   // Go-live : sans boutique resolue (API /shops en echec ou vide), on affiche
   // un etat explicite - jamais de boutique de demonstration.
   /* TROIS ÉTATS SANS BOUTIQUE, ET ILS NE SE CONFONDENT PAS. L'écran n'en
-     connaissait que deux — « chargement » et « API injoignable » — parce que le
+     connaissait que deux : « chargement » et « API injoignable », parce que le
      troisième n'existait pas : un repli choisissait une boutique en silence.
      Sans repli, il faut le dire et laisser choisir, sinon le visiteur attend un
      chargement qui ne viendra jamais. */
@@ -6113,7 +6113,7 @@ function ShopFrame({ variant }) {
         <Basket shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} deliveryFeeResult={deliveryFeeResult} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
       </div>
 
-      {/* Mobile bottom tab bar — 2 buttons, 50/50 split */}
+      {/* Mobile bottom tab bar : 2 buttons, 50/50 split */}
       <nav className="ws-tabbar" aria-label={t('nav.navAria')}>
         <button className="ws-tabbar__btn ws-tabbar__btn--cart" onClick={() => setCartDrawerOpen(true)} aria-label={t('nav.cart')}>
           <span className="ws-tabbar__cart-wrap">
@@ -6128,7 +6128,7 @@ function ShopFrame({ variant }) {
         </button>
       </nav>
 
-      {/* Slot change confirmation — one cart = one route + one date */}
+      {/* Slot change confirmation : one cart = one route + one date */}
       {pendingSlot && (
         <SlotChangeModal
           items={pendingSlot.dropped}

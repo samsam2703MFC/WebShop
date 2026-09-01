@@ -1,5 +1,5 @@
 /* =====================================================================
-   WSCalendar — calendar/slots/cutoff API stub
+   WSCalendar : calendar/slots/cutoff API stub
    ---------------------------------------------------------------------
    The UI must NEVER hardcode dates, slots, days or cutoffs. It calls
    these helpers, which default to the in-memory shop/tour seeds.
@@ -32,7 +32,7 @@
           // répondu » : les deux donnent un calendrier vide à l'écran. Sans
           // cette trace, une panne ressemble trait pour trait à une boutique
           // fermée toute la semaine, et personne ne va chercher plus loin.
-          console.error('[calendrier] jours indisponibles — HTTP ' + r.status);
+          console.error('[calendrier] jours indisponibles, HTTP ' + r.status);
         } catch (e) { console.error('[calendrier] jours injoignables', e); }
       }
       return []; // pas d'API -> aucun jour annonce
@@ -43,7 +43,7 @@
           const u = `${api.endpoint}/slots?shopId=${encodeURIComponent(shopId||'')}&mode=${encodeURIComponent(mode||'')}&date=${encodeURIComponent(date)}`;
           const r = await fetch(u, { credentials: 'include' });
           if (r.ok) return await r.json();
-          console.error('[calendrier] créneaux indisponibles — HTTP ' + r.status);
+          console.error('[calendrier] créneaux indisponibles, HTTP ' + r.status);
         } catch (e) { console.error('[calendrier] créneaux injoignables', e); }
       }
       return []; // pas d'API -> aucun creneau propose
@@ -54,7 +54,7 @@
           const u = `${api.endpoint}/cutoff?shopId=${encodeURIComponent(shopId||'')}&mode=${encodeURIComponent(mode||'')}`;
           const r = await fetch(u, { credentials: 'include' });
           if (r.ok) return await r.json();
-          console.error('[calendrier] cut-off indisponible — HTTP ' + r.status);
+          console.error('[calendrier] cut-off indisponible, HTTP ' + r.status);
         } catch (e) { console.error('[calendrier] cut-off injoignable', e); }
       }
       noApi();

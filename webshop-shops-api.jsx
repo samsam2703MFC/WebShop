@@ -1,13 +1,13 @@
-// webshop-shops-api.jsx — Shops directory accessor.
+// webshop-shops-api.jsx : Shops directory accessor.
 //
 // Per profile spec: "No hardcoded shop data. Shops must come from API."
-// This module is the seam — UI code calls window.WSShops.list() and never
+// This module is the seam : UI code calls window.WSShops.list() and never
 // imports the W_SHOPS object directly. To swap in a real backend, set:
 //   window.WSShops.endpoint = 'https://your-host/shops';
 // Response must be an array (or {shops: [...]}) of {id,name,city,accent,address}.
 //
 // GO-LIVE : la liste vient UNIQUEMENT de l'API (/shops → table `shops`). Le
-// repli sur la fixture mémoire window.W_SHOPS a été SUPPRIMÉ — c'est lui qui a
+// repli sur la fixture mémoire window.W_SHOPS a été SUPPRIMÉ, c'est lui qui a
 // re-servi en production des boutiques de démonstration qui n'existent plus ni
 // dans le code ni en base. Sans endpoint, list() lève une erreur : l'écran
 // affiche « Boutiques indisponibles », jamais une liste inventée.
@@ -45,7 +45,7 @@
   }
 
   function setEndpoint(url) { endpoint = url || null; cache = null; }
-  // Vide tant que l'API n'a pas répondu (sert d'état initial React) — aucune
+  // Vide tant que l'API n'a pas répondu (sert d'état initial React) : aucune
   // boutique n'est affichée avant d'avoir la vraie liste.
   function getCacheSync() { return cache ? cache.slice() : []; }
 

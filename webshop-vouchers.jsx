@@ -1,16 +1,16 @@
-// webshop-vouchers.jsx — Voucher loading/validation + deep-link param parsing.
+// webshop-vouchers.jsx : Voucher loading/validation + deep-link param parsing.
 // Loaded into the storefront BEFORE webshop-full-bundle.jsx so the helpers
 // are global by the time CheckoutWizard / ShopFrame need them.
 
 (function () {
   // ─────────────────────────────────────────────────────────────────────────
-  // GO-LIVE — les bons vivent en base (promotion → voucher_campaign →
+  // GO-LIVE : les bons vivent en base (promotion → voucher_campaign →
   // voucher_code) et SEUL le serveur peut les valider : il connaît les
   // compteurs d'utilisation, le ciblage client/bureau, le périmètre produit
   // et les dates. L'ancien couple loadVouchers()/validateVoucher() lisait
   // localStorage et recalculait la remise dans le navigateur : un code
   // pouvait être « accepté » sans exister en base, ou une remise différer
-  // de celle réellement facturée. Supprimé — aucune validation locale.
+  // de celle réellement facturée. Supprimé, aucune validation locale.
   // ─────────────────────────────────────────────────────────────────────────
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -35,7 +35,7 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // WSVouchers — API stub for voucher redemption.
+  // WSVouchers : API stub for voucher redemption.
   // The admin app reads/writes localStorage.atelier_vouchers directly while
   // there is no backend. The storefront always goes through WSVouchers.redeem()
   // at checkout so the seam is clean for production.
@@ -65,8 +65,8 @@
         } catch (_) {}
       }
       // Le serveur est le SEUL juge d'un code : injoignable ou non configuré,
-      // on refuse — jamais de validation « à blanc » côté client.
-      return { ok: false, reason: 'offline', message: 'Service codes promo indisponible — réessayez.' };
+      // on refuse : jamais de validation « à blanc » côté client.
+      return { ok: false, reason: 'offline', message: 'Service codes promo indisponible, réessayez.' };
     },
 
     /* Bons DISPONIBLES pour ce client + boutique (marketing : affichage +
@@ -78,7 +78,7 @@
         if (customerId != null && customerId !== '') qs.set('customerId', String(customerId));
         if (subtotal != null) qs.set('subtotal', String(subtotal));
         // `lang` : le libellé du bon (« Livraison offerte », « dès 30 € ») est
-        // COMPOSÉ par le serveur — le front reçoit une phrase déjà faite et ne
+        // COMPOSÉ par le serveur : le front reçoit une phrase déjà faite et ne
         // peut donc pas la traduire lui-même.
         const lg = (window.WSI18n && window.WSI18n.getLang && window.WSI18n.getLang()) || '';
         if (lg) qs.set('lang', lg);
@@ -88,7 +88,7 @@
       return [];
     },
 
-    /* Liste des bons (usage admin) — base uniquement, sinon erreur. */
+    /* Liste des bons (usage admin) : base uniquement, sinon erreur. */
     async list() {
       if (!WSVouchers.endpoint) throw new Error('API bons non configurée.');
       const r = await fetch(WSVouchers.endpoint, { credentials: 'include' });

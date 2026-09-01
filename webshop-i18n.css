@@ -1,5 +1,5 @@
 /* =====================================================================
-   WEBSHOP — i18n widgets (LangChip + LangMenu)
+   WEBSHOP : i18n widgets (LangChip + LangMenu)
    ===================================================================== */
 
 /* ----- compact chip in top nav ----- */
@@ -99,14 +99,14 @@
   font-size: 11px; color: var(--color-text-muted, #7a6f63);
 }
 
-/* ----- mobile — hide chip in tab bar; profile menu still works ----- */
+/* ----- mobile : hide chip in tab bar; profile menu still works ----- */
 @media (max-width: 640px) {
   .ws-langchip__btn { height: 30px; padding: 0 7px; font-size: 10.5px; }
   .ws-langchip__menu { right: 0; min-width: 156px; }
 }
 
 /* =====================================================================
-   Account modal — editable profile form
+   Account modal : editable profile form
    ===================================================================== */
 .ws-acc__form {
   display: grid;

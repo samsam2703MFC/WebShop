@@ -1,4 +1,4 @@
-// webshop-shop-router.jsx — Active-shop routing for the multi-shop storefront.
+// webshop-shop-router.jsx : Active-shop routing for the multi-shop storefront.
 //
 // One storefront serves every shop. The catalogue, cart, checkout and login
 // are all served by our own API (php-api/), filtered by shopId. This module is

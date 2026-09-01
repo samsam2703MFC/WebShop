@@ -1,5 +1,5 @@
 /* =====================================================================
-   WSTours — delivery tours (tournées) API stub
+   WSTours : delivery tours (tournées) API stub
    ---------------------------------------------------------------------
    The UI must NEVER read W_TOURS directly. It calls these helpers,
    which default to the in-memory W_TOURS seed while no backend is wired.
@@ -15,7 +15,7 @@
     endpoint: null,
 
     /* Liste des tournées (table ws_tours), éventuellement filtrée par boutique.
-       GO-LIVE : plus aucun repli sur la constante W_TOURS — une tournée
+       GO-LIVE : plus aucun repli sur la constante W_TOURS, une tournée
        inventée enverrait un client vers une livraison qui n'existe pas.
        Erreur réseau/serveur => on lève, l'appelant affiche l'erreur. */
     async list({ shopId } = {}) {
@@ -27,7 +27,7 @@
       return Array.isArray(j) ? j : (j.tours || j.data || []);
     },
 
-    /* Une tournée par id — même règle : vraie donnée ou erreur. */
+    /* Une tournée par id : même règle : vraie donnée ou erreur. */
     async get(id) {
       if (!id) return null;
       if (!api.endpoint) throw new Error('API tournées non configurée.');

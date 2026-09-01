@@ -1,5 +1,5 @@
 /* =====================================================================
-   WEBSHOP i18n — React glue
+   WEBSHOP i18n : React glue
    ---------------------------------------------------------------------
    - useT() hook: returns { t, tProduct, tCategory, lang, setLang } and
      re-renders the calling component on language change.
@@ -11,7 +11,7 @@
   const { useState, useEffect, useRef, useCallback } = React;
   const I = window.WSI18n;
   if (!I) {
-    console.error('WSI18n not loaded — make sure webshop-i18n.jsx is included before this file.');
+    console.error('WSI18n not loaded : make sure webshop-i18n.jsx is included before this file.');
     return;
   }
 
@@ -109,7 +109,7 @@
           >
             {I.SUPPORTED.map((code) => (
               <option key={code} value={code}>
-                {code.toUpperCase()} — {t('lang.' + code)}
+                {code.toUpperCase()} : {t('lang.' + code)}
               </option>
             ))}
           </select>

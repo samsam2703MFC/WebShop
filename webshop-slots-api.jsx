@@ -1,4 +1,4 @@
-// webshop-slots-api.jsx — window.WSSlots
+// webshop-slots-api.jsx : window.WSSlots
 //
 // Delivery SLOTS for the active office. A "slot" is a delivery window served by
 // the office's tour (ws_tour_availability): each row = one window (morning

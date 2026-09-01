@@ -1,5 +1,5 @@
 /* =====================================================================
-   WSPricing — basket pricing / promos / payment-methods API stub
+   WSPricing : basket pricing / promos / payment-methods API stub
    ---------------------------------------------------------------------
    The frontend MUST NOT contain pricing rules. Every rule below is a
    backend concern; this module is the seam.

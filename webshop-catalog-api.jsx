@@ -1,7 +1,7 @@
 /* =====================================================================
-   WSCatalog — catalogue / assortiments / stock
+   WSCatalog : catalogue / assortiments / stock
    ---------------------------------------------------------------------
-   GO-LIVE — SOURCE UNIQUE : l'API (tables ws_products, ws_categories,
+   GO-LIVE : SOURCE UNIQUE : l'API (tables ws_products, ws_categories,
    ws_product_shops, ws_product_prices, prix magasin ERP…). Toute la
    machinerie de seeds mémoire (window._CATALOG_SEED : produits, prix par
    boutique, assortiments, delivery_stock) a été SUPPRIMÉE, ainsi que les
@@ -26,7 +26,7 @@
 
   /* Réservation et libération portent l'identité du client. L'API l'établit
      désormais à partir du SEUL en-tête Authorization : le repli sur un
-     `customerId` transmis dans le corps laissait réserver — ou libérer — du
+     `customerId` transmis dans le corps laissait réserver, ou libérer, du
      stock au nom de n'importe quel client. Sans cet en-tête, ces deux appels
      répondent 401. */
   const authHeaders = () =>
@@ -34,7 +34,7 @@
 
   /* Date -> 'AAAA-MM-JJ' en heure LOCALE. toISOString() convertit en UTC : une
      Date construite à minuit local devient 22:00 la VEILLE en été (UTC+2), et
-     la journée demandée au serveur était systématiquement la mauvaise — stock
+     la journée demandée au serveur était systématiquement la mauvaise, stock
      du jour précédent affiché en permanence. Même défaut que celui qui rendait
      le dernier jour du mois invisible au franchisé. */
   const pad2 = (n) => String(n).padStart(2, '0');
@@ -57,11 +57,11 @@
 
     async listCategories({ shopId, date } = {}) {
       const base = requireEndpoint();
-      // `date` : même filtre saisonnier que listProducts — une catégorie
+      // `date` : même filtre saisonnier que listProducts, une catégorie
       // entièrement hors saison ne doit pas rester dans la barre de navigation.
       const dateQs = date ? `&date=${encodeURIComponent(date)}` : '';
       // `lang` : le SERVEUR résout les libellés traduits (alias ERP). Sans
-      // alias pour cette langue, il renvoie le libellé source — le front ne
+      // alias pour cette langue, il renvoie le libellé source, le front ne
       // traduit rien lui-même et n'a donc jamais de trou à combler.
       const lg = (window.WSI18n && window.WSI18n.getLang && window.WSI18n.getLang()) || '';
       const langQs = lg ? `&lang=${encodeURIComponent(lg)}` : '';
@@ -128,14 +128,14 @@
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ productId, shopId, date: iso, mode, qty, customerId }),
       });
-      // Le serveur dit PRECISEMENT ce qui bloque — « Stock insuffisant », avec
+      // Le serveur dit PRECISEMENT ce qui bloque, « Stock insuffisant », avec
       // le disponible restant. Remplacer ce message par « HTTP 409 » privait le
       // client de la seule information utile : combien il peut encore prendre.
       if (!r.ok) {
         const j = await r.json().catch(() => null);
         const msg = (j && typeof j.error === 'string' && j.error) ? j.error : ('Réservation impossible (HTTP ' + r.status + ')');
         const dispo = (j && typeof j.available === 'number')
-          ? (j.available > 0 ? ` — il reste ${j.available} pièce${j.available > 1 ? 's' : ''}` : ' — il n\'en reste aucune')
+          ? (j.available > 0 ? ` : il reste ${j.available} pièce${j.available > 1 ? 's' : ''}` : ', il n\'en reste aucune')
           : '';
         throw new Error(msg + dispo);
       }
@@ -160,7 +160,7 @@
         // 401 passait pour un succès et le stock restait gelé jusqu'à
         // expiration, sans la moindre trace. C'est le défaut qui avait déjà été
         // corrigé pour reserve() et oublié ici.
-        if (!r.ok) { console.error('[stock] libération refusée — HTTP ' + r.status); return { ok: false, status: r.status }; }
+        if (!r.ok) { console.error('[stock] libération refusée : HTTP ' + r.status); return { ok: false, status: r.status }; }
         const j = await r.json().catch(() => null);
         console.info('[stock] réponse libération', j);
         return j;

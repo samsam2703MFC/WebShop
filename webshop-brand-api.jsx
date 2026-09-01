@@ -1,5 +1,5 @@
 /* =====================================================================
-   WSBrand — theming/brand config API stub
+   WSBrand : theming/brand config API stub
    ---------------------------------------------------------------------
    The UI must NEVER hardcode brand colors, fonts, logos or labels in JS.
    It calls WSBrand.get() and applies the result to CSS variables.

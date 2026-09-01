@@ -1,17 +1,17 @@
 /* =====================================================================
-   WEBSHOP — Validation TVA (VIES)
+   WEBSHOP : Validation TVA (VIES)
    ---------------------------------------------------------------------
    VIES n'expose pas d'endpoint navigateur compatible CORS : la
    vérification passe TOUJOURS par notre backend (window.WSVies.endpoint,
    câblé par api-config.js).
 
-   GO-LIVE — aucune donnée simulée. L'ancien module embarquait un mock
+   GO-LIVE : aucune donnée simulée. L'ancien module embarquait un mock
    (SAMPLE_DB) qui FABRIQUAIT l'identité d'une société (nom, adresse,
    code postal, ville) pour 5 numéros d'exemple, et rejetait tout numéro
    réel absent de cette liste. Une société pouvait donc être « validée »
    avec une raison sociale et une adresse inventées, ou une vraie société
    refusée. Supprimé : sans endpoint configuré, on renvoie explicitement
-   « service indisponible » — jamais une identité inventée.
+   « service indisponible » : jamais une identité inventée.
 
    Forme de retour en succès :
      { valid: true, data: { vat, country, name, address, postalCode, city } }

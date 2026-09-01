@@ -1,4 +1,4 @@
-// app.jsx — assemble three artboards on a design canvas, one per badge variant.
+// app.jsx : assemble three artboards on a design canvas, one per badge variant.
 
 const { useState } = React;
 
@@ -32,7 +32,7 @@ function VariantAFrame() {
     <AdminWindow>
       <PageHead/>
       <ArtboardNote>
-        <strong>Option A — Bandeau boutique (rail vertical)</strong>
+        <strong>Option A : Bandeau boutique (rail vertical)</strong>
         Chaque tournée s'ouvre sur une bande couleur tenue par la boutique : nom en display Vank, ville en petite capitale. Identité forte, lisible de loin, maintien de la hiérarchie L'Atelier (Ruby + Abricot) sur le reste de la tuile. Idéal en réseau multi-franchisés.
       </ArtboardNote>
       <SplitStrip/>
@@ -51,7 +51,7 @@ function VariantBFrame() {
     <AdminWindow>
       <PageHead/>
       <ArtboardNote>
-        <strong>Option B — Pastille boutique en ligne</strong>
+        <strong>Option B : Pastille boutique en ligne</strong>
         Le badge boutique vit dans la zone d'identification de la tournée, sous le nom : avatar coloré + nom + ville. Discret, dense, parfait pour des listes longues. La couleur reste portée par la pastille seule, le reste de la tuile garde le ton brand neutre.
       </ArtboardNote>
       <SplitStrip/>
@@ -70,8 +70,8 @@ function VariantCFrame() {
     <AdminWindow>
       <PageHead/>
       <ArtboardNote>
-        <strong>Option C — Tampon livraison</strong>
-        Chaque tuile reçoit un liseré fin sur sa tranche haute + un « tampon » d'expédition en haut à droite (épingle + boutique + ville). Métaphore évidente — chaque tournée a un point de départ. Marquage fort sans envahir la grille horizontale.
+        <strong>Option C : Tampon livraison</strong>
+        Chaque tuile reçoit un liseré fin sur sa tranche haute + un « tampon » d'expédition en haut à droite (épingle + boutique + ville). Métaphore évidente, chaque tournée a un point de départ. Marquage fort sans envahir la grille horizontale.
       </ArtboardNote>
       <SplitStrip/>
       <Toolbar shopFilter={shopFilter} setShopFilter={setShopFilter}/>
@@ -86,16 +86,16 @@ function App() {
   return (
     <DesignCanvas
       title="Tournées Admin · badge boutique"
-      subtitle="[2.7] Delivery Rounds — Shop Badge on Tournée Tile"
+      subtitle="[2.7] Delivery Rounds : Shop Badge on Tournée Tile"
     >
       <DCSection id="variants" title="Trois pistes pour rendre la boutique d'attache toujours visible sur la tuile.">
-        <DCArtboard id="A" label="A — Bandeau rail" width={1480} height={1020}>
+        <DCArtboard id="A" label="A : Bandeau rail" width={1480} height={1020}>
           <VariantAFrame/>
         </DCArtboard>
-        <DCArtboard id="B" label="B — Pastille en ligne" width={1480} height={1020}>
+        <DCArtboard id="B" label="B : Pastille en ligne" width={1480} height={1020}>
           <VariantBFrame/>
         </DCArtboard>
-        <DCArtboard id="C" label="C — Tampon livraison" width={1480} height={1020}>
+        <DCArtboard id="C" label="C : Tampon livraison" width={1480} height={1020}>
           <VariantCFrame/>
         </DCArtboard>
       </DCSection>

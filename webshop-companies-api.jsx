@@ -1,5 +1,5 @@
 /* =====================================================================
-   WSCompanies — B2B company accounts an e-mail may order for.
+   WSCompanies : B2B company accounts an e-mail may order for.
    Used by the checkout to offer "commander pour une entreprise".
 
    To wire a real backend, set:

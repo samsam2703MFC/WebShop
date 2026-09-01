@@ -1,11 +1,11 @@
 /* =====================================================================
-   WEBSHOP i18n — noyau (source unique : la table ws_i18n via GET /i18n)
+   WEBSHOP i18n : noyau (source unique : la table ws_i18n via GET /i18n)
    ---------------------------------------------------------------------
    « Rien en dur » : AUCUNE chaîne d'interface ne vit ici. Les libellés sont
    chargés au boot depuis l'API (/i18n → table ws_i18n) et fusionnés via
    merge(). Les composants lisent t('clé') ; tant que la table n'a pas répondu,
    t() renvoie la clé (jamais un texte inventé). Un échec de chargement est
-   signalé au bandeau (WSBug.note), comme les produits — pas de repli.
+   signalé au bandeau (WSBug.note), comme les produits, pas de repli.
 
    - Langues : fr, nl par défaut ; une boutique peut restreindre via `languages`.
    - Langue d'ouverture : choix explicite du client > profil > langue de la
@@ -109,7 +109,7 @@
   /* ---------- chargement depuis l'API ------------------------------ */
   /* Filet de sécurité : la DERNIÈRE réponse réussie est gardée en local et
      resservie si l'API tombe. Sans ça, une panne de /i18n affichait les CLÉS
-     BRUTES sur toute l'interface (« auth.welcomeBack ») — le pire des deux
+     BRUTES sur toute l'interface (« auth.welcomeBack ») : le pire des deux
      mondes. Ce n'est pas un repli inventé : c'est le texte que le serveur a
      réellement servi. L'échec reste signalé au bandeau. */
   const LS_CACHE = 'ws.i18n.v1';

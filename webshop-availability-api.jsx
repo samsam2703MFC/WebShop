@@ -1,5 +1,5 @@
 /* =====================================================================
-   WSAvailability — central availability engine API stub
+   WSAvailability : central availability engine API stub
    ---------------------------------------------------------------------
    Single source of truth for all availability decisions.
    The frontend must NEVER calculate availability itself. It sends

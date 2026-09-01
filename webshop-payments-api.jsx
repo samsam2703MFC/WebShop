@@ -1,5 +1,5 @@
 /* =====================================================================
-   WSPayments — allowed payment methods per shop AND per profile.
+   WSPayments : allowed payment methods per shop AND per profile.
      window.WSPayments.endpoint = BASE_URL + '/payment-methods';
 
    GET {endpoint}?shopId=&profile=guest|registered|company&companyId=&mode=
@@ -10,7 +10,7 @@
    tient pas sa propre liste de méthodes carte.
 
    `mode` est indispensable : en livraison, le serveur écarte « paiement en
-   boutique » — le client ne s'y rend jamais. Sans ce paramètre il était
+   boutique » : le client ne s'y rend jamais. Sans ce paramètre il était
    proposé, et la commande partait au bureau sans encaissement possible.
 
    Returns [] when no endpoint (demo mode); the UI then falls back to its

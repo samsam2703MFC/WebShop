@@ -1,27 +1,27 @@
-/* webshop-bug-banner.jsx — le bandeau d'erreur du WEBSHOP.
+/* webshop-bug-banner.jsx : le bandeau d'erreur du WEBSHOP.
  *
  * POURQUOI IL EXISTE. Les deux back-offices ont un bandeau rouge qui annonce
  * les échecs de chargement (__BO_RENDER_ERRORS). Le webshop, lui, n'avait que
- * des console.error : dix appels — catégories, assortiments, cross-sell, frais
- * de livraison, stock, session — échouaient en silence pour qui ne garde pas la
+ * des console.error : dix appels, catégories, assortiments, cross-sell, frais
+ * de livraison, stock, session, échouaient en silence pour qui ne garde pas la
  * console ouverte. Une grille vide ressemblait alors exactement à une boutique
  * sans produit, et c'est ce qui a fait chercher pendant une heure des articles
  * qui n'avaient jamais manqué.
  *
  * RÈGLE DU DÉPÔT : aucun repli, aucune donnée inventée. Sans repli, un appel qui
- * échoue laisse un écran vide — il FAUT donc que l'écran le dise, sinon on a
+ * échoue laisse un écran vide, il FAUT donc que l'écran le dise, sinon on a
  * remplacé un mensonge par un silence.
  *
  * DOM PUR, HORS REACT. Le bandeau doit s'afficher même si React ne monte pas,
  * ou monte à moitié : c'est précisément là qu'on en a le plus besoin. Il ne
  * dépend d'aucun composant, d'aucun état, et se construit à la première erreur.
  *
- * IL RESTE CRÉDIBLE. Il n'apparaît que sur un échec réel — jamais sur une liste
+ * IL RESTE CRÉDIBLE. Il n'apparaît que sur un échec réel, jamais sur une liste
  * vide, qui est une réponse valable du serveur. Un bandeau permanent n'est plus
  * lu, et le jour où il dit quelque chose, personne ne le voit.
  */
 (function () {
-  var erreurs = [];      // { quoi, detail } — dédupliquées par `quoi`
+  var erreurs = [];      // { quoi, detail } : dédupliquées par `quoi`
   var el = null;
 
   function corps() {
@@ -53,11 +53,11 @@
         (document.body || document.documentElement).appendChild(el);
       }
       var c = document.getElementById('ws-bug-corps');
-      if (c) c.textContent = '⚠ ERREUR — PLEASE DEBUG (' + erreurs.length + ')\n' + corps();
+      if (c) c.textContent = '⚠ ERREUR : PLEASE DEBUG (' + erreurs.length + ')\n' + corps();
     } catch (_) { /* si même ça échoue, il reste la console */ }
   }
 
-  /* note(quoi, detail) — `quoi` identifie la source (« catalogue », « stock »…)
+  /* note(quoi, detail) : `quoi` identifie la source (« catalogue », « stock »…)
      et sert de clé de déduplication : un appel qui échoue à chaque frappe ne
      doit pas empiler cinquante lignes identiques. */
   function note(quoi, detail) {

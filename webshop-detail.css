@@ -1,5 +1,5 @@
 /* =====================================================================
-   PRODUCT DETAIL MODAL — premium rebuild
+   PRODUCT DETAIL MODAL : premium rebuild
    Namespace: .pdm-*
    ===================================================================== */
 
@@ -53,13 +53,13 @@
 .pdm-close:hover { transform: scale(1.06); background: #fff; }
 }
 
-/* HERO — hidden on desktop, shown as banner on mobile ------------- */
+/* HERO : hidden on desktop, shown as banner on mobile ------------- */
 .pdm-hero {
   position: relative;
   flex: 0 0 auto;
   height: 200px;
   background: var(--color-bg, #faf7f2);
-  display: none; /* desktop: no image — fits more options in the modal */
+  display: none; /* desktop: no image, fits more options in the modal */
   align-items: center; justify-content: center;
   overflow: hidden;
 }
@@ -121,7 +121,7 @@
 }
 .pdm-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
-/* In-place swipe hint — pulses on the right edge of the scroll area to
+/* In-place swipe hint : pulses on the right edge of the scroll area to
    communicate "swipe to see more". Fades out the moment the user scrolls,
    and stays hidden once they've reached the bottom. */
 .pdm-info { position: relative; }
@@ -319,7 +319,7 @@
   vertical-align: middle;
 }
 
-/* BUNDLE LIST — vertical stack on both desktop & mobile ----------- */
+/* BUNDLE LIST : vertical stack on both desktop & mobile ----------- */
 .pdm-bundles { display: flex; flex-direction: column; gap: 8px; }
 .pdm-section-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -432,7 +432,7 @@
 }
 .pdm-bcard.is-picked .pdm-bcard__radio::after { transform: scale(1); }
 
-/* expanded bundle slot pickers — progressive disclosure */
+/* expanded bundle slot pickers, progressive disclosure */
 .pdm-bcard__expand {
   overflow: hidden;
   display: grid; grid-template-rows: 0fr;
@@ -445,7 +445,7 @@
   padding-top: 4px;
 }
 
-/* OPTION GROUPS — segmented toggles -------------------------------- */
+/* OPTION GROUPS : segmented toggles -------------------------------- */
 .pdm-opts { display: flex; flex-direction: column; gap: 12px; }
 
 .pdm-optrow { display: flex; flex-direction: column; gap: 6px; transition: opacity 220ms ease, transform 220ms ease; }
@@ -554,7 +554,7 @@
   display: grid; grid-template-rows: 0fr;
   transition: grid-template-rows 280ms cubic-bezier(.2,.8,.2,1);
   /* SANS ce clip, le contenu d'un groupe REPLIÉ débordait de sa rangée 0fr :
-     invisible sous l'élément suivant mais toujours CLIQUABLE — un tap sur une
+     invisible sous l'élément suivant mais toujours CLIQUABLE, un tap sur une
      option touchait en réalité le groupe replié du dessus. Vu au doigt, pas à
      la souris (le pointeur survole, le doigt tape au jugé). */
   overflow: hidden;
@@ -565,7 +565,7 @@
    open list feels balanced and clearly the focus of the modal. */
 .pdm-opt.is-open.is-active { box-shadow: 0 0 0 2px var(--pdm-accent, var(--color-primary)) inset, 0 1px 2px rgba(20,14,10,.04); }
 
-/* CHIP SELECTOR — full-width vertical stack -------------------------- */
+/* CHIP SELECTOR : full-width vertical stack -------------------------- */
 .pdm-chips { display: flex; flex-direction: column; flex-wrap: nowrap; gap: 6px; width: 100%; }
 .pdm-chip {
   display: inline-flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -600,7 +600,7 @@
   color: #fff;
 }
 
-/* IMAGE CHIP — full-width row with tile + label + delta */
+/* IMAGE CHIP : full-width row with tile + label + delta */
 .pdm-imgchip {
   display: inline-flex; align-items: center; gap: 10px;
   width: 100%;
@@ -718,7 +718,7 @@
   animation: pdm-pop 220ms cubic-bezier(.2,.8,.2,1);
 }
 
-/* MOBILE — bottom-sheet treatment (same UX model, anchored to bottom) */
+/* MOBILE : bottom-sheet treatment (same UX model, anchored to bottom) */
 @media (max-width: 760px) {
   .pdm-scrim { align-items: flex-end; padding: 0; }
   .pdm {
@@ -757,7 +757,7 @@
 /* ── TACTILE : le tap répond au PREMIER coup ─────────────────────────────
    touch-action: manipulation désarme l'attente du double-tap-zoom : sans
    elle, le navigateur mobile retient chaque tap le temps de voir si un
-   second arrive — à la souris ce délai n'existe pas, d'où un composeur
+   second arrive : à la souris ce délai n'existe pas, d'où un composeur
    « qui répond mal uniquement sur téléphone ». Le halo de tap est retiré
    au passage (le retour visuel est déjà porté par les états .is-on). */
 .pdm button,
@@ -769,9 +769,9 @@
 }
 
 /* ================================================================== */
-/* RESSENTI TACTILE (14/08) — le natif répond au poser du doigt, pas   */
+/* RESSENTI TACTILE (14/08) : le natif répond au poser du doigt, pas   */
 /* au lever. Ici le clic reste au lever (c'est le web), mais l'état    */
-/* PRESSÉ s'affiche à l'appui via :active — seul .pdm-cta l'avait.     */
+/* PRESSÉ s'affiche à l'appui via :active, seul .pdm-cta l'avait.     */
 /* Uniquement transform (compositée) : le retour ne dépend pas du      */
 /* thread principal, même si React re-rend au même moment.             */
 /* ================================================================== */
@@ -804,7 +804,7 @@
 
 /* ─── TACTILE : la réaction doit être IMMÉDIATE ──────────────────────────
    Le dépliage animait grid-template-rows : un recalcul de mise en page à
-   CHAQUE image — imperceptible à la souris sur PC, mais long et saccadé sur
+   CHAQUE image : imperceptible à la souris sur PC, mais long et saccadé sur
    téléphone (« je touche, je vois l'action, la réaction prend trop de
    temps »). Au doigt, une liste s'ouvre d'un coup, comme dans une app
    native : pas d'animation de dépliage sur les appareils sans souris. */

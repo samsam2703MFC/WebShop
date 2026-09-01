@@ -1,4 +1,4 @@
-/* L'Atelier By Webshop — storefront variants */
+/* L'Atelier By Webshop : storefront variants */
 
 .ws {
   width: 100%;
@@ -11,7 +11,7 @@
   flex-direction: column;
   overflow: hidden;
   --shop-accent: #8D1D2C;
-  /* Webshop uses a single typeface — alias display to the UI font. */
+  /* Webshop uses a single typeface, alias display to the UI font. */
   --font-display: var(--font-ui);
 }
 
@@ -22,7 +22,7 @@
 .ws *::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
 /* =====================================================================
-   NAVBAR — base
+   NAVBAR : base
    ===================================================================== */
 .ws-nav {
   background: var(--color-surface);
@@ -49,7 +49,7 @@
 }
 .ws-nav__brandwrap { display: flex; align-items: center; gap: 12px; }
 
-/* Shop chip (Variant A) — small pill anchored next to brand */
+/* Shop chip (Variant A) : small pill anchored next to brand */
 .ws-nav__shopchip {
   display: inline-flex; align-items: center; gap: 7px;
   height: 32px;
@@ -63,7 +63,7 @@
 }
 .ws-nav__shopchip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary); }
 
-/* Shop plate (Variant C) — outlined card carrying the shop accent */
+/* Shop plate (Variant C) : outlined card carrying the shop accent */
 .ws-nav__shopplate {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 5px 11px 5px 9px;
@@ -75,7 +75,7 @@
 }
 .ws-nav__shopplate-city { font-weight: 400; opacity: 0.7; font-size: 11px; }
 
-/* Date — pill, tinted by mode (ruby for collect, abricot for delivery) */
+/* Date : pill, tinted by mode (ruby for collect, abricot for delivery) */
 .ws-nav__date {
   display: inline-flex; align-items: center; gap: 6px;
   height: 32px;
@@ -119,7 +119,7 @@
 }
 
 /* Mode pills */
-/* SÉLECTEUR DE MODE — un seul objet segmenté, sur bureau COMME sur mobile.
+/* SÉLECTEUR DE MODE : un seul objet segmenté, sur bureau COMME sur mobile.
    C'étaient deux pastilles indépendantes : rien ne disait qu'elles sont
    EXCLUSIVES, elles ressemblaient à deux filtres cumulables. Or le mode
    commande les prix, les créneaux et l'heure limite. Un curseur qui glisse
@@ -150,8 +150,8 @@
   z-index: 0;
 }
 .ws-modes__indicator[data-mode="delivery"] { transform: translateX(100%); }
-/* Le curseur porte la couleur du mode — Ruby en collecte, Abricot en
-   livraison — - comme les anciennes pastilles pleines. */
+/* Le curseur porte la couleur du mode, Ruby en collecte, Abricot en
+   livraison : - comme les anciennes pastilles pleines. */
 .ws[data-mode="collect"] .ws-modes__indicator {
   background: color-mix(in oklab, var(--color-primary) 14%, var(--color-surface));
 }
@@ -201,7 +201,7 @@
 }
 /* Vue mobile : le sélecteur de langue RESTE visible. Il était masqué à l'époque
    où l'icône « i » occupait ce coin ; le « i » est parti, et une boutique
-   bilingue (Halle : nl+fr) doit pouvoir changer de langue depuis un téléphone —
+   bilingue (Halle : nl+fr) doit pouvoir changer de langue depuis un téléphone
    sans lui, un francophone à Halle n'avait aucun moyen de repasser en FR.
    Sélecteur descendant (.ws-nav__right …) pour l'emporter sur .ws-langchip
    défini plus tard dans webshop-i18n.css (spécificité égale sinon). */
@@ -227,7 +227,7 @@
   box-shadow: inset 0 0 0 1px var(--color-collection-border);
 }
 
-/* Variant B — colored shop bar */
+/* Variant B : colored shop bar */
 .ws-shopbar {
   color: #fff;
   font-size: 12px;
@@ -252,7 +252,7 @@
 }
 
 /* =====================================================================
-   BODY LAYOUT — main grid + basket
+   BODY LAYOUT : main grid + basket
    ===================================================================== */
 .ws-body {
   display: grid;
@@ -276,7 +276,7 @@
 .ws-checkout__body::-webkit-scrollbar,
 .ws-modal__panel::-webkit-scrollbar { display: none; }
 
-/* Bakery scroll cue — pinned to the right gutter of the main scroll column,
+/* Bakery scroll cue : pinned to the right gutter of the main scroll column,
    exactly where the native scrollbar used to be. Inverts color vs current mode. */
 .ws-body { position: relative; }
 .ws-scrollcue {
@@ -320,7 +320,7 @@
 }
 
 /* =====================================================================
-   DELIVERY SLOTS — evening ("Soirée") / lunch / next-day
+   DELIVERY SLOTS : evening ("Soirée") / lunch / next-day
    Theme is resolved server-side (cta.theme). Components ONLY map the
    theme name to tokens via [data-theme]; no hex is hardcoded in JSX.
    Contrast rules (design review):
@@ -376,7 +376,7 @@
 .ws-slotseg__cutoff { font-size: 11.5px; color: var(--color-text-muted); padding-left: 4px; }
 .ws-slotseg__cutoff strong { color: var(--color-primary); font-weight: 600; }
 
-/* "Plats préparés" badge (evening) — copper, isolated from any --ruby element */
+/* "Plats préparés" badge (evening) : copper, isolated from any --ruby element */
 .ws-badge--plats {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 9px; border-radius: 999px;
@@ -413,7 +413,7 @@
 .ws-slotchange__confirm:hover { filter: brightness(1.06); }
 }
 
-/* Horizontal cue on category strip — tiny chevron right, fades when at end. */
+/* Horizontal cue on category strip, tiny chevron right, fades when at end. */
 .ws-cats { position: relative; }
 .ws-cats[data-can-scroll-right="1"]::after {
   content: "";
@@ -484,7 +484,7 @@
    CATEGORY ROW
    ===================================================================== */
 /* Texte pour lecteurs d'écran uniquement (annonce du changement de niveau
-   de la ligne de nav) — utilitaire fonctionnel, aucun rôle visuel. */
+   de la ligne de nav) : utilitaire fonctionnel, aucun rôle visuel. */
 .ws-vh {
   position: absolute; width: 1px; height: 1px;
   padding: 0; margin: -1px; border: 0;
@@ -546,7 +546,7 @@
   opacity: .6;
 }
 
-/* Seasonal assortment badge — same shape, but with a small star mark + warmer tile */
+/* Seasonal assortment badge : same shape, but with a small star mark + warmer tile */
 .ws-cat--season .ws-cat__tile {
   background: linear-gradient(180deg, #fbf3e7, #f5e9d6);
   border-color: rgba(193,122,42,0.25);
@@ -572,7 +572,7 @@
   background: #fff; color: var(--cat-accent);
 }
 
-/* Subcategory strip — same anatomy, smaller + lighter */
+/* Subcategory strip : same anatomy, smaller + lighter */
 .ws-cats-wrap { display: flex; flex-direction: column; gap: 0; }
 .ws-subcats__rule {
   margin: 6px 0 10px;
@@ -652,7 +652,7 @@
 }
 
 /* =====================================================================
-   PRODUCT DETAIL MODAL — options, upsells, bundle band
+   PRODUCT DETAIL MODAL : options, upsells, bundle band
    ===================================================================== */
 .ws-detail {
   position: fixed; inset: 0;
@@ -664,7 +664,7 @@
 }
 @keyframes ws-fade-in { from { opacity: 0 } to { opacity: 1 } }
 
-/* ===== NEW SPLIT MODAL — 50/50 layout + bundle carousel ===== */
+/* ===== NEW SPLIT MODAL : 50/50 layout + bundle carousel ===== */
 .ws-detail2 {
   position: relative;
   width: min(1040px, 100%);
@@ -790,7 +790,7 @@
   font-size: 22px; font-weight: 500; color: var(--color-text);
 }
 
-/* ===== Bottom — bundle carousel ===== */
+/* ===== Bottom : bundle carousel ===== */
 .ws-detail2__bot {
   display: flex; flex-direction: column;
   padding: 10% 28px 20px;       /* badge sits ~10% below the top of the bottom section */
@@ -1325,7 +1325,7 @@
 }
 
 /* =====================================================================
-   BUNDLES — full-width accordion rows
+   BUNDLES : full-width accordion rows
    ===================================================================== */
 .ws-bundles { margin: 6px 0 18px; }
 .ws-bundles__head {
@@ -1411,7 +1411,7 @@
 .ws-brow__desc {
   grid-row: 1;
   grid-column: 2;
-  /* desc sits below name on its own row via subgrid trick — fall back */
+  /* desc sits below name on its own row via subgrid trick, fall back */
   display: none;
 }
 .ws-brow__head { grid-template-rows: auto auto; }
@@ -1624,9 +1624,9 @@
 }
 .ws-add::before { content: ''; position: absolute; inset: -10px; border-radius: 50%; }
 
-/* All shops use the brand ruby — no per-shop accent overrides. */
+/* All shops use the brand ruby, no per-shop accent overrides. */
 
-/* Card meta strip — sits BELOW the 1:1 photo, holds allergens + info + add */
+/* Card meta strip : sits BELOW the 1:1 photo, holds allergens + info + add */
 .ws-card__metaStrip {
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px;
@@ -1714,7 +1714,7 @@
   letter-spacing: .01em;
 }
 .ws-line__price { font-size: 12px; font-weight: 500; }
-/* Per-line note — discreet until focused */
+/* Per-line note : discreet until focused */
 .ws-line__notewrap {
   display: flex; align-items: center; gap: 6px;
   margin-top: 6px;
@@ -1849,7 +1849,7 @@
   font-size: 10.5px; color: var(--color-text-muted);
   letter-spacing: .01em;
 }
-/* Unlocked state — clean validated reward, no progress dots. Replaces the
+/* Unlocked state : clean validated reward, no progress dots. Replaces the
    "in-progress" red bar with a calmer, success-tinted strip. */
 .ws-cross.is-unlocked {
   background: #f3eddc; border-color: #d8c79f;
@@ -1863,7 +1863,7 @@
 .ws-cross.is-unlocked .ws-cross__title,
 .ws-cross.is-unlocked .ws-cross__lede { color: var(--color-text); }
 
-/* Modal portion option row — inherits .pdm-optrow / .pdm-seg styling so
+/* Modal portion option row : inherits .pdm-optrow / .pdm-seg styling so
    it matches every other option group. We just add a touch of breathing
    room when it sits inside the head area. */
 .pdm-head > .pdm-optrow { margin-top: 12px; }
@@ -2117,17 +2117,17 @@
 
 
 /* =====================================================================
-   RESPONSIVE — tablet & mobile
+   RESPONSIVE : tablet & mobile
    ===================================================================== */
 
-/* Tablet & smaller — basket becomes a slide-up drawer; product grid → 3 then 2 cols */
+/* Tablet & smaller : basket becomes a slide-up drawer; product grid → 3 then 2 cols */
 @media (max-width: 1024px) {
   .ws-body { grid-template-columns: 1fr; }
   .ws-main { padding: 18px 18px 96px; }   /* leave room for the floating cart bar */
   .ws-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .ws-pagehead__title { font-size: 26px; }
 
-  /* Inline basket hidden on tablet/mobile — accessible only via the tab bar's
+  /* Inline basket hidden on tablet/mobile, accessible only via the tab bar's
      basket button, which opens the drop-up drawer. The basket inside the
      drawer (.ws-drawer__panel .ws-basket) stays visible. */
   .ws-basket--inline,
@@ -2176,7 +2176,7 @@
   }
   .ws-mode span,
   .ws-mode { gap: 4px; }
-  /* Hide the second-row mode label text on very narrow screens — keep icons + first word */
+  /* Hide the second-row mode label text on very narrow screens, keep icons + first word */
   .ws-mode .ws-mode__short { display: none; }
 }
 
@@ -2305,7 +2305,7 @@
   .ws-modal__grid { grid-template-columns: 1fr; }
   .ws-modal__title { font-size: 24px; }
 
-  /* Shop switcher dropdown — clamp to 80vw, perfectly centered, premium feel */
+  /* Shop switcher dropdown : clamp to 80vw, perfectly centered, premium feel */
   .ws-modal--switcher { padding: 16px; align-items: center; justify-content: center; }
   .ws-modal__panel--switcher {
     border-radius: 18px;
@@ -2444,7 +2444,7 @@
 
 
 /* =====================================================================
-   AUTH / ACCOUNT — login, register, account, office request
+   AUTH / ACCOUNT : login, register, account, office request
    ===================================================================== */
 .ws-modal__panel--narrow {
   width: min(520px, 100%);
@@ -2671,7 +2671,7 @@
   background: var(--color-bg-secondary);
 }
 /* Respiration CONSTANTE entre deux tickets successifs : sans elle les cartes
-   se touchaient (gap réel 0), collées bord à bord — illisible sur une longue
+   se touchaient (gap réel 0), collées bord à bord, illisible sur une longue
    liste d'achats. 10px = même rythme que les autres listes du compte. */
 .ws-acc__card + .ws-acc__card { margin-top: 10px; }
 .ws-acc__card--ok      { background: color-mix(in oklab, var(--color-secondary) 25%, var(--color-surface)); border-color: var(--color-collection-border); }
@@ -2725,7 +2725,7 @@
 .ws-acc__pick-list > li + li { border-top: 1px solid var(--color-border-tertiary); }
 /* UNE ligne = UN BUREAU. C'est la société qu'on rattache à son compte : elle
    porte la validation, la tournée, la facturation. Ses points de livraison
-   s'affichent dessous pour reconnaître l'entreprise, mais ne se cliquent pas —
+   s'affichent dessous pour reconnaître l'entreprise, mais ne se cliquent pas
    ce n'est pas au client de trancher entre « réception » et « étage 3 ». */
 .ws-acc__pick-bureau { gap: 3px; padding: 11px 12px; }
 .ws-acc__pick-site {
@@ -2845,7 +2845,7 @@
 
 
 /* =====================================================================
-   CHECKOUT — slide-over wizard
+   CHECKOUT : slide-over wizard
    ===================================================================== */
 .ws-checkout {
   position: absolute; top: 0; right: 0; bottom: 0;
@@ -2911,7 +2911,7 @@
   border: 1px solid color-mix(in oklab, var(--color-primary) 22%, transparent);
 }
 .ws-co-guest__login .ws-linkbtn { font-size: 13px; font-weight: 700; }
-/* Guest reassurance banner — makes "no-account checkout" obvious */
+/* Guest reassurance banner : makes "no-account checkout" obvious */
 .ws-co-guest__banner {
   display: flex; align-items: flex-start; gap: 10px;
   padding: 11px 13px; border-radius: 10px;
@@ -3103,7 +3103,7 @@
 .ws-b2b__sub { font-size: 11px; color: var(--color-text-muted); line-height: 1.3; }
 .ws-b2b__field { gap: 5px; }
 
-/* "Commander sur le compte" — selectable account row */
+/* "Commander sur le compte", selectable account row */
 .ws-b2b__account {
   display: flex; align-items: flex-start; gap: 10px;
   padding: 11px 12px;
@@ -3141,7 +3141,7 @@
 .ws-b2b__account-name { font-size: 12.5px; font-weight: 500; color: var(--color-text); line-height: 1.3; }
 .ws-b2b__account-sub { font-size: 11px; color: var(--color-text-muted); }
 
-/* "Je paie pour ma société" — informational callout */
+/* "Je paie pour ma société", informational callout */
 .ws-b2b__callout {
   display: flex; align-items: center; gap: 9px;
   padding: 10px 12px;
@@ -3212,7 +3212,7 @@
   display: grid; place-items: center;
 }
 /* Message d'explication : POSITION FIXE, pas absolue.
-   .ws-toast est `position: absolute`, donc placé au bas du CONTENEUR — sur une
+   .ws-toast est `position: absolute`, donc placé au bas du CONTENEUR, sur une
    longue liste de produits, il s'affichait bien en dehors du champ visible.
    Un message que personne ne voit ne vaut pas mieux que pas de message : c'est
    même pire, puisqu'on croit l'avoir écrit.
@@ -3254,7 +3254,7 @@
 
 
 /* ==========================================================================
- * VOUCHER INPUT (checkout step 3) — single-row applier with success state
+ * VOUCHER INPUT (checkout step 3) : single-row applier with success state
  * ========================================================================== */
 .ws-co-voucher {
   border: 1px solid var(--color-border-secondary, #d9d2c4);
@@ -3322,7 +3322,7 @@
   padding: 12px 14px;
   box-shadow: 0 1px 4px rgba(47,122,77,.14);
 }
-/* Pastille ✓ en tête de la ligne « code appliqué » — repère visuel fort. */
+/* Pastille ✓ en tête de la ligne « code appliqué », repère visuel fort. */
 .ws-co-voucher__row--ok::before {
   content: "✓";
   flex: 0 0 auto;
@@ -3350,7 +3350,7 @@
 .ws-co-summary__row--promo { color: #2f7a4d; font-weight: 600; }
 .ws-co-summary__row--promo span { color: #2f7a4d; }
 
-/* Bons DISPONIBLES (marketing) — le client applique en un clic. */
+/* Bons DISPONIBLES (marketing) : le client applique en un clic. */
 .ws-co-avail { margin-top: 12px; }
 .ws-co-avail__head {
   display: flex; align-items: center; gap: 6px;
@@ -3395,7 +3395,7 @@
 }
 
 /* ==========================================================================
- * DEEP-LINK BANNER (storefront) — appears bottom-left when user lands via
+ * DEEP-LINK BANNER (storefront) : appears bottom-left when user lands via
  * an admin-generated direct link with shop/voucher/category preloaded.
  * ========================================================================== */
 .ws-deeplink {
@@ -3427,7 +3427,7 @@
 }
 
 /* =====================================================================
-   MOBILE-APP UX POLISH (≤ 720px)  — premium, thumb-friendly, no overflow
+   MOBILE-APP UX POLISH (≤ 720px) : premium, thumb-friendly, no overflow
    ===================================================================== */
 @media (max-width: 720px) {
   html, body { overflow-x: hidden; }
@@ -3459,7 +3459,7 @@
      .ws-nav : les quatre éléments partagent alors le MÊME conteneur flex, donc
      la barre de mode (flex-basis 100%) prend la largeur du bandeau entier et non
      celle du bloc gauche. Sans ça, le bloc de droite réservait sa largeur sur les
-     deux lignes et tronquait le libellé (« Levering op kant… ») — la même
+     deux lignes et tronquait le libellé (« Levering op kant… ») : la même
      mécanique qui coupait le nom de la boutique. Le DOM reste celui du desktop. */
   .ws-nav {
     padding: 8px 10px;
@@ -3487,21 +3487,21 @@
   .ws-mode__lbl-full { display: inline; }
   .ws-mode__lbl-mob { display: none !important; }
   /* Le « i » abricot de ModePills est un 3ᵉ enfant de la grille : il tombait
-     en ligne 2, masqué par overflow, tout en restant atteignable au clavier —
+     en ligne 2, masqué par overflow, tout en restant atteignable au clavier
      et il forçait une 2ᵉ rangée, d'où des boutons à demi-hauteur. Le lien
      .ws-nav__info de la barre rend déjà ce service en mobile.
      !important est nécessaire : ce span porte des styles EN LIGNE, qu'aucun
-     sélecteur ne peut battre autrement — et le JSX est partagé avec le desktop. */
+     sélecteur ne peut battre autrement, et le JSX est partagé avec le desktop. */
   .ws-modewrap > span:last-child { display: none !important; }
 
   /* Le fond du segment actif est l'INDICATEUR coulissant, pas le bouton.
      Sans cette neutralisation, la règle de base .ws-mode--collect.is-active
-     (deux classes, donc plus spécifique) repeint le demi-segment en Ruby —
+     (deux classes, donc plus spécifique) repeint le demi-segment en Ruby
      et le libellé, Ruby lui aussi sur mobile, devenait illisible sur son
      propre fond. Invisible tant qu'il n'y avait qu'un picto blanc. */
   .ws-modes .ws-mode.is-active { background: transparent; border-color: transparent; }
 
-  /* Toggle-switch style segmented control — compact icon-only for single-row */
+  /* Toggle-switch style segmented control, compact icon-only for single-row */
   .ws-modewrap {
     flex: 1 0 100%;                      /* ligne à part, pleine largeur du bandeau */
     order: 4;                            /* après boutique, date et langue */
@@ -3572,7 +3572,7 @@
     stroke-width: 1.7;
   }
 
-  /* Shop selector — compact pill, ellipsizes shop name */
+  /* Shop selector : compact pill, ellipsizes shop name */
   .ws-nav__shopchip {
     font-size: 11.5px;
     padding: 0 9px 0 7px;
@@ -3607,7 +3607,7 @@
   .ws-nav__cart,
   .ws-nav__office { display: none !important; }
 
-  /* Date pill — compact button, mode-tinted (rules from base CSS still apply) */
+  /* Date pill : compact button, mode-tinted (rules from base CSS still apply) */
   .ws-nav__date {
     font-size: 11.5px;
     padding: 0 10px;
@@ -3632,12 +3632,12 @@
   .ws-nav__shopchip span:not(.ws-nav__shopchip-dot) { max-width: 100%; }
   .ws-nav__date { font-size: 11px; padding: 0 8px; height: 30px; }
   /* 320 px : il manquait 2 px au libellé le plus long. On les reprend sur les
-     rembourrages — pas sur le texte qu'on vient justement de rendre lisible.
+     rembourrages : pas sur le texte qu'on vient justement de rendre lisible.
      (Une marge négative ne sert à rien ici : la largeur vient de flex-basis.) */
   .ws-modes { height: 50px; margin-top: 7px; padding: 2px; }   /* − 4 − 2 = 44 px de bouton */
   .ws-modes__indicator { top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px); }
   /* 320 px (iPhone SE 1) : « Livraison au bureau » ne tient qu'à ce corps-là.
-     Mesuré, pas estimé — au-dessus, l'ellipse revient sur le libellé même
+     Mesuré, pas estimé : au-dessus, l'ellipse revient sur le libellé même
      qu'on est en train de rendre lisible. */
   .ws-mode { font-size: 11px; gap: 3px; padding: 0 1px; }
   .ws-mode svg { width: 14px; height: 14px; }
@@ -3712,7 +3712,7 @@
 /* =====================================================================
    MOBILE BOTTOM TAB BAR  (only visible on phone/tablet ≤ 1024px)
    ===================================================================== */
-/* Hide on desktop — only visible on phone/tablet */
+/* Hide on desktop : only visible on phone/tablet */
 .ws-tabbar { display: none !important; }
 @media (max-width: 1024px) {
   .ws-tabbar {
@@ -3787,7 +3787,7 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Mode LIVRAISON (mobile ≤1024px) — boutons d'action principaux du parcours en
+   Mode LIVRAISON (mobile ≤1024px) : boutons d'action principaux du parcours en
    Abricot Pastel #F2C9A0 : ajout produit « + », bouton panier, « Passer au
    paiement », « Continuer » et le bouton de l'étape coordonnées. Drapeau
    body.ws-mode-delivery posé par le front quand mode === 'delivery'. Hors
@@ -3882,7 +3882,7 @@
   color: var(--color-text, #241F1C); font-size:11.5px; font-weight:700; border-radius:8px; padding:7px 12px; cursor:pointer; }
 .ws-giftbar__hint{ font-size:11.5px; color: var(--color-text-muted, #7A7168); margin-top:11px; }
 
-/* Checkout — champ code cadeau */
+/* Checkout : champ code cadeau */
 .ws-co-gift{ margin:14px 0 4px; }
 .ws-co-gift__head{ display:flex; align-items:center; gap:7px; margin-bottom:8px; }
 .ws-co-gift__ic{ color: var(--color-primary, #8D1D2C); }
@@ -3901,7 +3901,7 @@
   border:1px solid #2D7A3E; border-radius:5px; padding:1px 6px; margin-left:6px; vertical-align:middle; }
 
 /* ── Panier Croisé : suggestions calculées par le serveur (assortiment, saison,
-   stock déjà filtrés). Le bloc n'existe pas quand il n'y a rien à proposer —
+   stock déjà filtrés). Le bloc n'existe pas quand il n'y a rien à proposer
    pas de rubrique vide. Abricot pour le distinguer des lignes achetées : ce
    n'est pas encore dans le panier. ── */
 .ws-xsell { background: var(--color-bg-secondary); border-top: 1px solid var(--color-border-tertiary);
@@ -3924,7 +3924,7 @@
 .ws-xsell__add:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
 
-/* ── TACTILE : mêmes règles pour tout le shop — un tap = un clic, sans
+/* ── TACTILE : mêmes règles pour tout le shop, un tap = un clic, sans
    attente du double-tap-zoom (délai inexistant à la souris, d'où des
    « miss-clicks » signalés uniquement sur téléphone). */
 .ws button, .ws [role="button"], .ws a {
@@ -3933,7 +3933,7 @@
 }
 
 /* ================================================================== */
-/* RESSENTI TACTILE (14/08) — état pressé à l'appui sur les cibles     */
+/* RESSENTI TACTILE (14/08) : état pressé à l'appui sur les cibles     */
 /* principales de la boutique (le survol est désormais réservé aux     */
 /* vrais pointeurs via @media (hover: hover) : plus de survol collant  */
 /* après un tap). Transform seule : composité, feedback immédiat.      */

@@ -13,7 +13,7 @@
 .al-row .al-icon { display: inline-block; flex: 0 0 auto; }
 /* Allergène SANS pictogramme : le libellé brut, affiché plutôt qu'écarté.
    Une information réglementaire ne disparaît pas parce qu'un mot a changé
-   d'orthographe — voir le commentaire dans webshop-allergens.jsx. */
+   d'orthographe : voir le commentaire dans webshop-allergens.jsx. */
 .al-row__raw {
   font-size: 10.5px;
   line-height: 1;
@@ -39,7 +39,7 @@
    Navbar trigger button
    ========================================================================= */
 .ws-nav__allergens-btn {
-  /* inherits .ws-nav__icon — only the hover treatment differs slightly */
+  /* inherits .ws-nav__icon : only the hover treatment differs slightly */
   position: relative;
 }
 .ws-nav__allergens-btn:hover { color: var(--color-primary); }
@@ -165,7 +165,7 @@
 .al-card:nth-child(4n) { border-right: none; }
 .al-card:nth-last-child(-n+2) { border-bottom: none; }
 .al-card:nth-last-child(2):nth-child(4n+1),
-.al-card:nth-last-child(2):nth-child(4n+3) { /* nothing — keep border on staggered tails */ }
+.al-card:nth-last-child(2):nth-child(4n+3) { /* nothing, keep border on staggered tails */ }
 
 .al-card__num {
   position: absolute;

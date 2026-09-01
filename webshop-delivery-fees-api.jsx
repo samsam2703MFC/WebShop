@@ -1,5 +1,5 @@
 /* =========================================================================
-   webshop-delivery-fees-api.jsx — window.WSDeliveryFees
+   webshop-delivery-fees-api.jsx, window.WSDeliveryFees
    =========================================================================
    Resolves the delivery fee that applies to a B2B office delivery order.
 
@@ -83,14 +83,14 @@
      * Resolves the applicable delivery fee for a given context and subtotal.
      *
      * Returns:
-     *   fee_amount                number   — fee to charge (0 if free)
+     *   fee_amount                number      : fee to charge (0 if free)
      *   free_delivery             boolean
      *   always_charge             boolean
-     *   free_delivery_minimum     number   — threshold for free delivery
-     *   amount_remaining_for_free number   — subtotal still needed to unlock free delivery
-     *   payment_type              string   — 'immediate' | 'deferred'
-     *   resolved_level            string   — 'site' | 'office' | 'tour' | 'shop' | 'global'
-     *   site                      object|null — site record (when resolved at site level)
+     *   free_delivery_minimum     number      : threshold for free delivery
+     *   amount_remaining_for_free number      : subtotal still needed to unlock free delivery
+     *   payment_type              string      : 'immediate' | 'deferred'
+     *   resolved_level            string      : 'site' | 'office' | 'tour' | 'shop' | 'global'
+     *   site                      object|null : site record (when resolved at site level)
      */
     async quote({ siteId, officeClientId, tourneeId, shopId, subtotal }) {
       if (this.endpoint) return apiFetch('/quote', { siteId, officeClientId, tourneeId, shopId, subtotal });
@@ -116,7 +116,7 @@
       }
       // GO-LIVE : plus de liste bancontact/visa/apple codée en dur. Les moyens
       // de paiement viennent de /payment-methods (boutique × profil). Sans
-      // liste fournie par l'appelant, on renvoie vide — l'UI affiche l'erreur.
+      // liste fournie par l'appelant, on renvoie vide : l'UI affiche l'erreur.
       return defaultMethods || [];
     },
   };

@@ -1,4 +1,4 @@
-/* Vite entry — imports everything in the same order as the legacy HTML.
+/* Vite entry : imports everything in the same order as the legacy HTML.
    The stubs attach window.WSXxx (side-effect imports); the last import
    (webshop-full-bundle) mounts the app via ReactDOM.createRoot. React and
    ReactDOM are injected into every file by vite.config esbuild.jsxInject. */
@@ -11,11 +11,11 @@ import '../webshop-i18n.css';
 import '../webshop-profile-extras.css';
 import '../webshop-allergens.css';
 
-// Bandeau d'erreur — EN PREMIER : il doit pouvoir signaler l'échec de
+// Bandeau d'erreur : EN PREMIER : il doit pouvoir signaler l'échec de
 // n'importe quel import qui suit, y compris celui qui monte l'application.
 import '../webshop-bug-banner.jsx';
 
-// API stubs — must run before the components (they expose window.WSXxx).
+// API stubs : must run before the components (they expose window.WSXxx).
 import '../webshop-vouchers.jsx';
 import '../webshop-promo-api.jsx';
 import '../webshop-i18n.jsx';
@@ -35,7 +35,7 @@ import '../webshop-tours-api.jsx';
 import '../webshop-orders-api.jsx';
 import '../webshop-companies-api.jsx';
 import '../webshop-payments-api.jsx';
-import '../qr.jsx';                    // encodeur QR (window.QR) — modale fidélité
+import '../qr.jsx';                    // encodeur QR (window.QR) : modale fidélité
 
 // Central config (sets endpoints from BASE_URL).
 import '../api-config.js';
