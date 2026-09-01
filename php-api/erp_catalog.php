@@ -281,7 +281,13 @@ function erp_catalog_enabled() {
  * disponibilité et les portions. Un seul appel, mis en cache par (boutique,
  * langue, include) : trois appels séparés donneraient trois vérités possibles
  * à quelques secondes d'écart. */
-function erp_available_brut($shopId, $include = '', $lang = 'fr') {
+/* L'include CANONIQUE. Les trois lecteurs (allergènes, gammes, portions)
+ * demandent la même chose pour partager une seule réponse en cache : des
+ * include différents feraient trois appels, donc trois vérités possibles à
+ * quelques secondes d'écart. */
+const ERP_AV_INCLUDE = 'portions,availability_periods';
+
+function erp_available_brut($shopId, $include = ERP_AV_INCLUDE, $lang = 'fr') {
   static $cache = [];
   $shopId = (int) $shopId;
   if ($shopId <= 0) return null;
@@ -327,7 +333,7 @@ function erp_available_brut($shopId, $include = '', $lang = 'fr') {
  * (« Céréales contenant du gluten, Œufs, Lait ») ; le module d'allergènes du
  * front résout ces libellés comme il résout les codes. */
 function erp_allergenes($shopId, $lang = 'fr') {
-  $rows = erp_available_brut($shopId, 'availability_periods', $lang);
+  $rows = erp_available_brut($shopId, ERP_AV_INCLUDE, $lang);
   if (!is_array($rows)) return null;          // ERP muet : on ne conclut rien
   $out = [];
   foreach ($rows as $pid => $r) {
@@ -352,7 +358,7 @@ function erp_allergenes($shopId, $lang = 'fr') {
  * Rend null si l'ERP est muet — l'appelant doit alors NE PAS filtrer, plutôt
  * que masquer tout le catalogue sur une panne réseau. */
 function erp_produits_de_saison($shopId, $date = null, $lang = 'fr') {
-  $rows = erp_available_brut($shopId, 'availability_periods', $lang);
+  $rows = erp_available_brut($shopId, ERP_AV_INCLUDE, $lang);
   if (!is_array($rows)) return null;
   $d  = (is_string($date) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) ? $date : date('Y-m-d');
   $md = (int) (substr($d, 5, 2) . substr($d, 8, 2));   // MMJJ, comme l'ancien SQL
@@ -388,4 +394,55 @@ function erp_produits_de_saison($shopId, $date = null, $lang = 'fr') {
     $ok[$pid] = $actives ? $dedans : true;
   }
   return $ok;
+}
+
+/* ── PORTIONS DU RÉSEAU, PAR L'ENDPOINT ──────────────────────────────────────
+ * Sert les deux écrans de diagnostic « règles de portion » — celui de la
+ * marque (prix posés par CHAQUE boutique) et celui du franchisé (la sienne).
+ * Remplace une lecture de product_portion × shop_product_portion_price.
+ *
+ * Un appel par boutique, chacun déjà mis en cache par erp_available_brut : la
+ * vue marque a besoin des prix des quatre boutiques, et il n'existe pas
+ * d'endpoint réseau qui les donnerait d'un coup.
+ *
+ * Rend [id_produit => ['produit','cat','prix_piece',
+ *                      'portions' => [ppid => ['label','ordre','prix'=>[shop=>montant]]]]].
+ * Un prix absent reste absent : « sans prix » est une information, pas un zéro. */
+function erp_portions_reseau(array $shopIds, $lang = 'fr') {
+  $LBL = ['one_half' => '1/2', 'half' => '1/2', 'demi' => '1/2', '1/2' => '1/2',
+          'one_quarter' => '1/4', 'quarter' => '1/4', 'quart' => '1/4', '1/4' => '1/4',
+          'one_eighth' => '1/8', 'eighth' => '1/8', 'huitieme' => '1/8', '1/8' => '1/8'];
+  $out = []; $vu = false;
+  foreach ($shopIds as $sid) {
+    $sid = (int) $sid; if ($sid <= 0) continue;
+    $rows = erp_available_brut($sid, ERP_AV_INCLUDE, $lang);
+    if (!is_array($rows)) continue;         // cette boutique-là est muette
+    $vu = true;
+    foreach ($rows as $pid => $r) {
+      if (empty($r['portions']) || !is_array($r['portions'])) continue;
+      if (!isset($out[$pid])) $out[$pid] = [
+        'produit'    => (string) ($r['name'] ?? ('#' . $pid)),
+        'cat'        => (string) ($r['category_name'] ?? ($r['base_category_name'] ?? 'Autres')),
+        'prix_piece' => is_numeric($r['portion_price_gross'] ?? null) ? (float) $r['portion_price_gross'] : null,
+        'portions'   => [],
+      ];
+      foreach ($r['portions'] as $q) {
+        if (!is_array($q) || (isset($q['is_active']) && !(int) $q['is_active'])) continue;
+        $ppid = (int) ($q['id'] ?? 0); if ($ppid <= 0) continue;
+        if (!isset($out[$pid]['portions'][$ppid])) $out[$pid]['portions'][$ppid] = [
+          'label' => $LBL[mb_strtolower(trim((string) ($q['portion_type'] ?? '')))] ?? (string) ($q['label'] ?? '?'),
+          'ordre' => (int) ($q['display_order'] ?? 0),
+          'prix'  => [],
+        ];
+        $raw = $q['shop_price_gross'] ?? ($q['shop_price'] ?? null);
+        if (!empty($q['has_shop_price']) && is_numeric($raw) && (float) $raw > 0)
+          $out[$pid]['portions'][$ppid]['prix'][$sid] = (float) $raw;
+      }
+    }
+  }
+  if (!$vu) return null;                    // toutes muettes : on ne conclut rien
+  foreach ($out as &$p2) uasort($p2['portions'], static fn($a,$b) => $a['ordre'] <=> $b['ordre']);
+  unset($p2);
+  uasort($out, static fn($a,$b) => [$a['cat'],$a['produit']] <=> [$b['cat'],$b['produit']]);
+  return $out;
 }

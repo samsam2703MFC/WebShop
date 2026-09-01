@@ -266,20 +266,19 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
   }
 
   /* Produits ACTIFS du webshop → leur recette. Le lien produit→recette vient
-     de L'API D'ABORD (shops/{ref}/products/available, UN appel) : la table
-     locale `product` est un réplica, et il a déjà menti — constaté en
-     production sur « Salade Chèvre » (2130006) : recette liée dans tfbuddy à
-     11 h, réplica local encore à NULL, produit invisible pour la synchro
-     alors que sa photo attendait. Le réplica ne sert plus que de REPLI pour
-     les produits absents de la réponse API (ou si l'appel échoue). */
+     de L'API, ET D'ELLE SEULE (shops/{ref}/products/available, UN appel).
+     Le réplica local `product` servait de repli ; il a été retiré parce qu'il
+     avait déjà menti en production — « Salade Chèvre » (2130006) : recette
+     liée dans tfbuddy à 11 h, réplica encore à NULL, produit invisible pour
+     la synchro alors que sa photo attendait. Un repli qui se trompe est pire
+     que pas de repli : il fait passer une donnée périmée pour la donnée.
+     API illisible → aucune recette, donc aucune photo touchée, et le message
+     le dit. */
   try {
-    $sql = "SELECT p.id, erp.id_recipe
-              FROM ws_products p
-              LEFT JOIN product erp ON erp.id = p.id
-             WHERE p.active = 1";
-    $rows0 = $pdo->query($sql)->fetchAll(PDO::FETCH_NUM);
+    $rows0 = $pdo->query("SELECT p.id FROM ws_products p WHERE p.active = 1")
+                 ->fetchAll(PDO::FETCH_COLUMN);
   } catch (Throwable $e) {
-    fwrite(STDERR, "⚠ sync_product_photos : lecture ws_products/product impossible — " . $e->getMessage() . "\n");
+    fwrite(STDERR, "⚠ sync_product_photos : lecture ws_products impossible — " . $e->getMessage() . "\n");
     exit(0);
   }
   $apiRec = [];
@@ -307,12 +306,12 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
         if (!empty($pr['id_recipe'])) $apiRec[(int) $pr['id']] = (int) $pr['id_recipe'];
       }
     }
-    if (!$apiRec) fwrite(STDERR, "  ⚠ available (boutique $refShop) illisible — liens recette pris du réplica local seul\n");
+    if (!$apiRec) fwrite(STDERR, "  ⚠ available (boutique $refShop) illisible — aucun lien recette, aucune photo touchée.\n");
   }
   $rows = [];
   $dirPhotos = __DIR__ . '/../assets/product_pictures';
-  foreach ($rows0 as [$pid, $ridLocal]) {
-    $rid = $apiRec[(int) $pid] ?? (int) $ridLocal;   // l'API prime, le réplica complète
+  foreach ($rows0 as $pid) {
+    $rid = (int) ($apiRec[(int) $pid] ?? 0);         // l'API, et elle seule
     if ($rid > 0) { $rows[] = [(int) $pid, $rid]; continue; }
     /* Produit actif SANS recette : le balayage ne le traite jamais, donc un
        vieux fichier manuel y survivait indéfiniment (constaté : 6700098,
