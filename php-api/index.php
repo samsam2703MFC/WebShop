@@ -457,7 +457,7 @@ function ws_voucher_upsert(array $o) {
                       p.price AS price, ps.no_delivery,
                       COALESCE(p.office_delivery,1) AS office_delivery," .
              ($hasCanal ? " COALESCE(p.click_and_collect,1) AS click_and_collect," : " 1 AS click_and_collect,") . "
-                      (SELECT JSON_ARRAYAGG(allergen) FROM ws_product_allergens a WHERE a.product_id = p.id) AS allergens
+                      NULL AS allergens   /* renseigné par l'ERP juste après : voir l'intersection ci-dessous */
                  FROM ws_products p
                  LEFT JOIN ws_product_shops ps ON ps.product_id = p.id AND ps.shop_id = ?
                  LEFT JOIN ws_categories c ON c.id = p.cat_id
@@ -529,7 +529,10 @@ function ws_voucher_upsert(array $o) {
       // TROIS états d'allergènes, jamais confondus (sécurité alimentaire) :
       //   liste  = allergènes connus ; []  = recette évaluée, réellement aucun ;
       //   null   = NON RENSEIGNÉ (le front l'affiche comme tel).
-      // Un réplica ws_product_allergens vide signifie « inconnu », pas « aucun ».
+      // La valeur part à NULL ici et n'est renseignée que par l'ERP, plus bas :
+      // sa réponse fait foi. Un produit que l'ERP ne documente pas reste donc
+      // « non renseigné », jamais « aucun allergène » — la nuance est de la
+      // sécurité alimentaire, pas du style.
       $x['allergens'] = $x['allergens'] ? json_decode($x['allergens']) : null;
     }
     unset($x);
@@ -10076,13 +10079,16 @@ function dispatch($m, $p) {
       try {
         if (!row("SELECT 1 x FROM information_schema.tables
                    WHERE table_schema=DATABASE() AND table_name='product_portion'")) json_out([]);
+        /* Le prix de base n'est plus lu dans ws_product_prices : depuis la
+           bascule du 31/08, portion_price de l'ERP fait foi et cette table
+           ne déterminait plus rien. Une jointure qui n'influence pas le
+           résultat est pire qu'inutile — elle laisse croire qu'y écrire a
+           un effet. */
         $rs = rows("SELECT DISTINCT p.id AS pid, p.name AS produit, COALESCE(c.label,'Autres') AS cat,
-                           COALESCE(ppx.price, p.price) AS prix_base
+                           p.price AS prix_base
                       FROM product_portion pp
                       JOIN ws_products p ON p.id = pp.id_product AND p.active = 1
                       LEFT JOIN ws_categories c ON c.id = p.cat_id
-                      LEFT JOIN ws_product_prices ppx ON ppx.product_id = p.id AND ppx.active = 1" .
-                     ($shopId ? " AND ppx.shop_id = " . (int) $shopId : "") . "
                      WHERE pp.is_active = 1
                      ORDER BY cat, p.name LIMIT 300");
         // Prix EXPLICITES par portion (shop_product_portion_price, boutique en
@@ -11425,10 +11431,14 @@ function dispatch($m, $p) {
     // Prix par boutique
     if ($m === 'POST' && $p === '/admin/price') {
       $b = body();
-      q("INSERT INTO ws_product_prices (product_id, shop_id, price, active) VALUES (?,?,?,1)
-         ON DUPLICATE KEY UPDATE price=VALUES(price), active=1",
-        [$b['productId'], $b['shopId'], (float) $b['price']]);
-      json_out(['ok' => true]);
+      /* FERMÉ. Cette route écrivait dans ws_product_prices, qui ne fixe plus
+         aucun prix depuis que portion_price de l'ERP fait foi (31/08) : on
+         enregistrait un montant que personne ne débitait jamais, et l'appelant
+         recevait « ok ». Une deuxième source silencieuse, exactement ce que le
+         résolveur unique existe pour empêcher. Mieux vaut refuser franchement
+         et dire où le prix se règle. */
+      json_out(['error' => "Les prix se règlent dans Franchise Buddy (portion_price).",
+                'code' => 'prix_erp'], 409);
     }
     // Stock du jour (ou date donnée)
     if ($m === 'POST' && $p === '/admin/stock') {
