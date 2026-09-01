@@ -738,6 +738,10 @@ function dispatch($m, $p) {
      nombre de jours). ── */
   if ($m === 'GET' && $p === '/config') {
     json_out([
+      // Base URL publique du webshop (ws_param.webshop_base_url). La PWA la lit
+      // ICI au lieu de requêter ws_param en direct : source unique, un seul
+      // endroit à changer si le domaine bouge. null = non configurée.
+      'webshopBaseUrl'         => (($wb = rtrim((string) ws_param('webshop_base_url', ''), '/')) !== '') ? $wb : null,
       'fidelityTabEnabled'     => ws_param('fidelity_tab_enabled', '1') !== '0',
       'invoiceRequestDeadline' => ws_param('invoice_request_deadline', 'end_of_month'),
       // Nav catégories : icônes des deux touches de première position (Tout /
@@ -775,6 +779,76 @@ function dispatch($m, $p) {
                 'ligne' => $e->getLine(),
                 'base' => $base], 500);
     }
+  }
+  /* ── Annuaire des boutiques pour la PWA (public). Différent de /shops, qui
+     est la PORTE D'ENTRÉE du webshop et ne liste que webshop_enabled = 1 :
+     la PWA (fidélité, avis, sélecteur de boutique préférée) a besoin de TOUTES
+     les boutiques actives, avec le drapeau webshop et le lien d'avis Google.
+     C'est ce que la PWA lisait jusqu'ici en SQL direct sur `shops` ; elle passe
+     désormais par cet endpoint — plus aucune table partagée lue en direct.
+     Colonnes optionnelles gardées par col_exists : le socle CI ne les porte pas
+     toutes, la prod oui. ── */
+  if ($m === 'GET' && $p === '/shops/directory') {
+    $opt = [];
+    foreach (['address_line', 'webshop_url', 'google_review_url', 'sort_order'] as $oc)
+      $opt[$oc] = col_exists('shops', $oc);
+    $cols = "id, slug, name, city, TRIM(CONCAT_WS(' ', street, street_num)) AS street_address, webshop_enabled";
+    foreach ($opt as $oc => $has) if ($has) $cols .= ", $oc";
+    $order = ($opt['sort_order'] ? 'sort_order, ' : '') . 'name';
+    json_out(array_map(fn ($r) => [
+      'id'              => (int) $r['id'],
+      'slug'            => $r['slug'] ?? null,
+      'name'            => $r['name'],
+      'city'            => $r['city'] ?? null,
+      // L'adresse « libre » (address_line) prime quand elle existe ; sinon la
+      // rue + numéro, comme /shops.
+      'address'         => ($opt['address_line'] && !empty($r['address_line'])) ? $r['address_line'] : ($r['street_address'] ?: null),
+      'sortOrder'       => $opt['sort_order'] ? (int) ($r['sort_order'] ?? 0) : 0,
+      'webshopEnabled'  => (bool) ($r['webshop_enabled'] ?? 0),
+      'webshopUrl'      => $opt['webshop_url'] ? ($r['webshop_url'] ?: null) : null,
+      'googleReviewUrl' => $opt['google_review_url'] ? ($r['google_review_url'] ?: null) : null,
+    ], rows("SELECT $cols FROM shops WHERE active = 1 ORDER BY $order")));
+  }
+
+  /* ── « Offre du moment » de la PWA (public) : la diapositive hero marketing
+     partagée site ↔ PWA (lp_hero_slides), filtrée sur active_in_pwa et sur son
+     calendrier (dates, heures, jours). Logique reprise telle quelle de la PWA
+     (repo_promo_featured) pour qu'elle cesse de lire lp_hero_slides en direct.
+     Renvoie la première diapositive éligible, ou null — jamais une offre
+     inventée. Table absente (hors landing, socle CI) → null aussi. ── */
+  if ($m === 'GET' && $p === '/landing/hero') {
+    if (!tbl_exists('lp_hero_slides') || !col_exists('lp_hero_slides', 'active_in_pwa')) json_out(null);
+    $lang = (qp('locale') === 'nl') ? 'nl' : 'fr';   // lp_hero_slides est fr/nl ; en → fr
+    $slides = rows("SELECT position, eyebrow_$lang AS eyebrow, title_$lang AS title, lede_$lang AS lede,
+                           cta1_text_$lang AS cta, cta1_url, image_path, pwa_image_path, ws_product_slug,
+                           pwa_price_label, pwa_unit_label, pwa_from, pwa_to, pwa_hour_from, pwa_hour_to, pwa_days
+                      FROM lp_hero_slides
+                     WHERE is_active = 1 AND active_in_pwa = 1
+                     ORDER BY position, id");
+    $now = time(); $hour = (int) date('G', $now); $dow = (int) date('N', $now);   // 1 = lundi … 7 = dimanche
+    foreach ($slides as $r) {
+      if (!empty($r['pwa_from']) && $now < strtotime($r['pwa_from'])) continue;
+      if (!empty($r['pwa_to'])   && $now > strtotime($r['pwa_to']))   continue;
+      if ($r['pwa_hour_from'] !== null && $r['pwa_hour_from'] !== '' && $hour < (int) $r['pwa_hour_from']) continue;
+      if ($r['pwa_hour_to']   !== null && $r['pwa_hour_to']   !== '' && $hour > (int) $r['pwa_hour_to'])   continue;
+      if (!empty($r['pwa_days'])) {
+        $days = array_map('intval', array_filter(explode(',', (string) $r['pwa_days']), 'strlen'));
+        if ($days && !in_array($dow, $days, true)) continue;
+      }
+      json_out([
+        'tag'         => $r['eyebrow'],
+        'name'        => strip_tags((string) $r['title'], '<br>'),   // retire <span class="script">
+        'desc'        => $r['lede'],
+        'price'       => $r['pwa_price_label'] ?: null,
+        'unit'        => $r['pwa_unit_label'] ?: null,
+        'cta'         => $r['cta'] ?: 'Commander →',
+        'img'         => $r['image_path'],
+        'pwaImage'    => $r['pwa_image_path'] ?: null,
+        'productSlug' => $r['ws_product_slug'] ?: null,
+        'ctaUrl'      => $r['cta1_url'] ?: null,
+      ]);
+    }
+    json_out(null);
   }
   if ($m === 'GET' && $p === '/brand') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
@@ -3446,6 +3520,10 @@ function dispatch($m, $p) {
     $last  = trim($b['lastName'] ?? '');
     $zip   = trim($b['postalCode'] ?? ($b['zip'] ?? ''));
     $authM = (($b['authMethod'] ?? 'email') === 'phone') ? 'phone' : 'email';
+    // Canal d'inscription : `channel: 'pwa'` quand l'appel vient de l'API PWA
+    // (qui créait le compte elle-même, en SQL direct, avec source_channel='pwa'
+    // et pwa_user=1). Le drapeau reste, la table n'est plus écrite que d'ici.
+    $canal = (($b['channel'] ?? '') === 'pwa') ? 'pwa' : 'webshop';
     if ($mail !== '' && !filter_var($mail, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'Email invalide'], 400);
     if ($authM === 'email' && $mail === '')  json_out(['error' => 'Email requis'], 400);
     if ($authM === 'phone' && $phone === '') json_out(['error' => 'Téléphone requis'], 400);
@@ -3499,14 +3577,17 @@ function dispatch($m, $p) {
       // confie pas la visibilité d'un client à un objet de base qui a déjà
       // disparu une fois (cf. trg_client_office_delivery_*).
       $hasPref = col_exists('client', 'preferred_shop_id');
+      $hasPwa  = col_exists('client', 'pwa_user');
       q("INSERT INTO client (id_main_shop, " . ($hasPref ? "preferred_shop_id, " : "") . "email, phone, phone_prefix, phone_e164, name, surname, zip, " . ($hasLoc ? "locality, " : "") . "password_hash,
-                             active, source_channel, webshop_user, preferred_auth_method)
-         VALUES (?," . ($hasPref ? "?," : "") . "?,?,?,?,?,?,?," . ($hasLoc ? "?," : "") . "?,1,'webshop',1,?)",
+                             active, source_channel, webshop_user, " . ($hasPwa ? "pwa_user, " : "") . "preferred_auth_method)
+         VALUES (?," . ($hasPref ? "?," : "") . "?,?,?,?,?,?,?," . ($hasLoc ? "?," : "") . "?,1,?,?," . ($hasPwa ? "?," : "") . "?)",
         array_merge(
           [$ms], $hasPref ? [$ms] : [],
           [($mail ?: null), ($phone ?: null), ($phone !== '' ? $pfx : null), ($e164 ?: null), $first, $last, $zip],
           $hasLoc ? [$locality] : [],
-          [$hash, $authM]));
+          [$hash, $canal, $canal === 'pwa' ? 0 : 1],
+          $hasPwa ? [$canal === 'pwa' ? 1 : 0] : [],
+          [$authM]));
       $id = db()->lastInsertId();
       /* MIROIR ERP — la fiche existe côté réseau dès l'inscription, avec son
          ASSIGNATION boutique (la ligne qui manque aux fiches historiques et
@@ -3758,6 +3839,10 @@ function dispatch($m, $p) {
       json_out(['error' => 'no_password', 'message' => 'Ce compte existe mais n’a pas encore de mot de passe.', 'needsPassword' => true], 409);
     }
     if (!$u || !password_verify($b['password'] ?? '', $u['password_hash'])) json_out(['error' => 'Identifiants incorrects.'], 401);
+    // Connexion depuis la PWA : le compte est marqué utilisateur PWA (la PWA
+    // posait ce drapeau elle-même, en SQL direct, à chaque connexion).
+    if (($b['channel'] ?? '') === 'pwa' && col_exists('client', 'pwa_user'))
+      q("UPDATE client SET pwa_user = 1 WHERE id = ?", [(int) $u['id']]);
     json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400])]);
   }
   // Définit / met à jour le mot de passe d'un compte existant, puis connecte.
@@ -3897,6 +3982,9 @@ function dispatch($m, $p) {
     if ($v !== 'ok')            json_out(['error' => 'Code incorrect.', 'code' => 'faux'], 401);
     $id = (int) $r['u']['id'];
     q("UPDATE client SET password_hash = ? WHERE id = ?", [password_hash($pass, PASSWORD_BCRYPT), $id]);
+    // Compte réclamé par SMS depuis la PWA : même drapeau qu'à la connexion.
+    if (($b['channel'] ?? '') === 'pwa' && col_exists('client', 'pwa_user'))
+      q("UPDATE client SET pwa_user = 1 WHERE id = ?", [$id]);
     json_out(['user' => user_payload($id), 'token' => sign_token(['id' => $id, 'exp' => time() + 30 * 86400])]);
   }
 
@@ -3914,6 +4002,37 @@ function dispatch($m, $p) {
       json_out(['error' => 'Compte inactif.'], 401);
     }
     json_out(['user' => user_payload($cid), 'token' => sign_token(['id' => $cid, 'exp' => time() + 30 * 86400])]);
+  }
+  /* ── Émission du jeton SSO PWA → webshop (le pendant de /auth/handoff, qui le
+     CONSOMME). Jusqu'ici la PWA écrivait elle-même dans auth_handoff, en SQL
+     direct sur une table partagée ; elle appelle désormais cet endpoint avec
+     son jeton Bearer. Même contrat qu'avant : jeton aléatoire 256 bits, seul
+     son sha256 est stocké, TTL 60 s, usage unique (used_at), empreinte UA+IP.
+     public_id est NOT NULL dans auth_handoff : il est posé ici (UUID v4) pour
+     les comptes antérieurs à la migration identité. ── */
+  if ($m === 'POST' && $p === '/auth/handoff-create') {
+    $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    if (!tbl_exists('auth_handoff')) json_out(['error' => 'SSO indisponible (table auth_handoff absente).'], 503);
+    $hasPub  = col_exists('client', 'public_id');
+    $hasPref = col_exists('client', 'preferred_shop_id');
+    $c = row("SELECT id_main_shop" . ($hasPub ? ', public_id' : ", NULL AS public_id")
+              . ($hasPref ? ', preferred_shop_id' : ", NULL AS preferred_shop_id")
+              . " FROM client WHERE id = ? AND active = 1 LIMIT 1", [$id]);
+    if (!$c) json_out(['error' => 'Compte inactif.'], 401);
+    $pub = trim((string) ($c['public_id'] ?? ''));
+    if ($pub === '') {
+      $d = random_bytes(16);
+      $d[6] = chr((ord($d[6]) & 0x0f) | 0x40); $d[8] = chr((ord($d[8]) & 0x3f) | 0x80);
+      $pub = vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($d), 4));
+      if ($hasPub) q("UPDATE client SET public_id = ? WHERE id = ? AND (public_id IS NULL OR public_id = '')", [$pub, $id]);
+    }
+    $shop  = $c['preferred_shop_id'] ?? $c['id_main_shop'] ?? null;
+    $token = bin2hex(random_bytes(32));                  // jeton brut : jamais persisté
+    $fp    = substr(hash('sha256', ($_SERVER['HTTP_USER_AGENT'] ?? '') . '|' . ($_SERVER['REMOTE_ADDR'] ?? '')), 0, 128);
+    q("INSERT INTO auth_handoff (token_hash, client_id, public_id, shop_id, fingerprint, expires_at)
+       VALUES (?,?,?,?,?, DATE_ADD(NOW(), INTERVAL 60 SECOND))",
+      [hash('sha256', $token), $id, $pub, $shop !== null ? (int) $shop : null, $fp]);
+    json_out(['token' => $token, 'ttl' => 60]);
   }
   /* Vérifie la TVA via VIES ET lie la société au client (persisté) — miroir du
      PWA handle_billing_verify (modèle « company link ») : la société est une
@@ -4230,6 +4349,13 @@ function dispatch($m, $p) {
     $b = body(); $map = ['name' => 'firstName', 'surname' => 'lastName'];
     $sets = []; $vals = [];
     foreach ($map as $col => $k) if (array_key_exists($k, $b)) { $sets[] = "$col=?"; $vals[] = $b[$k]; }
+    // E-mail (édité depuis le profil PWA, qui l'écrivait en SQL direct) :
+    // format validé, normalisé en minuscules ; vide = retiré (NULL).
+    if (array_key_exists('email', $b)) {
+      $em = strtolower(trim((string) $b['email']));
+      if ($em !== '' && !filter_var($em, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'Email invalide'], 400);
+      $sets[] = 'email=?'; $vals[] = ($em !== '' ? $em : null);
+    }
     // Téléphone : normalisé en national + E.164 + préfixe.
     if (array_key_exists('phone', $b)) {
       /* Sans phonePrefix explicite, on repart du préfixe DÉJÀ en base (défaut
@@ -12713,6 +12839,13 @@ function user_payload($id) {
     'officeSource' => $officeSource,
     'officeSite' => $officeSite,
     'preferredShopId' => $u['preferred_shop_id'] ?? null,
+    // Champs que la PWA lisait en SQL direct sur `client` (profil, parrainage,
+    // adresse de facturation) : exposés ici pour qu'elle passe par /auth/me.
+    'mainShopId'   => isset($u['id_main_shop']) ? (int) $u['id_main_shop'] : null,
+    'clientCode'   => $u['client_code'] ?? null,
+    'memberSince'  => $u['member_since'] ?? null,
+    'iban'         => $u['iban'] ?? null,
+    'billingLines' => $u['billing_lines'] ?? null,
     'lang' => $u['locale'] ?? ($u['preferred_lang'] ?? 'fr'),
     'isBusiness' => (bool) ($u['is_b2b'] ?? ($u['is_business'] ?? 0)),
     // Id de la fiche société liée : sert de billing_entity_id lors d'une
