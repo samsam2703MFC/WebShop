@@ -1399,7 +1399,7 @@ Note: the voucher in the URL is still validated server-side via `POST /vouchers/
 
 ## Product preparation paths — `/franchisor/preparation-*`
 
-Network-wide production-preparation **configuration** defined by the brand and shared by all shops (no shop scope, no `id_brand`). Config only — it does not compute a schedule. Backed by migration `0086_product_preparation_paths.sql` (three tables, **no seed**). All endpoints require the network admin token (`X-Admin-Token`, or `Authorization: Bearer <admin>`), like the rest of `/franchisor/*`.
+Network-wide production-preparation **configuration** defined by the brand and shared by all shops (no shop scope, no `id_brand`). Config only — it does not compute a schedule. Backed by migration `0104_product_preparation_paths.sql` (three tables, **no seed**). All endpoints require the network admin token (`X-Admin-Token`, or `Authorization: Bearer <admin>`), like the rest of `/franchisor/*`.
 
 | Method | Endpoint | Purpose |
 |---|---|---|

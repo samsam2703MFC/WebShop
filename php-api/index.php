@@ -5617,7 +5617,7 @@ function dispatch($m, $p) {
     /* ══════════════════════════════════════════════════════════════════
        PARCOURS DE PRÉPARATION PRODUIT — configuration RÉSEAU (marque).
        Défini par le franchiseur, partagé par toutes les boutiques : aucune
-       portée boutique, pas de seed (tables via migration 0086). Photos =
+       portée boutique, pas de seed (tables via migration 0104). Photos =
        objets fichiers indépendants sous assets/preparation/, référencés par
        clé dans l'étape ; la copie duplique les fichiers. Règles (batch, four)
        appliquées ici, côté serveur, jamais seulement en base.

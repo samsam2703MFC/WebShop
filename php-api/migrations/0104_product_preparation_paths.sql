@@ -1,4 +1,4 @@
--- 0086 — Parcours de préparation produit (configuration RÉSEAU).
+-- 0104 — Parcours de préparation produit (configuration RÉSEAU).
 --
 -- Un parcours de préparation est défini par la marque (franchiseur) et partagé
 -- par toutes les boutiques : aucune colonne shop_id, aucune colonne id_brand
