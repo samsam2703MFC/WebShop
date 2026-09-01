@@ -424,7 +424,7 @@ function ws_voucher_upsert(array $o) {
     // DE RETRAIT/LIVRAISON, pas sur aujourd'hui. Un client qui commande le
     // 28 novembre pour le 2 décembre doit voir la gamme de Noël ; c'est la date
     // de remise de la marchandise qui fait foi, pas celle de la commande.
-    [$seasonWhere, $seasonArgs] = availability_where('p', $date);
+    [$seasonWhere, $seasonArgs] = availability_where('p', $date, $s);
     // Déclencheurs de menu explicites (0078) : injectés dans has_menu_options
     // seulement si la table existe (réplica pas encore migré → ancien chemin).
     $trgSql = tbl_exists('ws_bundle_triggers')
@@ -1245,7 +1245,7 @@ function dispatch($m, $p) {
                     [$shopX, $tp]);
         if (!$prod) continue;
         if ($modeX === 'delivery' && !(int) $prod['od']) continue;
-        if (!product_available_on($tp, $dateX)) continue;        // gamme saisonnière
+        if (!product_available_on($tp, $dateX, $shopX)) continue;   // gamme saisonnière
         if (!xsell_in_stock($tp, $shopX, $dateX, $modeX)) continue;
         $px    = prix_produits([$tp], $shopX ?: null);
         $price = $px[$tp] ?? (float) $prod['price'];
@@ -2810,7 +2810,7 @@ function dispatch($m, $p) {
       // Gamme saisonnière : refus à la DATE de retrait/livraison. Masquer au
       // catalogue ne suffit pas — un panier gardé en cache, un onglet resté
       // ouvert ou un appel direct passeraient sans ce contrôle.
-      if (!product_available_on($p2['id'], $b['deliveryDate'] ?? null)) {
+      if (!product_available_on($p2['id'], $b['deliveryDate'] ?? null, $shop)) {
         json_out(['error' => '« ' . trim((string) $p2['name']) . ' » n\'est pas disponible à la date choisie'
           . ' — retirez-le du panier ou changez de date.'], 409);
       }
@@ -11887,8 +11887,9 @@ function basket_pa($shop, $mode, $productIds) {
 }
 
 /* Normalise un moyen de paiement vers sa famille canonique. */
-/* Disponibilité saisonnière d'un produit (product_availability_period).
-   Ces gammes sont définies dans l'ERP — « 🎄 Noël & Nouvel An », etc. — et
+/* Disponibilité saisonnière d'un produit, SERVIE PAR L'ENDPOINT
+   (shops/{id}/products/available?include=availability_periods).
+   Ces gammes sont définies dans l'ERP (« 🎄 Noël & Nouvel An », etc.) et
    n'étaient PAS connues du webshop : un cougnou de Noël restait en vente le
    2 août, et rien ne l'activait en décembre non plus.
 
@@ -11898,48 +11899,61 @@ function basket_pa($shop, $mode, $productIds) {
      • au moins une période ACTIVE couvrant la date → disponible ;
      • périodes récurrentes : comparaison en mois-jour (MMJJ), avec passage
        d'année quand from_md > to_md (1101 → 115 = novembre à janvier) ;
-     • tables absentes → aucun filtre. Fermer le catalogue serait pire que de
+     • ERP muet → aucun filtre. Fermer le catalogue serait pire que de
        laisser passer : on préfère vendre hors saison qu'afficher une boutique
        vide, et c'est de toute façon le comportement d'avant.
 
    Renvoie [fragment SQL, arguments] à concaténer dans un WHERE. $alias est
    l'alias de la table produit. */
-function availability_where($alias, $date = null) {
-  static $ok = null;
-  if ($ok === null) {
-    try {
-      $ok = (bool) row("SELECT 1 x FROM information_schema.tables
-                         WHERE table_schema=DATABASE()
-                           AND table_name='product_availability_period' LIMIT 1")
-         && (bool) row("SELECT 1 x FROM information_schema.tables
-                         WHERE table_schema=DATABASE()
-                           AND table_name='product_availability_period_connection' LIMIT 1");
-    } catch (Throwable $e) { $ok = false; }
+function availability_where($alias, $date = null, $shopId = null) {
+  /* SOURCE : L'ENDPOINT. Le SQL qui vivait ici lisait
+     product_availability_period(_connection), copies locales des tables de
+     l'ERP. shops/{id}/products/available?include=availability_periods sert la
+     même chose, à jour.
+
+     On rend un NOT IN sur l'ensemble EXCLU, pas un IN sur l'ensemble autorisé.
+     Deux raisons : l'exclu est bien plus petit (36 produits contre 547 au
+     01/09), et surtout un produit que l'ERP ne connaît pas reste vendable —
+     c'est exactement la règle d'avant (« aucune période rattachée → disponible
+     en permanence »), alors qu'un IN l'aurait silencieusement retiré de la
+     vente.
+
+     Les périodes sont définies au niveau de la MARQUE (id_brand dans la
+     charge utile) : la boutique ne sert qu'à obtenir la liste, d'où le repli
+     sur une boutique de référence quand l'appelant n'en a pas.
+
+     ERP muet → aucun filtre, comme lorsque les tables étaient absentes.
+     Fermer le catalogue serait pire que de laisser passer : on préfère vendre
+     hors saison qu'afficher une boutique vide. */
+  if (!function_exists('erp_produits_de_saison')) return ['', []];
+  $sid = (int) $shopId;
+  if ($sid <= 0) {
+    static $ref = null;
+    if ($ref === null) {
+      $ref = (int) (function_exists('ws_param') ? ws_param('erp_ref_shop', 0) : 0);
+      if ($ref <= 0) {
+        try { $r = row("SELECT MIN(id) m FROM shops WHERE webshop_enabled = 1"); $ref = (int) ($r['m'] ?? 0); }
+        catch (Throwable $e) { $ref = 0; }
+      }
+    }
+    $sid = $ref;
   }
-  if (!$ok) return ['', []];
-  $d = (is_string($date) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) ? $date : date('Y-m-d');
-  $md = (int) (substr($d, 5, 2) . substr($d, 8, 2));   // MMJJ
-  $sql = " AND (NOT EXISTS (SELECT 1 FROM product_availability_period_connection pac
-                              JOIN product_availability_period pap
-                                ON pap.id = pac.id_period AND pap.is_active = 1
-                             WHERE pac.id_product = $alias.id)
-            OR EXISTS (SELECT 1 FROM product_availability_period_connection pac
-                         JOIN product_availability_period pap
-                           ON pap.id = pac.id_period AND pap.is_active = 1
-                        WHERE pac.id_product = $alias.id
-                          AND ((pap.is_recurring = 0 AND ? BETWEEN pap.start_date AND pap.end_date)
-                            OR (pap.is_recurring = 1 AND (
-                                  (pap.from_md <= pap.to_md AND ? BETWEEN pap.from_md AND pap.to_md)
-                               OR (pap.from_md >  pap.to_md AND (? >= pap.from_md OR ? <= pap.to_md)))))))";
-  return [$sql, [$d, $md, $md, $md]];
+  if ($sid <= 0) return ['', []];
+
+  $verdict = erp_produits_de_saison($sid, $date);
+  if (!is_array($verdict)) return ['', []];          // ERP muet
+  $hors = [];
+  foreach ($verdict as $pid => $vendable) if (!$vendable) $hors[] = (int) $pid;
+  if (!$hors) return ['', []];
+  return [' AND ' . $alias . '.id NOT IN (' . implode(',', $hors) . ')', []];
 }
 
 /* Le produit $pid est-il vendable à la date $date ? Même règle que
    availability_where, appliquée à un seul produit — utilisée à la création de
    commande : masquer au catalogue ne suffit pas, un panier gardé en cache ou
    un appel direct doit être refusé côté serveur. */
-function product_available_on($pid, $date) {
-  [$sql, $args] = availability_where('p', $date);
+function product_available_on($pid, $date, $shopId = null) {
+  [$sql, $args] = availability_where('p', $date, $shopId);
   if ($sql === '') return true;
   return (bool) row("SELECT 1 AS x FROM ws_products p WHERE p.id = ?$sql LIMIT 1",
                     array_merge([(int) $pid], $args));
@@ -12298,7 +12312,7 @@ function product_visibilite($shopId, array $ids, $mode = '', $date = null) {
      n'appartient plus à une boutique). Le LEFT JOIN sur ws_categories reste
      pour une seule chose — savoir si cat_id pointe sur une catégorie qui
      existe, ce qui est un défaut de NAVIGATION, pas un refus de vente. */
-  [$seasonSql, $seasonArgs] = availability_where('p', $date);
+  [$seasonSql, $seasonArgs] = availability_where('p', $date, $shopId);
   $rs = rows("SELECT p.id,
                      p.active AS actif,
                      COALESCE(p.office_delivery,1) AS od,
