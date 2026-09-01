@@ -849,6 +849,11 @@ function dispatch($m, $p) {
       'categories_traduites' => count($cat),
       'exemples'   => array_slice($prod, 0, 3, true),
       'clients'    => function_exists('erp_clients_etat') ? erp_clients_etat(qp('shopId') ?: 2) : null,
+      /* AVANCEMENT DE LA BASCULE (0103) : combien de comptes ont une fiche ERP
+         connue, et quelle part des commandes porte déjà sa fiche gelée. Un
+         chantier qu'on ne peut pas mesurer est un chantier dont on ignore où
+         il en est. */
+      'bascule' => function_exists('erp_map_etat') ? erp_map_etat() : null,
       /* PRIX — diagnostic d'exécution. Ajouté le 31/08 : le résolveur ERP était
          en place, déployé, et les prix servis restaient les prix locaux ; le
          raisonnement statique ne suffisait plus à dire pourquoi. Ces trois
@@ -3181,6 +3186,18 @@ function dispatch($m, $p) {
       $intOrNull = fn ($v) => (isset($v) && is_numeric($v)) ? (int) $v : null;
       $ordVals = [
         'order_ref' => $ref, 'shop_id' => $shop, 'customer_id' => $intOrNull($b['customerId'] ?? null),
+        /* LA FICHE ERP, GELÉE SUR LA COMMANDE. Une commande est une pièce
+           historique : elle doit garder la fiche contre laquelle elle a été
+           passée, même si le client est rattaché à une autre plus tard. C'est
+           la seule des neuf tables qui justifie une copie plutôt qu'une
+           résolution par la correspondance. NULL quand le lien n'est pas encore
+           connu — et c'est exact : personne ne sait, à cet instant, à quelle
+           fiche ce client correspond. La décision de rattachement reprendra
+           ces commandes-là. */
+        'customer_erp_id' => (function () use ($b, $intOrNull) {
+          $cid = $intOrNull($b['customerId'] ?? null);
+          return ($cid && function_exists('erp_map_id')) ? erp_map_id($cid) : null;
+        })(),
         'guest_email' => $guestEmail, 'guest_name' => $guestName, 'guest_phone' => $guestPhone, 'guest_phone_prefix' => $guestPfx,
         'mode' => $mode, 'status' => $orderStatus,
         // delivery_date : jour envoyé par le front, sinon JOUR MÊME — plus
@@ -3474,8 +3491,14 @@ function dispatch($m, $p) {
              désignent la même personne. C'est ce lien que lit la décision de
              rattachement (0099), et c'est lui qu'exigera toute écriture vers
              l'ERP le jour où leur PATCH acceptera autre chose que `status`. */
-          if (is_array($creee) && !empty($creee['id']) && col_exists('client', 'erp_client_id'))
-            q("UPDATE client SET erp_client_id=? WHERE id=?", [(int) $creee['id'], $id]);
+          if (is_array($creee) && !empty($creee['id'])) {
+            if (col_exists('client', 'erp_client_id'))
+              q("UPDATE client SET erp_client_id=? WHERE id=?", [(int) $creee['id'], $id]);
+            /* La CORRESPONDANCE, qui survivra à la table client (0103). Origine
+               « inscription » : cette fiche, c'est nous qui venons de la créer,
+               aucun arbitrage n'a été nécessaire. */
+            if (function_exists('erp_map_poser')) erp_map_poser($id, (int) $creee['id'], 'inscription');
+          }
         } catch (Throwable $e) { error_log('[ws] miroir ERP client: ' . $e->getMessage()); }
       }
     }
@@ -8686,6 +8709,16 @@ function dispatch($m, $p) {
         json_out(['ok' => false, 'error' => 'Fiche #' . $eid . ' déjà reliée à un autre compte.'], 409);
 
       q("UPDATE client SET erp_client_id=? WHERE id=?", [$eid, $cid]);
+      /* Correspondance durable + reprise des commandes DÉJÀ passées par ce
+         compte : elles n'avaient pas de fiche ERP au moment où elles ont été
+         créées, elles en ont une maintenant. C'est le seul instant où on peut
+         le faire sans supposer quoi que ce soit — le franchisé vient de dire
+         que les deux fiches sont la même personne. */
+      if (function_exists('erp_map_poser')) erp_map_poser($cid, $eid, 'rattachement');
+      if (col_exists('ws_orders', 'customer_erp_id')) {
+        try { q("UPDATE ws_orders SET customer_erp_id=? WHERE customer_id=? AND customer_erp_id IS NULL",
+                [$eid, $cid]); } catch (Throwable $e) { error_log('[ws] reprise commandes: ' . $e->getMessage()); }
+      }
       q("UPDATE ws_client_link_requests SET status='linked', decided_at=NOW(), decided_by=? WHERE id=?",
         [($par ?: null), $id]);
       json_out(['ok' => true, 'action' => 'link', 'clientId' => $cid, 'ficheId' => $eid]);
