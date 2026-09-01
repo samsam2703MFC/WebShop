@@ -2338,10 +2338,70 @@ function ModalShell({ onClose, children, narrow }) {
 }
 
 // Préfixes internationaux proposés dans les formulaires (défaut +32 Belgique).
+/* Indicatifs européens. L'ÉTIQUETTE COMMENCE PAR LE DRAPEAU ET L'INDICATIF,
+   le nom du pays ensuite : le sélecteur replié n'affiche que le début, et ce
+   sont ces deux-là qui doivent y tenir. Le nom sert à choisir dans la liste
+   ouverte, pas à se relire après coup.
+
+   Les quatre premiers sont ceux de la clientèle réelle et sortent de l'ordre
+   alphabétique — un client belge ne doit pas faire défiler pour trouver +32.
+
+   Les drapeaux sont des émoji « indicateurs régionaux ». Windows ne les rend
+   pas et affiche les deux lettres du pays à la place (BE, FR) : dégradé
+   acceptable, l'information reste lisible. Ne pas les remplacer par des
+   images — trente-deux requêtes pour une liste déroulante. */
 const PHONE_PREFIXES = [
-  ['+32', '+32'], ['+33', '+33'], ['+31', '+31'],
-  ['+352', '+352'], ['+49', '+49'],
+  ['+32',  '🇧🇪 +32 Belgique',        1],
+  ['+33',  '🇫🇷 +33 France',          1],
+  ['+44',  '🇬🇧 +44 Royaume-Uni',     1],
+  ['+31',  '🇳🇱 +31 Pays-Bas',        1],
+  ['+49',  '🇩🇪 +49 Allemagne',       0],
+  ['+43',  '🇦🇹 +43 Autriche',        0],
+  ['+359', '🇧🇬 +359 Bulgarie',       0],
+  ['+357', '🇨🇾 +357 Chypre',         0],
+  ['+385', '🇭🇷 +385 Croatie',        0],
+  ['+45',  '🇩🇰 +45 Danemark',        0],
+  ['+34',  '🇪🇸 +34 Espagne',         0],
+  ['+372', '🇪🇪 +372 Estonie',        0],
+  ['+358', '🇫🇮 +358 Finlande',       0],
+  ['+30',  '🇬🇷 +30 Grèce',           0],
+  ['+36',  '🇭🇺 +36 Hongrie',         0],
+  ['+353', '🇮🇪 +353 Irlande',        0],
+  ['+354', '🇮🇸 +354 Islande',        0],
+  ['+39',  '🇮🇹 +39 Italie',          0],
+  ['+371', '🇱🇻 +371 Lettonie',       0],
+  ['+423', '🇱🇮 +423 Liechtenstein',  0],
+  ['+370', '🇱🇹 +370 Lituanie',       0],
+  ['+352', '🇱🇺 +352 Luxembourg',     0],
+  ['+356', '🇲🇹 +356 Malte',          0],
+  ['+47',  '🇳🇴 +47 Norvège',         0],
+  ['+48',  '🇵🇱 +48 Pologne',         0],
+  ['+351', '🇵🇹 +351 Portugal',       0],
+  ['+40',  '🇷🇴 +40 Roumanie',        0],
+  ['+421', '🇸🇰 +421 Slovaquie',      0],
+  ['+386', '🇸🇮 +386 Slovénie',       0],
+  ['+46',  '🇸🇪 +46 Suède',           0],
+  ['+41',  '🇨🇭 +41 Suisse',          0],
+  ['+420', '🇨🇿 +420 Tchéquie',       0],
 ];
+
+/* Rend les options groupées : les quatre courants, puis le reste. Un groupe
+   nommé vaut mieux qu'un séparateur muet — la liste ouverte dit POURQUOI ces
+   quatre-là sont en haut. */
+function phonePrefixOptions() {
+  const courants = PHONE_PREFIXES.filter((x) => x[2]);
+  const autres   = PHONE_PREFIXES.filter((x) => !x[2]);
+  return (
+    <>
+      <optgroup label="Courants">
+        {courants.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </optgroup>
+      <optgroup label="Reste de l'Europe">
+        {autres.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </optgroup>
+    </>
+  );
+}
 
 // ── Collecte du code postal client (obligatoire partout) ────────────────
 // Dès que 4 chiffres sont saisis, la LOCALITÉ correspondante s'affiche
@@ -2669,7 +2729,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
             <label className="ws-field"><span>{t('form.phone')} <em style={{ fontStyle: 'normal', fontWeight: 400, opacity: .6 }}>{t('form.optional')}</em></span>
               <span className="ws-phone">
                 <select className="ws-phone__pfx" value={form.phonePrefix} onChange={(e) => set('phonePrefix', e.target.value)} aria-label={t('form.phonePrefix')}>
-                  {PHONE_PREFIXES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  {phonePrefixOptions()}
                 </select>
                 <input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} autoComplete="tel" inputMode="tel" placeholder="470 00 00 02"/>
               </span>
@@ -2689,7 +2749,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
               {form.authMethod === 'phone' ? (
                 <span className="ws-phone">
                   <select className="ws-phone__pfx" value={form.phonePrefix} onChange={(e) => set('phonePrefix', e.target.value)} aria-label={t('form.phonePrefix')}>
-                    {PHONE_PREFIXES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                    {phonePrefixOptions()}
                   </select>
                   <input type="tel" value={form.identifier} onChange={(e) => set('identifier', e.target.value)} autoComplete="username" inputMode="tel" placeholder="470 00 00 02"/>
                 </span>

@@ -2525,7 +2525,13 @@
 }
 /* Ligne téléphone : indicatif (select) + numéro (input) */
 .ws-phone { display: flex; gap: 8px; }
-.ws-phone__pfx { flex: 0 0 96px; }
+/* Assez large pour « 🇧🇪 +32 » replié : le drapeau et l'indicatif sont ce que
+   l'utilisateur relit, le nom du pays ne sert qu'à choisir dans la liste. */
+/* La largeur MINIMALE d'un select est celle de sa plus longue option
+   (« Liechtenstein »), et elle écrase la base flex : sans min-width:0, le
+   champ mangeait 205px et écrasait le numéro sur un écran étroit. On le laisse
+   se dimensionner à son contenu, borné, et rétrécissable. */
+.ws-phone__pfx { flex: 0 1 auto; min-width: 0; max-width: 150px; }
 .ws-phone > input { flex: 1; }
 .ws-phone > select,
 .ws-phone > input {
