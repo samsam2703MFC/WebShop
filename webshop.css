@@ -3965,3 +3965,52 @@
 @media (hover: none) {
   .ws-scrollcue { display: none; }
 }
+
+/* ── Code SMS : prouver qu'on est titulaire du numéro ──────────────────────
+   Encadré sous le champ mot de passe, pendant la seule étape où l'on attend
+   un code. Il reprend les variables de la carte de reconnaissance (fond
+   secondaire, filet discret) : c'est le même moment du parcours, ce n'est pas
+   une alerte. */
+.ws-otp {
+  margin: 2px 0 0;
+  padding: 12px 13px 10px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.ws-otp__lede {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+.ws-otp__lede strong {
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;   /* le numéro masqué ne doit pas se couper en deux */
+}
+/* Le code se lit chiffre par chiffre : chasse fixe, lettres espacées. */
+.ws-otp .ws-field input {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 18px;
+  letter-spacing: .28em;
+  text-align: center;
+}
+.ws-otp__timer {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+.ws-linkbtn--inline {
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 0;
+}
+.ws-linkbtn--inline:disabled {
+  opacity: .4;
+  cursor: default;
+  text-decoration: none;
+}

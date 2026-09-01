@@ -112,8 +112,46 @@
       } catch (_) { return { ok: false }; }
     },
 
+    /* ── CODE SMS : prouver qu'on est bien le titulaire du numéro ─────
+       Le serveur envoie le code au numéro DE LA FICHE, pas à celui qui vient
+       d'être saisi — sinon la preuve ne prouverait rien. Il ne rend jamais le
+       code ; on n'obtient ici que le numéro masqué, à afficher pour que la
+       personne sache sur quel téléphone regarder. */
+    async otpRequest({ identifier, phonePrefix }) {
+      if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
+      try {
+        const r = await fetch(`${api.endpoint}/otp-request`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier, phonePrefix: phonePrefix || '+32' }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) return { ok: true, phoneMasked: j.phoneMasked || '', expiresIn: j.expiresIn || 180 };
+        return { ok: false, code: j.code || null, error: j.error || "Envoi impossible." };
+      } catch (_) { return { ok: false, error: 'Réseau indisponible.' }; }
+    },
+
+    /* Code ET mot de passe en un seul appel : rien à garder entre les deux,
+       donc aucune fenêtre où quelqu'un pourrait s'intercaler. Connecte
+       directement en cas de succès. */
+    async otpSetPassword({ identifier, phonePrefix, code, password }) {
+      if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
+      try {
+        const r = await fetch(`${api.endpoint}/otp-set-password`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier, phonePrefix: phonePrefix || '+32', code, password }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
+        return { ok: false, code: j.code || null, error: j.error || 'Échec.' };
+      } catch (_) { return { ok: false, error: 'Réseau indisponible.' }; }
+    },
+
     /* ── Set / update password (compte existant) ─────────────────────── */
-    /* ⚠️ Sans vérification d'identité (pas d'OTP) — prototype uniquement. */
+    /* Chemin SANS preuve d'identité. Le serveur le refuse (409 otp_requis)
+       dès que le SMS est configuré ; il ne subsiste que tant qu'il ne l'est
+       pas, faute de quoi les comptes sans mot de passe — c'est-à-dire tous —
+       resteraient dehors. L'appelant doit traiter 'otp_requis'. */
     async setPassword({ email, phone, phonePrefix, identifier, password }) {
       if (api.endpoint) {
         try {
@@ -124,7 +162,8 @@
           });
           const j = await r.json();
           if (r.ok) { if (j.token) setToken(j.token); return { ok: true, user: j.user }; }
-          return { ok: false, error: j.error || j.message || 'Échec de la mise à jour.' };
+          return { ok: false, code: j.code || null,
+                   error: j.error || j.message || 'Échec de la mise à jour.' };
         } catch (_) {}
       }
       return { ok: false, error: 'Service indisponible.' };

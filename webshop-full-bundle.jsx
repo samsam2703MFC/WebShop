@@ -2425,6 +2425,22 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
      rattacher son historique d'achats est sa décision, pas la nôtre. */
   const [connu, setConnu] = useState(null);      // { prenom, concordances[] } | null
   const [lienEtat, setLienEtat] = useState('');  // '' | 'envoi' | 'pending' | 'refus'
+  /* Code SMS. '' = pas encore demandé · 'code' = envoyé, on attend la saisie.
+     Le numéro masqué vient du serveur : il ne rend jamais le numéro entier,
+     seulement de quoi savoir sur quel téléphone regarder. */
+  const [otpPhase, setOtpPhase] = useState('');
+  const [otpMask, setOtpMask]   = useState('');
+  const [otpCode, setOtpCode]   = useState('');
+  const [otpLeft, setOtpLeft]   = useState(0);   // secondes restantes
+
+  /* Décompte des 180 secondes de validité annoncées par SMSAPI. Le montrer
+     évite la question « est-ce que ça marche encore ? » et, une fois à zéro,
+     désigne le seul geste utile : en redemander un. */
+  useEffect(() => {
+    if (otpPhase !== 'code' || otpLeft <= 0) return;
+    const h = setTimeout(() => setOtpLeft((n) => n - 1), 1000);
+    return () => clearTimeout(h);
+  }, [otpPhase, otpLeft]);
   if (!open) return null;
   function set(k, v) { setForm((f) => ({ ...f, [k]: v })); setErr(''); }
   async function submit(e) {
@@ -2485,9 +2501,47 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
     setLienEtat('pending');
   }
 
+  const otpIdent = () => form.identifier || form.email || form.phone || '';
+
+  /* Demande d'un code. Sert aussi au renvoi. */
+  async function demanderCode() {
+    setErr(''); setLoading(true);
+    try {
+      const r = await window.WSAuth.otpRequest({ identifier: otpIdent(), phonePrefix: form.phonePrefix });
+      if (r.ok) { setOtpMask(r.phoneMasked); setOtpLeft(r.expiresIn || 180); setOtpPhase('code'); setOtpCode(''); return r; }
+      return r;
+    } finally { setLoading(false); }
+  }
+
   async function submitSetPassword() {
     setErr('');
     if (!newPw || newPw.length < 6) { setErr('Mot de passe : 6 caractères minimum.'); return; }
+    /* PHASE 2 — le code est saisi : code et mot de passe partent ensemble. */
+    if (otpPhase === 'code') {
+      if (!/^\d{4,8}$/.test(otpCode.trim())) { setErr('Saisissez le code reçu par SMS.'); return; }
+      setLoading(true);
+      try {
+        const r = await window.WSAuth.otpSetPassword({
+          identifier: otpIdent(), phonePrefix: form.phonePrefix, code: otpCode.trim(), password: newPw });
+        if (!r.ok) {
+          if (r.code === 'perime') setOtpLeft(0);
+          setErr(r.error || 'Code incorrect.'); return;
+        }
+        onRegister(r.user); onClose();
+      } catch (_) { setErr('Erreur réseau. Veuillez réessayer.'); }
+      finally { setLoading(false); }
+      return;
+    }
+
+    /* PHASE 1 — ON DEMANDE LE CODE D'ABORD, ET C'EST LE SERVEUR QUI TRANCHE.
+       Le front n'a pas à savoir si le SMS est configuré : il essaie, et ne
+       retombe sur le chemin sans preuve que si le serveur répond 'sms_off'.
+       Le jour où le jeton SMSAPI est posé, cet écran devient sûr tout seul,
+       sans redéploiement du front. */
+    const d = await demanderCode();
+    if (d.ok) return;
+    if (d.code !== 'sms_off') { setErr(d.error || "Envoi impossible."); return; }
+
     setLoading(true);
     try {
       const r = await window.WSAuth.setPassword({ email: form.email, phone: form.phone, phonePrefix: form.phonePrefix, identifier: form.identifier, password: newPw });
@@ -2559,10 +2613,40 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
           <p className="ws-modal__lede">{t('auth.setPassword')}</p>
           <div className="ws-form">
             <label className="ws-field"><span>{t('auth.password')}</span>
-              <input type="password" value={newPw} onChange={(e) => { setNewPw(e.target.value); setErr(''); }} autoComplete="new-password" placeholder={t('auth.min6')}/></label>
+              <input type="password" value={newPw} onChange={(e) => { setNewPw(e.target.value); setErr(''); }} autoComplete="new-password" placeholder={t('auth.min6')} disabled={otpPhase === 'code'}/></label>
+
+            {/* ── LA PREUVE PAR SMS ────────────────────────────────────────
+                Ce panneau n'apparaît que si le serveur a réellement envoyé un
+                code. Tant que le SMS n'est pas configuré, l'écran reste celui
+                d'avant : on n'annonce pas une sécurité qui n'existe pas. */}
+            {otpPhase === 'code' && (
+              <div className="ws-otp">
+                <p className="ws-otp__lede">
+                  Code envoyé au <strong>{otpMask}</strong>, le numéro enregistré sur votre fiche.
+                </p>
+                <label className="ws-field"><span>Code reçu par SMS</span>
+                  <input type="text" value={otpCode} inputMode="numeric" autoComplete="one-time-code"
+                    maxLength={8} placeholder="123456" autoFocus
+                    onChange={(e) => { setOtpCode(e.target.value.replace(/\D/g, '')); setErr(''); }}/></label>
+                <p className="ws-otp__timer">
+                  {otpLeft > 0
+                    ? `Valable encore ${Math.floor(otpLeft / 60)}:${String(otpLeft % 60).padStart(2, '0')}`
+                    : 'Ce code a expiré.'}
+                  {' '}
+                  <button type="button" className="ws-linkbtn ws-linkbtn--inline" disabled={loading || otpLeft > 150}
+                    onClick={async () => { const r = await demanderCode(); if (!r.ok) setErr(r.error || "Envoi impossible."); }}>
+                    Recevoir un nouveau code
+                  </button>
+                </p>
+              </div>
+            )}
+
             {err && <p className="ws-form__err">{err}</p>}
-            <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={submitSetPassword}>{loading ? 'Mise à jour…' : 'Mettre à jour & se connecter'}</button>
-            <button type="button" className="ws-linkbtn" onClick={() => { setPwStep(false); setTab('login'); setErr(''); }}>{t('auth.havePassword')}</button>
+            <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={submitSetPassword}>
+              {loading ? (otpPhase === 'code' ? 'Vérification…' : 'Envoi…')
+                       : (otpPhase === 'code' ? 'Valider & se connecter' : 'Mettre à jour & se connecter')}
+            </button>
+            <button type="button" className="ws-linkbtn" onClick={() => { setPwStep(false); setOtpPhase(''); setOtpCode(''); setTab('login'); setErr(''); }}>{t('auth.havePassword')}</button>
           </div>
         </>
       ) : (
