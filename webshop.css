@@ -4065,3 +4065,23 @@
   cursor: default;
   text-decoration: none;
 }
+
+/* ── BUNDLE ERP sur la vignette : le bundle se SIGNALE ici, il se choisit
+   dans la fiche. Même registre que « Disponible en portions » pour la
+   ligne « Avec Coca-Cola », et le prix bundle sous le prix produit, prix
+   normal barré. Données : catalogue → bundleOffer (aucune sans l'ERP). ── */
+.ws-card__offer {
+  display: inline-flex; align-items: center; gap: 5px;
+  align-self: flex-start;
+  font-size: 10.5px; font-weight: 600;
+  color: var(--color-primary);
+  letter-spacing: .01em;
+}
+.ws-card__offer svg { flex: none; }
+.ws-card__offerprice {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  font-size: 11.5px; font-weight: 600; color: var(--color-primary);
+  white-space: nowrap;
+}
+.ws-card__offerprice s { font-weight: 400; color: var(--color-text-muted); }
+.ws-card__badge--offer { background: var(--color-primary); }

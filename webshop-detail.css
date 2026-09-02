@@ -815,3 +815,14 @@
   .pdm-optrow,
   .pdm-opt__chev { transition-duration: 0s; }
 }
+
+/* ── BUNDLE ERP dans la fiche : deux options exclusives dans le registre du
+   composeur (pdm-bcard). L'économie s'affiche en face du prix bundle. ── */
+.pdm-bcard__lines { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
+.pdm-bcard__lines li { font-size: 12.5px; color: var(--color-text); display: flex; justify-content: space-between; gap: 10px; }
+.pdm-bcard__lines li span:last-child { color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.pdm-bcard__save {
+  display: inline-block; margin-left: 8px; padding: 2px 7px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--color-primary);
+}
+.pdm-bcard__strike { font-weight: 400; color: var(--color-text-muted); text-decoration: line-through; margin-right: 6px; }

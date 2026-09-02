@@ -630,6 +630,24 @@ function ws_voucher_upsert(array $o) {
         unset($po);
       }
     }
+    /* BUNDLES ERP (promotions) : le bundle se SIGNALE sur la vignette et se
+       CHOISIT dans la fiche. `bundleOffer` = {id, name, price, regular, saving,
+       items[{productId, name, portion, qty, unit}]}, ou null. L'économie est
+       calculée avec les prix résolus ICI (les mêmes qu'à la commande), jamais
+       reçue du navigateur ; sans bundle ERP complet et tarifé : null. */
+    try {
+      $idsB = array_map(static fn ($x2) => (int) $x2['id'], $r);
+      $nomsB = []; foreach ($r as $x2) $nomsB[(int) $x2['id']] = (string) $x2['name'];
+      $prixB = []; foreach ($r as $x2) if ((float) $x2['price'] > 0) $prixB[(int) $x2['id']] = (float) $x2['price'];
+      $offres = function_exists('erp_bundle_offres')
+        ? erp_bundle_offres((int) $s, $idsB, $prixB, $popts ?? [], $nomsB) : [];
+      foreach ($r as &$x) $x['bundleOffer'] = $offres[(int) $x['id']] ?? null;
+      unset($x);
+    } catch (Throwable $e) {
+      error_log('[ws] bundles ERP : ' . $e->getMessage());
+      foreach ($r as &$x) $x['bundleOffer'] = null;
+      unset($x);
+    }
     unset($x);
     // Règle : on n'affiche QUE les produits à prix non nul (> 0). Un produit dont le
     // prix effectif (magasin ERP, ou repli ws_) vaut 0 n'est pas vendable → masqué.
@@ -2934,6 +2952,36 @@ function dispatch($m, $p) {
         error_log('[ws] menu non validé — produit ' . (int) $p2['id']
                   . ' formule ' . (int) ($it['bundleId'] ?? 0)
                   . ' choix ' . json_encode($it['bundleSlots']));
+      /* BUNDLE ERP choisi dans la fiche : le panier n'envoie qu'un identifiant,
+         le bundle est RE-RÉSOLU ici pour cette boutique (mêmes prix que
+         l'affichage). La ligne mère porte le NOM du bundle et son PRIX ; les
+         autres articles deviennent des lignes filles à 0 (« Inclus dans … »),
+         comme les composants d'un menu : la boutique sait quoi préparer, la
+         compta lit le prix une seule fois. Un bundle qui n'est plus servi ou
+         plus tarifé ⇒ 409, jamais un prix deviné. */
+      $nomB = null;
+      if (!empty($it['bundleOfferId']) && function_exists('erp_bundle_offre_pour')) {
+        $idsB2 = [(int) $p2['id']];
+        foreach ((array) erp_bundles_brut($shop) as $bb) if ($bb['id'] === (int) $it['bundleOfferId'])
+          foreach ($bb['items'] as $bi) $idsB2[] = $bi['pid'];
+        $idsB2 = array_values(array_unique($idsB2));
+        $nomsB2 = []; foreach (rows("SELECT id, name FROM ws_products WHERE id IN (" . implode(',', array_fill(0, count($idsB2), '?')) . ")", $idsB2) as $nb) $nomsB2[(int) $nb['id']] = (string) $nb['name'];
+        $offB = erp_bundle_offre_pour($shop, (int) $p2['id'], (int) $it['bundleOfferId'],
+                                      prix_produits($idsB2, (int) $shop), erp_portion_options($shop, $idsB2), $nomsB2);
+        if (!$offB) {
+          json_out(['error' => 'Le bundle choisi pour « ' . trim((string) $p2['name'])
+            . ' » n\'est plus proposé dans cette boutique — retirez-le du panier et rajoutez le produit.'], 409);
+        }
+        $unit = (float) $offB['price']; $suppl = 0.0; $nomB = $offB['name'] !== '' ? $offB['name'] : $p2['name'];
+        $filles = [];
+        foreach ($offB['items'] as $li) {
+          $lab = $li['name'] . ($li['portionLabel'] ? ', ' . $li['portionLabel'] : '');
+          if ((int) $li['productId'] === (int) $p2['id'] && !$li['portion'] && (int) $li['qty'] === 1) continue; // c'est la mère
+          for ($k = 0; $k < (int) $li['qty']; $k++) $filles[] = ['product_id' => (int) $li['productId'], 'label' => $lab, 'delta' => 0];
+        }
+        $comp = ['modifier' => 0, 'choices' => $filles];
+        $it['portion'] = null;   // le bundle fixe ses portions ; la mère est le produit entier
+      }
       $subtotal += ($unit + $suppl) * $qty;
       // `options` = composition du menu (formule, choix de chaque emplacement,
       // suppléments). La ligne était reconstruite depuis le produit ERP et
@@ -2947,7 +2995,7 @@ function dispatch($m, $p) {
       // `unit` = prix de la ligne mère : le produit + le modificateur de la
       // formule. Les suppléments par choix, eux, restent PORTÉS PAR LEUR LIGNE
       // (voir l'écriture des composants) — c'est là qu'ils sont lisibles.
-      $lines[] = ['productId' => $p2['id'], 'name' => $p2['name'], 'qty' => $qty,
+      $lines[] = ['productId' => $p2['id'], 'name' => $nomB ?? $p2['name'], 'qty' => $qty,
                   'unit' => round($unit + $comp['modifier'], 2),
                   'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion'],
                   'id' => (int) $p2['id'], 'cat_id' => (int) ($p2['cat_id'] ?? 0), 'sub_cat_id' => (int) ($p2['sub_cat_id'] ?? 0),

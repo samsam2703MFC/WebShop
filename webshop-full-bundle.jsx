@@ -859,6 +859,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   const [upsellIds, setUpsellIds]     = React.useState({});
   const [qty, setQty]                 = React.useState(1);
   const [portion, setPortion]         = React.useState('entier');
+  const [offerOn, setOfferOn]         = React.useState(false); // bundle ERP choisi (fiche)
   const [openOpts, setOpenOpts]       = React.useState({}); // accordion state per option id
   const [carIdx, setCarIdx]           = React.useState(0);
   const [pulse, setPulse]             = React.useState(0);  // re-trigger price pop animation
@@ -886,6 +887,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     // Portion par défaut = la PREMIÈRE option proposée (l'entière quand les
     // options ERP sont fournies, sinon le comportement historique).
     setPortion((portionOptionList(product).find((o) => o.v === 'entier') || portionOptionList(product)[0])?.v || 'entier');
+    setOfferOn(false);   // le produit seul par défaut ; le bundle se choisit
     setBundleSlots({});
     setCarIdx(0);
     if (product?.options) {
@@ -974,7 +976,11 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
     const u = product.upsells.find((x) => x.id === id);
     return t + (u?.delta || 0);
   }, 0);
-  const unitTotal = unit + bundleDelta + upsellDelta;
+  // BUNDLE ERP choisi : son prix REMPLACE le prix unitaire (portion, options,
+  // formule et suppléments compris — le bundle fixe sa composition).
+  const bundleOffer = product?.bundleOffer || null;
+  const offerPicked = offerOn && !!bundleOffer;
+  const unitTotal = offerPicked ? bundleOffer.price : (unit + bundleDelta + upsellDelta);
   const grossTotal = unitTotal * qty;
   const offerCalc = product?.offer ? computeOffer(product.offer, qty, unitTotal, {
     portion: product.portions ? portion : null,
@@ -995,7 +1001,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
   }
 
   // Re-pulse price on any change
-  React.useEffect(() => { setPulse((p) => p + 1); }, [unit, bundleDelta, upsellDelta, qty, bundleId]);
+  React.useEffect(() => { setPulse((p) => p + 1); }, [unit, bundleDelta, upsellDelta, qty, bundleId, offerPicked]);
 
   // Sync carIdx to scroll position (snap-based feel)
   function onCarScroll(e) {
@@ -1106,11 +1112,15 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
       const u = product.upsells.find((x) => x.id === id);
       if (u) optionLabels.push('+ ' + u.label);
     });
+    if (offerPicked) {
+      optionLabels.length = 0;   // le bundle fixe sa composition : seuls ses articles
+      for (const it of bundleOffer.items) optionLabels.push(it.qty + ' × ' + it.name + (it.portionLabel ? ', ' + it.portionLabel : ''));
+    }
     onAdd({
       productId: product.id,
       // Libellé dérivé de la portion RÉSOLUE (portOpt) : cohérent avec le prix.
       // Pas de suffixe pour l'Entière.
-      name: product.name + (portOpt && portOpt.v !== 'entier' ? ', ' + portOpt.name : ''),
+      name: offerPicked ? bundleOffer.name : product.name + (portOpt && portOpt.v !== 'entier' ? ', ' + portOpt.name : ''),
       qty,
       price: qty > 0 ? total / qty : (unit + bundleDelta + upsellDelta),
       options: optionLabels.map((label) => ({ label })),
@@ -1120,9 +1130,12 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
          menu : la boutique voyait « Menu » sans savoir quoi preparer.
          C'est le serveur qui resout ces identifiants en produits ; le navigateur
          ne decide pas de ce qui est vendu. */
-      bundleId: activeBundle ? activeBundle.id : null,
-      bundleSlots: { ...bundleSlots },
-      portion: portOpt ? portOpt.v : null,
+      bundleId: offerPicked ? null : (activeBundle ? activeBundle.id : null),
+      bundleSlots: offerPicked ? {} : { ...bundleSlots },
+      /* bundleOfferId = le bundle ERP choisi : le serveur le RE-RÉSOUT (prix,
+         articles) pour la boutique ; le navigateur ne décide pas du prix. */
+      bundleOfferId: offerPicked ? bundleOffer.id : null,
+      portion: offerPicked ? null : (portOpt ? portOpt.v : null),
       cat: product.cat,
       crossPortion: !!product.crossPortion,
       basePrice: product.price,
@@ -1297,6 +1310,43 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
               </div>
             )}
 
+            {/* BUNDLE ERP : deux options exclusives, le produit seul par défaut.
+                Même registre que le composeur (pdm-bcard). Le bouton du bas
+                reprend le choix. */}
+            {bundleOffer && (
+              <div className="pdm-bundles pdm-offer">
+                <div className="pdm-section-head">
+                  <span className="pdm-section-title">{t('pd.offerTitle')}</span>
+                </div>
+                <div className="pdm-bcard-list">
+                  <div className={'pdm-bcard' + (!offerPicked ? ' is-picked' : '')} role="button" aria-pressed={!offerPicked}
+                       {...wsTap(() => setOfferOn(false), { open: true })}>
+                    <div className="pdm-bcard__top">
+                      <span className="pdm-bcard__name">{t('pd.offerAlone', { name: product.name })}</span>
+                      <span className="pdm-bcard__price">€{(unit + bundleDelta + upsellDelta).toFixed(2)}</span>
+                    </div>
+                    <p className="pdm-bcard__desc">{t('pd.offerAloneDesc')}</p>
+                  </div>
+                  <div className={'pdm-bcard' + (offerPicked ? ' is-picked' : '')} role="button" aria-pressed={offerPicked}
+                       {...wsTap(() => setOfferOn(true), { open: true })}>
+                    <span className="pdm-bcard__badge">{t('card.offer')}</span>
+                    <div className="pdm-bcard__top">
+                      <span className="pdm-bcard__name">{bundleOffer.name}</span>
+                      <span className="pdm-bcard__price">
+                        <span className="pdm-bcard__strike">€{bundleOffer.regular.toFixed(2)}</span>€{bundleOffer.price.toFixed(2)}
+                        <span className="pdm-bcard__save">{t('pd.offerSave', { amount: bundleOffer.saving.toFixed(2).replace('.', ',') })}</span>
+                      </span>
+                    </div>
+                    <ul className="pdm-bcard__lines" aria-label={t('pd.offerIn')}>
+                      {bundleOffer.items.map((it, k) => (
+                        <li key={k}><span>{it.qty} × {it.name}{it.portionLabel ? ', ' + it.portionLabel : ''}</span><span>€{(it.unit * it.qty).toFixed(2)}</span></li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* BUNDLE CAROUSEL */}
             {bundleList.length > 0 && (
               <div className="pdm-bundles">
@@ -1412,7 +1462,7 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
               <button className="pdm-qty__btn" {...wsTap(() => setQty((q) => Math.min(q + 1, deliveryStockLeft ?? 99)))} aria-label={t('qty.inc')} disabled={deliveryStockLeft !== null && qty >= deliveryStockLeft}>+</button>
             </div>
             <button className="pdm-cta" disabled={!valid || deliveryBlocked || (deliveryStockLeft !== null && deliveryStockLeft === 0)} {...wsTap(handleConfirm, { shield: true })}>
-              <span>{deliveryBlocked ? t('pd.notForDelivery') : (deliveryStockLeft === 0 ? t('pd.outOfStock') : (valid ? t('pd.addToCart') : t('pd.chooseOptions')))}</span>
+              <span>{deliveryBlocked ? t('pd.notForDelivery') : (deliveryStockLeft === 0 ? t('pd.outOfStock') : (valid ? (offerPicked ? t('pd.offerAdd') : t('pd.addToCart')) : t('pd.chooseOptions')))}</span>
               <span className="pdm-cta__total" key={pulse}>
                 {offerDiscount > 0 && (
                   <span className="pdm-cta__strike">€{grossTotal.toFixed(2)}</span>
@@ -1494,6 +1544,16 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
             <span>{t('pd.portionsAvailable')}</span>
           </div>
         )}
+        {/* BUNDLE ERP : il se SIGNALE ici (ligne « Avec Coca-Cola », prix bundle
+            avec le prix normal barré) et se CHOISIT dans la fiche. bundleOffer
+            vient du serveur ; sans bundle ERP tarifé, il est null et rien
+            n'apparaît. */}
+        {p.bundleOffer && (
+          <div className="ws-card__offer" title={p.bundleOffer.name}>
+            <Pict d={ICONS.check} s={10}/>
+            <span>{t('card.offerWith', { name: p.bundleOffer.items.filter((it) => it.productId !== p.id).map((it) => it.name).join(' + ') || p.bundleOffer.name })}</span>
+          </div>
+        )}
         {p.lead_time > 0 && (
           <div className="ws-card__leadtime" title={`Commander ${p.lead_time} jour${p.lead_time > 1 ? 's' : ''} avant`}>
             {`J+${p.lead_time}`}
@@ -1502,6 +1562,12 @@ const ProductCard = React.memo(function ProductCard({ p, onAdd, onOpen, mode, ba
         <div className="ws-card__name">{p.name}</div>
         <div className="ws-card__meta">
           <span className="ws-card__price">€{price.toFixed(2)}{hasOptions && <span className="ws-card__from"> · {t('card.fromPrice')}</span>}</span>
+          {p.bundleOffer && (
+            <span className="ws-card__offerprice" title={p.bundleOffer.name}>
+              <span>{t('card.offer')} €{p.bundleOffer.price.toFixed(2)}</span>
+              <s>€{p.bundleOffer.regular.toFixed(2)}</s>
+            </span>
+          )}
           {/* Compteur « X dispo » retiré des vignettes (demandé le 15/08) : il
               exposait le stock restant sur la grille. « Épuisé » reste : c'est
               une contrainte que le client doit voir avant d'ajouter. */}
@@ -4317,7 +4383,7 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
         slot: typeof slot === 'object' && slot
           ? { slotId: slot.id, label: slot.label, date: deliveryDate }
           : { slotId: slot, label: slot, date: deliveryDate },
-        basket: basket.map((l) => ({ productId: l.productId, qty: l.qty, portion: l.portion || null, note: l.note || null, options: l.options || [], bundleId: l.bundleId || null, bundleSlots: l.bundleSlots || {} })),
+        basket: basket.map((l) => ({ productId: l.productId, qty: l.qty, portion: l.portion || null, note: l.note || null, options: l.options || [], bundleId: l.bundleId || null, bundleOfferId: l.bundleOfferId || null, bundleSlots: l.bundleSlots || {} })),
         voucher: voucherApplied && voucherApplied.ok ? voucherApplied.voucher.code : null,
         giftCode: giftCode || null,
         note: orderNote || null,

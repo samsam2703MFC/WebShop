@@ -446,3 +446,132 @@ function erp_portions_reseau(array $shopIds, $lang = 'fr') {
   uasort($out, static fn($a,$b) => [$a['cat'],$a['produit']] <=> [$b['cat'],$b['produit']]);
   return $out;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BUNDLES ERP (promotions) — « Brownies + Coca-Cola » à prix bundle.
+
+   SOURCE : GET admin/promotions/bundles. Un bundle est un nom, un prix
+   (bundle_price) et des articles {id_product, id_product_portion, quantity},
+   la clé d'un article étant produit:portion, 0 valant pièce entière. C'est
+   le schéma que l'API a dicté par ses validations le 01/09/2026 ; la liste
+   était VIDE ce jour-là et `calculate` refusait tout produit pour toutes les
+   boutiques (« Products not available for the selected calculation shop »).
+   Ce lecteur est donc écrit sur le schéma, tolérant sur l'enveloppe
+   (items / data, bundle_price à la racine ou sous bundle_promotion), et il
+   ne montre RIEN tant que l'ERP ne sert pas un bundle complet et tarifé :
+   aucune donnée inventée.
+
+   PRIX : l'économie affichée est « somme des articles − prix bundle », avec
+   les prix que CE serveur résout pour CETTE boutique (prix_produits et
+   erp_portion_options, les mêmes qu'à la facturation). Le calcul ERP
+   (calculate) n'est pas consulté : il refuse nos boutiques, et un montant
+   affiché doit être un montant que la commande sait reproduire. Un article
+   sans prix ici ⇒ le bundle n'est pas proposé. Une économie ≤ 0 non plus.
+   ═══════════════════════════════════════════════════════════════════════ */
+function erp_bundles_brut($shopId) {
+  static $cache = [];
+  $shopId = (int) $shopId;
+  if (array_key_exists($shopId, $cache)) return $cache[$shopId];
+  if (!function_exists('erp_enabled') || !erp_enabled()) return $cache[$shopId] = null;
+  $ttl = (int) (function_exists('ws_param') ? ws_param('catalog_direct_ttl', 60) : 60);
+  $data = erp_get('admin/promotions/bundles?limit=100', $ttl);
+  if (!is_array($data)) return $cache[$shopId] = null;
+  $list = array_is_list($data) ? $data : null;
+  if ($list === null) foreach (['items', 'data', 'results', 'bundles'] as $k)
+    if (isset($data[$k]) && is_array($data[$k])) { $list = $data[$k]; break; }
+  if ($list === null) {
+    if (function_exists('erp_notes')) erp_notes('ERP bundles : forme inattendue');
+    return $cache[$shopId] = null;
+  }
+  $out = [];
+  foreach ($list as $b) {
+    if (!is_array($b) || empty($b['id'])) continue;
+    // Actif ? Un drapeau faux ou un statut fermé écarte le bundle ; sans
+    // indication, il est considéré servi (l'ERP ne liste que ses promotions).
+    if (array_key_exists('is_active', $b) && !$b['is_active']) continue;
+    $st = strtolower((string) ($b['status'] ?? $b['status_code'] ?? ''));
+    if ($st !== '' && in_array($st, ['inactive', 'archived', 'draft', 'disabled', 'ended', 'expired'], true)) continue;
+    // Portée boutique : shops / shop_ids / calculation_shop_id quand présents.
+    $scope = null;
+    foreach (['shops', 'shop_ids', 'promotion_shops'] as $k) {
+      if (!empty($b[$k]) && is_array($b[$k])) {
+        $scope = array_map(static fn ($s) => (int) (is_array($s) ? ($s['id_shop'] ?? $s['shop_id'] ?? $s['id'] ?? 0) : $s), $b[$k]);
+        break;
+      }
+    }
+    if ($scope !== null && $scope && !in_array($shopId, $scope, true)) continue;
+    $price = $b['bundle_price'] ?? ($b['bundle_promotion']['bundle_price'] ?? ($b['price'] ?? null));
+    if (!is_numeric($price) || (float) $price <= 0) continue;
+    $items = [];
+    foreach ((array) ($b['items'] ?? $b['bundle_items'] ?? $b['products'] ?? []) as $it) {
+      if (!is_array($it)) continue;
+      $pid = (int) ($it['id_product'] ?? $it['product_id'] ?? 0);
+      if ($pid <= 0) continue;
+      $items[] = ['pid' => $pid, 'pp' => (int) ($it['id_product_portion'] ?? $it['portion_id'] ?? 0),
+                  'qty' => max(1, (int) ($it['quantity'] ?? $it['qty'] ?? 1))];
+    }
+    if (count($items) < 2) continue;                 // un bundle d'un seul article n'en est pas un
+    $out[] = ['id' => (int) $b['id'], 'name' => trim((string) ($b['name'] ?? $b['title'] ?? '')),
+              'price' => round((float) $price, 2), 'items' => $items];
+  }
+  return $cache[$shopId] = $out;
+}
+
+/* Bundle → offre AFFICHABLE pour une boutique, ou null.
+   $prix   : id produit → prix pièce entière (prix_produits).
+   $ports  : id produit → portions [{v,label,price,pp_id}] (erp_portion_options).
+   $noms   : id produit → nom (pour les libellés « 1 × Coca-Cola 33cl »). */
+function erp_bundle_offre_construire(array $b, array $prix, array $ports, array $noms) {
+  $regular = 0.0; $lignes = [];
+  foreach ($b['items'] as $it) {
+    $nom = trim((string) ($noms[$it['pid']] ?? ''));
+    if ($nom === '') return null;                      // article inconnu ici : pas d'offre
+    $unit = null; $portion = null; $portionLabel = null;
+    if ($it['pp'] > 0) {
+      foreach ($ports[$it['pid']] ?? [] as $po) {
+        if ((int) ($po['pp_id'] ?? 0) === $it['pp']) {
+          if ($po['price'] === null) return null;
+          $unit = (float) $po['price']; $portion = $po['v']; $portionLabel = $po['label']; break;
+        }
+      }
+      if ($unit === null) return null;                 // portion sans prix dans cette boutique
+    } else {
+      if (!isset($prix[$it['pid']]) || (float) $prix[$it['pid']] <= 0) return null;
+      $unit = (float) $prix[$it['pid']];
+    }
+    $regular += $unit * $it['qty'];
+    $lignes[] = ['productId' => $it['pid'], 'name' => $nom, 'portion' => $portion,
+                 'portionLabel' => $portionLabel, 'qty' => $it['qty'], 'unit' => round($unit, 2)];
+  }
+  $regular = round($regular, 2);
+  $saving = round($regular - $b['price'], 2);
+  if ($saving <= 0) return null;                       // pas d'économie : rien à proposer
+  return ['id' => $b['id'], 'name' => $b['name'], 'price' => $b['price'],
+          'regular' => $regular, 'saving' => $saving, 'items' => $lignes];
+}
+
+/* Catalogue : id produit → offre (le premier bundle où le produit figure). */
+function erp_bundle_offres($shopId, array $ids, array $prix, array $ports, array $noms) {
+  $bundles = erp_bundles_brut($shopId);
+  if (!$bundles) return [];
+  $out = [];
+  foreach ($bundles as $b) {
+    $offre = null;
+    foreach ($b['items'] as $it) {
+      if (!in_array($it['pid'], $ids, true) || isset($out[$it['pid']])) continue;
+      if ($offre === null) { $offre = erp_bundle_offre_construire($b, $prix, $ports, $noms); if ($offre === null) break; }
+      $out[$it['pid']] = $offre;
+    }
+  }
+  return $out;
+}
+
+/* Commande : l'offre d'UN bundle pour UN produit déclencheur, re-résolue
+   serveur au moment de facturer — le panier ne porte qu'un identifiant. */
+function erp_bundle_offre_pour($shopId, $pid, $bundleId, array $prix, array $ports, array $noms) {
+  foreach ((array) erp_bundles_brut($shopId) as $b) {
+    if ($b['id'] !== (int) $bundleId) continue;
+    foreach ($b['items'] as $it) if ($it['pid'] === (int) $pid) return erp_bundle_offre_construire($b, $prix, $ports, $noms);
+  }
+  return null;
+}
