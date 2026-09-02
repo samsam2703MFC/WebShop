@@ -3,6 +3,7 @@
  * .htaccess renvoie toutes les requêtes ici ; on route sur méthode + chemin. */
 require __DIR__ . '/lib.php';
 require __DIR__ . '/promo_lib.php';
+require __DIR__ . '/tel.php';
 require __DIR__ . '/erp_alias.php';
 /* erp_catalog.php N'ÉTAIT PAS CHARGÉ — découvert le 31/08 par la sonde de prix.
    Le module était écrit, commenté et complet, mais aucun require ne le tirait :
@@ -3971,10 +3972,10 @@ function dispatch($m, $p) {
     $ident = strtolower(trim($b['identifier'] ?? $b['email'] ?? $b['phone'] ?? ''));
     if ($ident === '') return ['err' => 'Indiquez votre e-mail ou votre téléphone.', 'http' => 400];
     [, $nat, $e164] = norm_phone($b['phonePrefix'] ?? '+32', $ident);
-    $u = row("SELECT id, email, phone, phone_e164, password_hash FROM client
+    $u = row("SELECT id, email, phone, phone_prefix, phone_e164, password_hash FROM client
                WHERE LOWER(TRIM(email)) = ? AND active = 1 ORDER BY id LIMIT 1", [$ident]);
     if (!$u && $e164 !== '') {
-      $c = rows("SELECT id, email, phone, phone_e164, password_hash FROM client
+      $c = rows("SELECT id, email, phone, phone_prefix, phone_e164, password_hash FROM client
                   WHERE (phone_e164 = ? OR phone = ? OR phone = ?) AND active = 1 ORDER BY id",
                 [$e164, $nat, $ident]);
       if (count($c) > 1) return ['err' => 'Plusieurs comptes utilisent ce numéro. Utilisez votre e-mail.',
@@ -3983,12 +3984,13 @@ function dispatch($m, $p) {
     }
     if (!$u) return ['err' => "Aucun compte ne correspond.", 'code' => 'inconnu', 'http' => 404];
     /* Le code part au numéro DE LA FICHE, jamais à celui qui vient d'être tapé :
-       sinon la preuve ne prouverait rien — on se l'enverrait à soi-même. */
-    $tel = (string) ($u['phone_e164'] ?: $u['phone'] ?: '');
-    if (trim($tel) === '') return ['err' => "Ce compte n'a pas de numéro de téléphone. Contactez la boutique.",
-                                   'code' => 'sans_tel', 'http' => 409];
-    [, , $telE164] = norm_phone('+32', $tel);
-    return ['u' => $u, 'tel' => $telE164 ?: $tel];
+       sinon la preuve ne prouverait rien — on se l'enverrait à soi-même.
+       tel_fiche_e164() respecte l'indicatif DE LA FICHE : l'ancien
+       norm_phone('+32', …) renvoyait un +48 725… enregistré en +3248725…. */
+    $tel = tel_fiche_e164($u);
+    if ($tel === '') return ['err' => "Ce compte n'a pas de numéro de téléphone. Contactez la boutique.",
+                             'code' => 'sans_tel', 'http' => 409];
+    return ['u' => $u, 'tel' => $tel];
   };
 
   /* Étape 1 : envoyer le code. */
@@ -13728,18 +13730,7 @@ function vies_lookup($rawVat, $shopId = null) {
   ]];
 }
 
-function norm_phone($prefix, $raw) {
-  $pfx = trim((string) $prefix) !== '' ? trim((string) $prefix) : '+32';
-  if ($pfx[0] !== '+') $pfx = '+' . ltrim($pfx, '+');
-  $pd = preg_replace('/[^0-9]/', '', $pfx);
-  $d  = preg_replace('/[^0-9]/', '', (string) $raw);
-  if ($d === '') return [$pfx, '', ''];
-  if (strpos($d, '00' . $pd) === 0)                              $d = substr($d, 2 + strlen($pd));
-  elseif (strpos($d, $pd) === 0 && strlen($d) > strlen($pd) + 6) $d = substr($d, strlen($pd));
-  $d = ltrim($d, '0');
-  if ($d === '') return [$pfx, '', ''];
-  return [$pfx, '0' . $d, $pfx . $d];
-}
+/* norm_phone() vit dans tel.php (partagé avec php-api/tests/tel_fiche_test.php). */
 
 /* Crée une session Stripe Checkout via l'API REST (cURL). null si non configuré. */
 /* Session de paiement Stripe.

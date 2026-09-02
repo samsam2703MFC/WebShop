@@ -146,6 +146,9 @@ jobs:
       - name: QR
         run: php php-api/tests/qr_test.php
 
+      - name: Numéro de la fiche pour le SMS (indicatif respecté)
+        run: php php-api/tests/tel_fiche_test.php
+
       - name: Syntaxe PHP de toute l'API
         run: find php-api -name '*.php' -not -path '*/vendor/*' -print0 | xargs -0 -n1 php -l > /dev/null
 
