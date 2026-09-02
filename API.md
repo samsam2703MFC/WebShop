@@ -1489,3 +1489,13 @@ Network-wide production-preparation **configuration** defined by the brand and s
 **Photo body** — `photo_base64` (raw base64 or a `data:` URI). The type is validated on the bytes (JPEG/PNG/WebP), ≤10 MB. Stored as an independent file under `assets/preparation/<key>`; the response returns `{slot,key,url}`. Copying a path duplicates each photo under a fresh key.
 
 Step response shape (camelCase): `{id, sortOrder, description, durationSeconds, usesOven, batchGroupId, batchCapacity, productsPerTray, traysPerOven, photos:[{slot,key,url}]}`.
+
+## Loyalty cards (PWA) — `/franchisor/loyalty-*`
+
+Brand-level configuration of the PWA's **product loyalty cards** (stamp cards: "10 pains = 1 pain offert") and of the **points → voucher gauge**. The data lives in the shared database in the PWA's own tables (`pwa_loyalty_card`, `pwa_loyalty_config`), created by the PWA migration **025** (`latelier-by-pwa`, `docs/LOYALTY.md` §4); the PWA derives each client's stamps from their purchases (one stamp per unit bought, no coefficient — the ×2 rules only multiply points). Nothing is created from here: the endpoints answer **501** with the reason until that migration has run. All require the network admin token, like the rest of `/franchisor/*`.
+
+| Method | Route | Purpose |
+|---|---|---|
+| GET | `/franchisor/loyalty-cards` | `{cards[], config, cafeCategories[], shops[], pwaBase}` — every card (all shops, active or not) with a read-only `usage` (`stamps` in progress, `clients`) and `ready` (rewards waiting); `config` = `euros_per_point`, `voucher_points`, `voucher_value`, `voucher_label`, `voucher_editable`; `cafeCategories` = `pwa_cafe_categories` codes; `shops` for the scope selector; `pwaBase` = `ws_param pwa_url` (image previews). |
+| POST | `/franchisor/loyalty-card` | Create (`id` 0) or update a card: `card_code` (slug, unique; derived from `name` when empty), `name`, `img` (image path on the PWA side), `color_tint` / `color_fill` / `color_accent` (`#RRGGBB`), `stamps_required` (1–50), `reward_label`, `reward_validity_days` (0 = no expiry), `match_keywords` (CSV), `cafe_cat_codes` (CSV), `shop_id` (null = whole network), `active`, `sort_order`. `{id, delete:true}` deletes a card that carries **no** stamp yet (409 otherwise: deactivate it instead). |
+| POST | `/franchisor/loyalty-config` | `{euros_per_point, voucher_points, voucher_value, voucher_label}` — the earn ratio and the voucher gauge (501 until migration 025 adds the `voucher_*` columns). |
