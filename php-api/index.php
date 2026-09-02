@@ -5065,6 +5065,141 @@ function dispatch($m, $p) {
       json_out(['ok' => true, 'id' => $gid]);
     }
 
+    /* ── Cartes de fidélité par produit (PWA) — paramétrage MARQUE.
+       Tables pwa_loyalty_card / pwa_loyalty_config (base partagée), créées par
+       la migration PWA 025 (dépôt latelier-by-pwa, docs/LOYALTY.md §4) ; la PWA
+       en dérive les tampons de ses clients (un tampon par unité achetée, sans
+       coefficient — les ×2 ne jouent que sur les points). Ici la marque définit
+       les cartes (famille, illustration, couleurs, seuil, récompense, mots-clés,
+       portée) et la jauge points → bon d'achat. 501 tant que la migration PWA
+       n'est pas passée : rien n'est créé d'ici. ── */
+    $lcMissing = 'table pwa_loyalty_card absente — migration PWA 025 (migrate.yml du dépôt latelier-by-pwa) non jouée';
+    if ($m === 'GET' && $p === '/franchisor/loyalty-cards') {
+      if (!$tblExists('pwa_loyalty_card')) json_out(['error' => $lcMissing], 501);
+      $cards = rows("SELECT id, card_code, name, img, color_tint, color_fill, color_accent, stamps_required,
+                            reward_label, reward_validity_days, match_keywords, cafe_cat_codes, shop_id, active, sort_order
+                       FROM pwa_loyalty_card ORDER BY sort_order, id");
+      // Usage réseau, lecture seule : tampons en cours et récompenses prêtes par carte.
+      $usage = []; $ready = [];
+      if ($tblExists('pwa_loyalty_stamp'))
+        foreach (rows("SELECT card_id, COUNT(*) n, COUNT(DISTINCT client_id) c FROM pwa_loyalty_stamp WHERE reward_id IS NULL GROUP BY card_id") as $u)
+          $usage[(int) $u['card_id']] = ['stamps' => (int) $u['n'], 'clients' => (int) $u['c']];
+      if ($tblExists('pwa_loyalty_reward'))
+        foreach (rows("SELECT card_id, COUNT(*) n FROM pwa_loyalty_reward WHERE status = 'ready' GROUP BY card_id") as $u)
+          $ready[(int) $u['card_id']] = (int) $u['n'];
+      foreach ($cards as &$c) {
+        $c['id'] = (int) $c['id'];
+        $c['stamps_required'] = (int) $c['stamps_required'];
+        $c['reward_validity_days'] = (int) $c['reward_validity_days'];
+        $c['shop_id'] = $c['shop_id'] !== null ? (int) $c['shop_id'] : null;
+        $c['active'] = (int) $c['active'];
+        $c['sort_order'] = (int) $c['sort_order'];
+        $c['usage'] = $usage[$c['id']] ?? ['stamps' => 0, 'clients' => 0];
+        $c['ready'] = $ready[$c['id']] ?? 0;
+      }
+      unset($c);
+      $cfg = null;
+      if ($tblExists('pwa_loyalty_config')) {
+        $hasV = col_exists('pwa_loyalty_config', 'voucher_points');
+        $r = row("SELECT euros_per_point, points_per_step, active" . ($hasV ? ", voucher_points, voucher_value, voucher_label" : "") . " FROM pwa_loyalty_config WHERE id = 1");
+        if ($r) $cfg = [
+          'euros_per_point' => (float) $r['euros_per_point'],
+          'points_per_step' => (int) $r['points_per_step'],
+          'active'          => (int) $r['active'],
+          'voucher_points'  => $hasV ? (int) $r['voucher_points'] : 100,
+          'voucher_value'   => $hasV ? (float) $r['voucher_value'] : 5.0,
+          'voucher_label'   => $hasV ? $r['voucher_label'] : null,
+          'voucher_editable'=> $hasV,
+        ];
+      }
+      $cats = $tblExists('pwa_cafe_categories') ? rows("SELECT cat_code AS code, label FROM pwa_cafe_categories ORDER BY sort_order, id") : [];
+      $shops = [];
+      if ($tblExists('shops')) {
+        $hasCity = col_exists('shops', 'city');
+        $shops = rows("SELECT id, name" . ($hasCity ? ", city" : ", NULL AS city") . " FROM shops WHERE active = 1 ORDER BY name");
+        foreach ($shops as &$sh) $sh['id'] = (int) $sh['id'];
+        unset($sh);
+      }
+      json_out(['cards' => $cards, 'config' => $cfg, 'cafeCategories' => $cats, 'shops' => $shops,
+                'pwaBase' => rtrim((string) ws_param('pwa_url', ''), '/')]);
+    }
+    if ($m === 'POST' && $p === '/franchisor/loyalty-card') {
+      if (!$tblExists('pwa_loyalty_card')) json_out(['ok' => false, 'error' => $lcMissing], 501);
+      $b = body();
+      $cid = (int) ($b['id'] ?? 0);
+      if (!empty($b['delete'])) {
+        if (!$cid) json_out(['ok' => false, 'error' => 'id requis'], 400);
+        $n = $tblExists('pwa_loyalty_stamp') ? (int) (row("SELECT COUNT(*) n FROM pwa_loyalty_stamp WHERE card_id = ?", [$cid])['n'] ?? 0) : 0;
+        if ($n > 0)
+          json_out(['ok' => false, 'error' => "Cette carte porte déjà $n tampon(s) client : désactivez-la plutôt que de la supprimer (les tampons seraient perdus)."], 409);
+        q("DELETE FROM pwa_loyalty_card WHERE id = ?", [$cid]);
+        json_out(['ok' => true]);
+      }
+      $name = trim((string) ($b['name'] ?? ''));
+      if ($name === '') json_out(['ok' => false, 'error' => 'Le nom de la carte est requis.'], 400);
+      $code = strtolower(trim((string) ($b['card_code'] ?? '')));
+      if ($code === '') { $t = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $name); $code = strtolower($t !== false ? $t : $name); }
+      $code = trim(preg_replace('/[^a-z0-9]+/', '-', $code) ?? '', '-');
+      if ($code === '') json_out(['ok' => false, 'error' => 'Code de carte invalide (lettres, chiffres, tirets).'], 400);
+      $img = trim((string) ($b['img'] ?? ''));
+      if ($img === '') json_out(['ok' => false, 'error' => 'L’illustration est requise — chemin d’image côté PWA (ex. img/products/bread-1-240.webp).'], 400);
+      $hex = function ($v, $def, $what) {
+        $v = trim((string) $v);
+        if ($v === '') return $def;
+        if (!preg_match('/^#[0-9a-fA-F]{6}$/', $v)) json_out(['ok' => false, 'error' => "Couleur « $what » invalide (format #RRGGBB)."], 400);
+        return $v;
+      };
+      $tint   = $hex($b['color_tint'] ?? '',   '#FBEBD2', 'fond');
+      $fill   = $hex($b['color_fill'] ?? '',   '#FAC775', 'tampon');
+      $accent = $hex($b['color_accent'] ?? '', '#c17a2a', 'accent');
+      $req = (int) ($b['stamps_required'] ?? 10);
+      if ($req < 1 || $req > 50) json_out(['ok' => false, 'error' => 'Le nombre de tampons requis doit être entre 1 et 50.'], 400);
+      $reward = trim((string) ($b['reward_label'] ?? ''));
+      if ($reward === '') json_out(['ok' => false, 'error' => 'La récompense est requise (ex. « 1 pain offert »).'], 400);
+      $days = max(0, (int) ($b['reward_validity_days'] ?? 30));
+      $csv = function ($v) { return implode(',', array_values(array_filter(array_map('trim', explode(',', (string) $v)), 'strlen'))); };
+      $kw   = $csv($b['match_keywords'] ?? '');
+      $cats = $csv($b['cafe_cat_codes'] ?? '');
+      $shop = (isset($b['shop_id']) && $b['shop_id'] !== '' && $b['shop_id'] !== null) ? (int) $b['shop_id'] : null;
+      $active = !empty($b['active']) ? 1 : 0;
+      $sort = (int) ($b['sort_order'] ?? 0);
+      if (row("SELECT id FROM pwa_loyalty_card WHERE card_code = ? AND id <> ?", [$code, $cid]))
+        json_out(['ok' => false, 'error' => "Le code « $code » est déjà utilisé par une autre carte."], 409);
+      if ($cid) {
+        if (!row("SELECT id FROM pwa_loyalty_card WHERE id = ?", [$cid])) json_out(['ok' => false, 'error' => 'Carte introuvable.'], 404);
+        q("UPDATE pwa_loyalty_card SET card_code=?, name=?, img=?, color_tint=?, color_fill=?, color_accent=?, stamps_required=?,
+              reward_label=?, reward_validity_days=?, match_keywords=?, cafe_cat_codes=?, shop_id=?, active=?, sort_order=? WHERE id=?",
+          [$code, $name, $img, $tint, $fill, $accent, $req, $reward, $days, $kw, $cats, $shop, $active, $sort, $cid]);
+      } else {
+        q("INSERT INTO pwa_loyalty_card (card_code, name, img, color_tint, color_fill, color_accent, stamps_required,
+              reward_label, reward_validity_days, match_keywords, cafe_cat_codes, shop_id, active, sort_order)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          [$code, $name, $img, $tint, $fill, $accent, $req, $reward, $days, $kw, $cats, $shop, $active, $sort]);
+        $cid = (int) db()->lastInsertId();
+      }
+      json_out(['ok' => true, 'id' => $cid, 'card_code' => $code]);
+    }
+    if ($m === 'POST' && $p === '/franchisor/loyalty-config') {
+      if (!$tblExists('pwa_loyalty_config')) json_out(['ok' => false, 'error' => 'table pwa_loyalty_config absente — schéma PWA non installé'], 501);
+      if (!col_exists('pwa_loyalty_config', 'voucher_points'))
+        json_out(['ok' => false, 'error' => 'colonnes voucher_* absentes — migration PWA 025 non jouée'], 501);
+      $b = body();
+      $vp  = (int) ($b['voucher_points'] ?? 0);
+      $vv  = (float) str_replace(',', '.', (string) ($b['voucher_value'] ?? '0'));
+      $epp = (float) str_replace(',', '.', (string) ($b['euros_per_point'] ?? '0'));
+      $vl  = trim((string) ($b['voucher_label'] ?? ''));
+      if ($vp < 1)   json_out(['ok' => false, 'error' => 'Le seuil de points du bon doit être ≥ 1.'], 400);
+      if ($vv <= 0)  json_out(['ok' => false, 'error' => 'La valeur du bon doit être > 0.'], 400);
+      if ($epp <= 0) json_out(['ok' => false, 'error' => 'Le montant d’achat par point doit être > 0.'], 400);
+      if (row("SELECT id FROM pwa_loyalty_config WHERE id = 1"))
+        q("UPDATE pwa_loyalty_config SET euros_per_point=?, voucher_points=?, voucher_value=?, voucher_label=? WHERE id = 1",
+          [$epp, $vp, $vv, ($vl !== '' ? $vl : null)]);
+      else
+        q("INSERT INTO pwa_loyalty_config (id, euros_per_point, points_per_step, active, voucher_points, voucher_value, voucher_label) VALUES (1, ?, 1, 1, ?, ?, ?)",
+          [$epp, $vp, $vv, ($vl !== '' ? $vl : null)]);
+      json_out(['ok' => true]);
+    }
+
     /* ── Connexion Google Business Profile + clés du circuit avis — état
        sondé EN DIRECT (rien de mémorisé). `cles` dit ce qui est posé en
        ws_param ; `ok` dit si le refresh token s'échange et si accounts.list
