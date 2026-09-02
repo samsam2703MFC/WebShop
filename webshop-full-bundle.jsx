@@ -60,6 +60,20 @@ document.addEventListener('click', (e) => {
       && (t === e.target || t.contains(e.target) || e.target.contains(t))) return;
   e.stopPropagation(); e.preventDefault();
 }, { capture: true });
+/* ── SUIVI MARKETING : un seul point d'envoi vers Google Tag Manager.
+   Le conteneur (index.html) ne mesure rien par lui-même ; c'est l'application
+   qui pousse les faits métier dans dataLayer, et l'agence configure ses
+   balises dessus sans toucher au code. Rien n'est envoyé si dataLayer
+   n'existe pas (page servie sans le conteneur, bloqueur) : jamais d'erreur
+   côté client pour du suivi. Un achat = un événement « purchase » au
+   vocabulaire Google Ads / GA4 : transaction_id, value, currency. */
+function wsTrack(event, data) {
+  try {
+    if (!Array.isArray(window.dataLayer)) return;
+    window.dataLayer.push(Object.assign({ event: event }, data || {}));
+  } catch (_) { /* le suivi ne casse jamais l'achat */ }
+}
+
 function wsTap(fn, opts) {
   /* ÉCOUTEURS NATIFS, PAS SYNTHÉTIQUES. Diagnostic au doigt sur la fiche
      produit : les événements natifs d'un tap ATTEIGNENT l'élément et
@@ -5611,6 +5625,12 @@ function ShopFrame({ variant }) {
   }
   function handlePlaced(payload) {
     setCheckoutOpen(false);
+    /* Conversion sans passage par Stripe (paiement en boutique, sur compte,
+       différé) : la commande est enregistrée, c'est l'achat. Même événement,
+       même vocabulaire que le retour Stripe, pour que Google Ads compte les
+       deux chemins de la même façon. */
+    wsTrack('purchase', { transaction_id: payload.orderRef || '', value: Number(payload.total) || 0,
+                          currency: 'EUR', payment: payload.paymentLabel || 'autre' });
     setOrderToast({ ...payload, ts: Date.now() });
     setBasket([]);
     stockReleaseAll(); // reservations converted to qty_sold by the order endpoint
@@ -5863,6 +5883,11 @@ function ShopFrame({ variant }) {
       sessionStorage.removeItem('ws.pendingPay');
     } catch (_) {}
     if (paid && pend && Number.isFinite(Number(pend.total))) {
+      /* Conversion : la commande est payée, c'est ICI que Google Ads doit la
+         voir. transaction_id = la référence de commande, pour que deux
+         rechargements de la page de retour ne comptent qu'un achat. */
+      wsTrack('purchase', { transaction_id: pend.orderRef || String(pend.orderId || ''),
+                            value: Number(pend.total), currency: 'EUR', payment: 'stripe' });
       setOrderToast({ orderRef: pend.orderRef, slot: pend.slot,
                       paymentLabel: pend.paymentLabel, total: Number(pend.total), ts: Date.now() });
       setTimeout(() => setOrderToast(null), 6500);

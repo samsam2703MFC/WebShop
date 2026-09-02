@@ -3,6 +3,17 @@
 <head>
 <meta charset="utf-8">
 <title>L'Atelier By · Webshop</title>
+<!-- Google Tag Manager — GTM-53D3FLG5, le conteneur déjà posé sur la landing
+     B2B. Il n'était pas sur le webshop : la campagne Google Ads y envoyait des
+     visiteurs sans qu'aucune balise ne puisse les voir (constaté par l'agence
+     le 02/09/2026). Le conteneur ne mesure rien tout seul : les événements
+     métier sont poussés dans dataLayer par l'application (voir wsTrack). -->
+<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','GTM-53D3FLG5');</script>
+<!-- End Google Tag Manager -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#8D1D2C">
 <!-- CLAIR, TOUJOURS : sans color-scheme, Chrome Android « auto-assombrit »
@@ -26,6 +37,10 @@
 </style>
 </head>
 <body>
+<!-- Google Tag Manager (noscript) -->
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-53D3FLG5"
+height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+<!-- End Google Tag Manager (noscript) -->
 <div id="root"></div>
 <script type="module" src="/src/main.jsx"></script>
 </body>

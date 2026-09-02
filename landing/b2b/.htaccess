@@ -1,0 +1,12 @@
+# La page est bien en UTF-8 (octets valides, <meta charset="utf-8">), mais le
+# serveur la servait avec « Content-Type: text/html » SANS charset. Un
+# navigateur qui tranche avant de lire la balise meta — ou un relais qui
+# réécrit l'en-tête — la rend alors en ISO-8859-1 : accents et apostrophes
+# typographiques deviennent des symboles. Constaté par l'agence Google Ads le
+# 02/09/2026 sur la page « Comptes B2B ». L'en-tête fait foi : on le pose.
+AddDefaultCharset UTF-8
+<IfModule mod_headers.c>
+  <FilesMatch "\.html$">
+    Header set Content-Type "text/html; charset=utf-8"
+  </FilesMatch>
+</IfModule>
