@@ -266,7 +266,28 @@
       return { items: [], total: 0, canRequestInvoice: false };
     },
 
-    /* ── Demande de facture (to_invoice 1/0 + destinataire) sur un ticket ── */
+    /* ── « Facturer à une autre société » : VIES par le seul numéro de TVA,
+       SANS lier cette société au compte. Rend la fiche société (id, nom,
+       adresse) que la demande de facture recevra ensuite en billingEntityId.
+       Aucune saisie libre de nom ou d'adresse : ce que VIES rend fait foi. */
+    async billingEntityLookup({ vat }) {
+      if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
+      try {
+        const r = await fetch(`${api.endpoint}/purchases/billing-entity`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ vat }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j.entity) return { ok: true, entity: j.entity };
+        const e = j.error;
+        return { ok: false, error: (e && e.message) || e || 'Numéro de TVA non reconnu.' };
+      } catch (_) { return { ok: false, error: 'VIES indisponible. Réessayez.' }; }
+    },
+
+    /* ── Demande de facture (to_invoice 1/0 + destinataire) sur un ticket
+       de caisse OU une commande webshop : même appel, le serveur reconnaît la
+       référence et applique les règles de sa source. ── */
     async requestInvoice({ ref, want, billingEntityId }) {
       if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
       try {

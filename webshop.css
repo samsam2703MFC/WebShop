@@ -2815,6 +2815,45 @@
 }
 .ws-acc__badge--ok      { background: var(--color-collection-border); color: #fff; }
 .ws-acc__badge--pending { background: #f1d68a; color: #6b4d10; }
+
+/* ── Demande de facture depuis « Mes achats » ─────────────────────────────
+   Le ticket se déplie au clic ; le panneau reprend le vocabulaire des cartes
+   (mêmes pointillés, mêmes tailles) et celui des options exclusives du
+   composeur (liseré bordeaux + halo sur l'option retenue). */
+.ws-acc__card--open { cursor: pointer; }
+.ws-acc__card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 12.5px; padding: 4px 0; }
+.ws-acc__card-head svg { flex: 0 0 auto; opacity: .7; }
+.ws-acc__inv { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-border-tertiary); display: flex; flex-direction: column; gap: 10px; cursor: default; }
+.ws-acc__inv-check { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; color: var(--color-text); cursor: pointer; }
+.ws-acc__inv-check input { width: 18px; height: 18px; accent-color: var(--color-primary); margin: 0; }
+.ws-acc__inv-h { font-size: 11px; color: var(--color-text-muted); letter-spacing: .04em; text-transform: uppercase; margin-top: 2px; }
+.ws-acc__inv-opt {
+  display: flex; align-items: flex-start; gap: 12px; padding: 11px 14px;
+  border: 1px solid rgba(34,34,34,.14); border-radius: 12px; background: var(--color-surface);
+  cursor: pointer; text-align: left; font: inherit; color: inherit; width: 100%;
+}
+.ws-acc__inv-opt.is-on { border: 1.5px solid var(--color-primary); box-shadow: 0 0 0 3px rgba(141,29,44,.08); }
+.ws-acc__inv-radio { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid rgba(34,34,34,.35); flex: 0 0 auto; margin-top: 1px; box-sizing: border-box; }
+.is-on > .ws-acc__inv-radio { border: 5px solid var(--color-primary); }
+.ws-acc__inv-body { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ws-acc__inv-name { font-size: 13px; font-weight: 600; color: var(--color-text); }
+.ws-acc__inv-sub { font-size: 11.5px; color: var(--color-text-muted); }
+.ws-acc__inv-tag { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #2C6449; background: rgba(44,100,73,.12); padding: 3px 7px; border-radius: 999px; white-space: nowrap; }
+.ws-acc__inv-vat { display: flex; gap: 8px; margin-top: 8px; }
+.ws-acc__inv-vat input {
+  flex: 1; min-width: 0; height: 42px; padding: 0 12px; border: 0; border-radius: 10px;
+  background: var(--color-bg-secondary); color: var(--color-text);
+  font: 500 14px/1 ui-monospace, 'SFMono-Regular', Menlo, monospace; letter-spacing: .04em;
+}
+.ws-acc__inv-vat input:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+.ws-acc__inv-verify { height: 42px; padding: 0 14px; border-radius: 10px; border: 1.5px solid var(--color-primary); background: transparent; color: var(--color-primary); font: 600 13px/1 inherit; font-family: inherit; cursor: pointer; white-space: nowrap; }
+.ws-acc__inv-verify:disabled { opacity: .5; cursor: default; }
+.ws-acc__inv-res { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; background: var(--color-bg-secondary); border-radius: 10px; margin-top: 8px; }
+.ws-acc__inv-res svg { flex: 0 0 auto; margin-top: 1px; }
+.ws-acc__inv-ok { font-size: 10.5px; color: #2C6449; font-weight: 600; margin-top: 2px; }
+.ws-acc__inv-note { font-size: 11px; color: var(--color-text-muted); line-height: 1.45; }
+.ws-acc__inv-cancel { align-self: flex-end; background: none; border: 0; padding: 6px 0 0; font: inherit; font-size: 12px; color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.ws-acc__inv-cancel:disabled { opacity: .5; cursor: default; }
 .ws-acc__note {
   font-size: 12px;
   color: var(--color-text-muted);

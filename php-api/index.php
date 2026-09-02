@@ -4145,6 +4145,12 @@ function dispatch($m, $p) {
     $hasPdf = col_exists('pwa_invoices', 'pdf_path');
     $hasPep = col_exists('pwa_invoices', 'peppol_status');   // statut Peppol (0085)
     $hasFno = col_exists('ws_orders', 'fiscal_ticket_no');   // ticket fiscal (0085)
+    /* Commandes webshop : demande après coup (0111) + demande au tunnel (0011).
+       Les deux moments se fondent en UN état « demandée » : le client ne se
+       demande pas lequel des deux boutons il a coché. */
+    $canReqO = col_exists('ws_orders', 'to_invoice');
+    $hasBeO  = col_exists('ws_orders', 'billing_entity_id');
+    $hasIrq  = col_exists('ws_orders', 'invoice_requested');
     $items  = [];
     try {                                                              // tickets (ERP/PWA)
       $items = array_merge($items, rows(
@@ -4170,12 +4176,20 @@ function dispatch($m, $p) {
       $items = array_merge($items, rows(
         "SELECT o.order_ref AS ref, s.name AS shop, o.created_at AS at,
                 (SELECT COUNT(*) FROM ws_order_lines l WHERE l.order_id = o.id" . oline_own() . ") AS items,
-                o.total AS total, 0 AS toInvoice, NULL AS billingEntityId, NULL AS frozenAt,
+                o.total AS total,
+                " . ($canReqO || $hasIrq
+                      ? "IF(" . ($canReqO ? "COALESCE(o.to_invoice,0)=1" : "0") . ($hasIrq ? " OR COALESCE(o.invoice_requested,0)=1" : "") . ",1,0)"
+                      : "0") . " AS toInvoice,
+                " . ($hasBeO ? "o.billing_entity_id" : "NULL") . " AS billingEntityId,
+                " . ($hasBeO ? "COALESCE(NULLIF(be.company_name,''), NULLIF(be.invoice_name,''))" : "NULL") . " AS billingEntityName,
+                " . ($hasBeO ? "be.tax_number" : "NULL") . " AS billingEntityVat,
+                NULL AS frozenAt,
                 NULL AS invoiceNo, NULL AS invoiceTotal, NULL AS pdfPath,
                 " . ($hasFno ? "o.fiscal_ticket_no"  : "NULL") . " AS fiscalTicketNo,
                 " . ($hasFno ? "o.fiscal_ticket_url" : "NULL") . " AS fiscalTicketUrl,
                 NULL AS peppolStatus, NULL AS peppolAt, 'order' AS source
            FROM ws_orders o LEFT JOIN shops s ON s.id = o.shop_id AND s.webshop_enabled = 1
+           " . ($hasBeO ? "LEFT JOIN client be ON be.id = o.billing_entity_id" : "") . "
           WHERE o.customer_id = ? AND o.created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)",
         [$id]));
     } catch (Throwable $e) { /* — */ }
@@ -4202,7 +4216,11 @@ function dispatch($m, $p) {
     $items = array_slice($items, ($page - 1) * $per, $per);
     json_out([
       'items' => $items, 'total' => $total, 'page' => $page, 'perPage' => $per,
+      // Capacité par SOURCE : un ticket de caisse et une commande webshop ne
+      // dépendent pas de la même colonne. Le front n'affiche le panneau que
+      // pour les lignes que le serveur sait traiter.
       'canRequestInvoice' => $canReq,
+      'canRequestInvoiceOrders' => $canReqO,
       // Annoncé AU MOMENT de la demande : la facture n'apparaît qu'au batch
       // mensuel du franchisé — sinon le client la cherche dès le lendemain.
       'invoiceNotice' => 'Votre facture sera émise par la boutique en début de mois prochain.',
@@ -4213,8 +4231,80 @@ function dispatch($m, $p) {
      destinataire billing_entity_id. REFUS EN BASE (pas sur l'état affiché) si
      déjà facturé, gelé par le batch ERP, ou délai dépassé. 501 si la colonne
      to_invoice n'est pas encore migrée (voir rapport de schéma). ── */
+  /* ── Vérifier une société par son numéro de TVA, SANS la lier au compte.
+     /auth/billing-verify fait VIES puis REMPLACE la société de la personne :
+     c'est le bon geste pour « ma société », pas pour « facturer ce ticket à une
+     autre société ». Ici : VIES, puis la fiche société est retrouvée par TVA ou
+     créée (is_b2b, verified_at), et RENDUE — rien n'est écrit sur la personne.
+     C'est l'identifiant rendu que la demande de facture recevra. ── */
+  if ($m === 'POST' && $p === '/auth/purchases/billing-entity') {
+    $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    rate_limit('billent', 20, 900);   // VIES est un service public partagé : pas de rafale
+    $cs = row("SELECT id_main_shop FROM client WHERE id=?", [$id]);
+    $r = vies_lookup((string) (body()['vat'] ?? ''), $cs['id_main_shop'] ?? null);
+    if (empty($r['valid'])) json_out($r, 422);
+    $d = $r['data'];
+    if (empty($d['name'])) json_out(['valid' => false, 'error' => ['code' => 'no_name',
+      'message' => 'VIES reconnaît ce numéro mais ne rend pas de raison sociale : impossible de facturer sans nom.']], 422);
+    $c = row("SELECT id FROM client
+               WHERE tax_number = ? AND is_b2b = 1 AND (name IS NULL OR name = '')
+               ORDER BY (verified_at IS NOT NULL) DESC, id ASC LIMIT 1", [$d['vat']]);
+    $eid = (int) ($c['id'] ?? 0);
+    if ($eid) {
+      q("UPDATE client SET company_name=?, invoice_name=COALESCE(NULLIF(invoice_name,''),?),
+            invoice_address=COALESCE(NULLIF(invoice_address,''),?),
+            invoice_postal_code=COALESCE(invoice_postal_code,?), invoice_city=COALESCE(invoice_city,?),
+            is_b2b=1, verified_at=NOW() WHERE id=?",
+        [$d['name'], $d['name'], $d['address'], $d['postalCode'], $d['city'], $eid]);
+    } else {
+      $ms = (int) (($cs['id_main_shop'] ?? 0) ?: 1);
+      $hp = col_exists('client', 'preferred_shop_id');
+      q("INSERT INTO client (id_main_shop, " . ($hp ? "preferred_shop_id, " : "") . "is_b2b, company_name, tax_number, invoice_name,
+            invoice_address, invoice_postal_code, invoice_city, active, source_channel, verified_at)
+         VALUES (?," . ($hp ? "?," : "") . "1,?,?,?,?,?,?,1,'webshop',NOW())",
+        array_merge([$ms], $hp ? [$ms] : [], [$d['name'], $d['vat'], $d['name'], $d['address'], $d['postalCode'], $d['city']]));
+      $eid = (int) db()->lastInsertId();
+    }
+    json_out(['ok' => true, 'valid' => true, 'entity' => [
+      'id' => $eid, 'name' => $d['name'], 'vat' => $d['vat'],
+      'address' => $d['address'], 'postalCode' => $d['postalCode'], 'city' => $d['city'],
+    ]]);
+  }
+
   if ($m === 'POST' && $p === '/auth/purchases/request-invoice') {
     $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    $bq = body();
+    /* ── COMMANDE WEBSHOP (WS-…) : sa propre table, ses propres règles. Le
+       destinataire est, au choix : la personne, sa société liée, ou une
+       société VÉRIFIÉE par VIES (is_b2b + tax_number + verified_at) — c'est le
+       numéro de TVA saisi qui vaut intention de facturer, pas une saisie libre.
+       Le délai est le même que pour les tickets. ── */
+    $refQ = (string) ($bq['ref'] ?? '');
+    $ord = $refQ !== '' && col_exists('ws_orders', 'to_invoice')
+      ? row("SELECT id, created_at FROM ws_orders WHERE order_ref = ? AND customer_id = ? LIMIT 1", [$refQ, $id]) : null;
+    if ($ord) {
+      $want = !empty($bq['want']) ? 1 : 0;
+      if (time() > invoice_deadline((string) $ord['created_at'], ws_param('invoice_request_deadline', 'end_of_month')))
+        json_out(['error' => 'Délai dépassé pour cette commande.'], 409);
+      $be = null;
+      if ($want) {
+        $be = (int) ($bq['billingEntityId'] ?? 0);
+        if ($be <= 0) $be = (int) $id;
+        $ok = ($be === (int) $id)
+          || row("SELECT 1 x FROM client WHERE id = ? AND id = (SELECT company_client_id FROM client WHERE id = ?)", [$be, $id])
+          || row("SELECT 1 x FROM client WHERE id = ? AND is_b2b = 1 AND tax_number IS NOT NULL AND tax_number <> '' AND verified_at IS NOT NULL", [$be]);
+        if (!$ok) json_out(['error' => 'Destinataire non autorisé : société inconnue ou non vérifiée.'], 403);
+      }
+      $hasBe = col_exists('ws_orders', 'billing_entity_id'); $hasAt = col_exists('ws_orders', 'invoice_requested_at');
+      q("UPDATE ws_orders SET to_invoice=?" . ($hasBe ? ", billing_entity_id=?" : "") . ($hasAt ? ", invoice_requested_at=" . ($want ? "NOW()" : "NULL") : "")
+        . " WHERE id=?", array_merge([$want], $hasBe ? [$want ? $be : null] : [], [(int) $ord['id']]));
+      $lbl = null;
+      if ($want && $be !== (int) $id)
+        $lbl = row("SELECT COALESCE(NULLIF(company_name,''), NULLIF(invoice_name,'')) AS n, tax_number AS v FROM client WHERE id=?", [$be]);
+      json_out(['ok' => true, 'billingEntityId' => $want ? $be : null,
+                'billingEntityName' => $lbl['n'] ?? null, 'billingEntityVat' => $lbl['v'] ?? null,
+                'notice' => $want ? 'Votre facture sera émise par la boutique en début de mois prochain.' : null]);
+    }
     if (!col_exists('pwa_purchases', 'to_invoice')) {
       json_out(['error' => "Fonction indisponible : colonne pwa_purchases.to_invoice absente en base (voir rapport de schéma)."], 501);
     }

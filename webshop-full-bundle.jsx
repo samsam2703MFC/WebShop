@@ -2814,12 +2814,18 @@ function AccountPurchases({ user }) {
   const { t } = wsUseT();
   const [filter, setFilter]   = useState('all');
   const [page, setPage]       = useState(1);
-  const [meta, setMeta]       = useState({ total: 0, canRequestInvoice: false, invoiceNotice: '' });
+  const [meta, setMeta]       = useState({ total: 0, canRequestInvoice: false, canRequestInvoiceOrders: false, invoiceNotice: '' });
   const [items, setItems]     = useState([]);
   const [loading, setLoading] = useState(false);
   const [busyRef, setBusyRef] = useState('');
   const [notice, setNotice]   = useState('');
   const [err, setErr]         = useState('');
+  /* Demande de facture sur une COMMANDE WEBSHOP : le ticket se déplie au
+     clic. `inv` = brouillon du panneau ouvert (destinataire choisi, TVA
+     saisie, société vérifiée) — rien n'est écrit tant que « Demander la
+     facture » n'est pas pressé. */
+  const [openRef, setOpenRef] = useState('');
+  const [inv, setInv] = useState({ who: 'mine', vat: '', entity: null, vatErr: '', checking: false });
   const PER = 10;
   useEffect(() => {
     let alive = true;
@@ -2829,7 +2835,8 @@ function AccountPurchases({ user }) {
       : { items: [], total: 0 })
       .then((d) => {
         if (!alive || !d) return;
-        setMeta({ total: d.total || 0, canRequestInvoice: !!d.canRequestInvoice, invoiceNotice: d.invoiceNotice || '' });
+        setMeta({ total: d.total || 0, canRequestInvoice: !!d.canRequestInvoice,
+                  canRequestInvoiceOrders: !!d.canRequestInvoiceOrders, invoiceNotice: d.invoiceNotice || '' });
         setItems((prev) => (page === 1 ? (d.items || []) : prev.concat(d.items || [])));
       })
       .catch(() => {})
@@ -2854,6 +2861,43 @@ function AccountPurchases({ user }) {
     } else {
       setErr(r.error || 'Échec de la demande.');
     }
+  }
+  function openTicket(it) {
+    if (openRef === it.ref) { setOpenRef(''); return; }
+    setOpenRef(it.ref); setErr('');
+    setInv({ who: user.companyClientId ? 'mine' : 'me', vat: '', entity: null, vatErr: '', checking: false });
+  }
+  /* VIES par le seul numéro de TVA : ce que VIES rend fait foi, aucune
+     saisie de nom ou d'adresse. La société n'est PAS liée au compte. */
+  async function verifyOther() {
+    const vat = inv.vat.trim();
+    if (vat.length < 4) { setInv((v) => ({ ...v, vatErr: 'Indiquez le numéro de TVA, ex. BE0123456789.' })); return; }
+    setInv((v) => ({ ...v, checking: true, vatErr: '', entity: null }));
+    const r = await window.WSAuth.billingEntityLookup({ vat });
+    setInv((v) => ({ ...v, checking: false, entity: r.ok ? r.entity : null, vatErr: r.ok ? '' : (r.error || 'Numéro non reconnu.') }));
+  }
+  async function requestOrderInvoice(it) {
+    const be = inv.who === 'other' ? (inv.entity && inv.entity.id) : (inv.who === 'mine' ? user.companyClientId : user.id);
+    if (inv.who === 'other' && !be) { setInv((v) => ({ ...v, vatErr: 'Vérifiez d’abord le numéro de TVA.' })); return; }
+    setBusyRef(it.ref); setErr('');
+    const r = await window.WSAuth.requestInvoice({ ref: it.ref, want: true, billingEntityId: be });
+    setBusyRef('');
+    if (!r.ok) { setErr(r.error || 'Échec de la demande.'); return; }
+    setItems((list) => list.map((x) => (x.ref === it.ref
+      ? { ...x, state: 'requested', toInvoice: 1, billingEntityId: be,
+          billingEntityName: inv.who === 'other' ? (inv.entity && inv.entity.name) : (inv.who === 'mine' ? user.company : null),
+          billingEntityVat:  inv.who === 'other' ? (inv.entity && inv.entity.vat)  : (inv.who === 'mine' ? (user.invoice && user.invoice.vat) : null) }
+      : x)));
+    setOpenRef('');
+    if (r.notice) setNotice(r.notice);
+  }
+  async function cancelOrderInvoice(it) {
+    setBusyRef(it.ref); setErr('');
+    const r = await window.WSAuth.requestInvoice({ ref: it.ref, want: false, billingEntityId: null });
+    setBusyRef('');
+    if (!r.ok) { setErr(r.error || 'Annulation impossible.'); return; }
+    setItems((list) => list.map((x) => (x.ref === it.ref
+      ? { ...x, state: 'open', toInvoice: 0, billingEntityId: null, billingEntityName: null, billingEntityVat: null } : x)));
   }
   const fmtDate = (s) => {
     try {
@@ -2894,9 +2938,24 @@ function AccountPurchases({ user }) {
           <p className="ws-acc__note">Aucun achat sur les 12 derniers mois{filter !== 'all' ? ' pour ce filtre' : ''}.</p>
         </div>
       )}
-      {items.map((it) => (
-        <div key={it.source + '-' + it.ref} className="ws-acc__card">
-          <div className="ws-acc__card-row"><span className="ws-acc__k">{it.ref}</span><span className="ws-acc__v">{badge(it.state)}</span></div>
+      {items.map((it) => {
+        const isOrder  = it.source === 'order';
+        const canOpen  = isOrder && meta.canRequestInvoiceOrders && it.state !== 'invoiced' && it.state !== 'closed';
+        const isOpen   = canOpen && openRef === it.ref;
+        return (
+        <div key={it.source + '-' + it.ref} className={'ws-acc__card' + (canOpen ? ' ws-acc__card--open' : '')}
+             onClick={canOpen && it.state !== 'requested' ? () => openTicket(it) : undefined}>
+          <div className="ws-acc__card-head">
+            <span className="ws-acc__k">{it.ref}</span>
+            <span className="ws-acc__v" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              {badge(it.state)}
+              {canOpen && it.state !== 'requested' && (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  {isOpen ? <path d="M6 15l6-6 6 6"/> : <path d="M6 9l6 6 6-6"/>}
+                </svg>
+              )}
+            </span>
+          </div>
           <div className="ws-acc__card-row"><span className="ws-acc__k">{it.shop || '—'}</span><span className="ws-acc__v">{fmtDate(it.at)}</span></div>
           <div className="ws-acc__card-row">
             <span className="ws-acc__k">{Number(it.items) || 0} article{Number(it.items) > 1 ? 's' : ''}</span>
@@ -2918,6 +2977,99 @@ function AccountPurchases({ user }) {
             <div className="ws-acc__card-row"><span className="ws-acc__k">{t('acc.peppol')}</span>
               <span className="ws-acc__v">{peppolBadge(it.peppolStatus)}{it.peppolAt ? ' · ' + fmtDate(it.peppolAt) : ''}</span></div>
           )}
+          {/* COMMANDE WEBSHOP demandée : le destinataire, lié par son identifiant client */}
+          {isOrder && it.state === 'requested' && (
+            <div className="ws-acc__card-row">
+              <span className="ws-acc__k">Facturée à</span>
+              <span className="ws-acc__v" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+                <span>{it.billingEntityName || (it.billingEntityId === user.id || !it.billingEntityId ? 'Mon nom' : (user.company || 'Ma société'))}</span>
+                {(it.billingEntityVat || it.billingEntityId) && (
+                  <span style={{ fontSize: 11, color: 'var(--color-text-muted)', fontWeight: 400 }}>
+                    {it.billingEntityVat ? it.billingEntityVat + ' · ' : ''}client nº {it.billingEntityId}
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
+          {isOrder && it.state === 'requested' && meta.canRequestInvoiceOrders && (
+            <button type="button" className="ws-acc__inv-cancel" disabled={busyRef === it.ref}
+              onClick={(e) => { e.stopPropagation(); cancelOrderInvoice(it); }}>Annuler la demande</button>
+          )}
+
+          {/* COMMANDE WEBSHOP dépliée : le panneau de demande */}
+          {isOpen && it.state !== 'requested' && (
+            <div className="ws-acc__inv" onClick={(e) => e.stopPropagation()}>
+              <label className="ws-acc__inv-check">
+                <input type="checkbox" checked readOnly aria-label="Je veux une facture pour cet achat"/>
+                Je veux une facture pour cet achat
+              </label>
+              <div className="ws-acc__inv-h">Facturer à</div>
+
+              {user.companyClientId ? (
+                <button type="button" className={'ws-acc__inv-opt' + (inv.who === 'mine' ? ' is-on' : '')}
+                  onClick={() => setInv((v) => ({ ...v, who: 'mine' }))}>
+                  <span className="ws-acc__inv-radio" aria-hidden="true"/>
+                  <span className="ws-acc__inv-body">
+                    <span className="ws-acc__inv-name">{user.company || 'Ma société'}</span>
+                    <span className="ws-acc__inv-sub">
+                      {[user.invoice && user.invoice.vat, user.invoice && [user.invoice.address, [user.invoice.postalCode, user.invoice.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}
+                    </span>
+                  </span>
+                  {user.invoice && user.invoice.viesVerified && <span className="ws-acc__inv-tag">Vérifiée</span>}
+                </button>
+              ) : (
+                <button type="button" className={'ws-acc__inv-opt' + (inv.who === 'me' ? ' is-on' : '')}
+                  onClick={() => setInv((v) => ({ ...v, who: 'me' }))}>
+                  <span className="ws-acc__inv-radio" aria-hidden="true"/>
+                  <span className="ws-acc__inv-body"><span className="ws-acc__inv-name">{t('acc.inMyName')}</span></span>
+                </button>
+              )}
+
+              <button type="button" className={'ws-acc__inv-opt' + (inv.who === 'other' ? ' is-on' : '')}
+                onClick={() => setInv((v) => ({ ...v, who: 'other' }))} style={{ flexDirection: 'column', gap: 0 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
+                  <span className="ws-acc__inv-radio" aria-hidden="true"/>
+                  <span className="ws-acc__inv-name" style={{ flex: 1 }}>Une autre société</span>
+                  {inv.who !== 'other' && <span className="ws-acc__inv-sub">par son numéro de TVA</span>}
+                </span>
+                {inv.who === 'other' && (
+                  <span style={{ display: 'block', width: '100%' }} onClick={(e) => e.stopPropagation()}>
+                    <span className="ws-acc__inv-vat">
+                      <input type="text" value={inv.vat} placeholder="BE0123456789" autoComplete="off" spellCheck={false}
+                        onChange={(e) => setInv((v) => ({ ...v, vat: e.target.value, entity: null, vatErr: '' }))}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); verifyOther(); } }}
+                        aria-label="Numéro de TVA de la société à facturer"/>
+                      <button type="button" className="ws-acc__inv-verify" disabled={inv.checking} onClick={verifyOther}>
+                        {inv.checking ? 'Vérification…' : 'Vérifier'}
+                      </button>
+                    </span>
+                    {inv.vatErr && <span className="ws-acc__vat-msg ws-acc__vat-msg--err" style={{ display: 'block', marginTop: 6 }}>⚠ {inv.vatErr}</span>}
+                    {inv.entity && (
+                      <span className="ws-acc__inv-res">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2C6449" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>
+                        <span className="ws-acc__inv-body">
+                          <span className="ws-acc__inv-name">{inv.entity.name}</span>
+                          <span className="ws-acc__inv-sub">{[inv.entity.address, [inv.entity.postalCode, inv.entity.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</span>
+                          <span className="ws-acc__inv-ok">Numéro valide · vérifié sur VIES à l’instant</span>
+                        </span>
+                      </span>
+                    )}
+                  </span>
+                )}
+              </button>
+
+              <button type="button" className="ws-cta ws-cta--block" disabled={busyRef === it.ref || (inv.who === 'other' && !inv.entity)}
+                onClick={() => requestOrderInvoice(it)}>
+                {busyRef === it.ref ? 'Envoi…' : (inv.who === 'other' && inv.entity ? 'Demander la facture à ' + inv.entity.name : 'Demander la facture')}
+              </button>
+              <div className="ws-acc__inv-note">
+                {inv.who === 'other'
+                  ? 'Cette société ne remplace pas la vôtre : elle n’est utilisée que pour cet achat. Un numéro invalide ou inconnu de VIES ne peut pas être facturé.'
+                  : 'La facture est émise par la boutique en début de mois prochain. Vous pouvez annuler la demande jusque-là.'}
+              </div>
+            </div>
+          )}
+
           {meta.canRequestInvoice && it.source === 'ticket' && it.state !== 'invoiced' && (
             <label className="ws-acc__toggle" aria-label={t('acc.wantInvoice')}>
               <input type="checkbox" checked={it.state === 'requested'}
@@ -2941,7 +3093,8 @@ function AccountPurchases({ user }) {
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
       {hasMore && (
         <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={() => setPage((p) => p + 1)}>
           {t('common.seeMore')}
