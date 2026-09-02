@@ -147,6 +147,35 @@ Update the current user's profile. Only send the fields to update.
 
 ---
 
+### POST /auth/handoff-create
+
+Mint a one-time SSO token so the **PWA** can open the webshop already signed in — the
+counterpart of `POST /auth/handoff`, which consumes it. Requires `Authorization: Bearer <token>`.
+Only `sha256(token)` is stored (`auth_handoff`), TTL 60 s, single use, bound to a UA+IP
+fingerprint. The PWA appends it to the shop URL as `?handoff=<token>`.
+
+**Response 200**
+```json
+{ "token": "<64 hex chars>", "ttl": 60 }
+```
+
+**Response 401** — not signed in. **Response 503** — `auth_handoff` table absent.
+
+---
+
+### PWA channel & profile fields
+
+The PWA no longer reads or writes the `client` table itself; it goes through these endpoints:
+
+- `POST /auth/register`, `POST /auth/login` and `POST /auth/otp-set-password` accept an optional
+  `"channel": "pwa"`. It flags the account as a PWA user (`pwa_user = 1`; on register also
+  `source_channel = 'pwa'`). Absent → webshop behaviour, unchanged.
+- `GET /auth/me` additionally returns `mainShopId`, `clientCode`, `memberSince`, `iban` and
+  `billingLines`.
+- `PATCH /auth/me` additionally accepts `email` (format-validated, lowercased; `""` clears it).
+
+---
+
 ### POST /auth/password-reset
 
 Send a password-reset email. Always returns 200 regardless of whether the address exists (prevents user enumeration).
@@ -214,6 +243,42 @@ Wrapping with `{ "shops": [...] }` is also accepted by the stub.
 Only active shops are returned (`ws_shops.active = 1`). One storefront serves every
 shop; `webshop-shop-router.jsx` (`window.WSShopRouter`) tracks which `shopId` is active
 and every API call is scoped by it.
+
+### GET /shops/directory
+
+All **active** shops, for the PWA — including shops with `webshop_enabled = 0`, which
+`/shops` (the webshop entry point) deliberately omits. Public.
+
+**Response 200**
+```json
+[
+  {
+    "id": 3, "slug": "halle", "name": "Atelier by Halle", "city": "Halle",
+    "address": "Rue de la Station 12", "sortOrder": 1, "webshopEnabled": true,
+    "webshopUrl": "https://…/webshop?shopId=3", "googleReviewUrl": "https://g.page/…"
+  }
+]
+```
+
+`address` is `shops.address_line` when set, else street + number. `webshopUrl`,
+`googleReviewUrl` and `sortOrder` come back `null` / `0` on a schema without those columns.
+
+### GET /landing/hero
+
+The PWA's « offre du moment »: the first `lp_hero_slides` row with `is_active = 1 AND
+active_in_pwa = 1` whose PWA schedule (date range, hour range, weekdays) matches now.
+`?locale=fr|nl` (default `fr`). Public. Returns `null` when nothing is eligible or the table is
+absent — never an invented offer.
+
+**Response 200**
+```json
+{
+  "tag": "Nouveau", "name": "Tarte aux pommes", "desc": "…", "price": "12,90 €", "unit": "la pièce",
+  "cta": "Commander →", "img": "/img/…", "pwaImage": null, "productSlug": null, "ctaUrl": null
+}
+```
+
+`GET /config` additionally returns `webshopBaseUrl` (`ws_param.webshop_base_url`, `null` if unset).
 
 ### Managing shops
 
