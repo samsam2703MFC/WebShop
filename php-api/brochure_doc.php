@@ -140,18 +140,40 @@ function brochure_donnees($shopId, $officeId = null, $racine = '') {
                      AND (vco.valid_to IS NULL OR vco.valid_to >= CURDATE())
                      AND (vc.id_shop IS NULL OR vc.id_shop = ?)
                    ORDER BY vco.code", [$shopId]);
+      // TOUS les bons disponibles sur le webshop : réseau et boutique, pour tous
+      // les clients ou pour un bureau. Pour le dossier d'UN bureau, seuls les
+      // siens ; pour la boutique, ceux de chaque bureau avec le nom du bureau.
+      // Jamais un bon nominatif (CUSTOMER) : il n'est disponible qu'à une personne.
       foreach ($vs as $v) {
         $tk = (string) $v['target_kind'];
-        if ($tk === 'CUSTOMER' || $tk === 'GROUP') continue;
-        if ($tk === 'OFFICE' && (!$officeId || (int) $v['target_id'] !== $officeId)) continue;
+        if ($tk === 'CUSTOMER') continue;
+        if ($tk === 'OFFICE' && $officeId && (int) $v['target_id'] !== $officeId) continue;
+        $nomBureau = '';
+        if ($tk === 'OFFICE' && !$officeId && $v['target_id']) { $ob2 = row("SELECT name FROM ws_offices WHERE id=?", [(int) $v['target_id']]); $nomBureau = (string) ($ob2['name'] ?? ''); }
         $val = rtrim(rtrim((string) $v['discount_value'], '0'), '.');
         $effet = $v['discount_kind'] === 'PERCENT' ? "−$val %" : ($v['discount_kind'] === 'FIXED' ? "−$val\u{a0}€" : 'Livraison offerte');
         if ((float) $v['min_order_amount'] > 0) $effet .= ' dès ' . brochure_eur($v['min_order_amount']);
         $bons[] = ['code' => (string) $v['code'], 'effet' => $effet,
                    'validite' => $v['expires_at'] ? ('Valable jusqu\'au ' . date('d/m/Y', strtotime($v['expires_at']))) : 'Sans date limite',
-                   'cible' => $tk === 'OFFICE' ? 'Réservé à votre bureau' : 'Tous les clients'];
+                   'cible' => $tk === 'OFFICE' ? ($nomBureau !== '' ? 'Réservé au bureau ' . $nomBureau : 'Réservé à votre bureau') : ($tk === 'GROUP' ? 'Groupe de clients' : 'Tous les clients')];
       }
     } catch (Throwable $e) { $bons = []; }
+  }
+
+  // La promo automatique de la boutique (« 4 quarts achetés, 1 offert ») :
+  // règle ERP ou locale, appliquée au panier sans code. Un avantage réel,
+  // que le dossier doit annoncer comme les bons.
+  if (function_exists('cross_portion_rule')) {
+    try {
+      $regle = cross_portion_rule($shopId);
+      if ($regle && (int) $regle['buy'] > 0 && (int) $regle['free'] > 0) {
+        $lab = trim((string) ($regle['label'] ?? ''));
+        $bons[] = ['code' => $lab !== '' ? $lab : ((int) $regle['buy'] . ' + ' . (int) $regle['free']),
+                   'effet' => (int) $regle['buy'] . ' portion' . ((int) $regle['buy'] > 1 ? 's' : '') . ' achetée' . ((int) $regle['buy'] > 1 ? 's' : '') . ', ' . (int) $regle['free'] . ' offerte' . ((int) $regle['free'] > 1 ? 's' : '')
+                              . ((int) ($regle['threshold'] ?? 0) > (int) $regle['buy'] ? ' dès ' . (int) $regle['threshold'] . ' portions' : ''),
+                   'validite' => 'Automatique au panier, sans code', 'cible' => 'Tous les clients'];
+      }
+    } catch (Throwable $e) {}
   }
 
   // Commander : jours, cut-off, dépôt, facturation — depuis la fiche du bureau
