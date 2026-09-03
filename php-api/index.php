@@ -7202,6 +7202,34 @@ function dispatch($m, $p) {
       exit;
     }
 
+    /* LE DOSSIER « CARTE & TARIFS » (HTML A4, à imprimer ou enregistrer en PDF)
+       — pour la boutique, ou pour UN bureau : son assortiment, ses prix ou
+       non, le QR de son lien d'invitation. Même ouverture que l'affiche : la
+       console le récupère avec le jeton et l'ouvre dans un onglet. */
+    if ($m === 'GET' && $p === '/franchisee/office-brochure') {
+      $oid = (int) qp('office', 0);
+      $shopB = $shopId ? (int) $shopId : 0;
+      if ($oid) {
+        $oSc = ($shopId && col_exists('ws_offices', 'shop_id')) ? " AND (shop_id IS NULL OR shop_id=" . (int) $shopId . ")" : "";
+        $ob = row("SELECT id, shop_id FROM ws_offices WHERE id=? AND active=1$oSc", [$oid]);
+        if (!$ob) json_out(['ok' => false, 'error' => 'Bureau inconnu, ou hors de votre boutique.'], 404);
+        if (!$shopB && !empty($ob['shop_id'])) $shopB = (int) $ob['shop_id'];
+      }
+      if (!$shopB) json_out(['ok' => false, 'error' => 'Boutique non résolue : ouvrez la console avec ?shop=<id>.'], 400);
+      require_once __DIR__ . '/qr.php';
+      require_once __DIR__ . '/invite_doc.php';
+      require_once __DIR__ . '/brochure_doc.php';
+      $racine = preg_replace('#/inscription\?.*$#', '', invite_link(''));
+      $doc = brochure_donnees($shopB, $oid ?: null, $racine);
+      if (!$doc) json_out(['ok' => false, 'error' => 'Boutique ou bureau introuvable.'], 404);
+      $qrPng = null;
+      if (!empty($doc['qrUrl'])) { $res = qr_matrix($doc['qrUrl'], 'Q'); if ($res) $qrPng = qr_png($res[0], $res[1], 8, 4); }
+      header('Content-Type: text/html; charset=utf-8');
+      header('Cache-Control: no-store');
+      echo brochure_render($doc, $racine, $qrPng);
+      exit;
+    }
+
     /* L'AFFICHE (PDF, A4) — la même, écrite par le serveur. Elle sert de PIÈCE
        JOINTE à l'e-mail, où il faut un fichier ; l'écran, lui, passe par la
        version HTML ci-dessus, qui porte les polices de la marque. */
