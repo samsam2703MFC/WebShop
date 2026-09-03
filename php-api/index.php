@@ -7223,7 +7223,7 @@ function dispatch($m, $p) {
       // Le motif d'un échec REMONTE (la sonde et le franchisé le lisent) : un
       // « Erreur interne » muet a caché une colonne inexistante le 03/09.
       try {
-        $doc = brochure_donnees($shopB, $oid ?: null, $racine);
+        $doc = brochure_donnees($shopB, $oid ?: null, $racine, qp('date', '') ?: null, (bool) qp('sansSaison', 0));
         if (!$doc) json_out(['ok' => false, 'error' => 'Boutique ou bureau introuvable.'], 404);
         $qrPng = null;
         if (!empty($doc['qrUrl'])) { $res = qr_matrix($doc['qrUrl'], 'Q'); if ($res) $qrPng = qr_png($res[0], $res[1], 8, 4); }

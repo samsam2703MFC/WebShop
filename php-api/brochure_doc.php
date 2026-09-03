@@ -43,8 +43,12 @@ function brochure_police($fichier, $poids, $famille = 'Gotham') {
 function brochure_eur($v) { return number_format((float) $v, 2, ',', ' ') . "\u{a0}€"; }
 
 /* ── LES DONNÉES (lecture seule) ────────────────────────────────────────── */
-function brochure_donnees($shopId, $officeId = null, $racine = '') {
+function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null, $sansSaison = false) {
   $shopId = (int) $shopId; $officeId = $officeId ? (int) $officeId : null;
+  // Disponibilité : le catalogue tel qu'il sera servi À CETTE DATE (saisons,
+  // périodes ERP), aujourd'hui par défaut ; « sans saison » écarte en plus les
+  // produits saisonniers, pour un dossier qui reste juste toute l'année.
+  $date = ($date && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $date)) ? (string) $date : date('Y-m-d');
   // shops n'a pas de colonne address : l'adresse se compose de street + street_num
   // (même expression que la route /shops). webshop_url n'existe pas partout.
   $shop = row("SELECT id, name, city, email, phone, TRIM(CONCAT_WS(' ', street, street_num)) AS address"
@@ -65,8 +69,9 @@ function brochure_donnees($shopId, $officeId = null, $racine = '') {
 
   // Catalogue BUREAU de la boutique (canal livraison au bureau), réduit à
   // l'assortiment du bureau s'il en a un — exactement ce que le client verra.
-  $liste = catalog_produits_servis($shopId, 'office');
+  $liste = catalog_produits_servis($shopId, 'office', $date);
   if ($off) $liste = office_filtrer($liste, $off);
+  if ($sansSaison) $liste = array_values(array_filter($liste, static fn ($x) => empty($x['season'])));
 
   // Catégories et sous-catégories : celles des produits servis, dans l'ordre
   // du webshop (sort_order, puis libellé).
@@ -200,7 +205,7 @@ function brochure_donnees($shopId, $officeId = null, $racine = '') {
           'office' => $office ? ['name' => (string) $office['name'], 'assortment' => $off ? $off['mode'] : 'full'] : null,
           'showPrices' => $showPrices, 'qrUrl' => $qrUrl, 'qrCode' => $qrCode,
           'categories' => $categories, 'formules' => $formules, 'bons' => $bons, 'commande' => $commande,
-          'date' => date('d/m/Y'), 'mois' => ['', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'][(int) date('n')] . ' ' . date('Y')];
+          'date' => date('d/m/Y'), 'dispo' => date('d/m/Y', strtotime($date)), 'sansSaison' => (bool) $sansSaison, 'mois' => ['', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'][(int) date('n')] . ' ' . date('Y')];
 }
 
 /* ── LE HTML (aucune lecture de base) ───────────────────────────────────── */
@@ -258,7 +263,7 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
   } else {
     $cover .= '<div class="bloc"><div class="etiquette">Commander</div><div class="bloc__l">Sur le webshop' . ($d['commande']['webshop'] ? ' : <strong>' . $e($d['commande']['webshop']) . '</strong>' : '') . '.</div></div>';
   }
-  $cover .= '</div><div class="couv__bas"><div class="chips">' . $familles . '</div><div class="colophon">Édité depuis la console franchisé<br>le ' . $e($d['date']) . ($prix ? ' · prix TVAC' : ' · sans prix') . '</div></div></section>';
+  $cover .= '</div><div class="couv__bas"><div class="chips">' . $familles . '</div><div class="colophon">Édité depuis la console franchisé<br>le ' . $e($d['date']) . ($prix ? ' · prix TVAC' : ' · sans prix') . ((!empty($d['dispo']) && $d['dispo'] !== $d['date']) ? '<br>Disponibilités au ' . $e($d['dispo']) : '') . (!empty($d['sansSaison']) ? '<br>Sans les produits saisonniers' : '') . '</div></div></section>';
   $pages[] = $cover;
 
   // 2… · Catégories
