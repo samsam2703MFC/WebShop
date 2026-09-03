@@ -15,6 +15,7 @@ require __DIR__ . '/erp_alias.php';
    servis coïncidaient donc avec ceux de l'ERP sans qu'aucune intersection ne
    tourne. Une coïncidence de données prise pour un comportement. */
 require __DIR__ . '/erp_catalog.php';
+require __DIR__ . '/office_logo.php';
 require __DIR__ . '/erp_promos.php';
 require __DIR__ . '/erp_seasons.php';
 require __DIR__ . '/erp_clients.php';
@@ -7432,11 +7433,13 @@ function dispatch($m, $p) {
         ? ", (SELECT s.address FROM ws_office_delivery_sites s WHERE s.office_client_id=f.id AND s.active=1 ORDER BY s.id LIMIT 1) AS site"
         : ", NULL AS site";
       $notesSel = col_exists('ws_offices', 'delivery_notes') ? ", f.delivery_notes" : ", NULL AS delivery_notes";
+      $logoSel  = col_exists('ws_offices', 'logo_path') ? ", f.logo_path" : "";
       $rs = rows("SELECT f.id, f.tour_id, $tourSel, f.name, f.address, f.postal_code, f.city, f.contact,
-                            f.email, f.phone, f.vat, f.status, f.deferred_billing_enabled$notesSel$siteSel
+                            f.email, f.phone, f.vat, f.status, f.deferred_billing_enabled$notesSel$siteSel$logoSel
                        FROM ws_offices f $join WHERE $wh AND f.active=1 ORDER BY f.name LIMIT 300");
       // deferred en Oui/Non : valeurs du toggle du formulaire Office.
-      json_out(array_map(fn ($f) => ['deferred_billing_enabled' => ((int) $f['deferred_billing_enabled'] ? 'Oui' : 'Non')] + $f, $rs));
+      json_out(array_map(fn ($f) => ['deferred_billing_enabled' => ((int) $f['deferred_billing_enabled'] ? 'Oui' : 'Non'),
+                                     'logo_url' => office_logo_rel($f['logo_path'] ?? null)] + $f, $rs));
     }
 
     /* ── Contacts e-mail d'un bureau ──────────────────────────────────────────
@@ -11438,6 +11441,9 @@ function dispatch($m, $p) {
         $hasShopO = col_exists('ws_offices', 'shop_id');
         $hasCli   = col_exists('ws_offices', 'client_id');
         $hasNotes = col_exists('ws_offices', 'delivery_notes');
+        // Logo du bureau (0115) : contrôlé AVANT la transaction — un logo
+        // refusé ne doit pas laisser une sauvegarde à moitié faite.
+        foreach ($rows2 as $r0) { $le = office_logo_check(is_array($r0) ? ($r0['logo_url'] ?? null) : null); if ($le !== null) json_out(['ok' => false, 'error' => $le], 400); }
         // Sémantique replace (comme les sites) : ids traités collectés pour
         // désactiver les offices retirés côté BO — sinon la suppression d'un
         // office ne persiste jamais (il « ressuscite » au reload).
@@ -11479,6 +11485,7 @@ function dispatch($m, $p) {
             // de désactivation (suppression) puisse le viser.
             if ($hasShopO && $shopId) $sets[] = 'shop_id=COALESCE(shop_id, ' . (int) $shopId . ')';
             if ($sets) { $uvals[] = $rid; q("UPDATE ws_offices SET " . implode(',', $sets) . " WHERE id=?", $uvals); $n++; }
+            if (array_key_exists('logo_url', $r)) office_logo_apply($rid, $r['logo_url']);
             $keptOff[] = $rid;
             // Fiche client d'origine : TVA + raison sociale VIES.
             if ($hasCli && ($vat !== '' || !empty($r['vies_name']))) {
@@ -11503,6 +11510,7 @@ function dispatch($m, $p) {
             if ($hasShopO && $shopId)         { $cols[] = 'shop_id'; $ivals[] = (int) $shopId; }
             q("INSERT INTO ws_offices (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $ivals);
             $rid = (int) db()->lastInsertId();
+            if (array_key_exists('logo_url', $r)) office_logo_apply($rid, $r['logo_url']);
             $keptOff[] = $rid;
             $n++;
           }
@@ -11690,6 +11698,8 @@ function dispatch($m, $p) {
       $b = body();
       $raison = trim((string) ($b['raison'] ?? ''));
       if ($raison === '') json_out(['error' => 'raison sociale requise'], 400);
+      $obLogoErr = office_logo_check($b['logo'] ?? null);
+      if ($obLogoErr !== null) json_out(['error' => $obLogoErr], 400);
       // Code postal OBLIGATOIRE (collecte réseau, formulaire « Nouveau client »
       // du BO franchisé) + localité confirmée, stockés sur ws_offices.
       $obZip = trim((string) ($b['cp'] ?? ($b['postal_code'] ?? '')));
@@ -11731,6 +11741,7 @@ function dispatch($m, $p) {
          'pending', (stripos((string) ($b['paiement'] ?? ''), 'compt') === false) ? 1 : 0,
          (float) ($b['drop'] ?? 5)]);
       $officeId = (int) db()->lastInsertId();
+      if (!empty($b['logo'])) office_logo_apply($officeId, (string) $b['logo']);
       // Ligne CLIENT (table ERP) — sans elle le nouveau bureau n'apparaît
       // jamais dans le menu Clients (GET b2b-clients lit client). Séquence
       // anti-doublon : insert avec office_delivery=0 (pas de trigger), pose du

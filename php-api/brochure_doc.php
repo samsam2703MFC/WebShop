@@ -77,7 +77,7 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
 
   $office = null; $off = null; $qrUrl = null; $qrCode = null;
   if ($officeId) {
-    $office = row("SELECT id, name, address, postal_code, city, deferred_billing_enabled, drop_minutes FROM ws_offices WHERE id = ? AND active = 1", [$officeId]);
+    $office = row("SELECT id, name, address, postal_code, city, deferred_billing_enabled, drop_minutes" . (col_exists('ws_offices', 'logo_path') ? ', logo_path' : '') . " FROM ws_offices WHERE id = ? AND active = 1", [$officeId]);
     if (!$office) return null;
     $off = function_exists('office_assortiment') ? office_assortiment($officeId) : null;
     // LE QR MÈNE TOUJOURS AU FORMULAIRE DE COMPTE, RATTACHÉ À CE BUREAU : le lien
@@ -275,6 +275,13 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
   $prix = $d['showPrices'];
   $logo = brochure_lire('logo.png') ?: brochure_lire('logo-white.png');
   $logoSrc = $logo ? ('data:image/png;base64,' . base64_encode($logo)) : '';
+  /* Logo du bureau (0115) : embarqué comme le reste, à droite du logo L'Atelier. */
+  $logoBureau = '';
+  $lp = (string) ($d['office']['logo_path'] ?? '');
+  if ($lp !== '' && strpos($lp, '..') === false && ($lb = brochure_lire(ltrim($lp, '/'))) !== null && $lb !== '') {
+    $lext = strtolower(pathinfo($lp, PATHINFO_EXTENSION));
+    $logoBureau = 'data:' . ($lext === 'png' ? 'image/png' : ($lext === 'webp' ? 'image/webp' : 'image/jpeg')) . ';base64,' . base64_encode($lb);
+  }
   $qrSrc = $qrPng ? ('data:image/png;base64,' . base64_encode($qrPng)) : '';
   $police = brochure_police('GC_Vank.ttf', 400, 'Vank') . brochure_police('Gotham_Light.otf', 300)
           . brochure_police('Gotham_Book.otf', 400) . brochure_police('Gotham_Medium.otf', 500);
@@ -310,7 +317,8 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
   // 1 · Couverture
   $familles = implode('', array_map(static fn ($c) => '<span class="chip">' . $e($c['label']) . '</span>', $d['categories']));
   $cover = '<section class="page page--couv">' . (!empty($d['hero']) ? '<div class="couv__photo"><img src="' . $e($d['hero']) . '" alt=""></div>' : '');
-  $cover .= '<div class="couv__haut">' . ($logoSrc ? '<img class="couv__logo" src="' . $logoSrc . '" alt="L\'Atelier, sucré, salé, à emporter">' : '<div class="sur-titre">L\'Atelier · Sucré · Salé · À emporter</div>');
+  $cover .= '<div class="couv__haut"><div class="couv__marques">' . ($logoSrc ? '<img class="couv__logo" src="' . $logoSrc . '" alt="L\'Atelier, sucré, salé, à emporter">' : '<div class="sur-titre">L\'Atelier · Sucré · Salé · À emporter</div>')
+         . ($logoBureau ? '<img class="couv__logo-bureau" src="' . $logoBureau . '" alt="' . $e($d['office']['name'] ?? '') . '">' : '') . '</div>';
   $cover .= '<h1 class="couv__titre">Carte &amp; tarifs</h1><div class="couv__sous">Livraison au bureau · Click &amp; Collect · ' . $e($d['mois']) . '</div></div>';
   $cover .= '<hr class="filet">';
   $cover .= '<div class="couv__grille"><div class="bloc"><div class="etiquette">Votre boutique</div><div class="bloc__nom">' . $e($titreShop) . '</div>'
@@ -413,7 +421,7 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
 .bon__code{font-family:Consolas,'SFMono-Regular',monospace;font-size:15px;font-weight:700;letter-spacing:.06em;color:var(--color-primary)}.bon__l{font-size:12.5px;font-weight:500}.bon__c{font-size:11px;color:var(--color-text-muted)}
 .cmd{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3mm}.bloc__nom{font-size:18px;font-weight:500}.bloc__l{font-size:13px;color:#444;line-height:1.5}.bloc__l--petit{font-size:12px}
 .couv__photo{height:148mm;overflow:hidden;position:relative;flex:none}.couv__photo img{width:100%;height:100%;object-fit:cover;display:block}.couv__photo::after{content:'';position:absolute;left:0;right:0;bottom:0;height:42mm;background:linear-gradient(180deg,rgba(244,239,232,0),#F4EFE8)}
-.couv__haut{padding:4mm 16mm 0;display:flex;flex-direction:column;gap:2mm}.couv__logo{width:62mm;height:auto;display:block;margin-bottom:2mm}
+.couv__haut{padding:4mm 16mm 0;display:flex;flex-direction:column;gap:2mm}.couv__logo{width:62mm;height:auto;display:block;margin-bottom:2mm}.couv__marques{display:flex;justify-content:space-between;align-items:flex-end;gap:10mm}.couv__logo-bureau{max-width:44mm;max-height:22mm;width:auto;height:auto;object-fit:contain;display:block;margin-bottom:2mm}
 .couv__titre{font-family:var(--font-display);font-weight:400;font-size:52px;line-height:1.02;margin:0}.couv__sous{font-size:16px;color:var(--color-text-muted)}
 .page--couv .filet{margin:6mm 16mm 0}.couv__grille{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6mm;padding:6mm 16mm 0}
 .couv__qr{display:flex;gap:4mm;align-items:flex-start;min-width:0}.couv__qr .bloc{min-width:0;flex:1 1 auto}.qr{width:28mm;height:28mm;flex:none;border-radius:2mm;border:1px solid var(--color-border-tertiary);display:block;background:#fff}
