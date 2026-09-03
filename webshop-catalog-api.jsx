@@ -47,7 +47,11 @@
   }
 
   async function getJson(url, label) {
-    const r = await fetch(url, { credentials: 'include' });
+    // Le jeton client accompagne le catalogue : c'est lui qui dit au serveur
+    // si le client est rattaché à un bureau à assortiment réduit (0113).
+    let hdr = {};
+    try { const t = localStorage.getItem('ws_auth_token'); if (t) hdr = { 'Authorization': 'Bearer ' + t }; } catch (_) {}
+    const r = await fetch(url, { credentials: 'include', headers: hdr });
     if (!r.ok) throw new Error(label + ' indisponible (HTTP ' + r.status + ').');
     return await r.json();
   }

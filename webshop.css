@@ -4085,3 +4085,24 @@
 }
 .ws-card__offerprice s { font-weight: 400; color: var(--color-text-muted); }
 .ws-card__badge--offer { background: var(--color-primary); }
+
+/* ── PRIX MASQUÉS par bureau (0113) : le bureau du client connecté l'impose.
+   Le prix reste résolu et facturé serveur ; ici, seul l'affichage disparaît :
+   vignette, fiche, panier, récapitulatif. ── */
+.ws-noprice .ws-card__price, .ws-noprice .ws-card__offerprice, .ws-noprice .ws-card__from,
+.ws-noprice .ws-line__price, .ws-noprice .ws-xsell__p, .ws-noprice .ws-cross__save,
+.ws-noprice .pdm-cta__total, .ws-noprice .pdm-bcard__price, .ws-noprice .pdm-seg__delta, .ws-noprice .pdm-offer__save,
+.ws-noprice .pdm-bcard__lines li span:last-child,
+.ws-noprice .ws-co-summary__amt, .ws-noprice .ws-co-summary__row-note, .ws-noprice .ws-checkout__foot-v, .ws-noprice .ws-co-voucher__amt { display: none !important; }
+.ws-basket__office {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 12px 14px; border-radius: 12px; background: var(--color-background-secondary, #F4EFE8);
+  font-size: 11.5px; line-height: 1.45; color: var(--color-text);
+}
+.ws-basket__office svg { flex: none; margin-top: 1px; color: var(--color-primary); }
+.ws-grid__office {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 12px;
+  font-size: 11px; color: var(--color-text-muted);
+}
+.ws-grid__office svg { color: var(--color-primary); flex: none; }
+.ws-grid__office strong { color: var(--color-text); }

@@ -1256,10 +1256,53 @@ function dispatch($m, $p) {
     }
     json_out($cats);
   }
+  /* ASSORTIMENT PAR BUREAU (migration 0113). Un bureau (personne morale) peut
+     ne recevoir qu'une partie du catalogue (ws_office_products) et commander
+     sans voir les prix (show_prices=0). Le filtre est une RÉDUCTION du
+     catalogue déjà servi (canal, saison, stock, prix d'abord) ; il ne joue
+     que pour un client rattaché (client.office_id) ou un officeId explicite,
+     et la commande le revérifie : le panier n'est jamais cru sur parole. */
+  function office_assortiment($officeId) {
+    static $cache = [];
+    $officeId = (int) $officeId;
+    if ($officeId <= 0) return null;
+    if (array_key_exists($officeId, $cache)) return $cache[$officeId];
+    if (!col_exists('ws_offices', 'assortment_mode')) return $cache[$officeId] = null;
+    $o = row("SELECT id, name, assortment_mode, show_prices, deferred_billing_enabled, shop_id
+                FROM ws_offices WHERE id=? AND active=1", [$officeId]);
+    if (!$o) return $cache[$officeId] = null;
+    $ids = [];
+    if ($o['assortment_mode'] === 'custom' && tbl_exists('ws_office_products'))
+      foreach (rows("SELECT product_id FROM ws_office_products WHERE office_id=?", [$officeId]) as $r) $ids[(int) $r['product_id']] = true;
+    return $cache[$officeId] = ['id' => (int) $o['id'], 'name' => (string) $o['name'], 'mode' => (string) $o['assortment_mode'],
+      'show' => (bool) $o['show_prices'], 'deferred' => (bool) $o['deferred_billing_enabled'],
+      'shopId' => $o['shop_id'] !== null ? (int) $o['shop_id'] : null, 'ids' => $ids];
+  }
+  function office_du_client($cid) {
+    $cid = (int) $cid;
+    if ($cid <= 0 || !col_exists('client', 'office_id')) return null;
+    $c = row("SELECT office_id FROM client WHERE id=?", [$cid]);
+    return ($c && $c['office_id']) ? (int) $c['office_id'] : null;
+  }
+  function office_filtrer(array $liste, $office) {
+    if (!$office || $office['mode'] !== 'custom') return $liste;
+    return array_values(array_filter($liste, static fn ($x) => isset($office['ids'][(int) $x['id']])));
+  }
+  function office_contexte($office) {
+    if (!$office) return null;
+    return ['id' => $office['id'], 'name' => $office['name'], 'assortment' => $office['mode'],
+            'productCount' => $office['mode'] === 'custom' ? count($office['ids']) : null,
+            'showPrices' => $office['show'], 'deferredBilling' => $office['deferred']];
+  }
+
   if ($m === 'GET' && $p === '/catalog/products') {
     $s = qp('shopId'); if (!$s) json_out(['error' => 'shopId requis'], 400);
     photos_refresh_async();   // relance des photos ERP au fil des visites (throttlée, en arrière-plan)
-    json_out(catalog_produits_servis($s, qp('mode'), qp('date'), qp('lang')));
+    $liste = catalog_produits_servis($s, qp('mode'), qp('date'), qp('lang'));
+    // Bureau : l'officeId reçu (réduction seulement, donc sans risque) ou le
+    // rattachement du client connecté, quand le jeton accompagne l'appel.
+    $oidCat = (int) qp('officeId') ?: office_du_client(auth_uid());
+    json_out(office_filtrer($liste, office_assortiment($oidCat)));
   }
   /* ── VENTES CROISÉES — évaluation côté panier (migration 0056). ───────────
      Le navigateur envoie ce qu'il a (panier, boutique, date et heure de
@@ -2899,6 +2942,8 @@ function dispatch($m, $p) {
     //    portion sans prix ERP de portion → idem. Le client ne paie jamais un
     //    montant que la boutique n'a pas réellement fixé.
     $subtotal = 0; $lines = [];
+    // Assortiment du bureau du client connecté : revérifié ligne par ligne.
+    $offCmd = office_assortiment(office_du_client(auth_uid()));
     $storePrices = prix_produits(array_map(static fn($it) => (int) ($it['productId'] ?? 0), $basket), (int) $shop);
     $portPx = erp_portion_options($shop, array_map(static fn ($it2) => (int) ($it2['productId'] ?? 0), $basket));
     foreach ($basket as $it) {
@@ -2915,6 +2960,9 @@ function dispatch($m, $p) {
       if (!product_available_on($p2['id'], $b['deliveryDate'] ?? null, $shop)) {
         json_out(['error' => '« ' . trim((string) $p2['name']) . ' » n\'est pas disponible à la date choisie'
           . ' — retirez-le du panier ou changez de date.'], 409);
+      }
+      if ($offCmd && $offCmd['mode'] === 'custom' && !isset($offCmd['ids'][(int) $p2['id']])) {
+        json_out(['error' => '« ' . trim((string) $p2['name']) . ' » n\'est pas proposé à votre bureau — retirez-le du panier.'], 409);
       }
       if (!isset($storePrices[(int) $p2['id']])) {
         json_out(['error' => 'Prix indisponible pour « ' . trim((string) $p2['name'])
@@ -8419,10 +8467,19 @@ function dispatch($m, $p) {
       $hasAv  = $tblExists('ws_tour_availability');
       $hasSet = $tblExists('ws_office_delivery_settings');
       $hasOff = $hasSet && col_exists('ws_office_delivery_settings', 'cutoff_offset');
-      $rs = rows("SELECT f.id, f.name, f.deferred_billing_enabled, f.drop_minutes, f.tour_id, t.name AS tour
+      $hasAss = col_exists('ws_offices', 'assortment_mode');
+      $rs = rows("SELECT f.id, f.name, f.deferred_billing_enabled, f.drop_minutes, f.tour_id, t.name AS tour"
+                . ($hasAss ? ", f.assortment_mode, f.show_prices" : "") . "
                     FROM ws_offices f JOIN ws_tours t ON t.id = f.tour_id
                    WHERE " . $scope('t.shop_id') . " AND f.active=1 ORDER BY f.name LIMIT 200");
-      json_out(array_map(function ($f) use ($hasAv, $hasSet, $hasOff) {
+      // Assortiment (0113) : produits cochés par bureau, et taille du catalogue
+      // bureau de la boutique — comptés une fois, pas par carte.
+      $assN = [];
+      if ($hasAss && $tblExists('ws_office_products'))
+        foreach (rows("SELECT office_id, COUNT(*) n FROM ws_office_products GROUP BY office_id") as $an) $assN[(int) $an['office_id']] = (int) $an['n'];
+      $catN = null;
+      if ($hasAss && $shopId) { try { $catN = count(catalog_produits_servis((int) $shopId, 'office')); } catch (Throwable $e) { $catN = null; } }
+      json_out(array_map(function ($f) use ($hasAv, $hasSet, $hasOff, $hasAss, $assN, $catN) {
         $daysArr = []; $heure = null; $decal = 1;
         if ($hasAv) {
           $av = rows("SELECT DISTINCT delivery_day, TIME_FORMAT(MIN(cutoff_time),'%H:%i') AS cut
@@ -8447,8 +8504,93 @@ function dispatch($m, $p) {
                 'daysArr' => $daysArr,
                 'cutHeure' => $heure, 'cutDecal' => $decal, 'cutHerite' => $herite,
                 'cut' => $heure === null ? '—' : ($heure . ($decal > 0 ? ' J-' . $decal : ' le jour même')),
-                'drop' => (float) $f['drop_minutes']];
+                'drop' => (float) $f['drop_minutes'],
+                'assortmentMode' => $hasAss ? (string) $f['assortment_mode'] : 'full',
+                'assortmentCount' => $hasAss ? ($assN[(int) $f['id']] ?? 0) : null,
+                'catalogCount' => $catN,
+                'showPrices' => $hasAss ? (bool) $f['show_prices'] : true,
+                'deferredBilling' => (bool) $f['deferred_billing_enabled']];
       }, $rs));
+    }
+
+    /* ASSORTIMENT D'UN BUREAU (0113) — lecture : le bureau, puis le catalogue
+       BUREAU de la boutique (même fonction que le webshop, mode 'office')
+       groupé par catégorie avec l'état coché. Le franchisé ne voit que les
+       bureaux de sa boutique : 404 sinon, sans dire s'il existe ailleurs. */
+    $officeAssortLire = function ($oid) use ($shopId) {
+      if (!col_exists('ws_offices', 'assortment_mode')) json_out(['error' => 'Migration 0113 non appliquée.'], 501);
+      $oSc = ($shopId && col_exists('ws_offices', 'shop_id')) ? " AND (shop_id IS NULL OR shop_id=" . (int) $shopId . ")" : "";
+      $o = row("SELECT id, name, assortment_mode, show_prices, deferred_billing_enabled, shop_id
+                  FROM ws_offices WHERE id=? AND active=1$oSc", [(int) $oid]);
+      if (!$o) json_out(['error' => 'Bureau inconnu, ou hors de votre boutique.'], 404);
+      return $o;
+    };
+    if ($m === 'GET' && $p === '/franchisee/office-assortment') {
+      $oid = (int) qp('officeId'); if (!$oid) json_out(['error' => 'officeId requis'], 400);
+      $o = $officeAssortLire($oid);
+      $shopCat = $o['shop_id'] ?: $shopId;
+      if (!$shopCat) json_out(['error' => 'Bureau sans boutique : impossible de lister le catalogue.'], 409);
+      $liste = catalog_produits_servis((int) $shopCat, 'office');
+      $ids = [];
+      if (tbl_exists('ws_office_products'))
+        foreach (rows("SELECT product_id FROM ws_office_products WHERE office_id=?", [$oid]) as $r) $ids[(int) $r['product_id']] = true;
+      $cats = []; $checked = 0;
+      foreach ($liste as $x) {
+        $cid = (int) ($x['cat_id'] ?? $x['cat'] ?? 0);
+        $cnm = (string) ($x['category'] ?? $x['catName'] ?? $x['cat_name'] ?? '');
+        if ($cnm === '') $cnm = $cid ? ('Catégorie ' . $cid) : 'Sans catégorie';
+        if (!isset($cats[$cid])) $cats[$cid] = ['id' => $cid, 'name' => $cnm, 'products' => []];
+        $on = isset($ids[(int) $x['id']]); if ($on) $checked++;
+        $ch = [];
+        if (!empty($x['office_delivery'])) $ch[] = 'office_delivery';
+        if (!empty($x['click_and_collect'])) $ch[] = 'click_and_collect';
+        $cats[$cid]['products'][] = ['id' => (int) $x['id'], 'name' => (string) $x['name'], 'price' => (float) $x['price'],
+                                     'img' => $x['img'] ?? null, 'channels' => $ch, 'checked' => $on];
+      }
+      usort($cats, static fn ($a, $b) => strcasecmp($a['name'], $b['name']));
+      json_out(['office' => ['id' => (int) $o['id'], 'name' => (string) $o['name'], 'mode' => (string) $o['assortment_mode'],
+                             'showPrices' => (bool) $o['show_prices'], 'deferredBilling' => (bool) $o['deferred_billing_enabled']],
+                'counts' => ['checked' => $checked, 'total' => count($liste)],
+                'categories' => array_values($cats)]);
+    }
+    /* Écriture : mode + prix + la liste entière des produits cochés, en une
+       transaction — le client ne voit jamais un état intermédiaire. */
+    if ($m === 'POST' && $p === '/franchisee/office-assortment') {
+      $b = body();
+      $oid = (int) ($b['officeId'] ?? 0); if (!$oid) json_out(['ok' => false, 'error' => 'Bureau non précisé.'], 400);
+      $o = $officeAssortLire($oid);
+      if (!tbl_exists('ws_office_products')) json_out(['ok' => false, 'error' => 'Table ws_office_products absente — migration 0113 non appliquée.'], 501);
+      $mode = ($b['mode'] ?? 'full') === 'custom' ? 'custom' : 'full';
+      $show = array_key_exists('showPrices', $b) ? (bool) $b['showPrices'] : (bool) $o['show_prices'];
+      if (!$show && !(bool) $o['deferred_billing_enabled'])
+        json_out(['ok' => false, 'error' => 'Prix masqués impossibles sans facturation différée.'], 400);
+      $ids = array_values(array_unique(array_filter(array_map('intval', (array) ($b['productIds'] ?? [])), static fn ($i) => $i > 0)));
+      if ($mode === 'custom' && !$ids)
+        json_out(['ok' => false, 'error' => 'Un assortiment réduit doit proposer au moins un produit.'], 400);
+      // Seuls des produits de la boutique : un identifiant étranger est ignoré, pas enregistré.
+      if ($ids) {
+        $ok = rows("SELECT id FROM ws_products WHERE active=1 AND id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")", $ids);
+        $ids = array_map(static fn ($r) => (int) $r['id'], $ok);
+      }
+      global $pdo;
+      $pdo->beginTransaction();
+      try {
+        q("UPDATE ws_offices SET assortment_mode=?, show_prices=? WHERE id=?", [$mode, $show ? 1 : 0, $oid]);
+        q("DELETE FROM ws_office_products WHERE office_id=?", [$oid]);
+        foreach ($ids as $pid) q("INSERT INTO ws_office_products (office_id, product_id) VALUES (?,?)", [$oid, $pid]);
+        $pdo->commit();
+      } catch (Throwable $e) { $pdo->rollBack(); json_out(['ok' => false, 'error' => 'Enregistrement refusé : ' . $e->getMessage()], 500); }
+      json_out(['ok' => true, 'mode' => $mode, 'count' => count($ids), 'showPrices' => $show]);
+    }
+    /* Aperçu : le catalogue tel qu'un collaborateur de ce bureau le verra. */
+    if ($m === 'GET' && $p === '/franchisee/office-preview') {
+      $oid = (int) qp('officeId'); if (!$oid) json_out(['error' => 'officeId requis'], 400);
+      $o = $officeAssortLire($oid);
+      $shopCat = $o['shop_id'] ?: $shopId;
+      if (!$shopCat) json_out(['error' => 'Bureau sans boutique.'], 409);
+      $off = office_assortiment($oid);
+      json_out(['office' => office_contexte($off), 'showPrices' => (bool) $o['show_prices'],
+                'products' => office_filtrer(catalog_produits_servis((int) $shopCat, 'office'), $off)]);
     }
 
     /* Écriture d'UNE ligne de config bureau — jamais le remplacement de la
@@ -13113,6 +13255,9 @@ function user_payload($id) {
     // inscrite dans une entreprise (seule source que « Délier » ne coupe pas).
     'officeSource' => $officeSource,
     'officeSite' => $officeSite,
+    // Assortiment et affichage des prix du bureau (0113) : le front sait dès
+    // la connexion s'il masque les montants.
+    'office' => function_exists('office_contexte') ? office_contexte(office_assortiment($officeId)) : null,
     'preferredShopId' => $u['preferred_shop_id'] ?? null,
     // Champs que la PWA lisait en SQL direct sur `client` (profil, parrainage,
     // adresse de facturation) : exposés ici pour qu'elle passe par /auth/me.

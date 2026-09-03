@@ -1801,7 +1801,7 @@ function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
   );
 }
 
-function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, notesEnabled, deliveryFeeResult,
+function Basket({ hidePrices, officeName, shop, mode, basket, onClose, onCheckout, onRemove, onNote, notesEnabled, deliveryFeeResult,
                   date, slotTime, onCrossAdd }) {
   /* Les totaux affichés sont un APERÇU, calculé par wsTotaux() : miroir exact
      de l'addition du serveur, seule à faire foi. La commande, elle, est
@@ -1892,6 +1892,12 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
 
       {crossOffer && <CrossPortionStrip calc={crossOffer}/>}
 
+      {hidePrices ? (
+        <div className="ws-basket__office">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16M15 9h3a1 1 0 0 1 1 1v11"/></svg>
+          <span><strong>{t('cart.officeCovered')}</strong> {t('cart.officeNoPay', { name: officeName || '' })}</span>
+        </div>
+      ) : (<>
       <div className="ws-basket__sums">
         {basket.length > 0 && (
           <div className="ws-basket__row">
@@ -1935,6 +1941,7 @@ function Basket({ shop, mode, basket, onClose, onCheckout, onRemove, onNote, not
         </div>
       </div>
 
+      </>)}
       <button className="ws-cta" style={{ background: 'var(--color-primary)' }} {...wsTap(onCheckout, { shield: true })} disabled={!basket.length}>
         {t('cart.checkout')}
         <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>
@@ -5749,7 +5756,10 @@ function ShopFrame({ variant }) {
     // `lang` : les NOMS de produits sont résolus par le serveur selon la
     // langue : changer de langue doit redemander le catalogue, sinon la grille
     // reste dans la langue du premier chargement.
-  }, [shopId, mode, date, lang]);
+  // Le bureau du client change le catalogue servi (assortiment réduit, 0113) :
+  // rechargé à la connexion et à la déconnexion, pas seulement au changement
+  // de boutique, de mode ou de date.
+  }, [shopId, mode, date, lang, user ? user.officeId : null]);
   // Source commune GRILLE + LIGNE DE NAV : le catalogue restreint au créneau
   // et à la date en cours. La règle d'affichage de la nav (« n'afficher que ce
   // qui contient au moins un produit disponible ») est ainsi exactement celle
@@ -6341,8 +6351,11 @@ function ShopFrame({ variant }) {
     );
   }
 
+  // PRIX MASQUÉS (0113) : le bureau du client l'impose ; le prix reste résolu
+  // et facturé serveur, seul l'affichage disparaît (classe sur la racine).
+  const hidePrices = !!(user && user.office && user.office.showPrices === false);
   return (
-    <div className={`ws ws--${variant}`} data-mode={mode}>
+    <div className={`ws ws--${variant}${hidePrices ? ' ws-noprice' : ''}`} data-mode={mode}>
       <Nav shop={shop} mode={mode} onMode={handleMode} onSwitchShop={() => setSwitcherOpen(true)}
            cartCount={cartCount} date={date} onDate={handleDate} user={user} onAccount={handleAccount}
            onAllergens={() => setAllergensOpen(true)}
@@ -6379,6 +6392,12 @@ function ShopFrame({ variant }) {
 
           <CategoryRow active={cat} sub={subCat} onSelect={selectCat} onSelectSub={selectSub} onBack={backToCats} navIcons={navIcons} accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'} tint={mode === 'delivery' ? 'invert(45%) sepia(60%) saturate(600%) hue-rotate(5deg)' : 'invert(15%) sepia(85%) saturate(2400%) hue-rotate(335deg)'} categories={navCats} assortments={seasonChips}/>
 
+          {user && user.office && user.office.assortment === 'custom' && (
+            <div className="ws-grid__office">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16M15 9h3a1 1 0 0 1 1 1v11"/></svg>
+              <span>{t('catalog.officeSelection', { count: user.office.productCount == null ? '' : user.office.productCount })} · <strong>{user.office.name}</strong></span>
+            </div>
+          )}
           <div className="ws-grid">
             {products.map((p) => {
               const bqty = basket.filter((l) => l.productId === p.id).reduce((t, l) => t + l.qty, 0);
@@ -6414,7 +6433,7 @@ function ShopFrame({ variant }) {
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
         </button>
 
-        <Basket shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} deliveryFeeResult={deliveryFeeResult} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
+        <Basket hidePrices={hidePrices} officeName={user && user.office ? user.office.name : ''} shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} deliveryFeeResult={deliveryFeeResult} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
       </div>
 
       {/* Mobile bottom tab bar : 2 buttons, 50/50 split */}
@@ -6448,7 +6467,7 @@ function ShopFrame({ variant }) {
           <div className="ws-drawer__panel">
             <button className="ws-drawer__close" onClick={() => setCartDrawerOpen(false)} aria-label={t('common.close2')}>×</button>
             <div className="ws-drawer__handle" aria-hidden="true"/>
-            <Basket shop={shop} mode={mode} basket={basket} onCheckout={() => { setCartDrawerOpen(false); handleCheckout(); }} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
+            <Basket hidePrices={hidePrices} officeName={user && user.office ? user.office.name : ''} shop={shop} mode={mode} basket={basket} onCheckout={() => { setCartDrawerOpen(false); handleCheckout(); }} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
           </div>
         </div>
       )}
