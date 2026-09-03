@@ -8534,6 +8534,19 @@ function dispatch($m, $p) {
       $ids = [];
       if (tbl_exists('ws_office_products'))
         foreach (rows("SELECT product_id FROM ws_office_products WHERE office_id=?", [$oid]) as $r) $ids[(int) $r['product_id']] = true;
+      // Sous-catégories : libellé par identifiant, pour trier et regrouper
+      // dans l'éditeur (demande du 03/09). Un produit sans sous-catégorie
+      // tombe dans « Autres », en fin de catégorie.
+      $subNom = [];
+      if (tbl_exists('ws_category_subs'))
+        foreach (rows("SELECT id, label FROM ws_category_subs") as $sr) $subNom[(int) $sr['id']] = (string) $sr['label'];
+      usort($liste, static function ($a, $b) use ($subNom) {
+        $ca = (int) ($a['cat_id'] ?? $a['cat'] ?? 0); $cb = (int) ($b['cat_id'] ?? $b['cat'] ?? 0);
+        if ($ca !== $cb) return $ca <=> $cb;
+        $sa = $subNom[(int) ($a['sub_cat_id'] ?? 0)] ?? "\u{FFFF}"; $sb = $subNom[(int) ($b['sub_cat_id'] ?? 0)] ?? "\u{FFFF}";
+        $c = strcasecmp($sa, $sb); if ($c !== 0) return $c;
+        return strcasecmp((string) $a['name'], (string) $b['name']);
+      });
       $cats = []; $checked = 0;
       foreach ($liste as $x) {
         $cid = (int) ($x['cat_id'] ?? $x['cat'] ?? 0);
@@ -8544,8 +8557,10 @@ function dispatch($m, $p) {
         $ch = [];
         if (!empty($x['office_delivery'])) $ch[] = 'office_delivery';
         if (!empty($x['click_and_collect'])) $ch[] = 'click_and_collect';
+        $scid = (int) ($x['sub_cat_id'] ?? 0);
         $cats[$cid]['products'][] = ['id' => (int) $x['id'], 'name' => (string) $x['name'], 'price' => (float) $x['price'],
-                                     'img' => $x['img'] ?? null, 'channels' => $ch, 'checked' => $on];
+                                     'img' => $x['img'] ?? null, 'channels' => $ch, 'checked' => $on,
+                                     'subCatId' => $scid ?: null, 'subCatName' => $subNom[$scid] ?? null];
       }
       usort($cats, static fn ($a, $b) => strcasecmp($a['name'], $b['name']));
       json_out(['office' => ['id' => (int) $o['id'], 'name' => (string) $o['name'], 'mode' => (string) $o['assortment_mode'],
