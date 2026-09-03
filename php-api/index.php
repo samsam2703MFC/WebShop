@@ -7220,13 +7220,21 @@ function dispatch($m, $p) {
       require_once __DIR__ . '/invite_doc.php';
       require_once __DIR__ . '/brochure_doc.php';
       $racine = preg_replace('#/inscription\?.*$#', '', invite_link(''));
-      $doc = brochure_donnees($shopB, $oid ?: null, $racine);
-      if (!$doc) json_out(['ok' => false, 'error' => 'Boutique ou bureau introuvable.'], 404);
-      $qrPng = null;
-      if (!empty($doc['qrUrl'])) { $res = qr_matrix($doc['qrUrl'], 'Q'); if ($res) $qrPng = qr_png($res[0], $res[1], 8, 4); }
+      // Le motif d'un échec REMONTE (la sonde et le franchisé le lisent) : un
+      // « Erreur interne » muet a caché une colonne inexistante le 03/09.
+      try {
+        $doc = brochure_donnees($shopB, $oid ?: null, $racine);
+        if (!$doc) json_out(['ok' => false, 'error' => 'Boutique ou bureau introuvable.'], 404);
+        $qrPng = null;
+        if (!empty($doc['qrUrl'])) { $res = qr_matrix($doc['qrUrl'], 'Q'); if ($res) $qrPng = qr_png($res[0], $res[1], 8, 4); }
+        $html = brochure_render($doc, $racine, $qrPng);
+      } catch (Throwable $e) {
+        error_log('[ws] dossier : ' . $e->getMessage());
+        json_out(['ok' => false, 'error' => 'Dossier non produit : ' . $e->getMessage()], 500);
+      }
       header('Content-Type: text/html; charset=utf-8');
       header('Cache-Control: no-store');
-      echo brochure_render($doc, $racine, $qrPng);
+      echo $html;
       exit;
     }
 

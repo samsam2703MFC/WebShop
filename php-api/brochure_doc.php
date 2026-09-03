@@ -45,7 +45,10 @@ function brochure_eur($v) { return number_format((float) $v, 2, ',', ' ') . "\u{
 /* ── LES DONNÉES (lecture seule) ────────────────────────────────────────── */
 function brochure_donnees($shopId, $officeId = null, $racine = '') {
   $shopId = (int) $shopId; $officeId = $officeId ? (int) $officeId : null;
-  $shop = row("SELECT id, name, city, address, phone, email, webshop_url FROM shops WHERE id = ?", [$shopId]);
+  // shops n'a pas de colonne address : l'adresse se compose de street + street_num
+  // (même expression que la route /shops). webshop_url n'existe pas partout.
+  $shop = row("SELECT id, name, city, email, phone, TRIM(CONCAT_WS(' ', street, street_num)) AS address"
+            . (col_exists('shops', 'webshop_url') ? ", webshop_url" : ", NULL AS webshop_url") . " FROM shops WHERE id = ?", [$shopId]);
   if (!$shop) return null;
 
   $office = null; $off = null; $qrUrl = null; $qrCode = null;
