@@ -109,7 +109,15 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
 
   // Catalogue BUREAU de la boutique (canal livraison au bureau), réduit à
   // l'assortiment du bureau s'il en a un — exactement ce que le client verra.
-  $liste = catalog_produits_servis($shopId, 'office', $date);
+  /* Saisons cochées : leurs produits entrent même hors période à la date
+     (dossier imprimé d'avance). Les ids ERP viennent des gammes publiées. */
+  $forcer = null;
+  if (is_array($saisonsKeys) && $saisonsKeys && function_exists('erp_seasons') && function_exists('erp_seasons_enabled') && erp_seasons_enabled()) {
+    $voulu = array_fill_keys(array_map('strval', $saisonsKeys), true);
+    $forcer = [];
+    foreach (erp_seasons() as $g) if (isset($voulu[(string) $g['id']])) $forcer[] = (int) $g['erpId'];
+  }
+  $liste = catalog_produits_servis($shopId, 'office', $date, '', $forcer);
   if ($off) $liste = office_filtrer($liste, $off);
   if ($sansSaison) $liste = array_values(array_filter($liste, static fn ($x) => empty($x['season'])));
   /* Saisons choisies dans la modale : un produit saisonnier ne reste que si sa

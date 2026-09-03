@@ -412,7 +412,7 @@ function ws_voucher_upsert(array $o) {
      Le prix ERP est appliqué EN PHP (array_filter sur price > 0), après la
      requête : aucune clause SQL ne peut le répliquer. Partager la fonction est
      donc la seule façon d'empêcher les deux vues de diverger à nouveau. */
-  function catalog_produits_servis($s, $mode = '', $date = null, $lang = '') {
+  function catalog_produits_servis($s, $mode = '', $date = null, $lang = '', $forcer = null) {
     // Filtre livraison bureau PARTAGÉ (source unique) : en mode 'delivery'/'office',
     // on EXCLUT serveur-side les produits non éligibles au canal bureau
     // (office_delivery=0), pour que TOUT front (webshop online, webshop après
@@ -435,7 +435,7 @@ function ws_voucher_upsert(array $o) {
     // DE RETRAIT/LIVRAISON, pas sur aujourd'hui. Un client qui commande le
     // 28 novembre pour le 2 décembre doit voir la gamme de Noël ; c'est la date
     // de remise de la marchandise qui fait foi, pas celle de la commande.
-    [$seasonWhere, $seasonArgs] = availability_where('p', $date, $s);
+    [$seasonWhere, $seasonArgs] = availability_where('p', $date, $s, $forcer);
     // Déclencheurs de menu explicites (0078) : injectés dans has_menu_options
     // seulement si la table existe (réplica pas encore migré → ancien chemin).
     $trgSql = tbl_exists('ws_bundle_triggers')
@@ -7226,14 +7226,27 @@ function dispatch($m, $p) {
       $ids = array_values(array_unique(array_map(static fn ($x) => (int) ($x['cat_id'] ?? $x['cat'] ?? 0), $liste)));
       $cats = $ids ? rows("SELECT id, slug, label FROM ws_categories WHERE id IN (" . implode(',', array_fill(0, count($ids), '?')) . ") ORDER BY sort_order, label", $ids) : [];
       $n = []; foreach ($liste as $x) { $k = (int) ($x['cat_id'] ?? $x['cat'] ?? 0); $n[$k] = ($n[$k] ?? 0) + 1; }
-      $sais = 0; $saisM = [];
-      foreach ($liste as $x) {
-        if (empty($x['season'])) continue;
-        $sais++; $sk = (string) $x['season'];
-        if (!isset($saisM[$sk])) $saisM[$sk] = ['key' => $sk, 'nom' => (string) (($x['season_name'] ?? '') ?: $sk), 'n' => 0];
-        $saisM[$sk]['n']++;
+      /* Saisons : TOUTES les gammes saisonnières publiées de l'ERP
+         (product-availability-periods), pas seulement celles en période à la
+         date. Pour chacune : n = produits de cette gamme dans l'assortiment du
+         bureau, dates ignorées ; nDate = ceux servis à la date choisie. La
+         modale coche par défaut les gammes en période, et laisse cocher les
+         autres pour un dossier imprimé d'avance. */
+      $sais = 0; foreach ($liste as $x) if (!empty($x['season'])) $sais++;
+      $saisL = [];
+      if (function_exists('erp_seasons') && function_exists('erp_seasons_enabled') && erp_seasons_enabled()) {
+        $pub = erp_seasons();
+        $erpIds = array_map(static fn ($g) => (int) $g['erpId'], $pub);
+        $tout = $erpIds ? catalog_produits_servis($shopB, 'office', $dateB, '', $erpIds) : [];
+        if ($off) $tout = office_filtrer($tout, $off);
+        $nTout = []; foreach ($tout as $x) if (!empty($x['season'])) { $k = (string) $x['season']; $nTout[$k] = ($nTout[$k] ?? 0) + 1; }
+        $nDate = []; foreach ($liste as $x) if (!empty($x['season'])) { $k = (string) $x['season']; $nDate[$k] = ($nDate[$k] ?? 0) + 1; }
+        foreach ($pub as $g) {
+          $k = (string) $g['id'];
+          $saisL[] = ['key' => $k, 'nom' => (string) ($g['label'] ?: $k), 'n' => (int) ($nTout[$k] ?? 0), 'nDate' => (int) ($nDate[$k] ?? 0)];
+        }
+        usort($saisL, static fn ($a, $b) => strcasecmp($a['nom'], $b['nom']));
       }
-      $saisL = array_values($saisM); usort($saisL, static fn ($a, $b) => strcasecmp($a['nom'], $b['nom']));
       json_out(['ok' => true, 'date' => $dateB, 'produits' => count($liste), 'saisonniers' => $sais, 'saisons' => $saisL,
                 'cats' => array_map(static fn ($c) => ['key' => (string) ($c['slug'] ?: $c['label']), 'nom' => (string) $c['label'], 'n' => $n[(int) $c['id']] ?? 0], $cats)]);
     }
@@ -12554,7 +12567,7 @@ function basket_pa($shop, $mode, $productIds) {
 
    Renvoie [fragment SQL, arguments] à concaténer dans un WHERE. $alias est
    l'alias de la table produit. */
-function availability_where($alias, $date = null, $shopId = null) {
+function availability_where($alias, $date = null, $shopId = null, $forcer = null) {
   /* SOURCE : L'ENDPOINT. Le SQL qui vivait ici lisait
      product_availability_period(_connection), copies locales des tables de
      l'ERP. shops/{id}/products/available?include=availability_periods sert la
@@ -12589,7 +12602,7 @@ function availability_where($alias, $date = null, $shopId = null) {
   }
   if ($sid <= 0) return ['', []];
 
-  $verdict = erp_produits_de_saison($sid, $date);
+  $verdict = erp_produits_de_saison($sid, $date, 'fr', $forcer);
   if (!is_array($verdict)) return ['', []];          // ERP muet
   $hors = [];
   foreach ($verdict as $pid => $vendable) if (!$vendable) $hors[] = (int) $pid;

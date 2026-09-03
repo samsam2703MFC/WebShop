@@ -357,7 +357,10 @@ function erp_allergenes($shopId, $lang = 'fr') {
  *
  * Rend null si l'ERP est muet — l'appelant doit alors NE PAS filtrer, plutôt
  * que masquer tout le catalogue sur une panne réseau. */
-function erp_produits_de_saison($shopId, $date = null, $lang = 'fr') {
+/* $forcer : ids ERP de périodes à tenir pour ACTIVES quelle que soit la date
+   (dossier imprimé d'avance : la gamme de Noël cochée en novembre). */
+function erp_produits_de_saison($shopId, $date = null, $lang = 'fr', $forcer = null) {
+  $forcer = is_array($forcer) ? array_fill_keys(array_map('intval', $forcer), true) : [];
   $rows = erp_available_brut($shopId, ERP_AV_INCLUDE, $lang);
   if (!is_array($rows)) return null;
   $d  = (is_string($date) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) ? $date : date('Y-m-d');
@@ -380,6 +383,7 @@ function erp_produits_de_saison($shopId, $date = null, $lang = 'fr') {
          produits. Les onze vraies gammes saisonnières portent toutes 1. */
       if (array_key_exists('webshop_active', $p) && !(int) $p['webshop_active']) continue;
       $actives = true;
+      if ($forcer && isset($forcer[(int) ($p['id'] ?? 0)])) { $dedans = true; break; }
       if (empty($p['is_recurring'])) {
         $s = (string) ($p['start_date'] ?? ''); $e = (string) ($p['end_date'] ?? '');
         if ($s !== '' && $e !== '' && $d >= $s && $d <= $e) { $dedans = true; break; }
