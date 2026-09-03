@@ -8572,7 +8572,10 @@ function dispatch($m, $p) {
         $ok = rows("SELECT id FROM ws_products WHERE active=1 AND id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")", $ids);
         $ids = array_map(static fn ($r) => (int) $r['id'], $ok);
       }
-      global $pdo;
+      // La connexion vit dans db() (statique de lib.php), pas dans une globale :
+      // « global $pdo » rendait null et l'écriture partait en 500 — constaté
+      // par la sonde d'endpoints le 03/09, à la première écriture réelle.
+      $pdo = db();
       $pdo->beginTransaction();
       try {
         q("UPDATE ws_offices SET assortment_mode=?, show_prices=? WHERE id=?", [$mode, $show ? 1 : 0, $oid]);
