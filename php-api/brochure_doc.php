@@ -60,9 +60,29 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
     $office = row("SELECT id, name, address, postal_code, city, deferred_billing_enabled, drop_minutes FROM ws_offices WHERE id = ? AND active = 1", [$officeId]);
     if (!$office) return null;
     $off = function_exists('office_assortiment') ? office_assortiment($officeId) : null;
+    // LE QR MÈNE TOUJOURS AU FORMULAIRE DE COMPTE, RATTACHÉ À CE BUREAU : le lien
+    // d'invitation existant (code court, révocable depuis la fiche du bureau),
+    // sinon un lien ÉMIS ICI, valable un an — une brochure imprimée vit plus
+    // longtemps que l'affiche (30 jours). Même charge que l'émission depuis la
+    // console : boutique, bureau, société, site, départements, code postal.
+    $qrExpire = null;
     if (function_exists('invite_for_office')) {
       [$inv] = invite_for_office($officeId);
-      if ($inv && !empty($inv['jti'])) { $qrUrl = invite_link_court($inv['jti']); $qrCode = (string) $inv['jti']; }
+      if (!$inv && function_exists('invite_issue')) {
+        $site = row("SELECT id FROM ws_office_delivery_sites WHERE office_client_id=? AND active=1 ORDER BY is_default DESC, id LIMIT 1", [$officeId]);
+        $cli  = col_exists('ws_offices', 'client_id') ? row("SELECT client_id FROM ws_offices WHERE id=?", [$officeId]) : null;
+        $cid  = (int) ($cli['client_id'] ?? 0);
+        $deps = [];
+        if ($cid && tbl_exists('b2b_client_company_department')) {
+          $dk = col_exists('b2b_client_company_department', 'id_client') ? 'id_client' : (col_exists('b2b_client_company_department', 'client_id') ? 'client_id' : null);
+          if ($dk) $deps = array_map(static fn ($x) => (int) $x['id'], rows("SELECT id FROM b2b_client_company_department WHERE $dk=? ORDER BY id", [$cid]));
+        }
+        $oShop = col_exists('ws_offices', 'shop_id') ? row("SELECT shop_id, postal_code FROM ws_offices WHERE id=?", [$officeId]) : null;
+        $inv = invite_issue(['shop' => (int) (($oShop['shop_id'] ?? null) ?: $shopId), 'office' => $officeId, 'client' => $cid ?: null,
+                             'site' => $site ? (int) $site['id'] : null, 'depts' => $deps, 'domain' => null,
+                             'cp' => ($oShop['postal_code'] ?? null) ?: null, 'by' => 'brochure'], 365);
+      }
+      if ($inv && !empty($inv['jti'])) { $qrUrl = invite_link_court($inv['jti']); $qrCode = (string) $inv['jti']; $qrExpire = !empty($inv['expires_at']) ? date('d/m/Y', strtotime($inv['expires_at'])) : null; }
     }
   }
   $showPrices = $off ? (bool) $off['show'] : true;
@@ -225,7 +245,7 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
   return ['hero' => $hero, 'shop' => ['name' => (string) $shop['name'], 'city' => (string) $shop['city'], 'address' => (string) ($shop['address'] ?? ''),
                      'phone' => (string) ($shop['phone'] ?? ''), 'email' => (string) ($shop['email'] ?? '')],
           'office' => $office ? ['name' => (string) $office['name'], 'assortment' => $off ? $off['mode'] : 'full'] : null,
-          'showPrices' => $showPrices, 'qrUrl' => $qrUrl, 'qrCode' => $qrCode,
+          'showPrices' => $showPrices, 'qrUrl' => $qrUrl, 'qrCode' => $qrCode, 'qrExpire' => $qrExpire,
           'categories' => $categories, 'saisons' => $saisons, 'formules' => $formules, 'bons' => $bons, 'commande' => $commande,
           'date' => date('d/m/Y'), 'dispo' => date('d/m/Y', strtotime($date)), 'sansSaison' => (bool) $sansSaison, 'mois' => ['', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'][(int) date('n')] . ' ' . date('Y')];
 }
@@ -279,8 +299,8 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
           . (($shop['phone'] || $shop['email']) ? '<div class="bloc__l">' . $e(trim($shop['phone'] . ($shop['phone'] && $shop['email'] ? ' · ' : '') . $shop['email'])) . '</div>' : '') . '</div>';
   if ($d['office'] && $qrSrc) {
     $cover .= '<div class="couv__qr"><img class="qr" src="' . $qrSrc . '" alt="QR : créer mon compte rattaché à mon bureau"><div class="bloc"><div class="etiquette">Votre compte, rattaché à votre bureau</div>'
-            . '<div class="bloc__l">Scannez : votre compte se crée déjà rattaché à <strong>' . $e($d['office']['name']) . '</strong>' . ($d['office']['assortment'] === 'custom' ? ', avec votre assortiment' : '') . ($prix ? '' : ', sans montant à régler') . '.</div>'
-            . '<div class="bloc__l bloc__l--petit">Ou ouvrez : <strong class="code">' . $e(preg_replace('#^https?://#', '', (string) $d['qrUrl'])) . '</strong></div></div></div>';
+            . '<div class="bloc__l">Scannez pour créer votre compte sur le webshop, déjà rattaché à <strong>' . $e($d['office']['name']) . '</strong>' . ($d['office']['assortment'] === 'custom' ? ', avec votre assortiment' : '') . ($prix ? '' : ', sans montant à régler') . '.</div>'
+            . '<div class="bloc__l bloc__l--petit">Ou ouvrez : <strong class="code">' . $e(preg_replace('#^https?://#', '', (string) $d['qrUrl'])) . '</strong>' . (!empty($d['qrExpire']) ? ' · lien valable jusqu\'au ' . $e($d['qrExpire']) : '') . '</div></div></div>';
   } elseif ($d['office']) {
     $cover .= '<div class="bloc"><div class="etiquette">Votre compte, rattaché à votre bureau</div><div class="bloc__l">Demandez le lien d\'invitation de <strong>' . $e($d['office']['name']) . '</strong> à votre boutique : votre compte se crée déjà rattaché.</div></div>';
   } else {
