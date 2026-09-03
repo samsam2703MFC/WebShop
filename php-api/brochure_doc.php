@@ -209,7 +209,7 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
   }
   $total = 1 + count($pagesCat) + (($d['formules'] || $d['bons'] || $d['commande']['jours'] || $d['commande']['webshop']) ? 1 : 0);
 
-  $entete = static fn ($titre, $sous) => '<header class="en-tete"><div><div class="sur-titre">' . $e($titreShop) . ' · Carte &amp; tarifs</div><h2 class="titre">' . $e($titre) . '</h2></div><div class="en-tete__d">' . $sous . '</div></header>';
+  $entete = static fn ($titre, $sous = '') => '<header class="en-tete"><div><div class="sur-titre">' . $e($titreShop) . ' · Carte &amp; tarifs</div><h2 class="titre">' . $e($titre) . '</h2></div></header>';
   $pied = function ($n) use ($e, $logoSrc, $shop, $total, $prix) {
     return '<footer class="pied">' . ($logoSrc ? '<img class="pied__logo" src="' . $logoSrc . '" alt="L\'Atelier">' : '')
          . '<span>' . ($prix ? 'Prix TVAC · ' : '') . 'sous réserve de disponibilité et de saison · ' . $e($shop['name']) . ($shop['phone'] ? ' · ' . $e($shop['phone']) : '') . '</span><span class="pied__n">' . $n . ' / ' . $total . '</span></footer>';
@@ -242,7 +242,7 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
     $c = $pc['cat'];
     $h = '<section class="page">' . $entete($c['label'] . ($pc['suite'] ? ' (suite)' : ''), $c['count'] . ' produit' . ($c['count'] > 1 ? 's' : '') . ' · ' . count($c['groupes']) . ' famille' . (count($c['groupes']) > 1 ? 's' : '') . '<br>Livraison au bureau');
     foreach ($pc['items'] as $it) {
-      if ($it['t'] === 'sub') { $g = $it['g']; $h .= '<div class="sous"><span class="sous__t">' . $e($g['label']) . '</span><span class="sous__n">' . count($g['products']) . ' produit' . (count($g['products']) > 1 ? 's' : '') . '</span></div>'; continue; }
+      if ($it['t'] === 'sub') { $g = $it['g']; $h .= '<div class="sous"><span class="sous__t">' . $e($g['label']) . '</span></div>'; continue; }
       $p = $it['p'];
       $h .= '<div class="ligne"><div class="vignette">' . ($p['img'] ? '<img src="' . $e($p['img']) . '" alt="">' : '') . '</div><div class="ligne__c"><div class="ligne__nom">' . $e($p['name']) . '</div>';
       $det = [];
