@@ -41,6 +41,26 @@ function brochure_police($fichier, $poids, $famille = 'Gotham') {
        . ") format('$fmt');font-weight:$poids;font-style:normal;font-display:swap}";
 }
 function brochure_eur($v) { return number_format((float) $v, 2, ',', ' ') . "\u{a0}€"; }
+/* Une photo servie par le webshop (assets/product_pictures/…, assets/seasons/…)
+   est EMBARQUÉE dans le dossier : lue sur le disque du serveur, jamais liée.
+   Liée, elle dépend de l'hôte, du réseau et du cache de celui qui imprime —
+   le premier PDF est sorti avec des icônes d'image cassée à la place des
+   cookies. Introuvable sur le disque : on garde l'URL absolue en repli. */
+function brochure_photo($img, $racine) {
+  $img = (string) $img;
+  if ($img === '' || strpos($img, 'placeholder') !== false) return '';
+  $rel = preg_replace('#^https?://[^/]+/webshop/#', '', $img);
+  $rel = ltrim($rel, '/');
+  if (!preg_match('#^https?://#', $rel) && preg_match('#^[A-Za-z0-9_./-]+\.(webp|jpe?g|png)$#', $rel) && strpos($rel, '..') === false) {
+    $b = brochure_lire($rel);
+    if ($b !== null && strlen($b) > 0) {
+      $ext = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
+      $mime = $ext === 'webp' ? 'image/webp' : ($ext === 'png' ? 'image/png' : 'image/jpeg');
+      return 'data:' . $mime . ';base64,' . base64_encode($b);
+    }
+  }
+  return preg_match('#^https?://#', $img) ? $img : rtrim($racine, '/') . '/' . ltrim($img, '/');
+}
 
 /* ── LES DONNÉES (lecture seule) ────────────────────────────────────────── */
 function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null, $sansSaison = false, $catsKeys = null) {
@@ -129,7 +149,7 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
         'price' => (float) $x['price'], 'portions' => $portions,
         'allergens' => is_array($x['allergens'] ?? null) ? array_values(array_map('strval', $x['allergens'])) : null,
         'season' => !empty($x['season']) ? (string) ($x['season_name'] ?: $x['season']) : '',
-        'img' => ($img !== '' && strpos($img, 'placeholder') === false) ? (preg_match('#^https?://#', $img) ? $img : rtrim($racine, '/') . '/' . ltrim($img, '/')) : '',
+        'img' => brochure_photo($img, $racine),
       ];
     }
     usort($groupes, static fn ($a, $b) => $a['ordre'] <=> $b['ordre']);
@@ -146,8 +166,7 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
     $k = (string) $x['season'];
     if (!isset($saisons[$k])) {
       $si = (string) ($x['season_img'] ?? '');
-      $saisons[$k] = ['key' => $k, 'name' => (string) ($x['season_name'] ?: $k), 'n' => 0,
-                      'img' => ($si !== '' ? (preg_match('#^https?://#', $si) ? $si : rtrim($racine, '/') . '/' . ltrim($si, '/')) : '')];
+      $saisons[$k] = ['key' => $k, 'name' => (string) ($x['season_name'] ?: $k), 'n' => 0, 'img' => brochure_photo($si, $racine)];
     }
     $saisons[$k]['n']++;
   }
@@ -370,7 +389,7 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
 .page{width:210mm;min-height:297mm;background:var(--color-surface);padding:14mm 15mm 12mm;display:flex;flex-direction:column;gap:3.2mm;box-shadow:0 2px 14px rgba(0,0,0,.10);position:relative}
 .page--couv{background:var(--color-background-secondary);padding:0;gap:0}
 .sur-titre{font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--color-primary)}
-.etiquette{font-size:11px;font-weight:500;letter-spacing:var(--tracking-admin);text-transform:uppercase;color:var(--color-text-muted);margin-bottom:3px}
+.etiquette{font-size:11px;font-weight:500;letter-spacing:var(--tracking-admin);text-transform:uppercase;color:var(--color-text-muted);margin-bottom:3px;overflow-wrap:anywhere}
 .titre{font-family:var(--font-display);font-weight:400;font-size:32px;line-height:1.05;margin:4px 0 0}
 .en-tete{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;padding-bottom:2mm}
 .en-tete__d{font-size:11px;color:var(--color-text-muted);text-align:right;line-height:1.5}
@@ -397,8 +416,8 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
 .couv__haut{padding:4mm 16mm 0;display:flex;flex-direction:column;gap:2mm}.couv__logo{width:62mm;height:auto;display:block;margin-bottom:2mm}
 .couv__titre{font-family:var(--font-display);font-weight:400;font-size:52px;line-height:1.02;margin:0}.couv__sous{font-size:16px;color:var(--color-text-muted)}
 .page--couv .filet{margin:6mm 16mm 0}.couv__grille{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6mm;padding:6mm 16mm 0}
-.couv__qr{display:flex;gap:4mm;align-items:flex-start}.qr{width:28mm;height:28mm;flex:none;border-radius:2mm;border:1px solid var(--color-border-tertiary);display:block;background:#fff}
-.code{font-family:Consolas,'SFMono-Regular',monospace;letter-spacing:.08em;color:var(--color-primary)}
+.couv__qr{display:flex;gap:4mm;align-items:flex-start;min-width:0}.couv__qr .bloc{min-width:0;flex:1 1 auto}.qr{width:28mm;height:28mm;flex:none;border-radius:2mm;border:1px solid var(--color-border-tertiary);display:block;background:#fff}
+.code{font-family:Consolas,'SFMono-Regular',monospace;letter-spacing:.02em;color:var(--color-primary);word-break:break-all;overflow-wrap:anywhere;font-size:11px}
 .couv__bas{margin-top:auto;display:flex;justify-content:space-between;align-items:flex-end;gap:6mm;padding:0 16mm 14mm}.chips{display:flex;gap:2mm;flex-wrap:wrap}
 .chip{font-size:11px;font-weight:500;padding:1.4mm 2.8mm;border-radius:999px;background:var(--color-primary);color:#fff}.colophon{font-size:11px;color:#8a8079;text-align:right;white-space:nowrap;flex:none}
 @page{size:A4;margin:0}
