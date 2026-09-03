@@ -7202,6 +7202,34 @@ function dispatch($m, $p) {
       exit;
     }
 
+    /* OPTIONS DU DOSSIER — ce que la modale « Imprimer le dossier » propose :
+       les gammes RÉELLEMENT servies pour cette boutique (ou ce bureau, avec son
+       assortiment) à la date donnée, avec leur nombre de produits. Lu à
+       l'ouverture de la modale, jamais depuis une table en mémoire. */
+    if ($m === 'GET' && $p === '/franchisee/office-brochure-options') {
+      $oid = (int) qp('office', 0);
+      $shopB = $shopId ? (int) $shopId : 0;
+      $off = null;
+      if ($oid) {
+        $oSc = ($shopId && col_exists('ws_offices', 'shop_id')) ? " AND (shop_id IS NULL OR shop_id=" . (int) $shopId . ")" : "";
+        $ob = row("SELECT id, shop_id FROM ws_offices WHERE id=? AND active=1$oSc", [$oid]);
+        if (!$ob) json_out(['ok' => false, 'error' => 'Bureau inconnu, ou hors de votre boutique.'], 404);
+        if (!$shopB && !empty($ob['shop_id'])) $shopB = (int) $ob['shop_id'];
+        $off = office_assortiment($oid);
+      }
+      if (!$shopB) json_out(['ok' => false, 'error' => 'Boutique non résolue : ouvrez la console avec ?shop=<id>.'], 400);
+      $dateQ = qp('date', '');
+      $dateB = ($dateQ && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateQ)) ? $dateQ : date('Y-m-d');
+      $liste = catalog_produits_servis($shopB, 'office', $dateB);
+      if ($off) $liste = office_filtrer($liste, $off);
+      $ids = array_values(array_unique(array_map(static fn ($x) => (int) ($x['cat_id'] ?? $x['cat'] ?? 0), $liste)));
+      $cats = $ids ? rows("SELECT id, slug, label FROM ws_categories WHERE id IN (" . implode(',', array_fill(0, count($ids), '?')) . ") ORDER BY sort_order, label", $ids) : [];
+      $n = []; foreach ($liste as $x) { $k = (int) ($x['cat_id'] ?? $x['cat'] ?? 0); $n[$k] = ($n[$k] ?? 0) + 1; }
+      $sais = 0; foreach ($liste as $x) if (!empty($x['season'])) $sais++;
+      json_out(['ok' => true, 'date' => $dateB, 'produits' => count($liste), 'saisonniers' => $sais,
+                'cats' => array_map(static fn ($c) => ['key' => (string) ($c['slug'] ?: $c['label']), 'nom' => (string) $c['label'], 'n' => $n[(int) $c['id']] ?? 0], $cats)]);
+    }
+
     /* LE DOSSIER « CARTE & TARIFS » (HTML A4, à imprimer ou enregistrer en PDF)
        — pour la boutique, ou pour UN bureau : son assortiment, ses prix ou
        non, le QR de son lien d'invitation. Même ouverture que l'affiche : la
