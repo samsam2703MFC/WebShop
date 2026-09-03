@@ -43,7 +43,7 @@ function brochure_police($fichier, $poids, $famille = 'Gotham') {
 function brochure_eur($v) { return number_format((float) $v, 2, ',', ' ') . "\u{a0}€"; }
 
 /* ── LES DONNÉES (lecture seule) ────────────────────────────────────────── */
-function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null, $sansSaison = false) {
+function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null, $sansSaison = false, $catsKeys = null) {
   $shopId = (int) $shopId; $officeId = $officeId ? (int) $officeId : null;
   // Disponibilité : le catalogue tel qu'il sera servi À CETTE DATE (saisons,
   // périodes ERP), aujourd'hui par défaut ; « sans saison » écarte en plus les
@@ -77,7 +77,13 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
   // du webshop (sort_order, puis libellé).
   $catIds = array_values(array_unique(array_map(static fn ($x) => (int) ($x['cat_id'] ?? $x['cat'] ?? 0), $liste)));
   $subIds = array_values(array_unique(array_filter(array_map(static fn ($x) => (int) ($x['sub_cat_id'] ?? $x['subCat'] ?? 0), $liste))));
-  $cats = $catIds ? rows("SELECT id, label, sort_order FROM ws_categories WHERE id IN (" . implode(',', array_fill(0, count($catIds), '?')) . ") ORDER BY sort_order, label", $catIds) : [];
+  $cats = $catIds ? rows("SELECT id, slug, label, sort_order FROM ws_categories WHERE id IN (" . implode(',', array_fill(0, count($catIds), '?')) . ") ORDER BY sort_order, label", $catIds) : [];
+  // Gammes choisies avant impression : clés = slug (ou libellé sans slug), les
+  // mêmes que la console lit dans fr-dispo-cats. Sans liste : toutes.
+  if (is_array($catsKeys)) {
+    $veut = array_flip(array_map(static fn ($k) => mb_strtolower(trim((string) $k)), $catsKeys));
+    $cats = array_values(array_filter($cats, static fn ($c) => isset($veut[mb_strtolower((string) ($c['slug'] ?: $c['label']))]) || isset($veut[mb_strtolower((string) $c['label'])])));
+  }
   $subs = $subIds ? rows("SELECT id, category_id, label, sort_order FROM ws_category_subs WHERE id IN (" . implode(',', array_fill(0, count($subIds), '?')) . ") ORDER BY sort_order, label", $subIds) : [];
   $subLabel = []; foreach ($subs as $s) $subLabel[(int) $s['id']] = (string) $s['label'];
   $subOrder = []; foreach ($subs as $i => $s) $subOrder[(int) $s['id']] = $i;
