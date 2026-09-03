@@ -263,7 +263,7 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
   if ($d['office'] && $qrSrc) {
     $cover .= '<div class="couv__qr"><img class="qr" src="' . $qrSrc . '" alt="QR : créer mon compte rattaché à mon bureau"><div class="bloc"><div class="etiquette">Votre compte, rattaché à votre bureau</div>'
             . '<div class="bloc__l">Scannez : votre compte se crée déjà rattaché à <strong>' . $e($d['office']['name']) . '</strong>' . ($d['office']['assortment'] === 'custom' ? ', avec votre assortiment' : '') . ($prix ? '' : ', sans montant à régler') . '.</div>'
-            . '<div class="bloc__l bloc__l--petit">Ou tapez le code <strong class="code">' . $e($d['qrCode']) . '</strong> sur la page d\'inscription du webshop.</div></div></div>';
+            . '<div class="bloc__l bloc__l--petit">Ou ouvrez : <strong class="code">' . $e(preg_replace('#^https?://#', '', (string) $d['qrUrl'])) . '</strong></div></div></div>';
   } elseif ($d['office']) {
     $cover .= '<div class="bloc"><div class="etiquette">Votre compte, rattaché à votre bureau</div><div class="bloc__l">Demandez le lien d\'invitation de <strong>' . $e($d['office']['name']) . '</strong> à votre boutique : votre compte se crée déjà rattaché.</div></div>';
   } else {
@@ -293,7 +293,7 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
 
   // Dernière · Formules, bons, commande
   if ($total > 1 + count($pagesCat)) {
-    $h = '<section class="page">' . $entete('Formules &amp; avantages', 'Menus composés · bons en cours<br>Livraison au bureau');
+    $h = '<section class="page">' . $entete('Formules & avantages', 'Menus composés · bons en cours<br>Livraison au bureau');
     if ($d['formules']) {
       $h .= '<div class="rubrique">Formules · menus composés</div>';
       foreach ($d['formules'] as $f) {
