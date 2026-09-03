@@ -108,6 +108,7 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
         'name' => (string) $x['name'], 'desc' => trim((string) ($x['description'] ?? '')),
         'price' => (float) $x['price'], 'portions' => $portions,
         'allergens' => is_array($x['allergens'] ?? null) ? array_values(array_map('strval', $x['allergens'])) : null,
+        'season' => !empty($x['season']) ? (string) ($x['season_name'] ?: $x['season']) : '',
         'img' => ($img !== '' && strpos($img, 'placeholder') === false) ? (preg_match('#^https?://#', $img) ? $img : rtrim($racine, '/') . '/' . ltrim($img, '/')) : '',
       ];
     }
@@ -116,6 +117,21 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
     unset($g);
     $categories[] = ['label' => (string) $c['label'], 'count' => count($prods), 'groupes' => array_values($groupes)];
   }
+
+  // Saisons servies à cette date : nom, photo de gamme, nombre de produits —
+  // les mêmes champs que le webshop (season, season_name, season_img).
+  $saisons = [];
+  foreach ($liste as $x) {
+    if (empty($x['season'])) continue;
+    $k = (string) $x['season'];
+    if (!isset($saisons[$k])) {
+      $si = (string) ($x['season_img'] ?? '');
+      $saisons[$k] = ['key' => $k, 'name' => (string) ($x['season_name'] ?: $k), 'n' => 0,
+                      'img' => ($si !== '' ? (preg_match('#^https?://#', $si) ? $si : rtrim($racine, '/') . '/' . ltrim($si, '/')) : '')];
+    }
+    $saisons[$k]['n']++;
+  }
+  $saisons = array_values($saisons);
 
   // Formules (menus composés) des produits servis — seulement s'il en existe.
   $formules = [];
@@ -210,7 +226,7 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
                      'phone' => (string) ($shop['phone'] ?? ''), 'email' => (string) ($shop['email'] ?? '')],
           'office' => $office ? ['name' => (string) $office['name'], 'assortment' => $off ? $off['mode'] : 'full'] : null,
           'showPrices' => $showPrices, 'qrUrl' => $qrUrl, 'qrCode' => $qrCode,
-          'categories' => $categories, 'formules' => $formules, 'bons' => $bons, 'commande' => $commande,
+          'categories' => $categories, 'saisons' => $saisons, 'formules' => $formules, 'bons' => $bons, 'commande' => $commande,
           'date' => date('d/m/Y'), 'dispo' => date('d/m/Y', strtotime($date)), 'sansSaison' => (bool) $sansSaison, 'mois' => ['', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'][(int) date('n')] . ' ' . date('Y')];
 }
 
@@ -243,7 +259,8 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
     if ($cur) $chunks[] = $cur;
     foreach ($chunks as $i => $ch) $pagesCat[] = ['cat' => $c, 'items' => $ch, 'suite' => $i > 0, 'derniere' => $i === count($chunks) - 1];
   }
-  $total = 1 + count($pagesCat) + (($d['formules'] || $d['bons'] || $d['commande']['jours'] || $d['commande']['webshop']) ? 1 : 0);
+  $saisons = $d['saisons'] ?? [];
+  $total = 1 + count($pagesCat) + (($saisons || $d['formules'] || $d['bons'] || $d['commande']['jours'] || $d['commande']['webshop']) ? 1 : 0);
 
   $entete = static fn ($titre, $sous = '') => '<header class="en-tete"><div><div class="sur-titre">' . $e($titreShop) . ' · Carte &amp; tarifs</div><h2 class="titre">' . $e($titre) . '</h2></div></header>';
   $pied = function ($n) use ($e, $logoSrc, $shop, $total, $prix) {
@@ -280,7 +297,7 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
     foreach ($pc['items'] as $it) {
       if ($it['t'] === 'sub') { $g = $it['g']; $h .= '<div class="sous"><span class="sous__t">' . $e($g['label']) . '</span></div>'; continue; }
       $p = $it['p'];
-      $h .= '<div class="ligne"><div class="vignette">' . ($p['img'] ? '<img src="' . $e($p['img']) . '" alt="">' : '') . '</div><div class="ligne__c"><div class="ligne__nom">' . $e($p['name']) . '</div>';
+      $h .= '<div class="ligne"><div class="vignette">' . ($p['img'] ? '<img src="' . $e($p['img']) . '" alt="">' : '') . '</div><div class="ligne__c"><div class="ligne__nom">' . $e($p['name']) . (!empty($p['season']) ? ' <span class="saison">' . $e($p['season']) . '</span>' : '') . '</div>';
       $det = [];
       if ($p['desc'] !== '') $det[] = $e($p['desc']);
       if ($p['allergens']) $det[] = 'Allergènes : ' . $e(implode(', ', $p['allergens']));
@@ -293,7 +310,12 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
 
   // Dernière · Formules, bons, commande
   if ($total > 1 + count($pagesCat)) {
-    $h = '<section class="page">' . $entete('Formules & avantages', 'Menus composés · bons en cours<br>Livraison au bureau');
+    $h = '<section class="page">' . $entete($saisons ? 'Saisons, formules & avantages' : 'Formules & avantages');
+    if ($saisons) {
+      $h .= '<div class="rubrique">Gammes de saison servies' . (!empty($d['dispo']) ? ' au ' . $e($d['dispo']) : '') . '</div><div class="saisons">';
+      foreach ($saisons as $sa) $h .= '<div class="saison-c">' . ($sa['img'] ? '<img src="' . $e($sa['img']) . '" alt="">' : '<div class="saison-c__vide"></div>') . '<div><div class="saison-c__nom">' . $e($sa['name']) . '</div><div class="saison-c__n">' . (int) $sa['n'] . ' produit' . ($sa['n'] > 1 ? 's' : '') . ' dans ce dossier</div></div></div>';
+      $h .= '</div>';
+    }
     if ($d['formules']) {
       $h .= '<div class="rubrique">Formules · menus composés</div>';
       foreach ($d['formules'] as $f) {
@@ -344,6 +366,9 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
 .rubrique{font-size:12px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--color-primary);padding-top:3mm;border-top:1px solid var(--color-border-tertiary)}
 .menu{display:grid;grid-template-columns:1fr auto;gap:4mm;align-items:start;padding:2.5mm 0;border-bottom:1px dotted var(--color-border-secondary)}
 .menu__nom{font-size:14px;font-weight:500}.menu__prod{font-weight:400;color:var(--color-text-muted)}.menu__d{font-size:11.5px;color:#444;margin-top:1mm;line-height:1.5}.menu__d b{font-weight:500;color:var(--color-text)}
+.saison{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:var(--color-secondary);color:#6b4420;font-size:10px;font-weight:500;letter-spacing:.04em;vertical-align:middle}
+.saisons{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3mm}.saison-c{display:flex;gap:3mm;align-items:center;border:1px solid var(--color-border-secondary);border-radius:3mm;padding:2.5mm 3mm;background:var(--color-background-secondary)}
+.saison-c img,.saison-c__vide{width:18mm;height:13mm;border-radius:2mm;object-fit:cover;flex:none;background:#fff}.saison-c__nom{font-size:13px;font-weight:500}.saison-c__n{font-size:11px;color:var(--color-text-muted)}
 .bons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3mm}
 .bon{border:1px solid var(--color-border-secondary);border-radius:3mm;padding:3mm 3.5mm;display:flex;flex-direction:column;gap:1mm;background:var(--color-background-secondary)}
 .bon__code{font-family:Consolas,'SFMono-Regular',monospace;font-size:15px;font-weight:700;letter-spacing:.06em;color:var(--color-primary)}.bon__l{font-size:12.5px;font-weight:500}.bon__c{font-size:11px;color:var(--color-text-muted)}
