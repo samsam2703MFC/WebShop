@@ -7226,8 +7226,15 @@ function dispatch($m, $p) {
       $ids = array_values(array_unique(array_map(static fn ($x) => (int) ($x['cat_id'] ?? $x['cat'] ?? 0), $liste)));
       $cats = $ids ? rows("SELECT id, slug, label FROM ws_categories WHERE id IN (" . implode(',', array_fill(0, count($ids), '?')) . ") ORDER BY sort_order, label", $ids) : [];
       $n = []; foreach ($liste as $x) { $k = (int) ($x['cat_id'] ?? $x['cat'] ?? 0); $n[$k] = ($n[$k] ?? 0) + 1; }
-      $sais = 0; foreach ($liste as $x) if (!empty($x['season'])) $sais++;
-      json_out(['ok' => true, 'date' => $dateB, 'produits' => count($liste), 'saisonniers' => $sais,
+      $sais = 0; $saisM = [];
+      foreach ($liste as $x) {
+        if (empty($x['season'])) continue;
+        $sais++; $sk = (string) $x['season'];
+        if (!isset($saisM[$sk])) $saisM[$sk] = ['key' => $sk, 'nom' => (string) (($x['season_name'] ?? '') ?: $sk), 'n' => 0];
+        $saisM[$sk]['n']++;
+      }
+      $saisL = array_values($saisM); usort($saisL, static fn ($a, $b) => strcasecmp($a['nom'], $b['nom']));
+      json_out(['ok' => true, 'date' => $dateB, 'produits' => count($liste), 'saisonniers' => $sais, 'saisons' => $saisL,
                 'cats' => array_map(static fn ($c) => ['key' => (string) ($c['slug'] ?: $c['label']), 'nom' => (string) $c['label'], 'n' => $n[(int) $c['id']] ?? 0], $cats)]);
     }
 
@@ -7255,7 +7262,11 @@ function dispatch($m, $p) {
         $catsQ = qp('cats', null);
         $catsKeys = ($catsQ !== null && $catsQ !== '') ? array_values(array_filter(array_map('trim', explode(',', (string) $catsQ)), 'strlen')) : null;
         if ($catsQ !== null && !$catsKeys) json_out(['ok' => false, 'error' => 'Choisissez au moins une gamme à imprimer.'], 400);
-        $doc = brochure_donnees($shopB, $oid ?: null, $racine, qp('date', '') ?: null, (bool) qp('sansSaison', 0), $catsKeys);
+        // saisons=a,b : seules ces saisons restent (les produits sans saison
+        // restent toujours) ; saisons= vide ou sansSaison=1 : aucune saison.
+        $saisQ = qp('saisons', null);
+        $saisKeys = $saisQ !== null ? array_values(array_filter(array_map('trim', explode(',', (string) $saisQ)), 'strlen')) : null;
+        $doc = brochure_donnees($shopB, $oid ?: null, $racine, qp('date', '') ?: null, (bool) qp('sansSaison', 0), $catsKeys, $saisKeys);
         if (!$doc) json_out(['ok' => false, 'error' => 'Boutique ou bureau introuvable.'], 404);
         $qrPng = null;
         if (!empty($doc['qrUrl'])) { $res = qr_matrix($doc['qrUrl'], 'Q'); if ($res) $qrPng = qr_png($res[0], $res[1], 8, 4); }

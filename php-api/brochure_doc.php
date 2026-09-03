@@ -63,7 +63,7 @@ function brochure_photo($img, $racine) {
 }
 
 /* ── LES DONNÉES (lecture seule) ────────────────────────────────────────── */
-function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null, $sansSaison = false, $catsKeys = null) {
+function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null, $sansSaison = false, $catsKeys = null, $saisonsKeys = null) {
   $shopId = (int) $shopId; $officeId = $officeId ? (int) $officeId : null;
   // Disponibilité : le catalogue tel qu'il sera servi À CETTE DATE (saisons,
   // périodes ERP), aujourd'hui par défaut ; « sans saison » écarte en plus les
@@ -112,6 +112,14 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
   $liste = catalog_produits_servis($shopId, 'office', $date);
   if ($off) $liste = office_filtrer($liste, $off);
   if ($sansSaison) $liste = array_values(array_filter($liste, static fn ($x) => empty($x['season'])));
+  /* Saisons choisies dans la modale : un produit saisonnier ne reste que si sa
+     saison est cochée ; les produits sans saison restent toujours. Une liste
+     vide vaut « sans les produits saisonniers ». */
+  if (is_array($saisonsKeys)) {
+    $garde = array_fill_keys(array_map('strval', $saisonsKeys), true);
+    $liste = array_values(array_filter($liste, static fn ($x) => empty($x['season']) || isset($garde[(string) $x['season']])));
+    if (!$saisonsKeys) $sansSaison = true;
+  }
 
   // Catégories et sous-catégories : celles des produits servis, dans l'ordre
   // du webshop (sort_order, puis libellé).
@@ -266,7 +274,7 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
           'office' => $office ? ['name' => (string) $office['name'], 'assortment' => $off ? $off['mode'] : 'full'] : null,
           'showPrices' => $showPrices, 'qrUrl' => $qrUrl, 'qrCode' => $qrCode, 'qrExpire' => $qrExpire,
           'categories' => $categories, 'saisons' => $saisons, 'formules' => $formules, 'bons' => $bons, 'commande' => $commande,
-          'date' => date('d/m/Y'), 'dispo' => date('d/m/Y', strtotime($date)), 'sansSaison' => (bool) $sansSaison, 'mois' => ['', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'][(int) date('n')] . ' ' . date('Y')];
+          'date' => date('d/m/Y'), 'dispo' => date('d/m/Y', strtotime($date)), 'sansSaison' => (bool) $sansSaison, 'saisonsFiltre' => is_array($saisonsKeys) && $saisonsKeys, 'mois' => ['', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'][(int) date('n')] . ' ' . date('Y')];
 }
 
 /* ── LE HTML (aucune lecture de base) ───────────────────────────────────── */
@@ -333,7 +341,7 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
   } else {
     $cover .= '<div class="bloc"><div class="etiquette">Commander</div><div class="bloc__l">Sur le webshop' . ($d['commande']['webshop'] ? ' : <strong>' . $e($d['commande']['webshop']) . '</strong>' : '') . '.</div></div>';
   }
-  $cover .= '</div><div class="couv__bas"><div class="chips">' . $familles . '</div><div class="colophon">Édité depuis la console franchisé<br>le ' . $e($d['date']) . ($prix ? ' · prix TVAC' : ' · sans prix') . ((!empty($d['dispo']) && $d['dispo'] !== $d['date']) ? '<br>Disponibilités au ' . $e($d['dispo']) : '') . (!empty($d['sansSaison']) ? '<br>Sans les produits saisonniers' : '') . '</div></div></section>';
+  $cover .= '</div><div class="couv__bas"><div class="chips">' . $familles . '</div><div class="colophon">Édité depuis la console franchisé<br>le ' . $e($d['date']) . ($prix ? ' · prix TVAC' : ' · sans prix') . ((!empty($d['dispo']) && $d['dispo'] !== $d['date']) ? '<br>Disponibilités au ' . $e($d['dispo']) : '') . (!empty($d['sansSaison']) ? '<br>Sans les produits saisonniers' : (!empty($d['saisonsFiltre']) && !empty($d['saisons']) ? '<br>Saisons : ' . $e(implode(', ', array_map(static fn ($sa) => $sa['name'], $d['saisons']))) : '')) . '</div></div></section>';
   $pages[] = $cover;
 
   // 2… · Catégories
