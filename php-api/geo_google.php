@@ -98,6 +98,58 @@ function geo_route(array $origin, array $stops, bool $back, string $key): array 
   return ['ok' => true, 'km' => round($m / 1000, 1), 'minutes' => (int) round($s / 60), 'legs' => $legs];
 }
 
+/* ── ROUTES API : ORDRE D'ARRÊTS OPTIMAL (optimizeWaypointOrder) ───────────
+ * L'API « tournée » de Google Maps Platform pour un véhicule : elle rend
+ * l'ordre le plus court et les tronçons. Même clé que Places/Directions, mais
+ * « Routes API » doit être ACTIVÉE sur le projet Google Cloud de la clé —
+ * sinon 403 PERMISSION_DENIED, rendu tel quel à l'appelant.
+ * Retour au dépôt : tous les arrêts sont intermédiaires, destination = dépôt.
+ * Sans retour : le DERNIER arrêt reste la destination (fixe), les autres sont
+ * réordonnés — Google exige une destination connue. */
+function geo_routes_base(): string { return defined('GEO_ROUTES_BASE_TEST') ? GEO_ROUTES_BASE_TEST : 'https://routes.googleapis.com'; }
+function geo_http_post_json(string $url, array $body, array $headers, int $timeout = 15): array {
+  $raw = false; $code = 0; $json = json_encode($body, JSON_UNESCAPED_UNICODE);
+  $hdr = array_merge(['Content-Type: application/json', 'Accept: application/json'], $headers);
+  if (function_exists('curl_init')) {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => $timeout, CURLOPT_POST => true, CURLOPT_POSTFIELDS => $json, CURLOPT_HTTPHEADER => $hdr]);
+    $raw = curl_exec($ch); $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+  } else {
+    $ctx = stream_context_create(['http' => ['method' => 'POST', 'timeout' => $timeout, 'ignore_errors' => true, 'header' => implode("\r\n", $hdr) . "\r\n", 'content' => $json]]);
+    $raw = @file_get_contents($url, false, $ctx);
+    foreach (($http_response_header ?? []) as $h) if (preg_match('#^HTTP/\S+\s+(\d{3})#', $h, $m)) $code = (int) $m[1];
+  }
+  $d = ($raw !== false && $raw !== '') ? json_decode($raw, true) : null;
+  return [$code, is_array($d) ? $d : null];
+}
+function geo_route_optimise(array $origin, array $stops, bool $back, string $key): array {
+  $n = count($stops);
+  if ($n < 2 + ($back ? 0 : 1)) return ['ok' => false, 'error' => 'Au moins ' . ($back ? 2 : 3) . ' arrêts positionnés sont nécessaires pour proposer un ordre.'];
+  $pt = static fn ($p) => ['location' => ['latLng' => ['latitude' => (float) $p['lat'], 'longitude' => (float) $p['lng']]]];
+  $inter = $back ? $stops : array_slice($stops, 0, -1);
+  $dest  = $back ? $origin : $stops[$n - 1];
+  $body = ['origin' => $pt($origin), 'destination' => $pt($dest), 'intermediates' => array_map($pt, $inter),
+           'travelMode' => 'DRIVE', 'routingPreference' => 'TRAFFIC_UNAWARE', 'optimizeWaypointOrder' => true, 'languageCode' => 'fr', 'units' => 'METRIC'];
+  [$code, $d] = geo_http_post_json(geo_routes_base() . '/directions/v2:computeRoutes', $body,
+    ['X-Goog-Api-Key: ' . $key, 'X-Goog-FieldMask: routes.optimizedIntermediateWaypointIndex,routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration']);
+  if (!$d) return ['ok' => false, 'error' => 'Routes API injoignable (HTTP ' . $code . ')'];
+  if ($code !== 200 || empty($d['routes'][0])) {
+    $msg = (string) ($d['error']['message'] ?? ($d['error']['status'] ?? 'refus'));
+    if ($code === 403 || stripos($msg, 'PERMISSION') !== false || stripos($msg, 'not enabled') !== false || stripos($msg, 'has not been used') !== false)
+      $msg = 'Routes API non activée sur la clé Google — activer « Routes API » dans le projet Google Cloud (' . $msg . ')';
+    return ['ok' => false, 'error' => 'Google Routes : ' . $msg];
+  }
+  $r = $d['routes'][0];
+  $idx = array_values(array_map('intval', (array) ($r['optimizedIntermediateWaypointIndex'] ?? [])));
+  if (count($idx) !== count($inter)) $idx = range(0, count($inter) - 1);   // sans réordonnancement rendu : ordre inchangé
+  $order = [];
+  foreach ($idx as $i) $order[] = $i;                       // indices dans $stops (les intermédiaires sont les premiers)
+  if (!$back) $order[] = $n - 1;
+  $legs = []; $m = 0; $sec = 0;
+  foreach ($r['legs'] ?? [] as $lg) { $dm = (int) ($lg['distanceMeters'] ?? 0); $ds = (int) preg_replace('/\D/', '', (string) ($lg['duration'] ?? '0s')); $m += $dm; $sec += $ds; $legs[] = ['km' => round($dm / 1000, 1), 'min' => (int) round($ds / 60)]; }
+  return ['ok' => true, 'order' => $order, 'km' => round($m / 1000, 1), 'minutes' => (int) round($sec / 60), 'legs' => $legs];
+}
+
 /* Colonnes d'adresse / géo d'un site, posées depuis une ligne reçue (clés lat,
    lng, place_id, formatted, street, street_number, postal_code, city).
    Seules les colonnes présentes sont écrites ; sans lat/lng rien ne bouge. */

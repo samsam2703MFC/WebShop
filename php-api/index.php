@@ -7466,6 +7466,35 @@ function dispatch($m, $p) {
       }
       json_out(['ok' => true, 'km' => $r['km'], 'minutes' => $r['minutes'], 'legs' => $r['legs'], 'returnToDepot' => $back]);
     }
+    /* ORDRE D'ARRÊTS OPTIMAL (Google Routes API, optimizeWaypointOrder) :
+       { stops:[{id,lat,lng,label}], returnToDepot } → l'ordre le plus court,
+       ses tronçons, et l'économie contre l'ordre actuel (Directions). Rien
+       n'est écrit : l'assistant applique l'ordre si l'utilisateur le veut. */
+    if ($m === 'POST' && $p === '/franchisee/tour-optimise') {
+      rate_limit('geo_optimise', 30, 60);
+      $b = body(); $key = geo_google_key();
+      if ($key === '') json_out(['ok' => false, 'error' => 'Clé API Google absente — ws_param « google_api_key » à renseigner.'], 501);
+      if (!$shopId) json_out(['ok' => false, 'error' => 'Boutique non résolue : ouvrez la console avec ?shop=<id>.'], 400);
+      $dep = col_exists('shops', 'lat') ? row("SELECT lat, lng FROM shops WHERE id=?", [(int) $shopId]) : null;
+      if (!$dep || !is_numeric($dep['lat']) || !is_numeric($dep['lng'])) json_out(['ok' => false, 'error' => 'Position de la boutique inconnue (shops.lat / lng).'], 409);
+      $stops = []; $manquants = [];
+      foreach ((array) ($b['stops'] ?? []) as $i => $st) {
+        if (is_array($st) && is_numeric($st['lat'] ?? null) && is_numeric($st['lng'] ?? null)) $stops[] = ['id' => $st['id'] ?? $i, 'lat' => (float) $st['lat'], 'lng' => (float) $st['lng'], 'label' => (string) ($st['label'] ?? '')];
+        else $manquants[] = trim((string) (is_array($st) ? ($st['label'] ?? '') : '')) ?: ('arrêt ' . ($i + 1));
+      }
+      if ($manquants) json_out(['ok' => false, 'error' => 'Adresse non vérifiée (à choisir dans la liste Google) : ' . implode(', ', $manquants)], 409);
+      $back = array_key_exists('returnToDepot', $b) ? !empty($b['returnToDepot']) : true;
+      $o = ['lat' => (float) $dep['lat'], 'lng' => (float) $dep['lng']];
+      $opt = geo_route_optimise($o, $stops, $back, $key);
+      if (empty($opt['ok'])) json_out($opt, 502);
+      $cur = geo_route($o, $stops, $back, $key);
+      $ordered = array_map(static fn ($i) => $stops[$i], $opt['order']);
+      json_out(['ok' => true, 'order' => array_map(static fn ($s0) => $s0['id'], $ordered), 'labels' => array_map(static fn ($s0) => $s0['label'], $ordered),
+                'km' => $opt['km'], 'minutes' => $opt['minutes'], 'legs' => $opt['legs'],
+                'current' => !empty($cur['ok']) ? ['km' => $cur['km'], 'minutes' => $cur['minutes']] : null,
+                'saving' => !empty($cur['ok']) ? ['km' => round($cur['km'] - $opt['km'], 1), 'minutes' => (int) ($cur['minutes'] - $opt['minutes'])] : null,
+                'same' => $opt['order'] === range(0, count($stops) - 1), 'returnToDepot' => $back]);
+    }
     if ($m === 'POST' && $p === '/franchisee/tour-wizard') {
       rate_limit('tour_wizard', 60, 60);
       $b = body();
