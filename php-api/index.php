@@ -3916,14 +3916,14 @@ function dispatch($m, $p) {
     // numéro (cas constaté en base), MySQL renvoyait l'un OU l'autre au hasard,
     // et le mot de passe pourtant correct pouvait être refusé.
     // 1) L'EMAIL prime — c'est l'identifiant non ambigu.
-    $u = row("SELECT id, password_hash FROM client
+    $u = row("SELECT id FROM client
                WHERE LOWER(TRIM(email)) = ? AND active = 1
                ORDER BY id LIMIT 1", [$ident]);
     // 2) Sinon téléphone : s'il désigne PLUSIEURS comptes, on refuse
     //    explicitement au lieu d'en choisir un — l'utilisateur est invité à se
     //    connecter par email (« vraies données ou erreur », jamais de devinette).
     if (!$u && $identE164 !== '') {
-      $cands2 = rows("SELECT id, password_hash FROM client
+      $cands2 = rows("SELECT id FROM client
                        WHERE (phone_e164 = ? OR phone = ? OR phone = ?) AND active = 1
                        ORDER BY id", [$identE164, $identNat, $ident]);
       $phoneAmbigu = count($cands2) > 1;
@@ -3932,76 +3932,53 @@ function dispatch($m, $p) {
     $phoneAmbigu = $phoneAmbigu ?? false;
     $ambiguOut = static fn () => json_out(['error' => 'phone_ambigu',
                   'message' => 'Plusieurs comptes utilisent ce numéro de téléphone. Connectez-vous avec votre adresse email.'], 409);
-    /* ── CONNEXION PAR L'ERP SEULEMENT (0116). POST /clients/auth/login
-       authentifie par e-mail ou téléphone E.164. Le mot de passe local n'est
-       plus consulté : 200 → connecté, session ERP mémorisée, compte local
-       rattaché par erp_client_id (créé a minima s'il n'existe pas) ; 403 →
-       inactif ou bloqué ; 401 / 422 → identifiants incorrects ; ERP
-       injoignable → 503, jamais « identifiants incorrects » pour une panne.
-       La base locale ne sert plus qu'au PROFIL (fiche, bureau, boutique).
-       Conséquence assumée : un client dont l'ERP ne porte pas le mot de
-       passe ne peut plus se connecter (l'ERP n'a pas d'endpoint pour le
-       poser). Interrupteur d'urgence : ws_param.erp_client_auth = 0 rend le
-       chemin local ci-dessous. */
+    /* ── CONNEXION PAR L'ERP, SANS REPLI (0116/0117). POST /clients/auth/login
+       authentifie par e-mail ou téléphone E.164 ; la fiche vient de
+       GET /clients/{id} avec le jeton du client. Aucun mot de passe local,
+       aucune valeur par défaut : ce que l'ERP ne dit pas reste vide, et une
+       panne se voit (503), elle ne se déguise pas en « identifiants
+       incorrects ». La ligne client locale n'est qu'un miroir de la fiche ERP,
+       sauf les rattachements gérés ici (boutique préférée, bureau,
+       département), que l'ERP ne porte pas. */
+    if (!function_exists('erp_client_auth_enabled') || !erp_client_auth_enabled())
+      json_out(['error' => 'erp_non_configure', 'message' => 'Service de connexion non configuré (adresse ERP absente), please debug.'], 503);
     $passIn = (string) ($b['password'] ?? '');
-    if (function_exists('erp_client_auth_enabled') && erp_client_auth_enabled()) {
-      if ($passIn === '') json_out(['error' => 'Identifiants incorrects.'], 401);
-      $loginErp = (strpos($ident, '@') !== false) ? $ident : ($identE164 !== '' ? $identE164 : $ident);
-      $er = erp_client_login($loginErp, $passIn);
-      if (!empty($er['ok'])) {
-        $uid = 0;
-        $hasErpId = col_exists('client', 'erp_client_id');
-        if ($hasErpId && $er['clientId'] > 0) {
-          $byErp = row("SELECT id FROM client WHERE erp_client_id=? AND active=1 ORDER BY id LIMIT 1", [$er['clientId']]);
-          if ($byErp) $uid = (int) $byErp['id'];
-        }
-        if (!$uid && $u) $uid = (int) $u['id'];
-        if (!$uid && $phoneAmbigu) $ambiguOut();
-        if (!$uid) {
-          // Compte local a minima : identifiant, boutique préférée de l'ERP,
-          // pas de mot de passe local (l'ERP le porte), canal webshop.
-          $fiche = ($er['preferredShopId'] > 0 && function_exists('erp_client_par_id')) ? erp_client_par_id($er['preferredShopId'], $er['clientId']) : null;
-          $isMail = strpos($ident, '@') !== false;
-          $ms = $er['preferredShopId'] ?: (int) (qp('shopId', 0) ?: 0);
-          if ($ms <= 0) { $r0 = row("SELECT MIN(id) m FROM shops WHERE webshop_enabled = 1"); $ms = (int) ($r0['m'] ?? 0); }
-          $hasPref = col_exists('client', 'preferred_shop_id');
-          $cols = ['id_main_shop', 'email', 'phone', 'phone_e164', 'name', 'surname', 'zip', 'active', 'source_channel', 'webshop_user', 'preferred_auth_method'];
-          $vals = [$ms, $isMail ? $ident : (($fiche['email'] ?? '') ?: null), $isMail ? (($fiche['tel'] ?? '') ?: null) : $identNat, $isMail ? null : $identE164,
-                   (string) ($fiche['prenom'] ?? ''), (string) ($fiche['nom'] ?? ''), (string) ($fiche['cp'] ?? ''), 1, 'webshop', 1, $isMail ? 'email' : 'phone'];
-          if ($hasPref) { $cols[] = 'preferred_shop_id'; $vals[] = $ms; }
-          if ($hasErpId && $er['clientId'] > 0) { $cols[] = 'erp_client_id'; $vals[] = $er['clientId']; }
-          q("INSERT INTO client (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $vals);
-          $uid = (int) db()->lastInsertId();
-        } elseif ($hasErpId && $er['clientId'] > 0) {
-          q("UPDATE client SET erp_client_id = COALESCE(erp_client_id, ?) WHERE id = ?", [$er['clientId'], $uid]);
-        }
-        if (col_exists('client', 'erp_auth_at')) q("UPDATE client SET erp_auth_at = NOW() WHERE id = ?", [$uid]);
-        erp_client_session_store($uid, $er);
-        // Le PROFIL vient de l'ERP : GET /clients/{id} avec le jeton du client,
-        // recopié dans la ligne locale (qui n'est plus qu'un miroir).
-        $ficheErp = erp_client_fiche_par_jeton($er['access'], (int) $er['clientId']);
-        if ($ficheErp) erp_client_profil_sync($uid, $ficheErp);
-        if (($b['channel'] ?? '') === 'pwa' && col_exists('client', 'pwa_user')) q("UPDATE client SET pwa_user = 1 WHERE id = ?", [$uid]);
-        json_out(['user' => user_payload($uid), 'token' => sign_token(['id' => $uid, 'exp' => time() + 30 * 86400]), 'authSource' => 'erp']);
-      }
+    if ($passIn === '') json_out(['error' => 'Identifiants incorrects.'], 401);
+    $loginErp = (strpos($ident, '@') !== false) ? $ident : ($identE164 !== '' ? $identE164 : $ident);
+    $er = erp_client_login($loginErp, $passIn);
+    if (empty($er['ok'])) {
       $codeErp = (int) ($er['code'] ?? 0);
       if ($codeErp === 403) json_out(['error' => 'compte_bloque', 'message' => 'Ce compte est inactif ou bloqué. Contactez votre boutique.'], 403);
       if ($codeErp === 0 || $codeErp >= 500) json_out(['error' => 'erp_indisponible', 'message' => 'Service de connexion indisponible, réessayez dans un instant.'], 503);
       json_out(['error' => 'Identifiants incorrects.'], 401);
     }
-    // ── Chemin LOCAL : seulement quand ws_param.erp_client_auth = 0.
-    if ($phoneAmbigu) $ambiguOut();
-    // Compte existant mais sans mot de passe (client importé / créé côté PWA) :
-    // on ne renvoie pas "identifiants incorrects" -> on invite à définir un mot de passe.
-    if ($u && empty($u['password_hash'])) {
-      json_out(['error' => 'no_password', 'message' => 'Ce compte existe mais n’a pas encore de mot de passe.', 'needsPassword' => true], 409);
+    $ficheErp = erp_client_fiche_par_jeton($er['access'], (int) $er['clientId']);
+    if (!$ficheErp) json_out(['error' => 'erp_fiche', 'message' => "Connexion acceptée par l'ERP mais fiche client illisible (GET /clients/{id}), please debug."], 502);
+    $hasErpId = col_exists('client', 'erp_client_id');
+    $uid = 0;
+    if ($hasErpId && $er['clientId'] > 0) {
+      $byErp = row("SELECT id FROM client WHERE erp_client_id=? AND active=1 ORDER BY id LIMIT 1", [$er['clientId']]);
+      if ($byErp) $uid = (int) $byErp['id'];
     }
-    if (!$u || !password_verify($b['password'] ?? '', $u['password_hash'])) json_out(['error' => 'Identifiants incorrects.'], 401);
-    // Connexion depuis la PWA : le compte est marqué utilisateur PWA (la PWA
-    // posait ce drapeau elle-même, en SQL direct, à chaque connexion).
-    if (($b['channel'] ?? '') === 'pwa' && col_exists('client', 'pwa_user'))
-      q("UPDATE client SET pwa_user = 1 WHERE id = ?", [(int) $u['id']]);
-    json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400]), 'authSource' => 'local']);
+    if (!$uid && $u) $uid = (int) $u['id'];
+    if (!$uid && $phoneAmbigu) $ambiguOut();
+    if (!$uid) {
+      // Ligne locale créée depuis la fiche ERP, et d'elle seule.
+      $ms = (int) ($ficheErp['id_main_shop'] ?? 0);
+      if ($ms <= 0) json_out(['error' => 'erp_fiche', 'message' => 'Fiche ERP sans boutique principale (id_main_shop) : compte non créé, please debug.'], 502);
+      $cols = ['id_main_shop', 'active', 'source_channel', 'webshop_user'];
+      $vals = [$ms, 1, 'webshop', 1];
+      if ($hasErpId) { $cols[] = 'erp_client_id'; $vals[] = (int) $er['clientId']; }
+      q("INSERT INTO client (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $vals);
+      $uid = (int) db()->lastInsertId();
+    } elseif ($hasErpId && $er['clientId'] > 0) {
+      q("UPDATE client SET erp_client_id = COALESCE(erp_client_id, ?) WHERE id = ?", [$er['clientId'], $uid]);
+    }
+    erp_client_session_store($uid, $er);
+    erp_client_profil_sync($uid, $ficheErp);
+    if (col_exists('client', 'erp_auth_at')) q("UPDATE client SET erp_auth_at = NOW() WHERE id = ?", [$uid]);
+    if (($b['channel'] ?? '') === 'pwa' && col_exists('client', 'pwa_user')) q("UPDATE client SET pwa_user = 1 WHERE id = ?", [$uid]);
+    json_out(['user' => user_payload($uid), 'token' => sign_token(['id' => $uid, 'exp' => time() + 30 * 86400]), 'authSource' => 'erp']);
   }
   // Déconnexion : ferme la session ERP du client (0116) ; le jeton webshop,
   // sans table de session, expire de lui-même — le front l'oublie.
@@ -4014,8 +3991,7 @@ function dispatch($m, $p) {
   // ⚠️ SÉCURITÉ : aucune vérification d'identité (pas d'OTP). Choix produit assumé
   // pour le prototype. NE PAS mettre en prod sans OTP/email — sinon vol de compte.
   if ($m === 'POST' && $p === '/auth/set-password') {
-    if (function_exists('erp_client_auth_enabled') && erp_client_auth_enabled())
-      json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe est géré par l\'ERP L\'Atelier : le webshop ne le définit plus. Contactez votre boutique pour le définir ou le réinitialiser.'], 410);
+    json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe est géré par l\'ERP L\'Atelier : le webshop ne le définit plus. Contactez votre boutique pour le définir ou le réinitialiser.'], 410);
     // Durci : rate-limité, et RÉSERVÉ aux comptes qui n'ont PAS encore de mot
     // de passe (clients importés / créés côté PWA — le seul cas du flux front).
     // Un compte déjà protégé ne peut plus être écrasé ici : sans cette garde,
@@ -4137,8 +4113,7 @@ function dispatch($m, $p) {
    * fenêtre entre « code validé » et « mot de passe posé » où quelqu'un
    * pourrait s'intercaler. */
   if ($m === 'POST' && $p === '/auth/otp-set-password') {
-    if (function_exists('erp_client_auth_enabled') && erp_client_auth_enabled())
-      json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe est géré par l\'ERP L\'Atelier : le webshop ne le définit plus. Contactez votre boutique pour le définir ou le réinitialiser.'], 410);
+    json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe est géré par l\'ERP L\'Atelier : le webshop ne le définit plus. Contactez votre boutique pour le définir ou le réinitialiser.'], 410);
     rate_limit('otpset', 8, 900);
     $b = body();
     $pass = (string) ($b['password'] ?? '');
@@ -4521,8 +4496,7 @@ function dispatch($m, $p) {
 
   /* ── Sécurité : changement de mot de passe de la session (auth requise). ── */
   if ($m === 'POST' && $p === '/auth/password') {
-    if (function_exists('erp_client_auth_enabled') && erp_client_auth_enabled())
-      json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe est géré par l\'ERP L\'Atelier : le webshop ne le définit plus. Contactez votre boutique pour le définir ou le réinitialiser.'], 410);
+    json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe est géré par l\'ERP L\'Atelier : le webshop ne le définit plus. Contactez votre boutique pour le définir ou le réinitialiser.'], 410);
     $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
     $pass = (string) (body()['password'] ?? '');
     if (strlen($pass) < 6) json_out(['error' => 'Mot de passe trop court (min. 6 caractères).'], 400);
@@ -4681,16 +4655,16 @@ function dispatch($m, $p) {
        avec le jeton du client. Refus ou panne ERP → 502, rien n'est écrit
        localement : le profil ne diverge pas de la fiche ERP. Sans session ERP
        (connexion locale par l'interrupteur d'urgence) → écriture locale seule. */
-    $erpOk = null;
-    if ($sets && function_exists('erp_client_patch') && function_exists('erp_client_auth_enabled') && erp_client_auth_enabled()
-        && erp_client_sessions_ok() && row("SELECT 1 AS x FROM ws_erp_client_sessions WHERE client_id=?", [$id])) {
+    if ($sets) {
       $champs = [];
       foreach ($sets as $i => $st) $champs[substr($st, 0, strpos($st, '='))] = $vals[$i];
-      $erpOk = erp_client_patch((int) $id, $champs);
-      if (!$erpOk) json_out(['error' => 'erp_refus', 'message' => "Le profil n'a pas pu être enregistré dans l'ERP. Réessayez dans un instant."], 502);
+      if (!erp_client_sessions_ok() || !row("SELECT 1 AS x FROM ws_erp_client_sessions WHERE client_id=?", [$id]))
+        json_out(['error' => 'erp_session', 'message' => 'Session ERP absente : reconnectez-vous pour modifier votre profil.'], 401);
+      if (!erp_client_patch((int) $id, $champs))
+        json_out(['error' => 'erp_refus', 'message' => "Le profil n'a pas pu être enregistré dans l'ERP. Réessayez dans un instant."], 502);
+      $vals[] = $id; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $vals);   // miroir
     }
-    if ($sets) { $vals[] = $id; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $vals); }
-    json_out(['user' => user_payload($id), 'erpSaved' => $erpOk]);
+    json_out(['user' => user_payload($id), 'erpSaved' => (bool) $sets]);
   }
 
   /* ── Payment (Stripe via cURL, sans SDK) ── */

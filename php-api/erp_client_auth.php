@@ -12,15 +12,10 @@
  *   - 403 ERP (inactif / bloqué) → refus ferme : l'ERP fait autorité.
  *   - 401 / 422 / ERP injoignable → mot de passe local, comme avant.
  * Jamais de mot de passe ni de jeton dans les journaux.
- * Kill switch : ws_param.erp_client_auth = 0 (défaut : actif si l'ERP l'est). */
+ * Aucun repli : sans ERP, pas de connexion. */
 
 function erp_client_auth_enabled(): bool {
-  if (!function_exists('erp_cfg') || erp_cfg()['base'] === '') return false;
-  if (function_exists('ws_param')) {
-    try { $v = (string) ws_param('erp_client_auth', ''); if ($v === '0' || strtolower($v) === 'off') return false; }
-    catch (Throwable $e) { /* table absente : actif */ }
-  }
-  return true;
+  return function_exists('erp_cfg') && erp_cfg()['base'] !== '';
 }
 
 /* POST JSON public sur l'ERP. Rend [code HTTP, corps décodé|null]. 0 = injoignable. */
@@ -144,6 +139,7 @@ function erp_client_fiche_par_jeton(string $token, int $erpId): ?array {
 /* Colonnes recopiées de la fiche ERP vers la ligne locale. Les rattachements
    (boutique, bureau, département) ne sont pris que s'ils sont posés dans l'ERP :
    la console franchisé les gère aussi, on ne les efface pas depuis ici. */
+const ERP_CLIENT_LIENS = ['preferred_shop_id', 'office_id', 'department_id'];
 const ERP_CLIENT_COLS = ['name', 'surname', 'company_name', 'tax_number', 'street', 'street_number', 'city', 'zip', 'locality',
   'phone', 'phone_prefix', 'phone_e164', 'email', 'is_b2b', 'can_deferral', 'payment_terms', 'personal_discount_percent',
   'peppol_identifier', 'peppol_verified', 'locale', 'invoice_country', 'invoice_name', 'invoice_address', 'invoice_postal_code',
@@ -157,7 +153,8 @@ function erp_client_profil_sync(int $localId, array $c): int {
   foreach (ERP_CLIENT_COLS as $col) {
     if (!array_key_exists($col, $c) || !col_exists('client', $col)) continue;
     $v = $c[$col];
-    if ($v === null || $v === '') continue;                  // l'ERP ne vide pas
+    if (($v === null || $v === '') && in_array($col, ERP_CLIENT_LIENS, true)) continue;   // rattachement géré ici
+    if ($v === '') $v = null;
     if (is_array($v)) $v = json_encode($v);
     $sets[] = "$col=?"; $vals[] = $v;
   }

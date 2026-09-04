@@ -49,23 +49,28 @@ Session is **cookie-based**: the server sets an HttpOnly, Secure, SameSite=Lax c
 
 Authenticate a customer with email or phone + password.
 
-**ERP only (since migration 0116).** The server forwards the credentials to
-the ERP (`POST /clients/auth/login`, login = email or E.164 phone). The local
-password is never consulted; the local `client` row only provides the profile
-(matched by `erp_client_id`, else by the identifier; created minimally if
-unknown).
+**ERP only, no fallback (since migrations 0116/0117).** The server forwards
+the credentials to the ERP (`POST /clients/auth/login`, login = email or E.164
+phone), then reads the customer record with the customer's own token
+(`GET /clients/{id}`) and mirrors it verbatim into the local `client` row,
+empty values included. The local password is never consulted. Only the links
+managed by the webshop and the franchisee console (preferred shop, office,
+department) are left untouched when the ERP has none.
 
 | ERP answer | Result |
 | --- | --- |
-| 200 | Logged in. The ERP session (30-min access token, single-use refresh token) is stored server-side in `ws_erp_client_sessions`. `authSource: "erp"`. |
+| 200 + record readable | Logged in. ERP session stored server-side (`ws_erp_client_sessions`). `authSource: "erp"`. |
+| 200 but record unreadable | `502 { "error": "erp_fiche" }` |
 | 403 (inactive / blocked) | `403 { "error": "compte_bloque" }` |
 | 401 / 422 | `401 { "error": "Identifiants incorrects." }` |
 | unreachable / 5xx | `503 { "error": "erp_indisponible" }` |
+| ERP base not configured | `503 { "error": "erp_non_configure" }` |
 
-`/auth/set-password`, `/auth/otp-set-password` and `/auth/password` answer
-`410 { "error": "mdp_erp" }`: the ERP owns customer passwords and offers no
-endpoint to set them yet. Emergency switch: `ws_param.erp_client_auth = 0`
-restores the former local-password login.
+`GET /auth/me` re-reads the ERP record at most once a minute. `PATCH /auth/me`
+writes to the ERP first (`PATCH /clients/{id}`); a refusal returns `502` and
+nothing is written locally. `/auth/set-password`, `/auth/otp-set-password` and
+`/auth/password` answer `410 { "error": "mdp_erp" }`: the ERP owns customer
+passwords and offers no endpoint to set them yet.
 The 200 body also carries `"token"` (webshop bearer token, 30 days) and
 `"authSource"`.
 
