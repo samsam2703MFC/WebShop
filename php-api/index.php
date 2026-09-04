@@ -7112,9 +7112,36 @@ function dispatch($m, $p) {
       $from = qp('from', date('Y-m-01'));
       $prep = (float) ws_param('cost_prep_per_order', '0');
       $emb  = (float) ws_param('cost_packaging_unit', '0');
-      $tours = rows("SELECT id, name FROM ws_tours WHERE " . $scope('shop_id') . " AND active=1 ORDER BY name");
+      /* COÛT DE LA TOURNÉE (personnel + km), par sortie puis × sorties de la
+         période : taux horaire chauffeur (ws_param cost_driver_hour) × durée
+         (itinéraire Google mémorisé + accès des sites + dépôt des bureaux) +
+         km Google × prix au km de la tournée. Une composante absente rend le
+         coût NUL et dit ce qui manque — rien n'est supposé. */
+      $hourlyRaw = ws_param('cost_driver_hour', '');
+      $hourly = ($hourlyRaw === '' || !is_numeric($hourlyRaw)) ? null : (float) $hourlyRaw;
+      $hasKmT = col_exists('ws_tours', 'price_per_km');
+      $hasDrop = col_exists('ws_offices', 'drop_minutes');
+      $tours = rows("SELECT id, name" . ($hasKmT ? ", price_per_km, route_km, route_min" : "") . " FROM ws_tours WHERE " . $scope('shop_id') . " AND active=1 ORDER BY name");
       $out = [];
       foreach ($tours as $t) {
+        $runs = (int) ((row("SELECT COUNT(DISTINCT o.delivery_date) AS n FROM ws_orders o JOIN ws_offices f ON f.id = o.office_client_id
+                              WHERE f.tour_id = ? AND f.active = 1 AND o.delivery_date >= ?", [$t['id'], $from]) ?: ['n' => 0])['n']);
+        $kmT  = ($hasKmT && $t['route_km'] !== null) ? (float) $t['route_km'] : null;
+        $rMin = ($hasKmT && $t['route_min'] !== null) ? (int) $t['route_min'] : null;
+        $ppkT = ($hasKmT && $t['price_per_km'] !== null) ? (float) $t['price_per_km'] : null;
+        $accM = $tblExists('ws_office_delivery_sites') ? (float) ((row("SELECT COALESCE(SUM(site_access_minutes),0) AS m FROM ws_office_delivery_sites WHERE tournee_id=? AND active=1", [$t['id']]) ?: ['m' => 0])['m']) : 0.0;
+        $dropM = $hasDrop ? (float) ((row("SELECT COALESCE(SUM(drop_minutes),0) AS m FROM ws_offices WHERE tour_id=? AND active=1", [$t['id']]) ?: ['m' => 0])['m']) : 0.0;
+        $manque = [];
+        if ($rMin === null || $kmT === null) $manque[] = 'itinéraire Google non calculé (assistant tournée)';
+        if ($hourly === null) $manque[] = 'taux horaire chauffeur non paramétré (Paramètres de coûts)';
+        if ($ppkT === null) $manque[] = 'prix au km de la tournée non renseigné';
+        $minTot = $rMin !== null ? $rMin + $accM + $dropM : null;
+        $pers = ($hourly !== null && $minTot !== null) ? round($hourly * $minTot / 60, 2) : null;
+        $kmc  = ($ppkT !== null && $kmT !== null) ? round($kmT * $ppkT, 2) : null;
+        $unit = (!$manque && $pers !== null && $kmc !== null) ? round($pers + $kmc, 2) : null;
+        $tournee = ['runs' => $runs, 'km' => $kmT, 'routeMin' => $rMin, 'accMin' => $accM, 'dropMin' => $dropM, 'min' => $minTot,
+                    'ppk' => $ppkT, 'hourly' => $hourly, 'personnel' => $pers, 'kms' => $kmc, 'unit' => $unit,
+                    'total' => $unit !== null ? round($unit * $runs, 2) : null, 'manque' => $manque];
         $offices = rows(
           "SELECT f.name,
                   (SELECT COALESCE(SUM(o.total),0) FROM ws_orders o
@@ -7126,7 +7153,7 @@ function dispatch($m, $p) {
           'nom' => 'CA net', 'ca' => (float) $f['ca'],
           'couts' => round(((int) $f['n']) * ($prep + $emb), 2),
         ]]], $offices);
-        if ($sites) $out[] = ['nom' => $t['name'], 'sites' => $sites];
+        if ($sites) $out[] = ['nom' => $t['name'], 'sites' => $sites, 'tournee' => $tournee];
       }
       json_out($out);
     }
