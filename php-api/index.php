@@ -11830,8 +11830,14 @@ function dispatch($m, $p) {
          /delivery-fees/sites qui la contrôle. La franchir automatiquement à la
          création la vide de son sens. Elle redevient un geste explicite du
          franchisé, une fois la fiche complète. */
+      /* ACTIF DÈS LA CRÉATION, statut « pending ». active=0 le rendait
+         INVISIBLE : GET /franchisee/ws-offices ne sert que active=1, donc le
+         bureau disparaissait de toutes les listes de la console dès le premier
+         rafraîchissement, sans qu'aucun écran ne permette de le retrouver.
+         C'est le STATUT qui ferme la livraison tant qu'il n'est pas validé ;
+         active=0, c'est la suppression. */
       q("INSERT INTO ws_offices (tour_id, name, address, postal_code, city, contact, email, phone, vat, status, deferred_billing_enabled, drop_minutes, active" . ($obShop ? ", shop_id" : "") . ")
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0" . ($obShop ? "," . (int) $obShop : "") . ")",
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1" . ($obShop ? "," . (int) $obShop : "") . ")",
         [$tourId, $raison, (string) ($b['adr'] ?? ''), $obZip, $obLoc, (string) ($b['contactNom'] ?? ''),
          (string) ($b['contactEmail'] ?? ''), (string) ($b['contactTel'] ?? ''), (string) ($b['tva'] ?? ''),
          'pending', (stripos((string) ($b['paiement'] ?? ''), 'compt') === false) ? 1 : 0,
