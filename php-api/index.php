@@ -3926,31 +3926,37 @@ function dispatch($m, $p) {
       $cands2 = rows("SELECT id, password_hash FROM client
                        WHERE (phone_e164 = ? OR phone = ? OR phone = ?) AND active = 1
                        ORDER BY id", [$identE164, $identNat, $ident]);
-      if (count($cands2) > 1) {
-        json_out(['error' => 'phone_ambigu',
-                  'message' => 'Plusieurs comptes utilisent ce numéro de téléphone. Connectez-vous avec votre adresse email.'], 409);
-      }
-      $u = $cands2[0] ?? null;
+      $phoneAmbigu = count($cands2) > 1;
+      $u = $phoneAmbigu ? null : ($cands2[0] ?? null);
     }
-    /* ── L'ERP D'ABORD (0116). Il authentifie par e-mail ou téléphone E.164.
-       200 : connecté par l'ERP, session ERP mémorisée, compte local rattaché
-       par erp_client_id (créé a minima s'il n'existe pas : l'ERP vient de
-       reconnaître ce client). 403 : l'ERP le dit inactif ou bloqué → refus,
-       quel que soit le mot de passe local. 401 / 422 / injoignable → le mot
-       de passe local tranche, comme avant : aucun client n'est enfermé
-       dehors parce que l'ERP ne connaît pas encore son mot de passe. */
+    $phoneAmbigu = $phoneAmbigu ?? false;
+    $ambiguOut = static fn () => json_out(['error' => 'phone_ambigu',
+                  'message' => 'Plusieurs comptes utilisent ce numéro de téléphone. Connectez-vous avec votre adresse email.'], 409);
+    /* ── CONNEXION PAR L'ERP SEULEMENT (0116). POST /clients/auth/login
+       authentifie par e-mail ou téléphone E.164. Le mot de passe local n'est
+       plus consulté : 200 → connecté, session ERP mémorisée, compte local
+       rattaché par erp_client_id (créé a minima s'il n'existe pas) ; 403 →
+       inactif ou bloqué ; 401 / 422 → identifiants incorrects ; ERP
+       injoignable → 503, jamais « identifiants incorrects » pour une panne.
+       La base locale ne sert plus qu'au PROFIL (fiche, bureau, boutique).
+       Conséquence assumée : un client dont l'ERP ne porte pas le mot de
+       passe ne peut plus se connecter (l'ERP n'a pas d'endpoint pour le
+       poser). Interrupteur d'urgence : ws_param.erp_client_auth = 0 rend le
+       chemin local ci-dessous. */
     $passIn = (string) ($b['password'] ?? '');
-    $erpRefus = false;   // l'ERP connaît ce compte et a refusé le mot de passe
-    if (function_exists('erp_client_auth_enabled') && erp_client_auth_enabled() && $passIn !== '') {
+    if (function_exists('erp_client_auth_enabled') && erp_client_auth_enabled()) {
+      if ($passIn === '') json_out(['error' => 'Identifiants incorrects.'], 401);
       $loginErp = (strpos($ident, '@') !== false) ? $ident : ($identE164 !== '' ? $identE164 : $ident);
       $er = erp_client_login($loginErp, $passIn);
       if (!empty($er['ok'])) {
-        $uid = $u ? (int) $u['id'] : 0;
+        $uid = 0;
         $hasErpId = col_exists('client', 'erp_client_id');
-        if (!$uid && $hasErpId && $er['clientId'] > 0) {
+        if ($hasErpId && $er['clientId'] > 0) {
           $byErp = row("SELECT id FROM client WHERE erp_client_id=? AND active=1 ORDER BY id LIMIT 1", [$er['clientId']]);
           if ($byErp) $uid = (int) $byErp['id'];
         }
+        if (!$uid && $u) $uid = (int) $u['id'];
+        if (!$uid && $phoneAmbigu) $ambiguOut();
         if (!$uid) {
           // Compte local a minima : identifiant, boutique préférée de l'ERP,
           // pas de mot de passe local (l'ERP le porte), canal webshop.
@@ -3974,15 +3980,15 @@ function dispatch($m, $p) {
         if (($b['channel'] ?? '') === 'pwa' && col_exists('client', 'pwa_user')) q("UPDATE client SET pwa_user = 1 WHERE id = ?", [$uid]);
         json_out(['user' => user_payload($uid), 'token' => sign_token(['id' => $uid, 'exp' => time() + 30 * 86400]), 'authSource' => 'erp']);
       }
-      if (($er['code'] ?? 0) === 403) json_out(['error' => 'compte_bloque', 'message' => 'Ce compte est inactif ou bloqué. Contactez votre boutique.'], 403);
-      $erpRefus = (($er['code'] ?? 0) === 401);
+      $codeErp = (int) ($er['code'] ?? 0);
+      if ($codeErp === 403) json_out(['error' => 'compte_bloque', 'message' => 'Ce compte est inactif ou bloqué. Contactez votre boutique.'], 403);
+      if ($codeErp === 0 || $codeErp >= 500) json_out(['error' => 'erp_indisponible', 'message' => 'Service de connexion indisponible, réessayez dans un instant.'], 503);
+      json_out(['error' => 'Identifiants incorrects.'], 401);
     }
+    // ── Chemin LOCAL : seulement quand ws_param.erp_client_auth = 0.
+    if ($phoneAmbigu) $ambiguOut();
     // Compte existant mais sans mot de passe (client importé / créé côté PWA) :
     // on ne renvoie pas "identifiants incorrects" -> on invite à définir un mot de passe.
-    // Sauf si l'ERP vient de REFUSER le mot de passe pour ce compte : c'est
-    // alors une faute de frappe, pas un compte à réclamer — « identifiants
-    // incorrects », sans proposer de définir un mot de passe local.
-    if ($u && empty($u['password_hash']) && $erpRefus) json_out(['error' => 'Identifiants incorrects.'], 401);
     if ($u && empty($u['password_hash'])) {
       json_out(['error' => 'no_password', 'message' => 'Ce compte existe mais n’a pas encore de mot de passe.', 'needsPassword' => true], 409);
     }
@@ -4004,6 +4010,8 @@ function dispatch($m, $p) {
   // ⚠️ SÉCURITÉ : aucune vérification d'identité (pas d'OTP). Choix produit assumé
   // pour le prototype. NE PAS mettre en prod sans OTP/email — sinon vol de compte.
   if ($m === 'POST' && $p === '/auth/set-password') {
+    if (function_exists('erp_client_auth_enabled') && erp_client_auth_enabled())
+      json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe est géré par l\'ERP L\'Atelier : le webshop ne le définit plus. Contactez votre boutique pour le définir ou le réinitialiser.'], 410);
     // Durci : rate-limité, et RÉSERVÉ aux comptes qui n'ont PAS encore de mot
     // de passe (clients importés / créés côté PWA — le seul cas du flux front).
     // Un compte déjà protégé ne peut plus être écrasé ici : sans cette garde,
@@ -4125,6 +4133,8 @@ function dispatch($m, $p) {
    * fenêtre entre « code validé » et « mot de passe posé » où quelqu'un
    * pourrait s'intercaler. */
   if ($m === 'POST' && $p === '/auth/otp-set-password') {
+    if (function_exists('erp_client_auth_enabled') && erp_client_auth_enabled())
+      json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe est géré par l\'ERP L\'Atelier : le webshop ne le définit plus. Contactez votre boutique pour le définir ou le réinitialiser.'], 410);
     rate_limit('otpset', 8, 900);
     $b = body();
     $pass = (string) ($b['password'] ?? '');
@@ -4507,6 +4517,8 @@ function dispatch($m, $p) {
 
   /* ── Sécurité : changement de mot de passe de la session (auth requise). ── */
   if ($m === 'POST' && $p === '/auth/password') {
+    if (function_exists('erp_client_auth_enabled') && erp_client_auth_enabled())
+      json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe est géré par l\'ERP L\'Atelier : le webshop ne le définit plus. Contactez votre boutique pour le définir ou le réinitialiser.'], 410);
     $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
     $pass = (string) (body()['password'] ?? '');
     if (strlen($pass) < 6) json_out(['error' => 'Mot de passe trop court (min. 6 caractères).'], 400);

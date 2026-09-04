@@ -49,19 +49,23 @@ Session is **cookie-based**: the server sets an HttpOnly, Secure, SameSite=Lax c
 
 Authenticate a customer with email or phone + password.
 
-**Resolution order (since migration 0116).** The server tries the ERP first
-(`POST /clients/auth/login`, login = email or E.164 phone), then falls back to
-the local password:
+**ERP only (since migration 0116).** The server forwards the credentials to
+the ERP (`POST /clients/auth/login`, login = email or E.164 phone). The local
+password is never consulted; the local `client` row only provides the profile
+(matched by `erp_client_id`, else by the identifier; created minimally if
+unknown).
 
 | ERP answer | Result |
 | --- | --- |
-| 200 | Logged in. The ERP session (30-min access token, single-use refresh token) is stored server-side in `ws_erp_client_sessions`; the local account is matched by `erp_client_id` (or created minimally if unknown). `authSource: "erp"`. |
-| 403 (inactive / blocked) | Refused with `403 { "error": "compte_bloque" }`, whatever the local password. |
-| 401, 422, or ERP unreachable | Local `client.password_hash` decides, as before. `authSource: "local"`. |
+| 200 | Logged in. The ERP session (30-min access token, single-use refresh token) is stored server-side in `ws_erp_client_sessions`. `authSource: "erp"`. |
+| 403 (inactive / blocked) | `403 { "error": "compte_bloque" }` |
+| 401 / 422 | `401 { "error": "Identifiants incorrects." }` |
+| unreachable / 5xx | `503 { "error": "erp_indisponible" }` |
 
-Passwords set on the webshop (`/auth/set-password`, `/auth/otp-set-password`,
-`/auth/password`) stay local: the ERP offers no endpoint to set a client
-password yet. Kill switch: `ws_param.erp_client_auth = 0`.
+`/auth/set-password`, `/auth/otp-set-password` and `/auth/password` answer
+`410 { "error": "mdp_erp" }`: the ERP owns customer passwords and offers no
+endpoint to set them yet. Emergency switch: `ws_param.erp_client_auth = 0`
+restores the former local-password login.
 The 200 body also carries `"token"` (webshop bearer token, 30 days) and
 `"authSource"`.
 
