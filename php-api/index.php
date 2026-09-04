@@ -8935,7 +8935,7 @@ function dispatch($m, $p) {
       if ($level === 'site' || $level === 'office' || $level === 'tour') {
         if ($cible === '') json_out(['ok' => false, 'error' => 'Précisez la cible de la règle.'], 400);
         if ($level === 'tour') {
-          $t = row("SELECT id FROM ws_tours WHERE name=?" . ($sc ? " AND shop_id=$sc" : ""), [$cible]);
+          $t = row("SELECT id FROM ws_tours WHERE TRIM(name)=TRIM(?)" . ($sc ? " AND shop_id=$sc" : ""), [$cible]);
           if (!$t) json_out(['ok' => false, 'error' => "Tournée « $cible » inconnue dans votre boutique."], 404);
           $tourId = (int) $t['id'];
         } elseif ($level === 'office') {
@@ -9293,7 +9293,7 @@ function dispatch($m, $p) {
       if (!$tblExists('ws_tour_tracking')) json_out(['error' => 'ws_tour_tracking absente — migration 0035 non appliquée'], 500);
       $b2 = body(); $tn = trim((string) ($b2['tour'] ?? '')); $drv = trim((string) ($b2['driver'] ?? ''));
       if ($tn === '') json_out(['error' => 'tournée requise'], 400);
-      $t2 = row("SELECT id FROM ws_tours WHERE name=? AND " . $scope('shop_id') . " LIMIT 1", [$tn]);
+      $t2 = row("SELECT id FROM ws_tours WHERE TRIM(name)=TRIM(?) AND " . $scope('shop_id') . " LIMIT 1", [$tn]);
       if (!$t2) json_out(['error' => 'tournée introuvable', 'tour' => $tn], 404);
       $nStops = 0;
       if ($tblExists('ws_office_delivery_sites')) {
@@ -9911,7 +9911,7 @@ function dispatch($m, $p) {
         if ($tv !== '' && col_exists('ws_offices', 'tour_id') && $tblExists('ws_tours')) {
           $scT = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
           $tr = ctype_digit($tv) ? row("SELECT id FROM ws_tours WHERE id=?" . $scT, [(int) $tv])
-                                 : row("SELECT id FROM ws_tours WHERE name=? AND active=1" . $scT . " ORDER BY id DESC LIMIT 1", [$tv]);
+                                 : row("SELECT id FROM ws_tours WHERE TRIM(name)=TRIM(?) AND active=1" . $scT . " ORDER BY id DESC LIMIT 1", [$tv]);
           if ($tr) q("UPDATE ws_offices SET tour_id=? WHERE id=?", [(int) $tr['id'], $id]);
         }
         // Site (building) choisi : ligne de liaison bureau↔bâtiment, tournée héritée.
@@ -11188,7 +11188,7 @@ function dispatch($m, $p) {
             if (!$d) continue;
             $tourId = null;
             if (!empty($r['tour']) && !preg_match('/^toutes/i', (string) $r['tour']) && $tblExists('ws_tours')) {
-              $tr = row("SELECT id FROM ws_tours WHERE name=? LIMIT 1", [(string) $r['tour']]);
+              $tr = row("SELECT id FROM ws_tours WHERE TRIM(name)=TRIM(?) LIMIT 1", [(string) $r['tour']]);
               if ($tr) $tourId = (int) $tr['id'];
             }
             if ($hasCType)
@@ -11274,13 +11274,13 @@ function dispatch($m, $p) {
             $tid = (int) $mm[1];
             if (!row("SELECT id FROM ws_tours WHERE id=?", [$tid])) continue;
             if (isset($r['name']) && trim((string) $r['name']) !== '')     // édition : nom / capacité
-              q("UPDATE ws_tours SET name=?, max_items=? WHERE id=?", [(string) $r['name'], (int) ($r['max'] ?? 10), $tid]);
+              q("UPDATE ws_tours SET name=?, max_items=? WHERE id=?", [trim((string) $r['name']), (int) ($r['max'] ?? 10), $tid]);
           } elseif (strpos($rid, 'rn') === 0 && !empty($r['name'])) {      // nouvelle tournée du constructeur → création réelle
-            $ex = row("SELECT id FROM ws_tours WHERE name=?", [(string) $r['name']]);
+            $ex = row("SELECT id FROM ws_tours WHERE TRIM(name)=TRIM(?)", [(string) $r['name']]);
             if ($ex) { $tid = (int) $ex['id']; }
             else {
               q("INSERT INTO ws_tours (name, max_items, active" . ($shopId ? ", shop_id" : "") . ") VALUES (?,?,1" . ($shopId ? "," . (int) $shopId : "") . ")",
-                [(string) $r['name'], (int) ($r['max'] ?? 10)]);
+                [trim((string) $r['name']), (int) ($r['max'] ?? 10)]);
               $tid = (int) db()->lastInsertId();
             }
           } else { continue; }
@@ -11369,7 +11369,7 @@ function dispatch($m, $p) {
             $scT = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
             $tr = ctype_digit($tv)
               ? row("SELECT id FROM ws_tours WHERE id=?" . $scT, [(int) $tv])
-              : row("SELECT id FROM ws_tours WHERE name=? AND active=1" . $scT . " ORDER BY id DESC LIMIT 1", [$tv]);
+              : row("SELECT id FROM ws_tours WHERE TRIM(name)=TRIM(?) AND active=1" . $scT . " ORDER BY id DESC LIMIT 1", [$tv]);
             if ($tr) $tourId = (int) $tr['id'];
           }
           // Bureau (compte B2B) → ws_offices.id.
@@ -11551,7 +11551,7 @@ function dispatch($m, $p) {
             $scT = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
             $tr = ctype_digit($tv)
               ? row("SELECT id FROM ws_tours WHERE id=?" . $scT, [(int) $tv])
-              : row("SELECT id FROM ws_tours WHERE name=? AND active=1" . $scT . " ORDER BY id DESC LIMIT 1", [$tv]);
+              : row("SELECT id FROM ws_tours WHERE TRIM(name)=TRIM(?) AND active=1" . $scT . " ORDER BY id DESC LIMIT 1", [$tv]);
             if ($tr) $tourId = (int) $tr['id'];
           }
           $status = in_array(($r['status'] ?? ''), ['pending', 'validated'], true) ? $r['status'] : null;
@@ -11644,6 +11644,15 @@ function dispatch($m, $p) {
             $normSite = mb_strtolower(preg_replace('/\s+/u', ' ', $siteAdr));
             $ps = row("SELECT id, tournee_id FROM ws_office_delivery_sites
                         WHERE office_client_id=? AND active=1 AND $normAdrSql=? LIMIT 1", [$rid, $normSite]);
+            /* SITE ORPHELIN à la même adresse (créé depuis « Sites » sans société) :
+               on le RATTACHE au lieu d'en créer un second. Deux lignes pour un même
+               bâtiment — l'une sans société, l'autre avec — c'est ce que la base
+               montrait (« Kitchen / 1 » et « ODOO SA — Kitchen / 1 »). */
+            if (!$ps) {
+              $orph = row("SELECT id, tournee_id FROM ws_office_delivery_sites
+                            WHERE office_client_id IS NULL AND active=1 AND $normAdrSql=?" . (!empty($shopId) ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "") . " ORDER BY id LIMIT 1", [$normSite]);
+              if ($orph) { q("UPDATE ws_office_delivery_sites SET office_client_id=? WHERE id=?", [$rid, (int) $orph['id']]); $ps = $orph; }
+            }
             // La TOURNÉE de la liaison bureau↔site : celle du bureau si posée,
             // SINON celle du BÂTIMENT (une autre ligne active à la même adresse
             // qui en a une — le site créé dans l'écran Sites porte la tournée,
@@ -11729,7 +11738,7 @@ function dispatch($m, $p) {
         $t2s = function ($v) { return preg_match('/(\d{1,2}):(\d{2})/', (string) $v, $m2) ? sprintf('%02d:%02d:00', $m2[1], $m2[2]) : null; };
         $n = 0; $touched = [];
         foreach ($rows2 as $r) {
-          $tr = row("SELECT id FROM ws_tours WHERE name=? AND shop_id=" . (int) $shopId . " LIMIT 1", [(string) ($r['tour'] ?? '')]);
+          $tr = row("SELECT id FROM ws_tours WHERE TRIM(name)=TRIM(?) AND shop_id=" . (int) $shopId . " LIMIT 1", [(string) ($r['tour'] ?? '')]);
           if (!$tr) continue;
           $tid2 = (int) $tr['id'];
           $start = $t2s($r['dep'] ?? '06:00'); $end = $t2s($r['fin'] ?? '12:00'); $cut = $t2s($r['cut'] ?? '17:00');
@@ -11816,7 +11825,7 @@ function dispatch($m, $p) {
       if ($tourWanted === '')
         json_out(['error' => 'Tournée rattachée requise — un bureau sans tournée n\'est pas livrable.'], 400);
       if ($tblExists('ws_tours')) {
-        $tr = row("SELECT id FROM ws_tours WHERE name=? LIMIT 1", [$tourWanted]);
+        $tr = row("SELECT id FROM ws_tours WHERE TRIM(name)=TRIM(?) LIMIT 1", [$tourWanted]);
         if ($tr) $tourId = (int) $tr['id'];
       }
       if (!$tourId)
