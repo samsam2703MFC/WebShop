@@ -303,16 +303,42 @@
     },
 
     /* ── Sécurité : changement de mot de passe de la session ── */
-    async changePassword({ password }) {
+    /* Changement de mot de passe : l'ERP exige le mot de passe actuel. */
+    async changePassword({ currentPassword, password }) {
       if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
       try {
         const r = await fetch(`${api.endpoint}/password`, {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ password }),
+          body: JSON.stringify({ currentPassword, password }),
         });
-        const j = await r.json();
-        return r.ok ? { ok: true } : { ok: false, error: j.error || 'Échec.' };
+        const j = await r.json().catch(() => ({}));
+        return r.ok ? { ok: true } : { ok: false, error: j.message || j.error || 'Échec.' };
+      } catch (_) { return { ok: false, error: 'Réseau indisponible.' }; }
+    },
+
+    /* Mot de passe oublié : l'ERP envoie l'e-mail. 202 quoi qu'il arrive,
+       l'écran affiche un message neutre (aucune révélation de compte). */
+    async resetRequest({ email }) {
+      if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
+      try {
+        const r = await fetch(`${api.endpoint}/password-reset/request`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        const j = await r.json().catch(() => ({}));
+        return r.ok ? { ok: true } : { ok: false, error: j.message || j.error || 'Envoi impossible.' };
+      } catch (_) { return { ok: false, error: 'Réseau indisponible.' }; }
+    },
+    async resetConfirm({ token, password }) {
+      if (!api.endpoint) return { ok: false, error: 'Service indisponible.' };
+      try {
+        const r = await fetch(`${api.endpoint}/password-reset/confirm`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, password }),
+        });
+        const j = await r.json().catch(() => ({}));
+        return r.ok ? { ok: true } : { ok: false, error: j.message || j.error || 'Échec.' };
       } catch (_) { return { ok: false, error: 'Réseau indisponible.' }; }
     },
 

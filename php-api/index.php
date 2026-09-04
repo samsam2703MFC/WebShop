@@ -3640,100 +3640,53 @@ function dispatch($m, $p) {
     if ($zip === null) json_out(['error' => 'Code postal invalide'], 400);
     $locality = zip_locality($zip, $b['locality'] ?? '');
     $pass = (string) ($b['password'] ?? '');
-    $hash = ($pass !== '' && strlen($pass) >= 6) ? password_hash($pass, PASSWORD_BCRYPT) : null;
-    // Anti-doublon : si un client existe déjà (email OU téléphone E.164), on ne
-    // fusionne PAS — on renvoie 409 { exists:true } pour que le front propose de
-    // définir/mettre à jour le mot de passe (endpoint /auth/set-password).
+    /* ── L'ERP CRÉE LE COMPTE (POST /clients/auth/register) et rend la session.
+       Il exige e-mail, téléphone, prénom, nom, boutique et mot de passe :
+       plus d'inscription par téléphone seul. Le code postal, que l'ERP ne
+       demande pas à l'inscription, lui est écrit juste après (PATCH
+       /clients/{id}) — c'est lui qui place le client dans sa zone. La ligne
+       locale n'est qu'un miroir de la fiche ERP. Aucun mot de passe local. */
+    if ($mail === '')  json_out(['error' => 'Email requis : le compte est créé avec votre adresse e-mail.'], 400);
+    if ($phone === '') json_out(['error' => 'Téléphone requis.'], 400);
+    if ($first === '' || $last === '') json_out(['error' => 'Prénom et nom requis.'], 400);
+    $ms = is_numeric($b['shopId'] ?? null) ? (int) $b['shopId'] : null;
+    if (!$ms || !row("SELECT 1 AS x FROM shops WHERE id=?", [$ms])) json_out(['error' => 'Boutique requise pour créer le compte.'], 400);
+    if (!function_exists('erp_client_auth_enabled') || !erp_client_auth_enabled())
+      json_out(['error' => 'erp_non_configure', 'message' => "Service d'inscription non configuré (adresse ERP absente), please debug."], 503);
     $cl = row("SELECT id FROM client WHERE (? <> '' AND LOWER(TRIM(email))=?) OR (? <> '' AND (phone_e164=? OR phone=?)) LIMIT 1", [$mail, $mail, $phone, $e164, $phone]);
-    /* CONNU DE LA BOUTIQUE ? Un client qui achète au comptoir depuis des années
-       existe côté ERP — retrouvé par TÉLÉPHONE, la seule clé qui marche
-       (8123 fiches sur 8154 en ont un, 575 seulement ont un e-mail). On ne
-       bloque PAS l'inscription pour autant : il n'a pas de compte webshop,
-       c'est bien un compte qu'il vient créer. On le SIGNALE, pour que l'écran
-       puisse dire « nous vous connaissons » et que le franchisé sache que les
-       deux fiches désignent la même personne. */
+    if ($cl) json_out(['error' => 'Ce compte existe déjà. Connectez-vous, ou utilisez « Mot de passe oublié ».', 'exists' => true], 409);
     $dejaErp = null;
     if ($phone !== '' && function_exists('erp_client_par_tel')) {
-      try { $dejaErp = erp_client_par_tel($shopI ?? null, $phone); } catch (Throwable $e) { $dejaErp = null; }
+      try { $dejaErp = erp_client_par_tel($ms, $phone); } catch (Throwable $e) { $dejaErp = null; }
     }
-    if ($cl) {
-      json_out(['error' => 'Ce compte existe déjà. Connectez-vous ou définissez votre mot de passe.', 'exists' => true], 409);
+    $er = erp_client_register(['id_main_shop' => $ms, 'name' => $first, 'surname' => $last, 'email' => $mail,
+                               'phone' => ($e164 ?: $phone), 'password' => $pass, 'password_confirm' => $pass,
+                               'locale' => substr((string) ($b['lang'] ?? 'fr'), 0, 2) ?: 'fr']);
+    if (empty($er['ok'])) {
+      $codeErp = (int) ($er['code'] ?? 0);
+      if ($codeErp === 409) json_out(['error' => "Un compte existe déjà avec cet e-mail ou ce numéro. Connectez-vous, ou utilisez « Mot de passe oublié ».", 'exists' => true], 409);
+      if ($codeErp === 422) json_out(['error' => "Inscription refusée par l'ERP : " . (($er['message'] ?? '') ?: 'données invalides') . '.'], 400);
+      json_out(['error' => 'erp_indisponible', 'message' => "Service d'inscription indisponible, réessayez dans un instant."], 503);
     }
-    {
-      // La boutique du compte vient de la boutique CONSULTÉE, transmise par le
-      // front. Plus de devinette « boutique la plus fréquente en base » : ce
-      // repli affectait chaque nouveau client à la boutique la plus peuplée —
-      // il n'apparaissait jamais dans la console de SA boutique.
-      $ms = is_numeric($b['shopId'] ?? null) ? (int) $b['shopId'] : null;
-      if (!$ms || !row("SELECT 1 AS x FROM shops WHERE id=?", [$ms]))
-        json_out(['error' => 'Boutique requise pour créer le compte.'], 400);
-      // `locality` guardée par col_exists : le code peut être déployé une
-      // requête avant que migrate.sh n'ait joué 0015 — pas de 500 pendant la fenêtre.
-      $hasLoc = col_exists('client', 'locality');
-      // preferred_shop_id posé EXPLICITEMENT, comme partout ailleurs : la
-      // console franchisé cloisonne dessus, et un client créé sans lui
-      // n'apparaît dans aucune boutique. Un trigger le fait aussi, mais on ne
-      // confie pas la visibilité d'un client à un objet de base qui a déjà
-      // disparu une fois (cf. trg_client_office_delivery_*).
-      $hasPref = col_exists('client', 'preferred_shop_id');
-      $hasPwa  = col_exists('client', 'pwa_user');
-      q("INSERT INTO client (id_main_shop, " . ($hasPref ? "preferred_shop_id, " : "") . "email, phone, phone_prefix, phone_e164, name, surname, zip, " . ($hasLoc ? "locality, " : "") . "password_hash,
-                             active, source_channel, webshop_user, " . ($hasPwa ? "pwa_user, " : "") . "preferred_auth_method)
-         VALUES (?," . ($hasPref ? "?," : "") . "?,?,?,?,?,?,?," . ($hasLoc ? "?," : "") . "?,1,?,?," . ($hasPwa ? "?," : "") . "?)",
-        array_merge(
-          [$ms], $hasPref ? [$ms] : [],
-          [($mail ?: null), ($phone ?: null), ($phone !== '' ? $pfx : null), ($e164 ?: null), $first, $last, $zip],
-          $hasLoc ? [$locality] : [],
-          [$hash, $canal, $canal === 'pwa' ? 0 : 1],
-          $hasPwa ? [$canal === 'pwa' ? 1 : 0] : [],
-          [$authM]));
-      $id = db()->lastInsertId();
-      /* MIROIR ERP — la fiche existe côté réseau dès l'inscription, avec son
-         ASSIGNATION boutique (la ligne qui manque aux fiches historiques et
-         sans laquelle la fiche unitaire de l'ERP répond 404).
-         Volontairement APRÈS la création locale et sans test de retour : le
-         compte webshop est déjà valide, un ERP en panne ne doit pas empêcher
-         quelqu'un de s'inscrire. L'échec est journalisé, rien de plus. */
-      /* PAS DE MIROIR SI LA BOUTIQUE CONNAÎT DÉJÀ CE NUMÉRO. Le miroir créait
-         une SECONDE fiche pour quelqu'un qui en avait déjà une — un doublon
-         dans le fichier client, à chaque inscription d'un habitué du comptoir.
-         Deux cas, deux traitements :
-           • fiche existante → on ne crée rien ; le rattachement (0099) la
-             proposera, et c'est le franchisé qui tranchera. erp_client_id
-             reste NULL jusque-là : le lien doit être VALIDÉ, pas supposé ;
-           • personne inconnue → on crée, et on mémorise l'id sans arbitrage :
-             cette fiche-là, c'est nous qui venons de la faire, il n'y a aucune
-             question d'identité à trancher. */
-      if (!$dejaErp && function_exists('erp_client_creer')) {
-        try {
-          /* `name` = PRÉNOM et `surname` = NOM : c'est le sens réel côté ERP,
-             vérifié sur les 8156 fiches (name : Amandine, Claude… / surname :
-             COLARD, DURAND…). L'inverse paraît plus naturel en anglais et
-             c'est exactement l'erreur qui avait été commise dans le mappage
-             de lecture. */
-          $creee = erp_client_creer($shopI ?? null,
-                     ['phone' => $phone, 'name' => $first, 'surname' => $last, 'zip' => $zip]);
-          /* L'IDENTIFIANT DE LA FICHE, MÉMORISÉ. Il était jeté : le compte et
-             sa fiche ERP existaient tous les deux sans que rien ne dise qu'ils
-             désignent la même personne. C'est ce lien que lit la décision de
-             rattachement (0099), et c'est lui qu'exigera toute écriture vers
-             l'ERP le jour où leur PATCH acceptera autre chose que `status`. */
-          if (is_array($creee) && !empty($creee['id'])) {
-            if (col_exists('client', 'erp_client_id'))
-              q("UPDATE client SET erp_client_id=? WHERE id=?", [(int) $creee['id'], $id]);
-            /* La CORRESPONDANCE, qui survivra à la table client (0103). Origine
-               « inscription » : cette fiche, c'est nous qui venons de la créer,
-               aucun arbitrage n'a été nécessaire. */
-            if (function_exists('erp_map_poser')) erp_map_poser($id, (int) $creee['id'], 'inscription');
-          }
-        } catch (Throwable $e) { error_log('[ws] miroir ERP client: ' . $e->getMessage()); }
-      }
-    }
-    json_out(['user' => user_payload($id), 'token' => sign_token(['id' => (int) $id, 'exp' => time() + 30 * 86400]),
-              // Client déjà connu de la boutique (achats au comptoir) : l'écran
-              // peut l'accueillir en conséquence. Jamais de donnée personnelle
-              // au-delà du prénom — on confirme une reconnaissance, on ne
-              // divulgue pas une fiche à qui saisit un numéro.
+    // Code postal et localité : posés dans l'ERP, puis fiche relue.
+    erp_client_request('PATCH', 'clients/' . (int) $er['clientId'], ['zip' => $zip, 'locality' => ($locality ?: null)], $er['access']);
+    $ficheErp = erp_client_fiche_par_jeton($er['access'], (int) $er['clientId']);
+    if (!$ficheErp) json_out(['error' => 'erp_fiche', 'message' => "Compte créé dans l'ERP mais fiche illisible (GET /clients/{id}), please debug."], 502);
+    $hasPref = col_exists('client', 'preferred_shop_id');
+    $hasPwa  = col_exists('client', 'pwa_user');
+    $hasErpId = col_exists('client', 'erp_client_id');
+    $cols = ['id_main_shop', 'active', 'source_channel', 'webshop_user', 'preferred_auth_method'];
+    $vals = [$ms, 1, $canal, $canal === 'pwa' ? 0 : 1, $authM];
+    if ($hasPref)  { $cols[] = 'preferred_shop_id'; $vals[] = $ms; }
+    if ($hasPwa)   { $cols[] = 'pwa_user'; $vals[] = $canal === 'pwa' ? 1 : 0; }
+    if ($hasErpId) { $cols[] = 'erp_client_id'; $vals[] = (int) $er['clientId']; }
+    q("INSERT INTO client (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $vals);
+    $id = (int) db()->lastInsertId();
+    erp_client_session_store($id, $er);
+    erp_client_profil_sync($id, $ficheErp);
+    if (col_exists('client', 'erp_auth_at')) q("UPDATE client SET erp_auth_at = NOW() WHERE id = ?", [$id]);
+    if (function_exists('erp_map_poser')) { try { erp_map_poser($id, (int) $er['clientId'], 'inscription'); } catch (Throwable $e) { /* correspondance : best-effort */ } }
+    json_out(['user' => user_payload($id), 'token' => sign_token(['id' => $id, 'exp' => time() + 30 * 86400]), 'authSource' => 'erp',
               'connuEnBoutique' => $dejaErp ? ['depuis' => true, 'prenom' => (string) ($dejaErp['prenom'] ?? '')] : null], 201);
   }
 
@@ -3991,7 +3944,7 @@ function dispatch($m, $p) {
   // ⚠️ SÉCURITÉ : aucune vérification d'identité (pas d'OTP). Choix produit assumé
   // pour le prototype. NE PAS mettre en prod sans OTP/email — sinon vol de compte.
   if ($m === 'POST' && $p === '/auth/set-password') {
-    json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe est géré par l\'ERP L\'Atelier : le webshop ne le définit plus. Contactez votre boutique pour le définir ou le réinitialiser.'], 410);
+    json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe se réinitialise par e-mail : « Mot de passe oublié » sur l\'écran de connexion.'], 410);
     // Durci : rate-limité, et RÉSERVÉ aux comptes qui n'ont PAS encore de mot
     // de passe (clients importés / créés côté PWA — le seul cas du flux front).
     // Un compte déjà protégé ne peut plus être écrasé ici : sans cette garde,
@@ -4113,7 +4066,7 @@ function dispatch($m, $p) {
    * fenêtre entre « code validé » et « mot de passe posé » où quelqu'un
    * pourrait s'intercaler. */
   if ($m === 'POST' && $p === '/auth/otp-set-password') {
-    json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe est géré par l\'ERP L\'Atelier : le webshop ne le définit plus. Contactez votre boutique pour le définir ou le réinitialiser.'], 410);
+    json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe se réinitialise par e-mail : « Mot de passe oublié » sur l\'écran de connexion.'], 410);
     rate_limit('otpset', 8, 900);
     $b = body();
     $pass = (string) ($b['password'] ?? '');
@@ -4496,12 +4449,53 @@ function dispatch($m, $p) {
 
   /* ── Sécurité : changement de mot de passe de la session (auth requise). ── */
   if ($m === 'POST' && $p === '/auth/password') {
-    json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe est géré par l\'ERP L\'Atelier : le webshop ne le définit plus. Contactez votre boutique pour le définir ou le réinitialiser.'], 410);
+    // Changement de mot de passe : POST /clients/auth/password/change avec le
+    // jeton du client ; l'ERP révoque toutes ses sessions, on le reconnecte
+    // aussitôt avec le nouveau mot de passe pour que rien ne se coupe.
     $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
-    $pass = (string) (body()['password'] ?? '');
-    if (strlen($pass) < 6) json_out(['error' => 'Mot de passe trop court (min. 6 caractères).'], 400);
-    q("UPDATE client SET password_hash = ? WHERE id = ?", [password_hash($pass, PASSWORD_BCRYPT), $id]);
-    json_out(['ok' => true]);
+    $b = body(); $cur = (string) ($b['currentPassword'] ?? ''); $new = (string) ($b['password'] ?? '');
+    if ($cur === '') json_out(['error' => 'Mot de passe actuel requis.'], 400);
+    if (strlen($new) < 8) json_out(['error' => 'Nouveau mot de passe : 8 caractères minimum.'], 400);
+    $r = erp_client_password_change((int) $id, $cur, $new);
+    if (empty($r['ok'])) {
+      $c = (int) ($r['code'] ?? 0);
+      if ($c === 401) json_out(['error' => 'Mot de passe actuel incorrect, ou session expirée : reconnectez-vous.'], 401);
+      if ($c === 403) json_out(['error' => 'compte_bloque', 'message' => 'Ce compte est inactif ou bloqué. Contactez votre boutique.'], 403);
+      if ($c === 422) json_out(['error' => "Refusé par l'ERP : " . (($r['message'] ?? '') ?: 'mot de passe invalide') . '.'], 400);
+      json_out(['error' => 'erp_indisponible', 'message' => 'Service indisponible, réessayez dans un instant.'], 503);
+    }
+    $u = row("SELECT email, phone_e164 FROM client WHERE id=?", [$id]);
+    $login = (string) (($u['email'] ?? '') ?: ($u['phone_e164'] ?? ''));
+    $er = $login !== '' ? erp_client_login($login, $new) : ['ok' => false];
+    if (!empty($er['ok'])) erp_client_session_store((int) $id, $er);
+    json_out(['ok' => true, 'erpSession' => !empty($er['ok'])]);
+  }
+  // Mot de passe oublié : l'ERP envoie l'e-mail (202 quoi qu'il arrive :
+  // on ne révèle pas si l'adresse a un compte), le lien mène à
+  // /reset-password?token=… du webshop, qui confirme ci-dessous.
+  if ($m === 'POST' && $p === '/auth/password-reset/request') {
+    rate_limit('pwreset', 5, 300);
+    $em = strtolower(trim((string) (body()['email'] ?? '')));
+    if (!filter_var($em, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'Adresse e-mail invalide.'], 400);
+    if (!function_exists('erp_client_auth_enabled') || !erp_client_auth_enabled())
+      json_out(['error' => 'erp_non_configure', 'message' => 'Service non configuré (adresse ERP absente), please debug.'], 503);
+    $r = erp_client_reset_request($em);
+    if ($r['code'] === 202 || $r['code'] === 200) json_out(['ok' => true], 202);
+    if ($r['code'] === 422) json_out(['error' => 'Adresse e-mail invalide.'], 400);
+    json_out(['error' => 'erp_indisponible', 'message' => "L'envoi de l'e-mail est indisponible pour le moment, réessayez plus tard."], 503);
+  }
+  if ($m === 'POST' && $p === '/auth/password-reset/confirm') {
+    rate_limit('pwreset', 10, 300);
+    $b = body(); $tok = trim((string) ($b['token'] ?? '')); $new = (string) ($b['password'] ?? '');
+    if ($tok === '') json_out(['error' => 'Lien incomplet : ouvrez-le depuis l\'e-mail reçu.'], 400);
+    if (strlen($new) < 8) json_out(['error' => 'Mot de passe : 8 caractères minimum.'], 400);
+    if (!function_exists('erp_client_auth_enabled') || !erp_client_auth_enabled())
+      json_out(['error' => 'erp_non_configure', 'message' => 'Service non configuré (adresse ERP absente), please debug.'], 503);
+    $r = erp_client_reset_confirm($tok, $new);
+    if ($r['code'] === 200) json_out(['ok' => true]);
+    if ($r['code'] === 400) json_out(['error' => 'Lien invalide, expiré ou déjà utilisé. Demandez un nouvel e-mail.'], 400);
+    if ($r['code'] === 422) json_out(['error' => "Refusé par l'ERP : " . (($r['message'] ?? '') ?: 'mot de passe invalide') . '.'], 400);
+    json_out(['error' => 'erp_indisponible', 'message' => 'Service indisponible, réessayez dans un instant.'], 503);
   }
 
   /* ── Sociétés de facturation : ajout SANS n° TVA (ASBL, association,

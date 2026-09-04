@@ -53,6 +53,8 @@
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteRule ^inscription/?$ inscription.html [L,QSA]
+  # Lien de l'e-mail « mot de passe oublié » (CLIENT_PASSWORD_RESET_URL côté ERP).
+  RewriteRule ^reset-password/?$ reset-password.html [L,QSA]
 </IfModule>
 
 # Photos produit : le serveur servait les .webp SANS Content-Type (Apache ne le

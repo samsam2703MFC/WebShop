@@ -136,7 +136,6 @@ function wsTap(fn, opts) {
   };
 }
 
-
 // Diagnostic terrain : ?tapdebug=1 affiche les derniers événements tactiles
 // (type + cible) dans un coin de l'écran : pour voir ce que LE téléphone fait
 // réellement d'un tap qui « ne marche pas », sans outillage branché.
@@ -200,7 +199,6 @@ const W_SHOP_PRODUCTS = {};
 
 // Go-live : window._CATALOG_SEED n’est plus exposé, le catalogue vient
 // exclusivement de l'API /catalog ; en cas d'échec, l'UI reste vide/erreur.
-
 
 // =========================================================================
 // CLIENTS / OFFICES / DELIVERY TOURS
@@ -2564,8 +2562,9 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
   const [form, setForm] = useState({ identifier: '', email: '', phone: '', phonePrefix: '+32', password: '', firstName: '', lastName: '', postalCode: '', locality: '', authMethod: 'email' });
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
-  const [pwStep, setPwStep] = useState(false);   // panneau « compte existant -> mot de passe »
-  const [newPw, setNewPw] = useState('');
+  const [forgot, setForgot] = useState(false);       // panneau « mot de passe oublié » (e-mail via l'ERP)
+  const [forgotDone, setForgotDone] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
   const [cpOpts, setCpOpts] = useState([]);      // localités du CP saisi (validation « localité choisie »)
   /* Reconnaissance par la boutique : l'inscription a trouvé une fiche au même
      numéro. On ne referme PAS la fenêtre tant que le client n'a pas répondu
@@ -2575,19 +2574,10 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
   /* Code SMS. '' = pas encore demandé · 'code' = envoyé, on attend la saisie.
      Le numéro masqué vient du serveur : il ne rend jamais le numéro entier,
      seulement de quoi savoir sur quel téléphone regarder. */
-  const [otpPhase, setOtpPhase] = useState('');
-  const [otpMask, setOtpMask]   = useState('');
-  const [otpCode, setOtpCode]   = useState('');
-  const [otpLeft, setOtpLeft]   = useState(0);   // secondes restantes
 
   /* Décompte des 180 secondes de validité annoncées par SMSAPI. Le montrer
      évite la question « est-ce que ça marche encore ? » et, une fois à zéro,
      désigne le seul geste utile : en redemander un. */
-  useEffect(() => {
-    if (otpPhase !== 'code' || otpLeft <= 0) return;
-    const h = setTimeout(() => setOtpLeft((n) => n - 1), 1000);
-    return () => clearTimeout(h);
-  }, [otpPhase, otpLeft]);
   if (!open) return null;
   function set(k, v) { setForm((f) => ({ ...f, [k]: v })); setErr(''); }
   async function submit(e) {
@@ -2602,7 +2592,6 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
         if (!r.ok) {
           // Compte existant sans mot de passe -> panneau "définir votre mot de passe"
           // (on pré-remplit avec ce qui vient d'être tapé au login).
-          if (r.needsPassword) { setForm((f) => ({ ...f, email: f.email || (f.identifier.includes('@') ? f.identifier : ''), phone: f.phone || (f.identifier.includes('@') ? '' : f.identifier) })); setNewPw(form.password || ''); setPwStep(true); return; }
           setErr(r.error || 'Identifiants incorrects.'); return;
         }
         onLogin(r.user); onClose();
@@ -2612,6 +2601,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
         // serveur n'a jamais accepté l'inscription par téléphone seul, le
         // formulaire ne doit pas la promettre.
         if (!form.email) { setErr('Email requis.'); return; }
+        if (!form.phone) { setErr('Téléphone requis.'); return; }
         if ((form.password || '').length < 8) { setErr('Mot de passe requis (8 caractères minimum).'); return; }
         // Code postal OBLIGATOIRE (collecte réseau) + localité confirmée quand
         // le code couvre plusieurs localités.
@@ -2621,7 +2611,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
           ? await window.WSAuth.register({ ...form, shopId })
           : SRV_REQUIRED("d'inscription");
         if (!r.ok) {
-          if (r.exists) { setPwStep(true); return; }   // compte déjà présent -> set-password
+          if (r.exists) { setForgotEmail(form.email || ''); setErr(r.error || 'Ce compte existe déjà : connectez-vous, ou utilisez « Mot de passe oublié ».'); return; }
           setErr(r.error || "Erreur lors de l'inscription."); return;
         }
         /* Reconnu par la boutique : le compte est créé et valide, on le
@@ -2648,58 +2638,22 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
     setLienEtat('pending');
   }
 
-  const otpIdent = () => form.identifier || form.email || form.phone || '';
-
-  /* Demande d'un code. Sert aussi au renvoi. */
-  async function demanderCode() {
-    setErr(''); setLoading(true);
-    try {
-      const r = await window.WSAuth.otpRequest({ identifier: otpIdent(), phonePrefix: form.phonePrefix });
-      if (r.ok) { setOtpMask(r.phoneMasked); setOtpLeft(r.expiresIn || 180); setOtpPhase('code'); setOtpCode(''); return r; }
-      return r;
-    } finally { setLoading(false); }
-  }
-
-  async function submitSetPassword() {
+  /* Mot de passe oublié : l'ERP envoie un e-mail avec un lien d'une heure
+     vers /reset-password. Le serveur répond 202 que l'adresse ait un compte
+     ou non ; l'écran reste neutre, comme l'exige l'ERP. */
+  async function demanderReset() {
     setErr('');
-    if (!newPw || newPw.length < 6) { setErr('Mot de passe : 6 caractères minimum.'); return; }
-    /* PHASE 2 : le code est saisi : code et mot de passe partent ensemble. */
-    if (otpPhase === 'code') {
-      if (!/^\d{4,8}$/.test(otpCode.trim())) { setErr('Saisissez le code reçu par SMS.'); return; }
-      setLoading(true);
-      try {
-        const r = await window.WSAuth.otpSetPassword({
-          identifier: otpIdent(), phonePrefix: form.phonePrefix, code: otpCode.trim(), password: newPw });
-        if (!r.ok) {
-          if (r.code === 'perime') setOtpLeft(0);
-          setErr(r.error || 'Code incorrect.'); return;
-        }
-        onRegister(r.user); onClose();
-      } catch (_) { setErr('Erreur réseau. Veuillez réessayer.'); }
-      finally { setLoading(false); }
-      return;
-    }
-
-    /* PHASE 1 : ON DEMANDE LE CODE D'ABORD, ET C'EST LE SERVEUR QUI TRANCHE.
-       Le front n'a pas à savoir si le SMS est configuré : il essaie, et ne
-       retombe sur le chemin sans preuve que si le serveur répond 'sms_off'.
-       Le jour où le jeton SMSAPI est posé, cet écran devient sûr tout seul,
-       sans redéploiement du front. */
-    const d = await demanderCode();
-    if (d.ok) return;
-    if (d.code !== 'sms_off') { setErr(d.error || "Envoi impossible."); return; }
-
+    const em = (forgotEmail || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { setErr('Indiquez une adresse e-mail valide.'); return; }
     setLoading(true);
     try {
-      const r = await window.WSAuth.setPassword({ email: form.email, phone: form.phone, phonePrefix: form.phonePrefix, identifier: form.identifier, password: newPw });
-      if (!r.ok) { setErr(r.error || 'Échec de la mise à jour.'); return; }
-      onRegister(r.user); onClose();
-    } catch (_) {
-      setErr('Erreur réseau. Veuillez réessayer.');
-    } finally {
-      setLoading(false);
-    }
+      const r = await window.WSAuth.resetRequest({ email: em });
+      if (!r.ok) { setErr(r.error || 'Envoi impossible.'); return; }
+      setForgotDone(true);
+    } catch (_) { setErr('Erreur réseau. Veuillez réessayer.'); }
+    finally { setLoading(false); }
   }
+
   return (
     <ModalShell onClose={onClose} narrow>
       <p className="ws-modal__eyebrow">{t('auth.myAccount')}</p>
@@ -2754,46 +2708,22 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
             </>
           )}
         </>
-      ) : pwStep ? (
+      ) : forgot ? (
         <>
-          <h2 className="ws-modal__title">{tRich(t, 'auth.accountExists')}</h2>
-          <p className="ws-modal__lede">{t('auth.setPassword')}</p>
+          <h2 className="ws-modal__title">Mot de passe oublié</h2>
+          <p className="ws-modal__lede">Indiquez l'adresse e-mail de votre compte : vous recevrez un lien pour choisir un nouveau mot de passe.</p>
           <div className="ws-form">
-            <label className="ws-field"><span>{t('auth.password')}</span>
-              <input type="password" value={newPw} onChange={(e) => { setNewPw(e.target.value); setErr(''); }} autoComplete="new-password" placeholder={t('auth.min6')} disabled={otpPhase === 'code'}/></label>
-
-            {/* ── LA PREUVE PAR SMS ────────────────────────────────────────
-                Ce panneau n'apparaît que si le serveur a réellement envoyé un
-                code. Tant que le SMS n'est pas configuré, l'écran reste celui
-                d'avant : on n'annonce pas une sécurité qui n'existe pas. */}
-            {otpPhase === 'code' && (
-              <div className="ws-otp">
-                <p className="ws-otp__lede">
-                  Code envoyé au <strong>{otpMask}</strong>, le numéro enregistré sur votre fiche.
-                </p>
-                <label className="ws-field"><span>Code reçu par SMS</span>
-                  <input type="text" value={otpCode} inputMode="numeric" autoComplete="one-time-code"
-                    maxLength={8} placeholder="123456" autoFocus
-                    onChange={(e) => { setOtpCode(e.target.value.replace(/\D/g, '')); setErr(''); }}/></label>
-                <p className="ws-otp__timer">
-                  {otpLeft > 0
-                    ? `Valable encore ${Math.floor(otpLeft / 60)}:${String(otpLeft % 60).padStart(2, '0')}`
-                    : 'Ce code a expiré.'}
-                  {' '}
-                  <button type="button" className="ws-linkbtn ws-linkbtn--inline" disabled={loading || otpLeft > 150}
-                    onClick={async () => { const r = await demanderCode(); if (!r.ok) setErr(r.error || "Envoi impossible."); }}>
-                    Recevoir un nouveau code
-                  </button>
-                </p>
-              </div>
+            {forgotDone ? (
+              <p className="ws-modal__lede">Si un compte existe pour cette adresse, un e-mail vient d'être envoyé. Le lien est valable une heure.</p>
+            ) : (
+              <label className="ws-field"><span>Email</span>
+                <input type="email" value={forgotEmail} onChange={(e) => { setForgotEmail(e.target.value); setErr(''); }} autoComplete="email" autoFocus/></label>
             )}
-
             {err && <p className="ws-form__err">{err}</p>}
-            <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={submitSetPassword}>
-              {loading ? (otpPhase === 'code' ? 'Vérification…' : 'Envoi…')
-                       : (otpPhase === 'code' ? 'Valider & se connecter' : 'Mettre à jour & se connecter')}
-            </button>
-            <button type="button" className="ws-linkbtn" onClick={() => { setPwStep(false); setOtpPhase(''); setOtpCode(''); setTab('login'); setErr(''); }}>{t('auth.havePassword')}</button>
+            {!forgotDone && (
+              <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={demanderReset}>{loading ? 'Envoi…' : 'Recevoir le lien'}</button>
+            )}
+            <button type="button" className="ws-linkbtn" onClick={() => { setForgot(false); setForgotDone(false); setTab('login'); setErr(''); }}>Retour à la connexion</button>
           </div>
         </>
       ) : (
@@ -2845,6 +2775,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
               )}
             </label>
             <label className="ws-field"><span>{t('auth.password')}</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="current-password"/></label>
+            <button type="button" className="ws-linkbtn" onClick={() => { setForgot(true); setForgotDone(false); setForgotEmail(form.identifier.includes('@') ? form.identifier : ''); setErr(''); }}>Mot de passe oublié ?</button>
           </>
         )}
         {err && <p className="ws-form__err">{err}</p>}
@@ -3322,6 +3253,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   const [companyBusy, setCompanyBusy] = useState(false);
   const [companyErr, setCompanyErr]   = useState('');
   // Sécurité : changement de mot de passe.
+  const [pw0, setPw0] = useState('');   // mot de passe actuel, exigé par l'ERP
   const [pw1, setPw1] = useState('');
   const [pw2, setPw2] = useState('');
   const [pwBusy, setPwBusy] = useState(false);
@@ -3375,9 +3307,9 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
   }
   async function savePassword() {
     setPwBusy(true); setPwMsg(null);
-    const r = await window.WSAuth.changePassword({ password: pw1 });
+    const r = await window.WSAuth.changePassword({ currentPassword: pw0, password: pw1 });
     setPwBusy(false);
-    if (r.ok) { setPwMsg({ ok: true, text: 'Mot de passe mis à jour.' }); setPw1(''); setPw2(''); }
+    if (r.ok) { setPwMsg({ ok: true, text: 'Mot de passe mis à jour.' }); setPw0(''); setPw1(''); setPw2(''); }
     else setPwMsg({ ok: false, text: r.error || 'Échec.' });
   }
 
@@ -3838,6 +3770,11 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
         <div className="ws-acc__section-h">{t('acc.security')}</div>
         <div className="ws-acc__form">
           <label className="ws-acc__field">
+            <span className="ws-acc__field-label">Mot de passe actuel</span>
+            <input type="password" className="ws-acc__input" value={pw0}
+              onChange={(e) => setPw0(e.target.value)} autoComplete="current-password" />
+          </label>
+          <label className="ws-acc__field">
             <span className="ws-acc__field-label">{t('acc.newPassword')}</span>
             <input type="password" className="ws-acc__input" value={pw1}
               onChange={(e) => setPw1(e.target.value)} autoComplete="new-password" />
@@ -3854,7 +3791,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
           </p>
         )}
         <div className="ws-acc__form-foot">
-          <button type="button" className="ws-cta" disabled={pwBusy || pw1.length < 6 || pw1 !== pw2} onClick={savePassword}>
+          <button type="button" className="ws-cta" disabled={pwBusy || !pw0 || pw1.length < 8 || pw1 !== pw2} onClick={savePassword}>
             Changer le mot de passe
           </button>
         </div>
@@ -3975,7 +3912,6 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
             <button type="button" className="ws-acc__unplug" onClick={() => window.open('/landing/livraison-bureau.html', '_blank', 'noopener')}>Ma zone est-elle desservie&nbsp;?</button>
           </div>
         )}
-
 
         {/* Sélecteur de bureau (sites de livraison du shop : même liste que la PWA) */}
         {siteStep === 'pick' && (
@@ -4368,7 +4304,6 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
   // bouton « Payer » restait actif alors que l'écran affichait « moyens
   // indisponibles », et la commande partait avec un moyen vide.
   function step3Valid() { return paymentMethods.length > 0 && Boolean(payment); }
-
 
   async function handlePay() {
     // Livraison bureau sans frais résolus : on REFUSE au lieu de facturer 0 €

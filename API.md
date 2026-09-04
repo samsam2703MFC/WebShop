@@ -109,26 +109,43 @@ The 200 body also carries `"token"` (webshop bearer token, 30 days) and
 
 ### POST /auth/register
 
-Create a new customer account. Sets a session cookie on success.
+Creates the account **in the ERP** (`POST /clients/auth/register`) and logs the
+customer in. Since migration 0117 the ERP requires `firstName`, `lastName`,
+`email`, `phone`, `password` (8+ chars) and `shopId`; phone-only registration
+is no longer possible. The postal code is written to the ERP record right after
+creation (`PATCH /clients/{id}`), the record is read back and mirrored locally.
+Response `201` has the same shape as `/auth/login` (`user`, `token`,
+`authSource: "erp"`, plus `connuEnBoutique` when the shop already knows the
+phone). Errors: `409 { exists: true }` when the email or phone already has an
+account (locally or in the ERP), `400` for data the ERP refuses, `503` when the
+ERP is unreachable.
 
-**Request body**
-```json
-{
-  "email": "nouveau@client.be",
-  "password": "secret",
-  "firstName": "Jean",
-  "lastName": "Dupont"
-}
-```
+### POST /auth/password
 
-**Response 201** — same `{ user }` shape as login.
+Bearer token required. Body `{ "currentPassword", "password" }` (8+ chars).
+Forwards to `POST /clients/auth/password/change` with the customer's ERP
+token; the ERP revokes all the customer's sessions, and the webshop logs the
+customer back in with the new password. `401` wrong current password or no
+ERP session, `400` refused by the ERP, `503` unreachable.
 
-**Response 409**
-```json
-{ "error": { "code": "email_taken", "message": "Un compte existe déjà avec cet email." } }
-```
+### POST /auth/password-reset/request
 
----
+Public, rate-limited. Body `{ "email" }`. Forwards to
+`POST /clients/auth/password/reset/request`; the ERP e-mails a one-hour,
+single-use link to `…/webshop/reset-password?token=…` (ERP setting
+`CLIENT_PASSWORD_RESET_URL`). Always `202 { ok: true }` for a well-formed
+address, whether or not it has an account. `400` malformed e-mail, `503`
+e-mailing unavailable.
+
+### POST /auth/password-reset/confirm
+
+Public. Body `{ "token", "password" }`. Forwards to
+`POST /clients/auth/password/reset/confirm`. `200 { ok: true }`; `400` invalid,
+expired or already-used link; `503` unreachable. No automatic login: the page
+sends the customer back to the sign-in screen.
+
+`/auth/set-password`, `/auth/otp-request` and `/auth/otp-set-password` (the
+former SMS flow) answer `410`.
 
 ### POST /auth/logout
 

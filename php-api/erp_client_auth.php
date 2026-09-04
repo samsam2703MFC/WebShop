@@ -52,6 +52,11 @@ function erp_client_login(string $login, string $password): array {
     if (function_exists('erp_notes') && $code === 0) erp_notes('ERP : connexion client injoignable');
     return ['ok' => false, 'code' => $code];
   }
+  return erp_client_session_depuis($d);
+}
+
+/* Session ERP à partir d'une réponse de login ou de register. */
+function erp_client_session_depuis(array $d): array {
   $j = erp_jwt_payload((string) $d['access_token']);
   return ['ok' => true,
           'clientId'        => (int) ($j['client_id'] ?? $j['sub'] ?? 0),
@@ -60,6 +65,34 @@ function erp_client_login(string $login, string $password): array {
           'refresh'         => (string) ($d['refresh_token'] ?? ''),
           'expiresIn'       => (int) ($d['expires_in'] ?? 1800),
           'sessionId'       => (int) ($d['session_id'] ?? 0)];
+}
+
+/* ── INSCRIPTION, MOT DE PASSE, RÉINITIALISATION : tout dans l'ERP ─────────
+ * POST /clients/auth/register crée la fiche ET la session (201, même forme
+ * que le login). POST /clients/auth/password/change (jeton du client) change
+ * le mot de passe et révoque toutes les sessions. La réinitialisation passe
+ * par e-mail : reset/request (202 quoi qu'il arrive : anti-énumération) puis
+ * reset/confirm avec le jeton du lien (une heure, usage unique). */
+function erp_client_register(array $f): array {
+  [$code, $d] = erp_client_post('clients/auth/register', $f);
+  if (($code === 201 || $code === 200) && $d && !empty($d['access_token'])) return erp_client_session_depuis($d);
+  return ['ok' => false, 'code' => $code, 'message' => (string) ($d['description'] ?? '')];
+}
+function erp_client_password_change(int $localId, string $current, string $new): array {
+  $tok = erp_client_session_token($localId);
+  if ($tok === null) return ['ok' => false, 'code' => 401, 'message' => 'session ERP absente'];
+  [$code, $d] = erp_client_request('POST', 'clients/auth/password/change',
+    ['current_password' => $current, 'new_password' => $new, 'new_password_confirm' => $new], $tok);
+  if ($code === 200) { q("DELETE FROM ws_erp_client_sessions WHERE client_id=?", [$localId]); return ['ok' => true]; }
+  return ['ok' => false, 'code' => $code, 'message' => (string) ($d['description'] ?? '')];
+}
+function erp_client_reset_request(string $email): array {
+  [$code, $d] = erp_client_post('clients/auth/password/reset/request', ['email' => $email]);
+  return ['code' => $code, 'message' => (string) ($d['description'] ?? '')];
+}
+function erp_client_reset_confirm(string $token, string $new): array {
+  [$code, $d] = erp_client_post('clients/auth/password/reset/confirm', ['token' => $token, 'new_password' => $new, 'new_password_confirm' => $new]);
+  return ['code' => $code, 'message' => (string) ($d['description'] ?? '')];
 }
 
 function erp_client_sessions_ok(): bool {
