@@ -111,3 +111,91 @@ function erp_client_logout(int $localId): void {
   if ($s && !empty($s['refresh_token'])) erp_client_post('clients/auth/logout', ['refresh_token' => (string) $s['refresh_token']]);
   q("DELETE FROM ws_erp_client_sessions WHERE client_id=?", [$localId]);
 }
+
+/* ── PROFIL : LU ET ÉCRIT DANS L'ERP, AVEC LE JETON DU CLIENT ─────────────────
+ * GET /clients/{id} rend la fiche complète (mêmes colonnes que la table client
+ * locale) ; PATCH /clients/{id} l'écrit (204). La ligne locale n'est plus
+ * qu'un miroir de la fiche ERP, rafraîchi à la connexion et au plus une fois
+ * par minute sur /auth/me ; les modifications du profil partent d'abord à
+ * l'ERP. L'ERP complète et corrige, il ne vide pas : une valeur nulle ou vide
+ * côté ERP ne remplace jamais une valeur locale. */
+
+function erp_client_request(string $method, string $path, ?array $body, string $token): array {
+  $cfg = erp_cfg();
+  if ($cfg['base'] === '' || $token === '') return [0, null];
+  $h = "Accept: application/json\r\nAuthorization: Bearer $token\r\n";
+  if ($body !== null) $h .= "Content-Type: application/json\r\n";
+  $ctx = stream_context_create(['http' => ['method' => $method, 'header' => $h, 'timeout' => max(4, (int) $cfg['timeout']),
+                                            'ignore_errors' => true, 'content' => $body !== null ? json_encode($body) : '']]);
+  $raw = @file_get_contents($cfg['base'] . '/' . ltrim($path, '/'), false, $ctx);
+  $code = 0;
+  foreach (($http_response_header ?? []) as $l) if (preg_match('#^HTTP/\S+\s+(\d{3})#', $l, $m)) $code = (int) $m[1];
+  $d = ($raw !== false && $raw !== '') ? json_decode($raw, true) : null;
+  return [$code, is_array($d) ? $d : null];
+}
+
+/* Fiche ERP du client, lue avec SON jeton. */
+function erp_client_fiche_par_jeton(string $token, int $erpId): ?array {
+  if ($erpId <= 0) return null;
+  [$code, $d] = erp_client_request('GET', 'clients/' . $erpId, null, $token);
+  return ($code === 200 && $d && isset($d['id'])) ? $d : null;
+}
+
+/* Colonnes recopiées de la fiche ERP vers la ligne locale. Les rattachements
+   (boutique, bureau, département) ne sont pris que s'ils sont posés dans l'ERP :
+   la console franchisé les gère aussi, on ne les efface pas depuis ici. */
+const ERP_CLIENT_COLS = ['name', 'surname', 'company_name', 'tax_number', 'street', 'street_number', 'city', 'zip', 'locality',
+  'phone', 'phone_prefix', 'phone_e164', 'email', 'is_b2b', 'can_deferral', 'payment_terms', 'personal_discount_percent',
+  'peppol_identifier', 'peppol_verified', 'locale', 'invoice_country', 'invoice_name', 'invoice_address', 'invoice_postal_code',
+  'invoice_city', 'client_code', 'member_since', 'iban', 'billing_lines', 'fidelity_active', 'fidelity_linked_at',
+  'office_delivery', 'status', 'blocked', 'b2b_segment', 'b2b_payment_terms', 'b2b_credit_ceiling', 'b2b_web_discount', 'b2b_franco',
+  'id_main_shop', 'preferred_shop_id', 'office_id', 'department_id'];
+
+function erp_client_profil_sync(int $localId, array $c): int {
+  if ($localId <= 0) return 0;
+  $sets = []; $vals = [];
+  foreach (ERP_CLIENT_COLS as $col) {
+    if (!array_key_exists($col, $c) || !col_exists('client', $col)) continue;
+    $v = $c[$col];
+    if ($v === null || $v === '') continue;                  // l'ERP ne vide pas
+    if (is_array($v)) $v = json_encode($v);
+    $sets[] = "$col=?"; $vals[] = $v;
+  }
+  if (!empty($c['id']) && col_exists('client', 'erp_client_id')) { $sets[] = 'erp_client_id=COALESCE(erp_client_id, ?)'; $vals[] = (int) $c['id']; }
+  if ($sets) { $vals[] = $localId; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $vals); }
+  if (erp_client_sessions_ok() && col_exists('ws_erp_client_sessions', 'profile_synced_at'))
+    q("UPDATE ws_erp_client_sessions SET profile_synced_at=NOW() WHERE client_id=?", [$localId]);
+  return count($sets);
+}
+
+/* Relit la fiche ERP si la dernière lecture date de plus de $maxAge secondes.
+   Rend true si la ligne locale a été rafraîchie. */
+function erp_client_profil_refresh(int $localId, int $maxAge = 60): bool {
+  if (!erp_client_sessions_ok() || $localId <= 0) return false;
+  $s = row("SELECT erp_client_id" . (col_exists('ws_erp_client_sessions', 'profile_synced_at') ? ", profile_synced_at" : ", NULL AS profile_synced_at") .
+           " FROM ws_erp_client_sessions WHERE client_id=?", [$localId]);
+  if (!$s) return false;
+  if (!empty($s['profile_synced_at']) && strtotime($s['profile_synced_at']) > time() - $maxAge) return false;
+  $tok = erp_client_session_token($localId);
+  if ($tok === null) return false;
+  $erpId = (int) ($s['erp_client_id'] ?? 0);
+  if ($erpId <= 0 && col_exists('client', 'erp_client_id')) $erpId = (int) (row("SELECT erp_client_id FROM client WHERE id=?", [$localId])['erp_client_id'] ?? 0);
+  $c = erp_client_fiche_par_jeton($tok, $erpId);
+  if (!$c) return false;
+  erp_client_profil_sync($localId, $c);
+  return true;
+}
+
+/* Écrit des champs de la fiche dans l'ERP (PATCH /clients/{id}). Rend true si
+   l'ERP a accepté (2xx), false sinon (pas de session ERP, refus, panne). */
+function erp_client_patch(int $localId, array $fields): bool {
+  if (!erp_client_sessions_ok() || $localId <= 0 || !$fields) return false;
+  $tok = erp_client_session_token($localId);
+  if ($tok === null) return false;
+  $s = row("SELECT erp_client_id FROM ws_erp_client_sessions WHERE client_id=?", [$localId]);
+  $erpId = (int) ($s['erp_client_id'] ?? 0);
+  if ($erpId <= 0 && col_exists('client', 'erp_client_id')) $erpId = (int) (row("SELECT erp_client_id FROM client WHERE id=?", [$localId])['erp_client_id'] ?? 0);
+  if ($erpId <= 0) return false;
+  [$code] = erp_client_request('PATCH', 'clients/' . $erpId, $fields, $tok);
+  return $code >= 200 && $code < 300;
+}

@@ -3977,6 +3977,10 @@ function dispatch($m, $p) {
         }
         if (col_exists('client', 'erp_auth_at')) q("UPDATE client SET erp_auth_at = NOW() WHERE id = ?", [$uid]);
         erp_client_session_store($uid, $er);
+        // Le PROFIL vient de l'ERP : GET /clients/{id} avec le jeton du client,
+        // recopié dans la ligne locale (qui n'est plus qu'un miroir).
+        $ficheErp = erp_client_fiche_par_jeton($er['access'], (int) $er['clientId']);
+        if ($ficheErp) erp_client_profil_sync($uid, $ficheErp);
         if (($b['channel'] ?? '') === 'pwa' && col_exists('client', 'pwa_user')) q("UPDATE client SET pwa_user = 1 WHERE id = ?", [$uid]);
         json_out(['user' => user_payload($uid), 'token' => sign_token(['id' => $uid, 'exp' => time() + 30 * 86400]), 'authSource' => 'erp']);
       }
@@ -4563,7 +4567,9 @@ function dispatch($m, $p) {
   }
 
   if ($m === 'GET' && $p === '/auth/me') {
-    $id = auth_uid(); $u = $id ? user_payload($id) : null;
+    $id = auth_uid();
+    if ($id && function_exists('erp_client_profil_refresh')) { try { erp_client_profil_refresh((int) $id, 60); } catch (Throwable $e) { /* l'ERP muet ne casse pas le profil */ } }
+    $u = $id ? user_payload($id) : null;
     if (!$u) json_out(['error' => 'Non connecté.'], 401);
     json_out(['user' => $u]);
   }
@@ -4671,8 +4677,20 @@ function dispatch($m, $p) {
         $sets[] = 'fidelity_linked_at=?'; $vals[] = $lv;
       }
     }
+    /* L'ERP D'ABORD (0117) : les mêmes colonnes partent en PATCH /clients/{id}
+       avec le jeton du client. Refus ou panne ERP → 502, rien n'est écrit
+       localement : le profil ne diverge pas de la fiche ERP. Sans session ERP
+       (connexion locale par l'interrupteur d'urgence) → écriture locale seule. */
+    $erpOk = null;
+    if ($sets && function_exists('erp_client_patch') && function_exists('erp_client_auth_enabled') && erp_client_auth_enabled()
+        && erp_client_sessions_ok() && row("SELECT 1 AS x FROM ws_erp_client_sessions WHERE client_id=?", [$id])) {
+      $champs = [];
+      foreach ($sets as $i => $st) $champs[substr($st, 0, strpos($st, '='))] = $vals[$i];
+      $erpOk = erp_client_patch((int) $id, $champs);
+      if (!$erpOk) json_out(['error' => 'erp_refus', 'message' => "Le profil n'a pas pu être enregistré dans l'ERP. Réessayez dans un instant."], 502);
+    }
     if ($sets) { $vals[] = $id; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $vals); }
-    json_out(['user' => user_payload($id)]);
+    json_out(['user' => user_payload($id), 'erpSaved' => $erpOk]);
   }
 
   /* ── Payment (Stripe via cURL, sans SDK) ── */
