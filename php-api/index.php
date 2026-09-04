@@ -7456,6 +7456,18 @@ function dispatch($m, $p) {
           if ($hasStop) { $ssets[] = 'tournee_stop_id=?'; $svals[] = $stop; }
           if ($oid) { $ssets[] = 'office_client_id=?'; $svals[] = $oid; } elseif ($oidClr) { $ssets[] = 'office_client_id=NULL'; }
           if (array_key_exists('floor', $s0)) { $ssets[] = 'floor_room=?'; $svals[] = trim((string) $s0['floor']) ?: null; }
+          /* Un « nouveau » site à l'adresse d'un site actif de la boutique (même
+             bureau, ou sans bureau) REPREND cette ligne au lieu d'en créer une
+             seconde : le doublon « Rue Des Haipes » × 3 vient de là. Adresses
+             comparées sans casse ni espaces multiples, CP/localité compris. */
+          if (!$sid && $saddr !== '') {
+            $nAdr = mb_strtolower(preg_replace('/\s+/u', ' ', $saddr));
+            $dup = row("SELECT id FROM ws_office_delivery_sites
+                         WHERE active=1 AND (shop_id=? OR shop_id IS NULL) AND LOWER(REGEXP_REPLACE(TRIM(COALESCE(address,'')), '[[:space:]]+', ' '))=?
+                           AND (office_client_id IS NULL" . ($oid ? " OR office_client_id=" . (int) $oid : "") . ")
+                         ORDER BY (office_client_id IS NULL), id LIMIT 1", [(int) $shopId, $nAdr]);
+            if ($dup) $sid = (int) $dup['id'];
+          }
           if ($sid) {
             $svals[] = $sid;
             q("UPDATE ws_office_delivery_sites SET " . implode(',', $ssets) . ", shop_id=COALESCE(shop_id, " . (int) $shopId . ") WHERE id=?", $svals);
@@ -12177,7 +12189,10 @@ function dispatch($m, $p) {
       if ($tblExists('ws_office_delivery_sites')) {
         q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, tournee_id, site_access_minutes, active" . ($obShop ? ", shop_id" : "") . ")
             VALUES (?,?,?,?,?,?,1" . ($obShop ? "," . (int) $obShop : "") . ")",
-          [$officeId, $raison . ' — ' . ((string) ($b['office'] ?? 'Site')), (string) ($b['adr'] ?? ''),
+          // Adresse COMPLÈTE (rue, CP localité) — la même forme que l'assistant
+          // tournées, pour qu'un site créé ici et un site repris là-bas se
+          // reconnaissent (comparaison d'adresse normalisée).
+          [$officeId, $raison . ' — ' . ((string) ($b['office'] ?? 'Site')), trim((string) ($b['adr'] ?? '')) . (($obZip !== '' || $obLoc !== '') ? (', ' . trim($obZip . ' ' . (string) $obLoc)) : ''),
            // Temps d'accès : celui qui a été saisi, sinon RIEN. Les 6 minutes
            // par défaut entraient dans toutes les heures d'arrivée de la
            // tournée sans que personne les ait mesurées.
