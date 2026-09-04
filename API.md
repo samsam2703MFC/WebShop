@@ -128,24 +128,28 @@ token; the ERP revokes all the customer's sessions, and the webshop logs the
 customer back in with the new password. `401` wrong current password or no
 ERP session, `400` refused by the ERP, `503` unreachable.
 
-### POST /auth/password-reset/request
+### POST /auth/otp-request · POST /auth/otp-set-password
 
-Public, rate-limited. Body `{ "email" }`. Forwards to
-`POST /clients/auth/password/reset/request`; the ERP e-mails a one-hour,
-single-use link to `…/webshop/reset-password?token=…` (ERP setting
-`CLIENT_PASSWORD_RESET_URL`). Always `202 { ok: true }` for a well-formed
-address, whether or not it has an account. `400` malformed e-mail, `503`
-e-mailing unavailable.
+"Forgotten password" is **SMS only**. `otp-request { identifier, phonePrefix }`
+resolves the account (email or phone), sends a one-time code by SMS to the
+phone on the customer's record (SMSAPI) and returns
+`{ sent, phoneMasked, expiresIn }`; `503 sms_off` when SMS is not configured,
+`404` unknown account, `409 sans_tel` when the record has no phone.
+`otp-set-password { identifier, phonePrefix, code, password }` verifies the
+code, then asks the ERP to store the password with the integration token
+(`PUT /clients/{id}/password`, "option A") and logs the customer in
+(`user`, `token`, `authSource: "erp"`). While the ERP does not expose that
+endpoint the route answers `501 erp_endpoint_absent`. `401 faux|perime`,
+`400` password shorter than 8 characters, `409 sans_fiche` when the account
+has no ERP record.
 
-### POST /auth/password-reset/confirm
+### POST /auth/password-reset/request · POST /auth/password-reset/confirm
 
-Public. Body `{ "token", "password" }`. Forwards to
-`POST /clients/auth/password/reset/confirm`. `200 { ok: true }`; `400` invalid,
-expired or already-used link; `503` unreachable. No automatic login: the page
-sends the customer back to the sign-in screen.
+Server routes for the ERP's e-mail reset flow. Not used by the storefront
+(the product decision is SMS only); kept for the standalone page
+`/reset-password` should the e-mail flow ever be needed.
 
-`/auth/set-password`, `/auth/otp-request` and `/auth/otp-set-password` (the
-former SMS flow) answer `410`.
+`/auth/set-password` answers `410`.
 
 ### POST /auth/logout
 
