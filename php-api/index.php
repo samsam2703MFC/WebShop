@@ -22,6 +22,7 @@ require __DIR__ . '/erp_clients.php';
 require __DIR__ . '/erp_link.php';
 require __DIR__ . '/erp_client_auth.php';
 require __DIR__ . '/sms.php';
+require __DIR__ . '/geo_google.php';
 
 /* CORS */
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -7049,6 +7050,7 @@ function dispatch($m, $p) {
       $hasTk = $tblExists('ws_tour_tracking');
       $hasZ  = $tblExists('ws_delivery_zones');
       $hasFV = col_exists('ws_tours', 'delivery_fee');
+      $hasKm = col_exists('ws_tours', 'price_per_km');
       // `active` REMONTE, et le filtre `t.active=1` est levé : sans cela, une
       // tournée désactivée disparaissait du back-office, donc impossible à
       // réactiver — l'interrupteur aurait été à sens unique. C'est au BO de
@@ -7056,6 +7058,7 @@ function dispatch($m, $p) {
       // sur active=1 de son côté (/delivery-zones, /delivery-fees).
       $rs = rows("SELECT t.id, t.name, t.max_items, t.active" . ($hasZ ? ", z.name AS zone" : ", NULL AS zone") .
                  ($hasFV ? ", t.delivery_fee, t.vehicle" : ", NULL AS delivery_fee, NULL AS vehicle") .
+                 ($hasKm ? ", t.price_per_km, t.route_km, t.route_min, t.route_at" : ", NULL AS price_per_km, NULL AS route_km, NULL AS route_min, NULL AS route_at") .
                  ($hasTk ? ", tk.driver_name" : ", NULL AS driver_name") . ",
                          (SELECT COUNT(*) FROM ws_orders o
                             LEFT JOIN ws_office_delivery_sites stt ON stt.id = o.office_delivery_site_id
@@ -7094,6 +7097,11 @@ function dispatch($m, $p) {
                 'vehicule' => $t['vehicle'] ?: '', 'days' => $days,
                 'amplitude' => $amp, 'decharge' => $hasAv && $amp !== null ? (int) $svc : null, 'trajet' => $hasAv && $amp !== null ? (int) $svc : null,
                 'used' => (int) $t['used'], 'zone' => $t['zone'] ?: '—',
+                // Prix au km et dernier itinéraire Google (0120) : NULL tant que rien n'est saisi / calculé.
+                'pricePerKm' => $t['price_per_km'] !== null ? (float) $t['price_per_km'] : null,
+                'routeKm' => $t['route_km'] !== null ? (float) $t['route_km'] : null,
+                'routeMin' => $t['route_min'] !== null ? (int) $t['route_min'] : null,
+                'routeAt' => $t['route_at'] ?: null,
                 'active' => ((int) ($t['active'] ?? 1)) !== 0];
       }, $rs));
     }
@@ -7273,6 +7281,198 @@ function dispatch($m, $p) {
       header('Cache-Control: no-store');
       echo invite_affiche_html($recap, $inv['urlCourt'], date('d/m/Y', strtotime($inv['expiresAt'])), $racine);
       exit;
+    }
+
+    /* ── GÉO GOOGLE & ASSISTANT TOURNÉES (0120) ─────────────────────────────
+       geo-suggest : liste d'adresses pendant la frappe ; geo-place : la fiche
+       du lieu choisi (rue, n°, CP, localité, position) ; tour-route : km et
+       minutes de l'itinéraire dépôt → arrêts (→ dépôt) ; tour-wizard : une
+       tournée, ses codes postaux, ses sites et leurs bureaux en UNE écriture
+       atomique (transaction), à la place de trois sauvegardes qui pouvaient
+       se perdre entre elles. Sans clé Google : 501 ; Google en refus : 502.
+       Rien n'est inventé : sans position (adresse non choisie dans la liste)
+       un arrêt n'entre pas dans l'itinéraire et l'appel le dit (409). */
+    if ($m === 'GET' && $p === '/franchisee/geo-suggest') {
+      rate_limit('geo_suggest', 240, 60);
+      $q = trim((string) qp('q', ''));
+      if (mb_strlen($q) < 3) json_out(['ok' => true, 'suggestions' => []]);
+      $key = geo_google_key();
+      if ($key === '') json_out(['ok' => false, 'error' => 'Clé API Google absente — ws_param « google_api_key » à renseigner (console marque → Paramètres).'], 501);
+      $r = geo_suggest($q, $key);
+      json_out($r, !empty($r['ok']) ? 200 : 502);
+    }
+    if ($m === 'GET' && $p === '/franchisee/geo-place') {
+      rate_limit('geo_place', 120, 60);
+      $id = trim((string) qp('id', ''));
+      if ($id === '') json_out(['ok' => false, 'error' => 'Identifiant de lieu requis (id).'], 400);
+      $key = geo_google_key();
+      if ($key === '') json_out(['ok' => false, 'error' => 'Clé API Google absente — ws_param « google_api_key » à renseigner (console marque → Paramètres).'], 501);
+      $r = geo_place($id, $key);
+      json_out($r, !empty($r['ok']) ? 200 : 502);
+    }
+    if ($m === 'POST' && $p === '/franchisee/tour-route') {
+      rate_limit('geo_route', 60, 60);
+      $b = body();
+      $key = geo_google_key();
+      if ($key === '') json_out(['ok' => false, 'error' => 'Clé API Google absente — ws_param « google_api_key » à renseigner (console marque → Paramètres).'], 501);
+      if (!$shopId) json_out(['ok' => false, 'error' => 'Boutique non résolue : ouvrez la console avec ?shop=<id>.'], 400);
+      $dep = col_exists('shops', 'lat') ? row("SELECT lat, lng FROM shops WHERE id=?", [(int) $shopId]) : null;
+      if (!$dep || !is_numeric($dep['lat']) || !is_numeric($dep['lng']))
+        json_out(['ok' => false, 'error' => 'Position de la boutique inconnue (shops.lat / lng) : renseignez l\'adresse de la boutique via la liste Google.'], 409);
+      $stops = []; $manquants = [];
+      foreach ((array) ($b['stops'] ?? []) as $i => $st) {
+        if (is_array($st) && is_numeric($st['lat'] ?? null) && is_numeric($st['lng'] ?? null)) $stops[] = ['lat' => (float) $st['lat'], 'lng' => (float) $st['lng']];
+        else $manquants[] = trim((string) (is_array($st) ? ($st['label'] ?? '') : '')) ?: ('arrêt ' . ($i + 1));
+      }
+      if ($manquants) json_out(['ok' => false, 'error' => 'Adresse non vérifiée (à choisir dans la liste Google) : ' . implode(', ', $manquants), 'manquants' => $manquants], 409);
+      if (!$stops) json_out(['ok' => false, 'error' => 'Aucun arrêt.'], 400);
+      $back = array_key_exists('returnToDepot', $b) ? !empty($b['returnToDepot']) : true;
+      $r = geo_route(['lat' => (float) $dep['lat'], 'lng' => (float) $dep['lng']], $stops, $back, $key);
+      if (empty($r['ok'])) json_out($r, 502);
+      $tid = (int) ($b['tourId'] ?? 0);
+      if ($tid && col_exists('ws_tours', 'route_km')) {
+        $t = row("SELECT id, shop_id FROM ws_tours WHERE id=?", [$tid]);
+        if ($t && ($t['shop_id'] === null || (int) $t['shop_id'] === (int) $shopId))
+          q("UPDATE ws_tours SET route_km=?, route_min=?, route_at=NOW() WHERE id=?", [$r['km'], $r['minutes'], $tid]);
+      }
+      json_out(['ok' => true, 'km' => $r['km'], 'minutes' => $r['minutes'], 'legs' => $r['legs'], 'returnToDepot' => $back]);
+    }
+    if ($m === 'POST' && $p === '/franchisee/tour-wizard') {
+      rate_limit('tour_wizard', 60, 60);
+      $b = body();
+      if (!$shopId) json_out(['ok' => false, 'error' => 'Boutique non résolue : ouvrez la console avec ?shop=<id>.'], 400);
+      if (!$tblExists('ws_tours') || !$tblExists('ws_office_delivery_sites')) json_out(['ok' => false, 'error' => 'Tables ws_tours / ws_office_delivery_sites absentes.'], 503);
+      $t = is_array($b['tour'] ?? null) ? $b['tour'] : [];
+      $nom = trim((string) ($t['name'] ?? ''));
+      if ($nom === '') json_out(['ok' => false, 'error' => 'Nom de tournée requis.'], 400);
+      $tid = (int) ($t['id'] ?? 0);
+      if ($tid) {
+        $ex = row("SELECT id, shop_id FROM ws_tours WHERE id=?", [$tid]);
+        if (!$ex || ($ex['shop_id'] !== null && (int) $ex['shop_id'] !== (int) $shopId)) json_out(['ok' => false, 'error' => 'Tournée inconnue ou hors boutique.'], 403);
+      }
+      $dup = row("SELECT id FROM ws_tours WHERE TRIM(name)=TRIM(?) AND active=1 AND (shop_id=? OR shop_id IS NULL) AND id<>?", [$nom, (int) $shopId, $tid]);
+      if ($dup) json_out(['ok' => false, 'error' => 'Une tournée active porte déjà ce nom : « ' . $nom . ' ».'], 409);
+      // Codes postaux : 4 chiffres, uniques, jamais déjà pris par une autre tournée active de la boutique.
+      $cps = [];
+      foreach ((array) ($t['postcodes'] ?? []) as $c) { $c = preg_replace('/\D/', '', (string) $c); if (preg_match('/^\d{4}$/', $c)) $cps[$c] = true; }
+      $cps = array_keys($cps);
+      $hasTP = $tblExists('ws_tour_postcodes');
+      if ($cps && $hasTP) {
+        $ph = implode(',', array_fill(0, count($cps), '?'));
+        $conf = rows("SELECT p.postcode, tt.name FROM ws_tour_postcodes p JOIN ws_tours tt ON tt.id=p.tour_id
+                       WHERE p.postcode IN ($ph) AND tt.active=1 AND (tt.shop_id=? OR tt.shop_id IS NULL) AND tt.id<>?", array_merge($cps, [(int) $shopId, $tid]));
+        if ($conf) {
+          $l = array_map(static fn ($c0) => $c0['postcode'] . ' (' . $c0['name'] . ')', $conf);
+          json_out(['ok' => false, 'error' => 'Code(s) postal(aux) déjà desservi(s) par une autre tournée : ' . implode(', ', $l), 'conflits' => $l], 409);
+        }
+      }
+      // Sites : nom ou adresse requis ; bureau (s'il est donné) actif et de la boutique.
+      $sites = is_array($b['sites'] ?? null) ? array_values($b['sites']) : [];
+      $hasOff = $tblExists('ws_offices');
+      foreach ($sites as $i => $s0) {
+        if (!is_array($s0)) json_out(['ok' => false, 'error' => 'Site ' . ($i + 1) . ' : format invalide.'], 400);
+        if (trim((string) ($s0['name'] ?? '')) === '' && trim((string) ($s0['address'] ?? '')) === '') json_out(['ok' => false, 'error' => 'Site ' . ($i + 1) . ' : nom ou adresse requis.'], 400);
+        $oid0 = (int) ($s0['officeId'] ?? 0);
+        if ($oid0) {
+          $of = $hasOff ? row("SELECT id FROM ws_offices WHERE id=? AND active=1" . (col_exists('ws_offices', 'shop_id') ? " AND (shop_id=? OR shop_id IS NULL)" : ""), col_exists('ws_offices', 'shop_id') ? [$oid0, (int) $shopId] : [$oid0]) : null;
+          if (!$of) json_out(['ok' => false, 'error' => 'Site ' . ($i + 1) . ' : bureau #' . $oid0 . ' inconnu, inactif ou hors boutique.'], 409);
+        }
+        $sid0 = (int) ($s0['id'] ?? 0);
+        if ($sid0) {
+          $sx = row("SELECT id, shop_id FROM ws_office_delivery_sites WHERE id=?", [$sid0]);
+          if (!$sx || ($sx['shop_id'] !== null && (int) $sx['shop_id'] !== (int) $shopId)) json_out(['ok' => false, 'error' => 'Site #' . $sid0 . ' inconnu ou hors boutique.'], 403);
+        }
+      }
+      $sMin = null;
+      if (preg_match('/^(\d{1,2}):(\d{2})$/', (string) ($t['start'] ?? ''), $mm)) $sMin = (int) $mm[1] * 60 + (int) $mm[2];
+      elseif (is_numeric($t['start'] ?? null)) $sMin = (int) $t['start'];
+      $max = (isset($t['max']) && $t['max'] !== '' && is_numeric($t['max'])) ? (int) $t['max'] : null;
+      $hasStop = col_exists('ws_office_delivery_sites', 'tournee_stop_id');
+      $pdo = db(); $pdo->beginTransaction();
+      try {
+        // 1. Tournée.
+        $sets = ['name=?', 'max_items=?', 'active=1']; $vals = [$nom, $max];
+        if (col_exists('ws_tours', 'vehicle') && array_key_exists('vehicule', $t)) { $sets[] = 'vehicle=?'; $vals[] = (string) $t['vehicule'] ?: null; }
+        if (col_exists('ws_tours', 'return_to_depot') && array_key_exists('ret', $t)) { $sets[] = 'return_to_depot=?'; $vals[] = !empty($t['ret']) ? 1 : 0; }
+        if (col_exists('ws_tours', 'price_per_km') && array_key_exists('pricePerKm', $t)) { $sets[] = 'price_per_km=?'; $vals[] = ($t['pricePerKm'] === '' || $t['pricePerKm'] === null) ? null : (float) $t['pricePerKm']; }
+        if (col_exists('ws_tours', 'delivery_fee') && array_key_exists('forfait', $t)) { $sets[] = 'delivery_fee=?'; $vals[] = ($t['forfait'] === '' || $t['forfait'] === null) ? null : (float) $t['forfait']; }
+        if (col_exists('ws_tours', 'route_km') && is_numeric($t['routeKm'] ?? null) && is_numeric($t['routeMin'] ?? null)) { $sets[] = 'route_km=?'; $vals[] = (float) $t['routeKm']; $sets[] = 'route_min=?'; $vals[] = (int) $t['routeMin']; $sets[] = 'route_at=NOW()'; }
+        if ($tid) {
+          $vals[] = $tid;
+          q("UPDATE ws_tours SET " . implode(',', $sets) . (col_exists('ws_tours', 'shop_id') ? ", shop_id=COALESCE(shop_id, " . (int) $shopId . ")" : "") . " WHERE id=?", $vals);
+        } else {
+          $cols = array_map(static fn ($x) => explode('=', $x)[0], $sets);
+          $ph = array_map(static fn ($x) => strpos($x, '=?') !== false ? '?' : explode('=', $x)[1], $sets);
+          if (col_exists('ws_tours', 'shop_id')) { $cols[] = 'shop_id'; $ph[] = '?'; $vals[] = (int) $shopId; }
+          q("INSERT INTO ws_tours (" . implode(',', $cols) . ") VALUES (" . implode(',', $ph) . ")", $vals);
+          $tid = (int) $pdo->lastInsertId();
+        }
+        // 2. Codes postaux (remplacement intégral).
+        if ($hasTP && array_key_exists('postcodes', $t)) {
+          q("DELETE FROM ws_tour_postcodes WHERE tour_id=?", [$tid]);
+          foreach ($cps as $cp1) q("INSERT IGNORE INTO ws_tour_postcodes (tour_id, postcode) VALUES (?,?)", [$tid, $cp1]);
+        }
+        // 3. Jours + départ → fenêtre 'morning' (même règle que la sauvegarde typée).
+        if ($tblExists('ws_tour_availability') && array_key_exists('days', $t) && is_array($t['days'])) {
+          $dmap = ['L' => 1, 'Ma' => 2, 'Me' => 3, 'J' => 4, 'V' => 5, 'S' => 6, 'D' => 7];
+          $on = [];
+          $isList = array_keys($t['days']) === range(0, count($t['days']) - 1);
+          if ($isList) { foreach ($t['days'] as $d0) { if (is_numeric($d0)) $on[(int) $d0] = true; elseif (isset($dmap[(string) $d0])) $on[$dmap[(string) $d0]] = true; } }
+          else { foreach ($dmap as $k => $dow) if (!empty($t['days'][$k])) $on[$dow] = true; }
+          $s0m = $sMin ?? 360;
+          $fmt = static fn ($mn) => sprintf('%02d:%02d:00', intdiv((($mn % 1440) + 1440) % 1440, 60), (($mn % 60) + 60) % 60);
+          $startT = $fmt($s0m); $endT = $fmt($s0m + 180); $cutT = $fmt(max(0, $s0m - 120));
+          foreach ($dmap as $k => $dow) {
+            if (!empty($on[$dow])) {
+              q("INSERT INTO ws_tour_availability (tour_id, shop_id, delivery_day, window_label, delivery_start, delivery_end, cutoff_time, active)
+                   VALUES (?,?,?, 'morning', ?, ?, ?, 1)
+                   ON DUPLICATE KEY UPDATE delivery_start=VALUES(delivery_start), active=1", [$tid, (int) $shopId, $dow, $startT, $endT, $cutT]);
+            } else {
+              q("UPDATE ws_tour_availability SET active=0 WHERE tour_id=? AND shop_id=? AND delivery_day=? AND window_label='morning'", [$tid, (int) $shopId, $dow]);
+            }
+          }
+        }
+        // 4. Sites, dans l'ordre reçu (= ordre des arrêts).
+        $siteIds = [];
+        foreach ($sites as $i => $s0) {
+          $sid = (int) ($s0['id'] ?? 0);
+          $sname = trim((string) ($s0['name'] ?? '')); $saddr = trim((string) ($s0['address'] ?? ''));
+          if ($sname === '') $sname = $saddr;
+          $accRaw = $s0['acc'] ?? ($s0['site_access_minutes'] ?? null);
+          $acc = ($accRaw === null || $accRaw === '') ? null : (float) $accRaw;
+          $oid = (int) ($s0['officeId'] ?? 0);
+          $oidClr = array_key_exists('officeId', $s0) && !$oid;
+          $stop = $i + 1;
+          $ssets = ['name=?', 'address=?', 'site_access_minutes=?', 'tournee_id=?', 'active=1']; $svals = [$sname ?: null, $saddr ?: null, $acc, $tid];
+          if ($hasStop) { $ssets[] = 'tournee_stop_id=?'; $svals[] = $stop; }
+          if ($oid) { $ssets[] = 'office_client_id=?'; $svals[] = $oid; } elseif ($oidClr) { $ssets[] = 'office_client_id=NULL'; }
+          if (array_key_exists('floor', $s0)) { $ssets[] = 'floor_room=?'; $svals[] = trim((string) $s0['floor']) ?: null; }
+          if ($sid) {
+            $svals[] = $sid;
+            q("UPDATE ws_office_delivery_sites SET " . implode(',', $ssets) . ", shop_id=COALESCE(shop_id, " . (int) $shopId . ") WHERE id=?", $svals);
+          } else {
+            $cols = array_map(static fn ($x) => explode('=', $x)[0], $ssets);
+            $ph = array_map(static fn ($x) => strpos($x, '=?') !== false ? '?' : explode('=', $x)[1], $ssets);
+            $cols[] = 'shop_id'; $ph[] = '?'; $svals[] = (int) $shopId;
+            q("INSERT INTO ws_office_delivery_sites (" . implode(',', $cols) . ") VALUES (" . implode(',', $ph) . ")", $svals);
+            $sid = (int) $pdo->lastInsertId();
+          }
+          site_geo_poser($sid, $s0);
+          if ($oid && $hasOff && col_exists('ws_offices', 'tour_id')) q("UPDATE ws_offices SET tour_id=COALESCE(tour_id, ?) WHERE id=?", [$tid, $oid]);
+          $siteIds[] = $sid;
+        }
+        // 5. Sites retirés de la tournée (jamais supprimés : ils restent des sites).
+        $rm = array_values(array_filter(array_map('intval', (array) ($b['removeSites'] ?? []))));
+        if ($rm) {
+          $ph = implode(',', array_fill(0, count($rm), '?'));
+          q("UPDATE ws_office_delivery_sites SET tournee_id=NULL" . ($hasStop ? ", tournee_stop_id=NULL" : "") . " WHERE tournee_id=? AND id IN ($ph) AND (shop_id=? OR shop_id IS NULL)", array_merge([$tid], $rm, [(int) $shopId]));
+        }
+        $pdo->commit();
+      } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        json_out(['ok' => false, 'error' => 'Assistant non enregistré (rien n\'a été écrit) : ' . $e->getMessage()], 500);
+      }
+      json_out(['ok' => true, 'tourId' => $tid, 'siteIds' => $siteIds]);
     }
 
     /* OPTIONS DU DOSSIER — ce que la modale « Imprimer le dossier » propose :
@@ -7485,10 +7685,14 @@ function dispatch($m, $p) {
       if (!$tblExists('ws_office_delivery_sites')) json_vide(['ws_office_delivery_sites']);
       $hasT = $tblExists('ws_tours');
       $hasStop = col_exists('ws_office_delivery_sites', 'tournee_stop_id');
+      $hasGeo = col_exists('ws_office_delivery_sites', 'latitude');
+      $hasAdr = col_exists('ws_office_delivery_sites', 'postal_code');
       $rs = rows("SELECT s.id, s.office_client_id, s.client_id, s.name, s.address, s.floor_room,
                          s.contact_name, s.contact_phone, s.tournee_id, s.shop_id,
                          s.site_access_minutes, s.active, f.name AS office_name,
                          f.address AS office_address, f.postal_code AS office_cp, f.city AS office_city" .
+                 ($hasGeo ? ", s.latitude, s.longitude, s.google_place_id, s.geocode_status" : ", NULL AS latitude, NULL AS longitude, NULL AS google_place_id, NULL AS geocode_status") .
+                 ($hasAdr ? ", s.street, s.street_number, s.postal_code, s.city" : ", NULL AS street, NULL AS street_number, NULL AS postal_code, NULL AS city") .
                  ($hasStop ? ", s.tournee_stop_id" : ", NULL AS tournee_stop_id") .
                  ($hasT ? ", t.name AS tour_name" : ", NULL AS tour_name") . "
                     FROM ws_office_delivery_sites s
@@ -7511,6 +7715,14 @@ function dispatch($m, $p) {
         'acc' => $s2['site_access_minutes'] === null ? null : (float) $s2['site_access_minutes'],
         'site_access_minutes' => $s2['site_access_minutes'] === null ? null : (float) $s2['site_access_minutes'],
         'shop_id' => $s2['shop_id'], 'active' => (bool) $s2['active'],
+        // Position et adresse structurée (Google, 0120) : NULL / '' tant que
+        // l'adresse n'a pas été choisie dans la liste — l'écran l'affiche « non vérifiée ».
+        'lat' => $s2['latitude'] !== null ? (float) $s2['latitude'] : null,
+        'lng' => $s2['longitude'] !== null ? (float) $s2['longitude'] : null,
+        'place_id' => $s2['google_place_id'] ?: null,
+        'geo' => $s2['geocode_status'] ?: null,
+        'street' => $s2['street'] ?: '', 'street_number' => $s2['street_number'] ?: '',
+        'postal_code' => $s2['postal_code'] ?: '', 'city' => $s2['city'] ?: '',
       ], $rs));
     }
 
@@ -11305,6 +11517,8 @@ function dispatch($m, $p) {
             if (col_exists('ws_tours', 'delivery_fee') && isset($r['forfait'])) { $fvSets[] = 'delivery_fee=?'; $fvVals[] = (float) $r['forfait']; }
             if (col_exists('ws_tours', 'vehicle') && isset($r['vehicule'])) { $fvSets[] = 'vehicle=?'; $fvVals[] = (string) $r['vehicule']; }
             if (col_exists('ws_tours', 'return_to_depot') && array_key_exists('ret', $r)) { $fvSets[] = 'return_to_depot=?'; $fvVals[] = !empty($r['ret']) ? 1 : 0; }
+            // Prix au km (0120) : paramètre de la tournée, coût = km × prix. Vide → NULL, jamais 0.
+            if (col_exists('ws_tours', 'price_per_km') && array_key_exists('pricePerKm', $r)) { $fvSets[] = 'price_per_km=?'; $fvVals[] = ($r['pricePerKm'] === '' || $r['pricePerKm'] === null) ? null : (float) $r['pricePerKm']; }
             // Activation de la tournée. Une tournée en préparation ou suspendue
             // ne doit plus être proposée nulle part (sites, bureaux, webshop),
             // sans être supprimée : la supprimer perdrait ses codes postaux,
@@ -11433,12 +11647,14 @@ function dispatch($m, $p) {
                  site_access_minutes=?, $tourSql, office_client_id=COALESCE(?, office_client_id), active=1$stopSql" .
                  ($shopId ? ", shop_id=" . (int) $shopId : "") . " WHERE id=?",
               [$name ?: null, $addr ?: null, $floor ?: null, $cn ?: null, $cp ?: null, $acc, $officeId, (int) $ex['id']]);
+            site_geo_poser((int) $ex['id'], $r);
             $keptIds[] = (int) $ex['id']; $n++;
           } elseif ($name !== '' || $addr !== '' || $officeId) {
             q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, contact_name, contact_phone, site_access_minutes, tournee_id, shop_id, active" . ($hasStopCol ? ", tournee_stop_id" : "") . ")
                  VALUES (?,?,?,?,?,?,?,?,?,1" . ($hasStopCol ? ",?" : "") . ")",
               array_merge([$officeId, $name ?: null, $addr ?: null, $floor ?: null, $cn ?: null, $cp ?: null, $acc, $tourId, $shopId], $hasStopCol ? [$stopVal] : []));
-            $keptIds[] = (int) db()->lastInsertId(); $n++;
+            $newSid = (int) db()->lastInsertId(); site_geo_poser($newSid, $r);
+            $keptIds[] = $newSid; $n++;
           }
         }
         // Sémantique replace : toute ligne du périmètre boutique absente de la
@@ -11910,6 +12126,9 @@ function dispatch($m, $p) {
            (string) ($b['etage'] ?? ''), $tourId,
            (($b['acc'] ?? '') === '' || !is_numeric($b['acc'])) ? null : (float) $b['acc']]);
         $newSiteId = (int) db()->lastInsertId();
+        // Adresse choisie dans la liste Google à l'onboarding : position et
+        // composantes posées sur le site (itinéraire, ETA) — rien sans lat/lng.
+        site_geo_poser($newSiteId, $b);
       }
       /* Départements B2B. L'INSERT écrivait SEPT colonnes (client_id, company,
          site, office, name, effectif, contact) dans une table ERP qui n'en a
@@ -11935,9 +12154,17 @@ function dispatch($m, $p) {
           $dCols  = array_merge([$dKey, $dNam], array_keys($dOpt), $hasEff ? ['effectif'] : []);
           $dSql   = "INSERT INTO $DT (" . implode(', ', $dCols) . ") VALUES ("
                   . implode(', ', array_fill(0, count($dCols), '?')) . ")";
+          // Un département par nom : la console dédoublonne déjà, le serveur
+          // aussi (casse et espaces ignorés) — deux « Marketing » ne font pas deux lignes.
+          $dVus = [];
           foreach ($b['departements'] as $d) {
-            $dVals = array_merge([(int) $newClientId, (string) ($d['dept'] ?? '—')], array_values($dOpt));
-            if ($hasEff) $dVals[] = (int) ($d['effectif'] ?? 1);
+            $dNom = trim((string) (is_array($d) ? ($d['dept'] ?? '') : $d));
+            if ($dNom === '' || $dNom === '—') continue;
+            $dCle = mb_strtolower(preg_replace('/\s+/u', ' ', $dNom));
+            if (isset($dVus[$dCle])) continue;
+            $dVus[$dCle] = true;
+            $dVals = array_merge([(int) $newClientId, $dNom], array_values($dOpt));
+            if ($hasEff) $dVals[] = (int) (is_array($d) ? ($d['effectif'] ?? 1) : 1);
             try { q($dSql, $dVals); $newDeptIds[] = (int) db()->lastInsertId(); }
             catch (Throwable $e) { /* un département refusé ne doit pas annuler le bureau */ }
           }
