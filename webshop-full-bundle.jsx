@@ -2575,9 +2575,6 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
      Le numéro masqué vient du serveur : il ne rend jamais le numéro entier,
      seulement de quoi savoir sur quel téléphone regarder. */
 
-  /* Décompte des 180 secondes de validité annoncées par SMSAPI. Le montrer
-     évite la question « est-ce que ça marche encore ? » et, une fois à zéro,
-     désigne le seul geste utile : en redemander un. */
   if (!open) return null;
   function set(k, v) { setForm((f) => ({ ...f, [k]: v })); setErr(''); }
   async function submit(e) {
@@ -2743,7 +2740,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
             </div>
             <label className="ws-field"><span>{t('form.email')}</span><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email"/></label>
             <label className="ws-field"><span>{t('auth.password')}</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="new-password" minLength={8} placeholder={t('auth.min8')}/></label>
-            <label className="ws-field"><span>{t('form.phone')} <em style={{ fontStyle: 'normal', fontWeight: 400, opacity: .6 }}>{t('form.optional')}</em></span>
+            <label className="ws-field"><span>{t('form.phone')}</span>
               <span className="ws-phone">
                 <select className="ws-phone__pfx" value={form.phonePrefix} onChange={(e) => set('phonePrefix', e.target.value)} aria-label={t('form.phonePrefix')}>
                   {phonePrefixOptions()}
