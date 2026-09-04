@@ -224,3 +224,19 @@ function site_geo_poser(int $siteId, array $r): void {
   $vals[] = $siteId;
   q("UPDATE ws_office_delivery_sites SET " . implode(',', $sets) . " WHERE id=?", $vals);
 }
+
+/* Position Google d'un BUREAU (ws_offices), posée depuis une ligne reçue —
+   clés lat / lng (ou latitude / longitude), place_id, formatted, ou un
+   sous-objet `geo` portant les mêmes clés (onboarding). Seules les colonnes
+   présentes sont écrites ; sans lat / lng, rien ne bouge. */
+function office_geo_poser(int $officeId, array $r): void {
+  if ($officeId <= 0 || !function_exists('col_exists') || !col_exists('ws_offices', 'latitude')) return;
+  if (isset($r['geo']) && is_array($r['geo'])) $r = $r['geo'] + $r;
+  $lat = $r['lat'] ?? ($r['latitude'] ?? null); $lng = $r['lng'] ?? ($r['longitude'] ?? null);
+  if (!is_numeric($lat) || !is_numeric($lng)) return;
+  $sets = ['latitude=?', 'longitude=?']; $vals = [(float) $lat, (float) $lng];
+  if (col_exists('ws_offices', 'google_place_id')) { $sets[] = 'google_place_id=?'; $vals[] = (string) (($r['place_id'] ?? $r['placeId'] ?? '') ?: null); }
+  if (col_exists('ws_offices', 'google_formatted_address')) { $sets[] = 'google_formatted_address=?'; $vals[] = (string) (($r['formatted'] ?? '') ?: null); }
+  $vals[] = $officeId;
+  q("UPDATE ws_offices SET " . implode(',', $sets) . " WHERE id=?", $vals);
+}

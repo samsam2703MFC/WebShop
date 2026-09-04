@@ -7932,6 +7932,7 @@ function dispatch($m, $p) {
                          s.contact_name, s.contact_phone, s.tournee_id, s.shop_id,
                          s.site_access_minutes, s.active, f.name AS office_name,
                          f.address AS office_address, f.postal_code AS office_cp, f.city AS office_city" .
+                 (col_exists('ws_offices', 'latitude') ? ", f.latitude AS office_lat, f.longitude AS office_lng" : ", NULL AS office_lat, NULL AS office_lng") .
                  ($hasGeo ? ", s.latitude, s.longitude, s.google_place_id, s.geocode_status" : ", NULL AS latitude, NULL AS longitude, NULL AS google_place_id, NULL AS geocode_status") .
                  ($hasAdr ? ", s.street, s.street_number, s.postal_code, s.city" : ", NULL AS street, NULL AS street_number, NULL AS postal_code, NULL AS city") .
                  ($hasStop ? ", s.tournee_stop_id" : ", NULL AS tournee_stop_id") .
@@ -7951,6 +7952,7 @@ function dispatch($m, $p) {
         'tour' => $s2['tour_name'] ?: '—', 'tournee_id' => $s2['tournee_id'] !== null ? (int) $s2['tournee_id'] : null,
         'stop' => $s2['tournee_stop_id'] !== null ? (int) $s2['tournee_stop_id'] : null,
         'office_address' => $s2['office_address'] ?: '', 'office_cp' => $s2['office_cp'] ?: '', 'office_city' => $s2['office_city'] ?: '',
+        'office_lat' => $s2['office_lat'] !== null ? (float) $s2['office_lat'] : null, 'office_lng' => $s2['office_lng'] !== null ? (float) $s2['office_lng'] : null,
         // NULL reste NULL : (float) NULL rendait 0, que l'écran lisait comme
         // « zéro minute d'accès » — une mesure, alors que rien n'a été mesuré.
         'acc' => $s2['site_access_minutes'] === null ? null : (float) $s2['site_access_minutes'],
@@ -7983,12 +7985,17 @@ function dispatch($m, $p) {
         : ", NULL AS site";
       $notesSel = col_exists('ws_offices', 'delivery_notes') ? ", f.delivery_notes" : ", NULL AS delivery_notes";
       $logoSel  = col_exists('ws_offices', 'logo_path') ? ", f.logo_path" : "";
+      // Position Google du bureau (0123) : NULL tant que l'adresse n'a pas été
+      // choisie dans la liste — l'écran la dit « non vérifiée ».
+      $geoSel   = col_exists('ws_offices', 'latitude') ? ", f.latitude AS lat, f.longitude AS lng, f.google_place_id AS place_id, f.google_formatted_address AS formatted"
+                                                       : ", NULL AS lat, NULL AS lng, NULL AS place_id, NULL AS formatted";
       $rs = rows("SELECT f.id, f.tour_id, $tourSel, f.name, f.address, f.postal_code, f.city, f.contact,
-                            f.email, f.phone, f.vat, f.status, f.deferred_billing_enabled$notesSel$siteSel$logoSel
+                            f.email, f.phone, f.vat, f.status, f.deferred_billing_enabled$notesSel$siteSel$logoSel$geoSel
                        FROM ws_offices f $join WHERE $wh AND f.active=1 ORDER BY f.name LIMIT 300");
       // deferred en Oui/Non : valeurs du toggle du formulaire Office.
       json_out(array_map(fn ($f) => ['deferred_billing_enabled' => ((int) $f['deferred_billing_enabled'] ? 'Oui' : 'Non'),
-                                     'logo_url' => office_logo_rel($f['logo_path'] ?? null)] + $f, $rs));
+                                     'logo_url' => office_logo_rel($f['logo_path'] ?? null),
+                                     'lat' => $f['lat'] !== null ? (float) $f['lat'] : null, 'lng' => $f['lng'] !== null ? (float) $f['lng'] : null] + $f, $rs));
     }
 
     /* ── Contacts e-mail d'un bureau ──────────────────────────────────────────
@@ -12043,6 +12050,7 @@ function dispatch($m, $p) {
             // de désactivation (suppression) puisse le viser.
             if ($hasShopO && $shopId) $sets[] = 'shop_id=COALESCE(shop_id, ' . (int) $shopId . ')';
             if ($sets) { $uvals[] = $rid; q("UPDATE ws_offices SET " . implode(',', $sets) . " WHERE id=?", $uvals); $n++; }
+            office_geo_poser($rid, $r);
             if (array_key_exists('logo_url', $r)) office_logo_apply($rid, $r['logo_url']);
             $keptOff[] = $rid;
             // Fiche client d'origine : TVA + raison sociale VIES.
@@ -12068,6 +12076,7 @@ function dispatch($m, $p) {
             if ($hasShopO && $shopId)         { $cols[] = 'shop_id'; $ivals[] = (int) $shopId; }
             q("INSERT INTO ws_offices (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $ivals);
             $rid = (int) db()->lastInsertId();
+            office_geo_poser($rid, $r);
             if (array_key_exists('logo_url', $r)) office_logo_apply($rid, $r['logo_url']);
             $keptOff[] = $rid;
             $n++;
@@ -12324,6 +12333,7 @@ function dispatch($m, $p) {
          'pending', preg_match('/compte|factur|diff[ée]r|cr[ée]dit/iu', (string) ($b['paiement'] ?? '')) ? 1 : 0,
          (float) ($b['drop'] ?? 5)]);
       $officeId = (int) db()->lastInsertId();
+      office_geo_poser($officeId, $b);
       if (!empty($b['logo'])) office_logo_apply($officeId, (string) $b['logo']);
       // Ligne CLIENT (table ERP) — sans elle le nouveau bureau n'apparaît
       // jamais dans le menu Clients (GET b2b-clients lit client). Séquence
