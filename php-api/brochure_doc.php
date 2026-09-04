@@ -304,22 +304,31 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
   $shop = $d['shop']; $titreShop = $shop['name'] . ($shop['city'] && stripos($shop['name'], $shop['city']) === false ? ' — ' . $shop['city'] : '');
   $pages = [];
 
-  /* Pagination des catégories : ~14 lignes par page (une sous-catégorie
-     pèse 0,6 ligne). Une catégorie longue continue sur la page suivante,
-     avec son titre repris et « (suite) ». */
+  /* Pagination CONTINUE : les catégories s'enchaînent sans saut de page,
+     ~14 lignes par page (un titre de catégorie pèse 1,6 ligne, une
+     sous-catégorie 0,6). Un titre n'est jamais orphelin en bas de page, et
+     une catégorie entamée continue sur la page suivante sous son nom
+     suivi de « (suite) » dans l'en-tête. */
   $CAP = 14.0;
-  $pagesCat = [];
+  $items = [];
   foreach ($d['categories'] as $c) {
-    $items = [];
+    $items[] = ['t' => 'cat', 'c' => $c, 'w' => 1.6];
     foreach ($c['groupes'] as $g) { $items[] = ['t' => 'sub', 'g' => $g, 'w' => 0.6]; foreach ($g['products'] as $p) $items[] = ['t' => 'p', 'p' => $p, 'w' => 1.0]; }
-    $chunks = []; $cur = []; $poids = 0.0;
-    foreach ($items as $it) {
-      if ($poids + $it['w'] > $CAP && $cur) { $chunks[] = $cur; $cur = []; $poids = 0.0; }
-      if ($it['t'] === 'sub' && $poids + 1.6 > $CAP && $cur) { $chunks[] = $cur; $cur = []; $poids = 0.0; }
-      $cur[] = $it; $poids += $it['w'];
-    }
-    if ($cur) $chunks[] = $cur;
-    foreach ($chunks as $i => $ch) $pagesCat[] = ['cat' => $c, 'items' => $ch, 'suite' => $i > 0, 'derniere' => $i === count($chunks) - 1];
+  }
+  $chunks = []; $cur = []; $poids = 0.0;
+  foreach ($items as $it) {
+    $reserve = $it['t'] === 'cat' ? 3.2 : ($it['t'] === 'sub' ? 1.6 : $it['w']);
+    if ($cur && $poids + $reserve > $CAP) { $chunks[] = $cur; $cur = []; $poids = 0.0; }
+    $cur[] = $it; $poids += $it['w'];
+  }
+  if ($cur) $chunks[] = $cur;
+  $pagesCat = []; $catEnCours = null;
+  foreach ($chunks as $ch) {
+    $premier = $ch[0];
+    if ($premier['t'] === 'cat') { $catEnCours = $premier['c']; $titre = $catEnCours['label']; $enTeteEstTitre = true; }
+    else { $titre = ($catEnCours ? $catEnCours['label'] : '') . ' (suite)'; $enTeteEstTitre = false; }
+    foreach ($ch as $it) if ($it['t'] === 'cat') $catEnCours = $it['c'];
+    $pagesCat[] = ['titre' => $titre, 'items' => $ch, 'enTeteEstTitre' => $enTeteEstTitre];
   }
   $saisons = $d['saisons'] ?? [];
   $total = 1 + count($pagesCat) + (($saisons || $d['formules'] || $d['bons'] || $d['commande']['jours'] || $d['commande']['webshop']) ? 1 : 0);
@@ -355,9 +364,10 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
   // 2… · Catégories
   $n = 2;
   foreach ($pagesCat as $pc) {
-    $c = $pc['cat'];
-    $h = '<section class="page">' . $entete($c['label'] . ($pc['suite'] ? ' (suite)' : ''), $c['count'] . ' produit' . ($c['count'] > 1 ? 's' : '') . ' · ' . count($c['groupes']) . ' famille' . (count($c['groupes']) > 1 ? 's' : '') . '<br>Livraison au bureau');
-    foreach ($pc['items'] as $it) {
+    $h = '<section class="page">' . $entete($pc['titre']);
+    foreach ($pc['items'] as $k => $it) {
+      // Titre de catégorie EN FLUX ; le premier de la page est déjà l'en-tête.
+      if ($it['t'] === 'cat') { if (!($k === 0 && $pc['enTeteEstTitre'])) $h .= '<div class="cat"><h3 class="cat__t">' . $e($it['c']['label']) . '</h3></div>'; continue; }
       if ($it['t'] === 'sub') { $g = $it['g']; $h .= '<div class="sous"><span class="sous__t">' . $e($g['label']) . '</span></div>'; continue; }
       $p = $it['p'];
       $h .= '<div class="ligne"><div class="vignette">' . ($p['img'] ? '<img src="' . $e($p['img']) . '" alt="">' : '') . '</div><div class="ligne__c"><div class="ligne__nom">' . $e($p['name']) . (!empty($p['season']) ? ' <span class="saison">' . $e($p['season']) . '</span>' : '') . '</div>';
@@ -418,7 +428,7 @@ function brochure_render(array $d, $racine = '', $qrPng = null) {
 .en-tete{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;padding-bottom:2mm}
 .en-tete__d{font-size:11px;color:var(--color-text-muted);text-align:right;line-height:1.5}
 .filet{border:none;border-top:1px solid var(--color-border-tertiary);margin:0}
-.sous{display:flex;align-items:baseline;gap:10px;padding-top:2.6mm;border-top:1px solid var(--color-border-tertiary)}
+.sous{display:flex;align-items:baseline;gap:10px;padding-top:2.6mm;border-top:1px solid var(--color-border-tertiary)}.cat{padding-top:5mm;break-after:avoid}.cat__t{font-family:var(--font-display);font-weight:400;font-size:26px;line-height:1.05;margin:0;color:var(--color-text)}
 .sous__t{font-size:12px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--color-primary)}.sous__n{font-size:11px;color:var(--color-text-muted)}
 .ligne{display:grid;grid-template-columns:17mm 1fr auto;gap:4mm;align-items:center;padding:2mm 0;border-bottom:1px dotted var(--color-border-secondary);break-inside:avoid}
 .vignette{width:17mm;height:12.5mm;border-radius:2mm;overflow:hidden;background:var(--color-background-secondary)}.vignette img{width:100%;height:100%;object-fit:cover;display:block}
