@@ -240,3 +240,40 @@ function office_geo_poser(int $officeId, array $r): void {
   $vals[] = $officeId;
   q("UPDATE ws_offices SET " . implode(',', $sets) . " WHERE id=?", $vals);
 }
+
+/* Position Google d'un CLIENT B2B (ws_client_geo, 0124) — mêmes clés que les
+   bureaux : lat / lng, place_id, formatted ; `source` = 'pick' (choisi dans la
+   liste) ou 'auto' (géocodé d'après l'adresse encodée). */
+function client_geo_poser(int $clientId, array $r, string $source = 'pick'): void {
+  if ($clientId <= 0 || !function_exists('row')) return;
+  if (!row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='ws_client_geo'")) return;
+  if (isset($r['geo']) && is_array($r['geo'])) $r = $r['geo'] + $r;
+  $lat = $r['lat'] ?? ($r['latitude'] ?? null); $lng = $r['lng'] ?? ($r['longitude'] ?? null);
+  if (!is_numeric($lat) || !is_numeric($lng)) return;
+  q("INSERT INTO ws_client_geo (client_id, latitude, longitude, google_place_id, google_formatted_address, source, updated_at) VALUES (?,?,?,?,?,?,NOW())
+     ON DUPLICATE KEY UPDATE latitude=VALUES(latitude), longitude=VALUES(longitude), google_place_id=VALUES(google_place_id), google_formatted_address=VALUES(google_formatted_address), source=VALUES(source), updated_at=NOW()",
+    [$clientId, (float) $lat, (float) $lng, (string) (($r['place_id'] ?? $r['placeId'] ?? '') ?: null), (string) (($r['formatted'] ?? '') ?: null), $source]);
+}
+
+/* GÉOCODAGE d'une adresse en texte (Geocoding API) : position, place_id,
+   adresse formatée et PRÉCISION (ROOFTOP = le bâtiment ; RANGE_INTERPOLATED =
+   le numéro estimé ; GEOMETRIC_CENTER / APPROXIMATE = la rue ou la localité,
+   pas une adresse). Sert au rattrapage des adresses sans position. */
+function geo_geocode(string $adresse, string $key, string $pays = 'BE'): array {
+  $adresse = trim(preg_replace('/\s+/', ' ', $adresse));
+  if ($adresse === '') return ['ok' => false, 'error' => 'adresse vide'];
+  $url = geo_google_base() . '/geocode/json?address=' . rawurlencode($adresse) . '&components=' . rawurlencode('country:' . $pays) . '&language=fr&key=' . rawurlencode($key);
+  [$code, $d] = geo_http_json($url);
+  if (!$d) return ['ok' => false, 'error' => geo_google_statut($d, $code)];
+  $st = (string) ($d['status'] ?? '');
+  if ($st === 'ZERO_RESULTS') return ['ok' => false, 'error' => 'introuvable'];
+  if ($st !== 'OK' || empty($d['results'][0])) return ['ok' => false, 'error' => geo_google_statut($d, $code)];
+  $r = $d['results'][0];
+  $lat = $r['geometry']['location']['lat'] ?? null; $lng = $r['geometry']['location']['lng'] ?? null;
+  if (!is_numeric($lat) || !is_numeric($lng)) return ['ok' => false, 'error' => 'sans position'];
+  $numero = false;
+  foreach ($r['address_components'] ?? [] as $ac) if (is_array($ac) && in_array('street_number', $ac['types'] ?? [], true)) $numero = true;
+  return ['ok' => true, 'lat' => (float) $lat, 'lng' => (float) $lng, 'placeId' => (string) ($r['place_id'] ?? ''),
+          'formatted' => (string) ($r['formatted_address'] ?? ''), 'precision' => (string) ($r['geometry']['location_type'] ?? ''),
+          'partiel' => !empty($r['partial_match']), 'numero' => $numero];
+}

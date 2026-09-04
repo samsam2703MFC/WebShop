@@ -7493,6 +7493,64 @@ function dispatch($m, $p) {
         [$tid, trim((string) ($b['driver'] ?? '')) ?: null, (float) $b['lat'], (float) $b['lng']]);
       json_out(['ok' => true, 'tourId' => $tid, 'at' => date('c')]);
     }
+    /* RATTRAPAGE DES POSITIONS : { budget? } → géocode (Google) chaque
+       bureau, site et client B2B de la boutique qui a une adresse mais pas de
+       position, par passes bornées dans le temps — la console rappelle tant
+       que `restant` > 0. Une position obtenue sans numéro de rue, ou sur une
+       localité seulement, n'est PAS gardée : elle est rendue dans le rapport
+       pour être choisie à la main dans la liste Google. */
+    if ($m === 'POST' && $p === '/franchisee/geo-backfill') {
+      rate_limit('geo_backfill', 20, 60);
+      $b = body(); $key = geo_google_key();
+      if ($key === '') json_out(['ok' => false, 'error' => 'Clé API Google absente — ws_param « google_api_key » à renseigner.'], 501);
+      $budget = max(3, min(40, (int) ($b['budget'] ?? 18))); $t0 = microtime(true);
+      $rap = []; $fait = 0; $restant = 0;
+      $adr = static fn ($rue, $cp, $ville) => trim(implode(', ', array_filter([trim((string) $rue), trim(trim((string) $cp) . ' ' . trim((string) $ville))])));
+      $precis = static fn (array $g) => !empty($g['ok']) && in_array($g['precision'], ['ROOFTOP', 'RANGE_INTERPOLATED'], true) && !empty($g['numero']);
+      // Bureaux
+      if (col_exists('ws_offices', 'latitude')) {
+        $sc = ($shopId && col_exists('ws_offices', 'shop_id')) ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
+        $rs = rows("SELECT id, name, address, postal_code, city FROM ws_offices WHERE active=1 AND latitude IS NULL AND COALESCE(address,'')<>''$sc ORDER BY id LIMIT 200");
+        foreach ($rs as $o) {
+          if (microtime(true) - $t0 > $budget) { $restant++; continue; }
+          $g = geo_geocode($adr($o['address'], $o['postal_code'], $o['city']), $key);
+          $ok = $precis($g);
+          if ($ok) { office_geo_poser((int) $o['id'], ['lat' => $g['lat'], 'lng' => $g['lng'], 'place_id' => $g['placeId'], 'formatted' => $g['formatted']]); $fait++; }
+          $rap[] = ['type' => 'bureau', 'id' => (int) $o['id'], 'nom' => (string) $o['name'], 'adresse' => $adr($o['address'], $o['postal_code'], $o['city']), 'ok' => $ok,
+                    'detail' => $ok ? (string) $g['formatted'] : (!empty($g['ok']) ? 'trop imprécis (' . $g['precision'] . ') : à choisir dans la liste Google' : (string) ($g['error'] ?? 'refus'))];
+        }
+      }
+      // Sites
+      if (col_exists('ws_office_delivery_sites', 'latitude')) {
+        $rs = rows("SELECT id, name, address FROM ws_office_delivery_sites WHERE active=1 AND latitude IS NULL AND COALESCE(address,'')<>'' AND " . $scope('shop_id') . " ORDER BY id LIMIT 200");
+        foreach ($rs as $o) {
+          if (microtime(true) - $t0 > $budget) { $restant++; continue; }
+          $g = geo_geocode((string) $o['address'], $key);
+          $ok = $precis($g);
+          if ($ok) { site_geo_poser((int) $o['id'], ['lat' => $g['lat'], 'lng' => $g['lng'], 'place_id' => $g['placeId'], 'formatted' => $g['formatted']]); $fait++; }
+          $rap[] = ['type' => 'site', 'id' => (int) $o['id'], 'nom' => (string) $o['name'], 'adresse' => (string) $o['address'], 'ok' => $ok,
+                    'detail' => $ok ? (string) $g['formatted'] : (!empty($g['ok']) ? 'trop imprécis (' . $g['precision'] . ') : à choisir dans la liste Google' : (string) ($g['error'] ?? 'refus'))];
+        }
+      }
+      // Clients B2B
+      if ($tblExists('client') && $tblExists('ws_client_geo') && col_exists('client', 'street')) {
+        $cliShop = col_exists('client', 'preferred_shop_id') ? 'preferred_shop_id' : (col_exists('client', 'id_main_shop') ? 'id_main_shop' : null);
+        $sc = ($shopId && $cliShop) ? " AND c.$cliShop=" . (int) $shopId : "";
+        $b2b = col_exists('client', 'is_b2b') ? " AND c.is_b2b=1" : "";
+        $rs = rows("SELECT c.id, COALESCE(c.company_name, c.name) AS nom, c.street, c.zip, c.city FROM client c
+                     LEFT JOIN ws_client_geo g ON g.client_id=c.id
+                    WHERE g.client_id IS NULL AND COALESCE(c.street,'')<>''$b2b$sc ORDER BY c.id LIMIT 200");
+        foreach ($rs as $o) {
+          if (microtime(true) - $t0 > $budget) { $restant++; continue; }
+          $g = geo_geocode($adr($o['street'], $o['zip'], $o['city']), $key);
+          $ok = $precis($g);
+          if ($ok) { client_geo_poser((int) $o['id'], ['lat' => $g['lat'], 'lng' => $g['lng'], 'place_id' => $g['placeId'], 'formatted' => $g['formatted']], 'auto'); $fait++; }
+          $rap[] = ['type' => 'client', 'id' => (int) $o['id'], 'nom' => (string) $o['nom'], 'adresse' => $adr($o['street'], $o['zip'], $o['city']), 'ok' => $ok,
+                    'detail' => $ok ? (string) $g['formatted'] : (!empty($g['ok']) ? 'trop imprécis (' . $g['precision'] . ') : à choisir dans la liste Google' : (string) ($g['error'] ?? 'refus'))];
+        }
+      }
+      json_out(['ok' => true, 'fait' => $fait, 'restant' => $restant, 'rapport' => $rap]);
+    }
     if ($m === 'POST' && $p === '/franchisee/tour-trace') {
       rate_limit('geo_trace', 120, 60);
       $b = body(); $key = geo_google_key();
@@ -8228,6 +8286,11 @@ function dispatch($m, $p) {
       $sel .= $cc('fidelity_active') ? ", c.fidelity_active" : ", 0 AS fidelity_active";
       $sel .= $cc('invoice_vat') ? ", c.invoice_vat" : ", NULL AS invoice_vat";
       $sel .= $cc('created_at') ? ", c.created_at" : ", NULL AS created_at";
+      // Position Google du client (ws_client_geo, 0124) : NULL tant qu'elle
+      // n'est pas posée — l'écran la dit « non vérifiée ».
+      $sel .= $tblExists('ws_client_geo')
+        ? ", (SELECT g.latitude FROM ws_client_geo g WHERE g.client_id=c.id) AS lat, (SELECT g.longitude FROM ws_client_geo g WHERE g.client_id=c.id) AS lng, (SELECT g.source FROM ws_client_geo g WHERE g.client_id=c.id) AS geo_source"
+        : ", NULL AS lat, NULL AS lng, NULL AS geo_source";
       // Commandes webshop : nb, dernière, 90 derniers jours (récurrence), CA.
       if ($tblExists('ws_orders'))
         $sel .= ", (SELECT COUNT(*) FROM ws_orders o WHERE o.customer_id=c.id) AS orders_count,
@@ -11971,6 +12034,7 @@ function dispatch($m, $p) {
           }
           if ($ex) {
             if ($sets) { $uv[] = (int) $ex['id']; q("UPDATE client SET " . implode(',', $sets) . " WHERE id=?", $uv); }
+            client_geo_poser((int) $ex['id'], $r);
             $n++;
           } else {
             $cols = ['id_main_shop', 'name', 'zip', 'city', 'street', 'active', 'source_channel', 'webshop_user'];
@@ -11990,6 +12054,7 @@ function dispatch($m, $p) {
               $iv[] = $mB[2] === 'num' ? $b2bNum($r[$mB[0]]) : (trim((string) $r[$mB[0]]) ?: null);
             }
             q("INSERT INTO client (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $iv);
+            client_geo_poser((int) db()->lastInsertId(), $r);
             $n++;
           }
         }
