@@ -7161,15 +7161,20 @@ function dispatch($m, $p) {
     // ── Chauffeurs live (fr_live_drivers) — télémétrie ws_tour_tracking. ──
     if ($m === 'GET' && $p === '/franchisee/fr-live-drivers') {
       if (!$tblExists('ws_tour_tracking') || !$tblExists('ws_tours')) json_vide(['ws_tour_tracking', 'ws_tours']);
-      $rs = rows("SELECT tk.driver_name, tk.vehicle, tk.stops_done, tk.stops_total, t.name
+      $hasPos = col_exists('ws_tour_tracking', 'lat');
+      $rs = rows("SELECT tk.tour_id, tk.driver_name, tk.vehicle, tk.stops_done, tk.stops_total, t.name" . ($hasPos ? ", tk.lat, tk.lng, tk.position_at, TIMESTAMPDIFF(MINUTE, tk.position_at, NOW()) AS age_min" : ", NULL AS lat, NULL AS lng, NULL AS position_at, NULL AS age_min") . "
                     FROM ws_tour_tracking tk JOIN ws_tours t ON t.id = tk.tour_id
                    WHERE " . $scope('t.shop_id') . " AND tk.driver_name IS NOT NULL ORDER BY t.name LIMIT 20");
       $palette = ['#8D1D2C', '#3B3468', '#2d7a3e', '#C87A3F'];
       $i = 0;
       json_out(array_map(function ($r) use (&$i, $palette) {
-        return ['color' => $palette[$i++ % 4], 'nom' => $r['driver_name'],
+        // Position GPS : celle envoyée par la tablette (0122), avec son âge.
+        // Absente → null : la carte ne place pas un chauffeur qu'elle ne voit pas.
+        return ['color' => $palette[$i++ % 4], 'nom' => $r['driver_name'], 'tourId' => (int) $r['tour_id'], 'tour' => (string) ($r['name'] ?? ''),
                 'info' => trim(($r['name'] ?: '') . ($r['vehicle'] ? (' · ' . $r['vehicle']) : '')),
-                'avancement' => ((int) $r['stops_done']) . '/' . max(1, (int) $r['stops_total'])];
+                'avancement' => ((int) $r['stops_done']) . '/' . max(1, (int) $r['stops_total']),
+                'lat' => $r['lat'] !== null ? (float) $r['lat'] : null, 'lng' => $r['lng'] !== null ? (float) $r['lng'] : null,
+                'positionAt' => $r['position_at'] ?: null, 'ageMin' => $r['age_min'] !== null ? (int) $r['age_min'] : null];
       }, $rs));
     }
 
@@ -7470,6 +7475,38 @@ function dispatch($m, $p) {
        { stops:[{id,lat,lng,label}], returnToDepot } → l'ordre le plus court,
        ses tronçons, et l'économie contre l'ordre actuel (Directions). Rien
        n'est écrit : l'assistant applique l'ordre si l'utilisateur le veut. */
+    /* TRACÉ RÉEL + TRAFIC (Routes API, TRAFFIC_ON_POLYLINE) pour les cartes :
+       { stops:[{lat,lng,label}], returnToDepot } → points de la polyline,
+       portions colorées NORMAL / SLOW / TRAFFIC_JAM, durées avec et sans trafic. */
+    /* POSITION DU CHAUFFEUR (tablette) : { tourId, lat, lng } → dernière
+       position de la tournée (ws_tour_tracking, 0122). La console la lit par
+       fr-live-drivers avec son âge. */
+    if ($m === 'POST' && $p === '/franchisee/driver-position') {
+      rate_limit('driver_pos', 600, 60);
+      $b = body(); $tid = (int) ($b['tourId'] ?? 0);
+      if (!$tid || !is_numeric($b['lat'] ?? null) || !is_numeric($b['lng'] ?? null)) json_out(['ok' => false, 'error' => 'tourId, lat et lng requis'], 400);
+      if (!$tblExists('ws_tour_tracking') || !col_exists('ws_tour_tracking', 'lat')) json_out(['ok' => false, 'error' => 'Migration 0122 non passée (ws_tour_tracking.lat).'], 501);
+      $t = row("SELECT id, shop_id FROM ws_tours WHERE id=?", [$tid]);
+      if (!$t || ($shopId && $t['shop_id'] !== null && (int) $t['shop_id'] !== (int) $shopId)) json_out(['ok' => false, 'error' => 'Tournée inconnue ou hors boutique.'], 403);
+      q("INSERT INTO ws_tour_tracking (tour_id, driver_name, stops_done, stops_total, lat, lng, position_at) VALUES (?,?,0,0,?,?,NOW())
+         ON DUPLICATE KEY UPDATE lat=VALUES(lat), lng=VALUES(lng), position_at=NOW()" . (isset($b['driver']) && trim((string) $b['driver']) !== '' ? ", driver_name=VALUES(driver_name)" : ""),
+        [$tid, trim((string) ($b['driver'] ?? '')) ?: null, (float) $b['lat'], (float) $b['lng']]);
+      json_out(['ok' => true, 'tourId' => $tid, 'at' => date('c')]);
+    }
+    if ($m === 'POST' && $p === '/franchisee/tour-trace') {
+      rate_limit('geo_trace', 120, 60);
+      $b = body(); $key = geo_google_key();
+      if ($key === '') json_out(['ok' => false, 'error' => 'Clé API Google absente — ws_param « google_api_key » à renseigner.'], 501);
+      if (!$shopId) json_out(['ok' => false, 'error' => 'Boutique non résolue : ouvrez la console avec ?shop=<id>.'], 400);
+      $dep = col_exists('shops', 'lat') ? row("SELECT lat, lng FROM shops WHERE id=?", [(int) $shopId]) : null;
+      if (!$dep || !is_numeric($dep['lat']) || !is_numeric($dep['lng'])) json_out(['ok' => false, 'error' => 'Position de la boutique inconnue (shops.lat / lng).'], 409);
+      $stops = [];
+      foreach ((array) ($b['stops'] ?? []) as $st) if (is_array($st) && is_numeric($st['lat'] ?? null) && is_numeric($st['lng'] ?? null)) $stops[] = ['lat' => (float) $st['lat'], 'lng' => (float) $st['lng']];
+      if (!$stops) json_out(['ok' => false, 'error' => 'Aucun arrêt positionné.'], 400);
+      $back = array_key_exists('returnToDepot', $b) ? !empty($b['returnToDepot']) : true;
+      $r = geo_route_trace(['lat' => (float) $dep['lat'], 'lng' => (float) $dep['lng']], $stops, $back, $key);
+      json_out($r, !empty($r['ok']) ? 200 : 502);
+    }
     if ($m === 'POST' && $p === '/franchisee/tour-optimise') {
       rate_limit('geo_optimise', 30, 60);
       $b = body(); $key = geo_google_key();

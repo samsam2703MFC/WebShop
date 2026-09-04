@@ -150,6 +150,55 @@ function geo_route_optimise(array $origin, array $stops, bool $back, string $key
   return ['ok' => true, 'order' => $order, 'km' => round($m / 1000, 1), 'minutes' => (int) round($sec / 60), 'legs' => $legs];
 }
 
+/* ── ROUTES API : TRACÉ RÉEL + TRAFIC (TRAFFIC_ON_POLYLINE) ────────────────
+ * Le tracé de la tournée (polyline) et, portion par portion, le niveau de
+ * trafic Google : NORMAL / SLOW / TRAFFIC_JAM — les couleurs de Google Maps.
+ * Durée avec trafic (duration) et sans (staticDuration) par tronçon. Même
+ * activation « Routes API » que l'ordre optimal. */
+function geo_polyline_decode(string $enc): array {
+  $pts = []; $i = 0; $n = strlen($enc); $lat = 0; $lng = 0;
+  while ($i < $n) {
+    foreach (['lat', 'lng'] as $k) {
+      $res = 0; $sh = 0;
+      do { $b = ord($enc[$i++]) - 63; $res |= ($b & 0x1f) << $sh; $sh += 5; } while ($b >= 0x20 && $i < $n);
+      $d = ($res & 1) ? ~($res >> 1) : ($res >> 1);
+      if ($k === 'lat') $lat += $d; else $lng += $d;
+    }
+    $pts[] = [round($lat / 1e5, 5), round($lng / 1e5, 5)];
+  }
+  return $pts;
+}
+function geo_route_trace(array $origin, array $stops, bool $back, string $key): array {
+  if (!$stops) return ['ok' => false, 'error' => 'aucun arrêt'];
+  $pt = static fn ($p) => ['location' => ['latLng' => ['latitude' => (float) $p['lat'], 'longitude' => (float) $p['lng']]]];
+  $dest = $back ? $origin : $stops[count($stops) - 1];
+  $inter = $back ? $stops : array_slice($stops, 0, -1);
+  $body = ['origin' => $pt($origin), 'destination' => $pt($dest), 'intermediates' => array_map($pt, $inter),
+           'travelMode' => 'DRIVE', 'routingPreference' => 'TRAFFIC_AWARE_OPTIMAL',
+           'departureTime' => gmdate('Y-m-d\TH:i:s\Z', time() + 90), 'extraComputations' => ['TRAFFIC_ON_POLYLINE'],
+           'polylineQuality' => 'HIGH_QUALITY', 'languageCode' => 'fr', 'units' => 'METRIC'];
+  [$code, $d] = geo_http_post_json(geo_routes_base() . '/directions/v2:computeRoutes', $body,
+    ['X-Goog-Api-Key: ' . $key, 'X-Goog-FieldMask: routes.distanceMeters,routes.duration,routes.staticDuration,routes.polyline.encodedPolyline,routes.travelAdvisory.speedReadingIntervals,routes.legs.distanceMeters,routes.legs.duration,routes.legs.staticDuration']);
+  if (!$d) return ['ok' => false, 'error' => 'Routes API injoignable (HTTP ' . $code . ')'];
+  if ($code !== 200 || empty($d['routes'][0])) {
+    $msg = (string) ($d['error']['message'] ?? ($d['error']['status'] ?? 'refus'));
+    if ($code === 403 || stripos($msg, 'PERMISSION') !== false || stripos($msg, 'not enabled') !== false || stripos($msg, 'has not been used') !== false)
+      $msg = 'Routes API non activée sur la clé Google — activer « Routes API » dans le projet Google Cloud (' . $msg . ')';
+    return ['ok' => false, 'error' => 'Google Routes : ' . $msg];
+  }
+  $r = $d['routes'][0]; $sec = static fn ($v) => (int) preg_replace('/\D/', '', (string) ($v ?? '0s'));
+  $pts = geo_polyline_decode((string) ($r['polyline']['encodedPolyline'] ?? ''));
+  $iv = [];
+  foreach ($r['travelAdvisory']['speedReadingIntervals'] ?? [] as $x)
+    $iv[] = ['a' => (int) ($x['startPolylinePointIndex'] ?? 0), 'b' => (int) ($x['endPolylinePointIndex'] ?? 0), 'speed' => (string) ($x['speed'] ?? 'NORMAL')];
+  $legs = [];
+  foreach ($r['legs'] ?? [] as $lg) $legs[] = ['km' => round(((int) ($lg['distanceMeters'] ?? 0)) / 1000, 1), 'min' => (int) round($sec($lg['duration'] ?? null) / 60), 'minSans' => (int) round($sec($lg['staticDuration'] ?? null) / 60)];
+  $nJam = 0; $nSlow = 0; foreach ($iv as $x) { if ($x['speed'] === 'TRAFFIC_JAM') $nJam++; elseif ($x['speed'] === 'SLOW') $nSlow++; }
+  return ['ok' => true, 'points' => $pts, 'intervals' => $iv, 'legs' => $legs,
+          'km' => round(((int) ($r['distanceMeters'] ?? 0)) / 1000, 1), 'minutes' => (int) round($sec($r['duration'] ?? null) / 60), 'minutesSans' => (int) round($sec($r['staticDuration'] ?? null) / 60),
+          'trafic' => ['jam' => $nJam, 'slow' => $nSlow, 'normal' => count($iv) - $nJam - $nSlow], 'at' => gmdate('c')];
+}
+
 /* Colonnes d'adresse / géo d'un site, posées depuis une ligne reçue (clés lat,
    lng, place_id, formatted, street, street_number, postal_code, city).
    Seules les colonnes présentes sont écrites ; sans lat/lng rien ne bouge. */
