@@ -7499,6 +7499,133 @@ function dispatch($m, $p) {
        que `restant` > 0. Une position obtenue sans numéro de rue, ou sur une
        localité seulement, n'est PAS gardée : elle est rendue dans le rapport
        pour être choisie à la main dans la liste Google. */
+    /* ═══ CRM DE PROSPECTION B2B ═══════════════════════════════════════
+       Un tableau par campagne. La marque décide les campagnes (portée réseau,
+       ws_promo_campaign.id_shop NULL) ; le franchisé choisit la sienne, y pose
+       ses cibles et les fait avancer de colonne en colonne. TOUT est variable :
+       les colonnes se renomment, se réordonnent, s'ajoutent et se retirent. */
+
+    // Les colonnes de la boutique, ou le cycle par défaut si elle n'en a pas
+    // encore : le tableau ne s'ouvre jamais vide.
+    if ($m === 'GET' && $p === '/franchisee/crm') {
+      if (!$tblExists('ws_crm_colonne')) json_out(['ok' => false, 'error' => 'Migration 0125 non passée (ws_crm_colonne).'], 501);
+      $sc = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
+      $cols = rows("SELECT id, cle, label, ordre, couleur, gagne, perdu FROM ws_crm_colonne WHERE actif=1$sc ORDER BY ordre, id");
+      if (!$cols) {
+        // Le cycle décrit par le réseau : choisir la campagne, préparer le bon
+        // et l'assortiment, envoyer, passer sur place, relancer, décrocher le
+        // rendez-vous. Posé une fois, modifiable ensuite.
+        $def = [['a_contacter', 'À contacter', '#8b8177'], ['prepare', 'Bon & assortiment prêts', '#b26a00'],
+                ['envoye', 'Envoyé par mail', '#2a5a9e'], ['visite', 'Visite sur place', '#6b4fa8'],
+                ['relance', 'Relance téléphone', '#C17A2A'], ['rdv', 'Rendez-vous obtenu', '#2d7a3e'],
+                ['gagne', 'Client gagné', '#2d7a3e'], ['perdu', 'Sans suite', '#8D1D2C']];
+        foreach ($def as $i => [$cle, $lab, $coul])
+          q("INSERT IGNORE INTO ws_crm_colonne (shop_id, cle, label, ordre, couleur, gagne, perdu, actif) VALUES (?,?,?,?,?,?,?,1)",
+            [$shopId ?: null, $cle, $lab, $i, $coul, $cle === 'gagne' ? 1 : 0, $cle === 'perdu' ? 1 : 0]);
+        $cols = rows("SELECT id, cle, label, ordre, couleur, gagne, perdu FROM ws_crm_colonne WHERE actif=1$sc ORDER BY ordre, id");
+      }
+      $camp = $tblExists('ws_promo_campaign')
+        ? rows("SELECT id, name, id_shop, starts_at, ends_at, is_active FROM ws_promo_campaign
+                 WHERE id_shop IS NULL" . ($shopId ? " OR id_shop=" . (int) $shopId : "") . " ORDER BY is_active DESC, ends_at DESC LIMIT 60")
+        : [];
+      $scC = $shopId ? " WHERE (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
+      $cartes = $tblExists('ws_crm_carte') ? rows("SELECT * FROM ws_crm_carte$scC ORDER BY ordre, id LIMIT 800") : [];
+      $gestes = [];
+      if ($tblExists('ws_crm_geste') && $cartes) {
+        $ids = implode(',', array_map(fn ($c) => (int) $c['id'], $cartes));
+        foreach (rows("SELECT carte_id, type, texte, par, quand FROM ws_crm_geste WHERE carte_id IN ($ids) ORDER BY quand DESC LIMIT 2000") as $g)
+          $gestes[(string) $g['carte_id']][] = ['type' => $g['type'], 'texte' => $g['texte'], 'par' => $g['par'], 'quand' => $g['quand']];
+      }
+      json_out(['ok' => true,
+        'colonnes' => array_map(fn ($c) => ['id' => (int) $c['id'], 'cle' => $c['cle'], 'label' => $c['label'],
+          'ordre' => (int) $c['ordre'], 'couleur' => $c['couleur'], 'gagne' => (int) $c['gagne'] === 1, 'perdu' => (int) $c['perdu'] === 1], $cols),
+        'campagnes' => array_map(fn ($c) => ['id' => (int) $c['id'], 'nom' => $c['name'],
+          'reseau' => $c['id_shop'] === null, 'active' => (int) $c['is_active'] === 1,
+          'du' => $c['starts_at'], 'au' => $c['ends_at']], $camp),
+        'cartes' => array_map(fn ($c) => ['id' => (int) $c['id'], 'campagneId' => $c['campagne_id'] !== null ? (int) $c['campagne_id'] : null,
+          'campagneNom' => $c['campagne_nom'], 'cibleType' => $c['cible_type'], 'cibleId' => $c['cible_id'] !== null ? (int) $c['cible_id'] : null,
+          'nom' => $c['nom'], 'colonne' => $c['colonne'], 'ordre' => (int) $c['ordre'], 'voucher' => $c['voucher_code'],
+          'contactNom' => $c['contact_nom'], 'contactRole' => $c['contact_role'], 'contactTel' => $c['contact_tel'],
+          'contactEmail' => $c['contact_email'], 'adresse' => $c['adresse'], 'note' => $c['note'],
+          'prochaine' => $c['prochaine_action'], 'maj' => $c['maj'],
+          'gestes' => $gestes[(string) $c['id']] ?? []], $cartes)]);
+    }
+
+    // Créer, modifier, déplacer ou supprimer une carte. Une seule route : le
+    // tableau ne fait qu'une chose, poser une carte quelque part.
+    if ($m === 'POST' && $p === '/franchisee/crm-carte') {
+      if (!$tblExists('ws_crm_carte')) json_out(['ok' => false, 'error' => 'Migration 0125 non passée (ws_crm_carte).'], 501);
+      $b = body(); $id = (int) ($b['id'] ?? 0);
+      if (!empty($b['supprimer']) && $id) {
+        q("DELETE FROM ws_crm_carte WHERE id=?" . ($shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : ""), [$id]);
+        if ($tblExists('ws_crm_geste')) q("DELETE FROM ws_crm_geste WHERE carte_id=?", [$id]);
+        json_out(['ok' => true, 'supprime' => $id]);
+      }
+      $txt = fn ($k, $n = 160) => array_key_exists($k, $b) ? (mb_substr(trim((string) $b[$k]), 0, $n) ?: null) : null;
+      $now = date('Y-m-d H:i:s');
+      $date = static function ($v) { $v = trim((string) $v); return preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) ? $v : null; };
+      if ($id) {
+        $sets = []; $vals = [];
+        foreach (['colonne' => 'colonne', 'nom' => 'nom', 'voucher' => 'voucher_code', 'contactNom' => 'contact_nom',
+                  'contactRole' => 'contact_role', 'contactTel' => 'contact_tel', 'contactEmail' => 'contact_email',
+                  'adresse' => 'adresse', 'note' => 'note'] as $k => $col) {
+          if (array_key_exists($k, $b)) { $sets[] = "$col=?"; $vals[] = $txt($k, $k === 'note' ? 2000 : 160); }
+        }
+        if (array_key_exists('ordre', $b)) { $sets[] = 'ordre=?'; $vals[] = (int) $b['ordre']; }
+        if (array_key_exists('prochaine', $b)) { $sets[] = 'prochaine_action=?'; $vals[] = $date($b['prochaine'] ?? ''); }
+        if (!$sets) json_out(['ok' => false, 'error' => 'rien à modifier'], 422);
+        $sets[] = 'maj=?'; $vals[] = $now; $vals[] = $id;
+        q("UPDATE ws_crm_carte SET " . implode(',', $sets) . " WHERE id=?", $vals);
+      } else {
+        $nom = $txt('nom'); if (!$nom) json_out(['ok' => false, 'error' => 'nom requis'], 422);
+        q("INSERT INTO ws_crm_carte (shop_id, campagne_id, campagne_nom, cible_type, cible_id, nom, colonne, ordre,
+             voucher_code, contact_nom, contact_role, contact_tel, contact_email, adresse, note, prochaine_action, cree_le, maj)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          [$shopId ?: null, isset($b['campagneId']) && $b['campagneId'] !== '' ? (int) $b['campagneId'] : null, $txt('campagneNom', 120),
+           mb_substr((string) ($b['cibleType'] ?? 'prospect'), 0, 16), isset($b['cibleId']) && $b['cibleId'] !== '' ? (int) $b['cibleId'] : null,
+           $nom, mb_substr((string) ($b['colonne'] ?? 'a_contacter'), 0, 40), (int) ($b['ordre'] ?? 0),
+           $txt('voucher', 60), $txt('contactNom', 120), $txt('contactRole', 60), $txt('contactTel', 40), $txt('contactEmail'),
+           $txt('adresse', 255), $txt('note', 2000), $date($b['prochaine'] ?? ''), $now, $now]);
+        $id = (int) db()->lastInsertId();
+      }
+      if ($tblExists('ws_crm_geste') && !empty($b['geste'])) {
+        q("INSERT INTO ws_crm_geste (carte_id, type, texte, par, quand) VALUES (?,?,?,?,?)",
+          [$id, mb_substr((string) $b['geste'], 0, 24), $txt('gesteTexte', 255), $txt('par', 80), $now]);
+      }
+      json_out(['ok' => true, 'id' => $id]);
+    }
+
+    // Les colonnes, en une fois : renommées, réordonnées, ajoutées, retirées.
+    if ($m === 'POST' && $p === '/franchisee/crm-colonnes') {
+      if (!$tblExists('ws_crm_colonne')) json_out(['ok' => false, 'error' => 'Migration 0125 non passée.'], 501);
+      $b = body(); $list = is_array($b['colonnes'] ?? null) ? $b['colonnes'] : [];
+      if (!$list) json_out(['ok' => false, 'error' => 'au moins une colonne'], 422);
+      $sid = $shopId ?: null;
+      // Une colonne retirée n'emporte pas ses cartes : elles rejoignent la
+      // première colonne. Perdre une prospection en renommant un tableau
+      // serait le pire des paramétrages.
+      $gardees = [];
+      foreach ($list as $i => $c) {
+        if (!is_array($c)) continue;
+        $cle = preg_replace('/[^a-z0-9_]/', '', mb_strtolower(trim((string) ($c['cle'] ?? '')))) ?: ('col' . $i);
+        $lab = mb_substr(trim((string) ($c['label'] ?? $cle)), 0, 80) ?: $cle;
+        $gardees[] = $cle;
+        q("INSERT INTO ws_crm_colonne (shop_id, cle, label, ordre, couleur, gagne, perdu, actif) VALUES (?,?,?,?,?,?,?,1)
+           ON DUPLICATE KEY UPDATE label=VALUES(label), ordre=VALUES(ordre), couleur=VALUES(couleur), gagne=VALUES(gagne), perdu=VALUES(perdu), actif=1",
+          [$sid, $cle, $lab, $i, mb_substr(trim((string) ($c['couleur'] ?? '')), 0, 16) ?: null,
+           !empty($c['gagne']) ? 1 : 0, !empty($c['perdu']) ? 1 : 0]);
+      }
+      $in = implode(',', array_fill(0, count($gardees), '?'));
+      $scD = $sid === null ? "shop_id IS NULL" : "shop_id=" . (int) $sid;
+      q("UPDATE ws_crm_colonne SET actif=0 WHERE $scD AND cle NOT IN ($in)", $gardees);
+      if ($tblExists('ws_crm_carte')) {
+        $prem = $gardees[0];
+        q("UPDATE ws_crm_carte SET colonne=?, maj=NOW() WHERE " . ($sid === null ? "shop_id IS NULL" : "shop_id=" . (int) $sid) . " AND colonne NOT IN ($in)",
+          array_merge([$prem], $gardees));
+      }
+      json_out(['ok' => true, 'colonnes' => count($gardees)]);
+    }
+
     if ($m === 'POST' && $p === '/franchisee/geo-backfill') {
       rate_limit('geo_backfill', 20, 60);
       $b = body(); $key = geo_google_key();
@@ -14430,6 +14557,8 @@ function bo_endpoint_section($name) {
     'catchment-postcodes' => 'zones', 'zone-check' => 'zones',
     // Clients B2B
     'ws-office-delivery-sites' => 'sites',
+    // CRM de prospection : même section que les clients B2B.
+    'crm' => 'b2bClients', 'crm-carte' => 'b2bClients', 'crm-colonnes' => 'b2bClients',
     'ws-offices' => 'offices', 'onboard-office' => 'offices', 'route-office' => 'offices',
     'office-invite' => 'offices', 'invite-revoke' => 'offices',
     'office-invite-pdf' => 'offices', 'office-invite-send' => 'offices',
