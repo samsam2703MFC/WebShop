@@ -6855,6 +6855,15 @@ function dispatch($m, $p) {
         $aCol = col_exists($SHOPS, 'address_line') ? 'address_line' : (col_exists($SHOPS, 'street') ? 'street' : null);
         if ($aCol) { $sets[] = "$aCol=?"; $vals[] = mb_substr(trim((string) $b['address']), 0, 255); }
       }
+      // Position choisie dans la liste Google (console) : posée telle quelle et
+      // étiquetée « manual » pour que le géocodage automatique ne la remplace
+      // pas — c'est le départ et le retour de toutes les tournées.
+      if (is_numeric($b['lat'] ?? null) && is_numeric($b['lng'] ?? null) && col_exists($SHOPS, 'lat') && col_exists($SHOPS, 'lng')) {
+        $sets[] = 'lat=?'; $vals[] = (float) $b['lat'];
+        $sets[] = 'lng=?'; $vals[] = (float) $b['lng'];
+        if (col_exists($SHOPS, 'geo_source')) $sets[] = "geo_source='manual'";
+        if (col_exists($SHOPS, 'geo_at')) $sets[] = 'geo_at=NOW()';
+      }
       /* Langue de la boutique (migration 0087). Elle n'était posée que par
          migration : aucun écran ne pouvait la changer, donc « Halle ouvre en
          néerlandais » n'était pas paramétrable par le franchisé.
