@@ -11903,6 +11903,11 @@ function dispatch($m, $p) {
                   [$siteAdr, $tgt['name'] ?? null, $tgt['tournee_id'] ?? null, $pairTour, (int) $any['id']]);
               }
             }
+            // Adresse du bureau choisie dans la liste Google : la position et
+            // les composantes vont sur SON site (celui de cette adresse) —
+            // c'est le site qui entre dans l'itinéraire, pas le bureau.
+            $gs = row("SELECT id FROM ws_office_delivery_sites WHERE office_client_id=? AND active=1 AND $normAdrSql=? LIMIT 1", [$rid, $normSite]);
+            if ($gs) site_geo_poser((int) $gs['id'], $r);
           }
         }
         // Suppression persistée : les offices du périmètre boutique absents de
@@ -12227,6 +12232,11 @@ function dispatch($m, $p) {
          saisie ; validité (validite) → expires_at si elle est une date. */
       $voucherFailed = [];
       foreach ($voucherNoms as $vn) {
+        /* Bon EXISTANT — choisi dans la liste que sert /franchisee/ws-vouchers-local.
+           On ne le récrit pas (sa valeur, sa validité et sa cible sont celles
+           de la liste, et le récrire ciblé « bureau » le fermerait aux
+           autres) : il est seulement annoncé au bureau dans son courrier. */
+        if ($tblExists('ws_vouchers') && row("SELECT 1 x FROM ws_vouchers WHERE code=? AND active=1 LIMIT 1", [$vn['code']])) { $vouchersCreated++; continue; }
         $val = $vn['valeur'];
         $num = is_numeric(preg_replace('/[^0-9.,]/', '', (string) $val)) ? (float) str_replace(',', '.', preg_replace('/[^0-9.,]/', '', (string) $val)) : null;
         // Type : « % » ou « pourcent » dans la valeur ⇒ percent, sinon montant fixe.
