@@ -48,10 +48,19 @@
       super(props);
       this.state = {
         lang: 'fr', eventType: '', zoneVal: '', cpVisible: false,
-        openFaq: -1, modalOpen: false, routedName: '', activeSection: ''
+        openFaq: -1, modalOpen: false, routedName: '', activeSection: '',
+        // Formulaire fusionné : 'event' (traiteur/événements, historique) ou
+        // 'bureau' (création d'un bureau livré — remplace l'ancienne landing
+        // /landing/office). ?tab=bureau présélectionne l'onglet bureau.
+        formTab: 'event',
+        vies: { status: 'idle', msg: '' },          // idle | checking | ok | fail
+        bVat: '', bCompany: '', bStreet: '', bZip: '', bCity: '',
+        bDept: '', bHead: '', bPlaceId: null,
+        bSug: [], bSugOpen: false, bSending: false
       };
       this._form = null;
       this._reveal = null;
+      this._sugTimer = null;
     }
 
     componentDidMount() {
@@ -59,6 +68,11 @@
         var l = localStorage.getItem('la_lang');
         if (l === 'fr' || l === 'nl') this.setState({ lang: l });
       } catch (e) {}
+      // Lien direct vers le volet bureau (tuile accueil, anciennes pages
+      // /landing/office redirigées) : ?tab=bureau.
+      try {
+        if (/[?&]tab=bureau\b/.test(location.search)) this.setState({ formTab: 'bureau' });
+      } catch (e2) {}
 
       var self = this;
       var spyIds = ['reseau', 'terrains', 'deroule', 'capacites'];
@@ -138,12 +152,131 @@
       return z ? z.shopId : 0;
     }
 
+    apiBase() {
+      // La landing vit sous /landing/b2b/ (alias Apache) ; l'API du site vit
+      // sous /webshop/api — même origine.
+      return location.origin + '/webshop/api';
+    }
+
+    /* ── Volet « Livraison bureau » ─────────────────────────────────────────
+       TVA → VIES (endpoint public /vies/:country/:vat, déjà en prod) qui
+       pré-remplit raison sociale + adresse ; adresse assistée par le proxy
+       Google du serveur (/b2b/geo-suggest, /b2b/geo-place). Chaque aide est
+       FACULTATIVE : si VIES ou Google est indisponible, les champs restent
+       saisissables à la main et l'envoi fonctionne. */
+    viesCheck() {
+      var self = this;
+      var raw = (this.state.bVat || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+      if (raw !== '' && /^[0-9]/.test(raw)) raw = 'BE' + raw;   // « 0894… » → BE
+      if (raw.length < 4) { this.setState({ vies: { status: 'idle', msg: '' } }); return; }
+      this.setState({ vies: { status: 'checking', msg: '' }, bVat: raw });
+      fetch(this.apiBase() + '/vies/' + encodeURIComponent(raw.slice(0, 2)) + '/' + encodeURIComponent(raw.slice(2)))
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (j && j.valid && j.data) {
+            var d = j.data;
+            self.setState(function (st) {
+              return {
+                vies: { status: 'ok', msg: '' },
+                bCompany: st.bCompany || d.name || '',
+                bStreet:  st.bStreet  || d.address || '',
+                bZip:     st.bZip     || d.postalCode || '',
+                bCity:    st.bCity    || d.city || ''
+              };
+            });
+          } else {
+            var m = j && j.error && j.error.message ? j.error.message : 'N° TVA non reconnu.';
+            self.setState({ vies: { status: 'fail', msg: m } });
+          }
+        })
+        .catch(function () {
+          self.setState({ vies: { status: 'fail', msg: self.t('Vérification indisponible — vous pouvez continuer.', 'Controle onbeschikbaar — u kunt doorgaan.') } });
+        });
+    }
+
+    addrChanged(v) {
+      var self = this;
+      this.setState({ bStreet: v, bPlaceId: null });
+      if (this._sugTimer) clearTimeout(this._sugTimer);
+      if ((v || '').trim().length < 3) { this.setState({ bSug: [], bSugOpen: false }); return; }
+      this._sugTimer = setTimeout(function () {
+        fetch(self.apiBase() + '/b2b/geo-suggest?q=' + encodeURIComponent(v))
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (j) {
+            var s = j && j.ok && j.suggestions ? j.suggestions : [];
+            self.setState({ bSug: s, bSugOpen: s.length > 0 });
+          })
+          .catch(function () { self.setState({ bSug: [], bSugOpen: false }); });
+      }, 300);
+    }
+
+    pickSug(s) {
+      var self = this;
+      this.setState({ bSugOpen: false, bStreet: s.label || s.main || '' });
+      fetch(this.apiBase() + '/b2b/geo-place?id=' + encodeURIComponent(s.id))
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          if (!j || !j.ok) return;
+          var street = (j.street || '') + (j.number ? ' ' + j.number : '');
+          self.setState({
+            bStreet: street || (s.main || s.label || ''),
+            bZip: j.zip || '', bCity: j.city || '', bPlaceId: j.placeId || null
+          });
+        })
+        .catch(function () {});
+    }
+
+    onSubmitBureau(form) {
+      var self = this;
+      var t = function (fr, nl) { return self.state.lang === 'nl' ? nl : fr; };
+      var st = this.state;
+      var payload = {
+        vat: st.bVat, viesValid: st.vies.status === 'ok',
+        company: st.bCompany, address: st.bStreet,
+        postalCode: st.bZip, city: st.bCity, placeId: st.bPlaceId,
+        department: st.bDept, headcount: st.bHead,
+        contactName: form.contact_nom ? form.contact_nom.value : '',
+        email: form.email_pro ? form.email_pro.value : '',
+        phone: form.telephone ? form.telephone.value : '',
+        consent: !!(form.consentement && form.consentement.checked),
+      };
+      this.setState({ bSending: true });
+      fetch(this.apiBase() + '/b2b/office-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          self.setState({ bSending: false });
+          if (!res.ok) throw new Error(res.j && res.j.error ? res.j.error : 'Erreur serveur');
+          var shop = res.j && res.j.shopName ? res.j.shopName : '';
+          var body = shop
+            ? t('Votre bureau est enregistré pour la boutique de ' + shop + ', qui couvre votre zone. Elle active la livraison et vous recontacte.',
+                'Uw kantoor is geregistreerd voor de winkel van ' + shop + ', die uw zone dekt. Zij activeert de levering en neemt contact op.')
+            : t('Votre bureau est enregistré. La boutique L\'Atelier By la plus proche active la livraison et vous recontacte.',
+                'Uw kantoor is geregistreerd. De dichtstbijzijnde L\'Atelier By-winkel activeert de levering en neemt contact op.');
+          self.setState({
+            modalOpen: true, routedName: body,
+            bVat: '', bCompany: '', bStreet: '', bZip: '', bCity: '',
+            bDept: '', bHead: '', bPlaceId: null, vies: { status: 'idle', msg: '' }
+          });
+          try { form.reset(); } catch (er) {}
+        })
+        .catch(function (err) {
+          self.setState({ bSending: false, modalOpen: true, routedName: t(
+            'Votre demande n\'a PAS pu être enregistrée (' + err.message + '). Réessayez, ou écrivez-nous : vos informations saisies sont conservées à l\'écran.',
+            'Uw aanvraag kon NIET worden geregistreerd (' + err.message + '). Probeer opnieuw of schrijf ons: uw gegevens blijven op het scherm staan.'
+          ) });
+        });
+    }
+
     onSubmit(e) {
       e.preventDefault();
       var self = this;
       var form = e.target;
       if (form.company_website && form.company_website.value) return; // honeypot
       if (!form.checkValidity()) { form.reportValidity(); return; }
+      if (this.state.formTab === 'bureau') { this.onSubmitBureau(form); return; }
       var D = this.content();
       var t = function (fr, nl) { return self.state.lang === 'nl' ? nl : fr; };
       var shopId = this.resolveShop(this.state.zoneVal);
@@ -299,6 +432,29 @@
           formEyebrow: t('Contact', 'Contact'),
           formTitle: t('Parlons de votre événement', 'Praten we over uw evenement'),
           formSub: t('Décrivez votre projet. Votre boutique de zone vous recontacte — pas de devis automatique, pas de prix en ligne. Du sur-mesure, discuté de vive voix.', 'Beschrijf uw project. Uw zonewinkel neemt contact op — geen automatische offerte, geen prijzen online. Maatwerk, in gesprek.'),
+          // ── Volet « Livraison bureau » (formulaire fusionné) ──
+          tabEvent: t('Événement & traiteur', 'Evenement & catering'),
+          tabBureau: t('Livraison bureau', 'Kantoorlevering'),
+          bTitle: t('Faites livrer votre bureau.', 'Laat uw kantoor beleveren.'),
+          bSub: t('Créez le compte de votre bureau : vos collaborateurs commandent en ligne et sont livrés directement à votre adresse. Votre numéro de TVA remplit le reste — la boutique de votre zone active la livraison.', 'Maak het account van uw kantoor aan: uw medewerkers bestellen online en worden rechtstreeks op uw adres beleverd. Uw btw-nummer vult de rest in — de winkel van uw zone activeert de levering.'),
+          bPoint1: t('TVA vérifiée automatiquement (VIES)', 'Btw automatisch gecontroleerd (VIES)'),
+          bPoint2: t('Adresse validée via Google', 'Adres gevalideerd via Google'),
+          bPoint3: t('Accès, horaires et personnel gérés ensuite avec votre boutique', 'Toegang, uren en personeel daarna geregeld met uw winkel'),
+          bfVat: t('N° de TVA', 'Btw-nummer'),
+          bfViesOk: t('Validé VIES', 'VIES gevalideerd'),
+          bfViesChecking: t('Vérification…', 'Controle…'),
+          bfCompany: t('Raison sociale', 'Firmanaam'),
+          bfCompanyTag: t('· remplie via VIES', '· ingevuld via VIES'),
+          bfAddress: t('Adresse du bureau', 'Adres van het kantoor'),
+          bfAddressHelp: t('Saisie assistée — adresse vérifiée via Google.', 'Begeleide invoer — adres gecontroleerd via Google.'),
+          bfZip: t('Code postal', 'Postcode'),
+          bfCity: t('Ville', 'Stad'),
+          bfDept: t('Département / service', 'Afdeling / dienst'),
+          bfDeptPh: t('ex. Ressources humaines', 'bv. Human resources'),
+          bfHead: t('Nombre de personnes', 'Aantal personen'),
+          consentBureau: t('J\'accepte que mes données soient transmises au franchisé de ma zone afin d\'activer la livraison de mon bureau. Elles ne sont utilisées que dans ce cadre.', 'Ik ga ermee akkoord dat mijn gegevens worden doorgegeven aan de franchisenemer van mijn zone om de levering van mijn kantoor te activeren. Ze worden enkel daarvoor gebruikt.'),
+          submitBureau: t('Créer mon bureau', 'Mijn kantoor aanmaken'),
+          bFormNote: t('Sans engagement. La boutique de votre zone confirme l\'activation sous quelques jours ouvrés.', 'Zonder verplichting. De winkel van uw zone bevestigt de activering binnen enkele werkdagen.'),
           fType: t('Type d’événement', 'Type evenement'),
           fDate: t('Date de l’événement', 'Datum van het evenement'),
           fGuests: t('Nombre de convives', 'Aantal gasten'),
@@ -623,14 +779,99 @@
             React.createElement('div', { 'data-rev': true, style: css('position:relative;') },
               React.createElement('p', { style: css('font-family:var(--font-ui);font-size:11px;font-weight:500;letter-spacing:.24em;text-transform:uppercase;color:var(--lp-abricot);margin:0 0 18px;') },
                 React.createElement('span', { style: css('font-family:var(--font-display);margin-right:12px;') }, '08'), c.formEyebrow),
-              React.createElement('h2', { style: css('font-family:var(--font-ui);font-weight:400;letter-spacing:-.015em;line-height:1.08;margin:0 0 22px;font-size:clamp(30px,4.4vw,54px);max-width:14ch;') }, c.formTitle),
-              React.createElement('p', { style: css('font-size:16.5px;line-height:1.7;color:var(--lp-muted);margin:0;max-width:44ch;') }, c.formSub),
+              React.createElement('h2', { style: css('font-family:var(--font-ui);font-weight:400;letter-spacing:-.015em;line-height:1.08;margin:0 0 22px;font-size:clamp(30px,4.4vw,54px);max-width:14ch;') }, st.formTab === 'bureau' ? c.bTitle : c.formTitle),
+              React.createElement('p', { style: css('font-size:16.5px;line-height:1.7;color:var(--lp-muted);margin:0;max-width:44ch;') }, st.formTab === 'bureau' ? c.bSub : c.formSub),
+              st.formTab !== 'bureau' ? null : React.createElement('div', { style: css('display:flex;flex-direction:column;gap:14px;margin-top:36px;') },
+                [c.bPoint1, c.bPoint2, c.bPoint3].map(function (pt, i) {
+                  return React.createElement('div', { key: i, style: css('display:flex;align-items:center;gap:12px;') },
+                    React.createElement('span', { style: css('width:22px;height:22px;border-radius:50%;border:1px solid var(--lp-abricot);color:var(--lp-abricot);display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;') }, CHECK),
+                    React.createElement('span', { style: css('font-size:14px;color:rgba(251,243,236,.8);') }, pt)
+                  );
+                })
+              ),
               React.createElement('p', { style: css('font-family:var(--font-accent);font-size:18px;color:var(--lp-abricot);margin:40px 0 0;opacity:.9;') }, c.tagline),
               React.createElement('img', { src: '/landing/assets/abricot/croissant.png', alt: '', 'aria-hidden': 'true', style: css('width:130px;opacity:.16;margin-top:34px;') })
             ),
             React.createElement('form', { 'data-rev': true, noValidate: true, ref: function (el) { self._form = el; }, onSubmit: function (e) { self.onSubmit(e); }, style: css('background:var(--lp-deep);border:1px solid var(--lp-line);border-radius:18px;padding:clamp(26px,3.4vw,40px);') },
               React.createElement('input', { type: 'text', name: 'company_website', tabIndex: -1, autoComplete: 'off', 'aria-hidden': 'true', style: css('position:absolute;left:-9999px;width:1px;height:1px;opacity:0;') }),
+              // Commutateur type de demande : événement/traiteur ↔ livraison bureau.
+              React.createElement('div', { style: css('display:flex;gap:2px;border:1px solid var(--lp-hair);border-radius:999px;padding:3px;margin-bottom:16px;') },
+                [{ k: 'event', lbl: c.tabEvent }, { k: 'bureau', lbl: c.tabBureau }].map(function (tb) {
+                  var on = st.formTab === tb.k;
+                  return React.createElement('button', {
+                    key: tb.k, type: 'button',
+                    onClick: function () { self.setState({ formTab: tb.k }); },
+                    style: css('flex:1;text-align:center;border:none;cursor:pointer;font-family:var(--font-ui);font-size:13px;font-weight:500;letter-spacing:.04em;padding:11px 0;border-radius:999px;background:' + (on ? 'var(--lp-ink)' : 'transparent') + ';color:' + (on ? 'var(--lp-deep)' : 'var(--lp-muted)') + ';')
+                  }, tb.lbl);
+                })
+              ),
               React.createElement('div', { style: css('display:grid;grid-template-columns:1fr 1fr;gap:16px;') },
+                /* ── Volet BUREAU : TVA/VIES → raison sociale + adresse Google ── */
+                st.formTab !== 'bureau' ? null : React.createElement(React.Fragment, { key: 'bureau' },
+                  React.createElement('label', { style: css('grid-column:1/-1;display:flex;flex-direction:column;gap:8px;') },
+                    React.createElement('span', { style: css('font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--lp-faint);') }, c.bfVat),
+                    React.createElement('div', { style: css('display:flex;align-items:center;gap:12px;') },
+                      React.createElement('input', { type: 'text', required: true, value: st.bVat, placeholder: 'BE 0000.000.000',
+                        onChange: function (e2) { self.setState({ bVat: e2.target.value, vies: { status: 'idle', msg: '' } }); },
+                        onBlur: function () { self.viesCheck(); },
+                        style: css('flex:1;min-width:0;font-family:var(--font-ui);font-size:15px;color:var(--lp-ink);background:rgba(251,243,236,.05);border:1px solid ' + (st.vies.status === 'ok' ? 'rgba(242,201,160,.45)' : 'var(--lp-hair)') + ';border-radius:10px;padding:12px 15px;') }),
+                      st.vies.status === 'ok' ? React.createElement('span', { style: css('display:inline-flex;align-items:center;gap:7px;border:1px solid var(--lp-abricot);color:var(--lp-abricot);border-radius:999px;padding:8px 14px;font-size:12px;font-weight:500;letter-spacing:.04em;white-space:nowrap;') }, CHECK, c.bfViesOk)
+                      : st.vies.status === 'checking' ? React.createElement('span', { style: css('font-size:12px;color:var(--lp-faint);white-space:nowrap;') }, c.bfViesChecking)
+                      : null
+                    ),
+                    st.vies.status === 'fail' ? React.createElement('span', { style: css('font-size:12px;color:var(--lp-abricot);line-height:1.5;') }, st.vies.msg) : null
+                  ),
+                  React.createElement('label', { style: css('grid-column:1/-1;display:flex;flex-direction:column;gap:8px;') },
+                    React.createElement('span', { style: css('font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--lp-faint);') }, c.bfCompany, ' ', React.createElement('span', { style: css('color:var(--lp-abricot);letter-spacing:.06em;text-transform:none;') }, c.bfCompanyTag)),
+                    React.createElement('input', { type: 'text', required: true, value: st.bCompany,
+                      onChange: function (e2) { self.setState({ bCompany: e2.target.value }); },
+                      style: css('width:100%;font-family:var(--font-ui);font-size:15px;color:var(--lp-ink);background:rgba(251,243,236,.05);border:1px solid var(--lp-hair);border-radius:10px;padding:12px 15px;') })
+                  ),
+                  React.createElement('label', { style: css('grid-column:1/-1;flex-direction:column;gap:8px;display:flex;position:relative;') },
+                    React.createElement('span', { style: css('font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--lp-faint);') }, c.bfAddress),
+                    React.createElement('input', { type: 'text', required: true, value: st.bStreet, autoComplete: 'off',
+                      onChange: function (e2) { self.addrChanged(e2.target.value); },
+                      onBlur: function () { setTimeout(function () { self.setState({ bSugOpen: false }); }, 200); },
+                      style: css('width:100%;font-family:var(--font-ui);font-size:15px;color:var(--lp-ink);background:rgba(251,243,236,.05);border:1px solid var(--lp-hair);border-radius:10px;padding:12px 15px;') }),
+                    !st.bSugOpen ? null : React.createElement('div', { style: css('position:absolute;top:100%;left:0;right:0;z-index:20;background:var(--lp-bg);border:1px solid var(--lp-line);border-radius:12px;box-shadow:0 22px 44px -18px rgba(0,0,0,.6);padding:6px;display:flex;flex-direction:column;') },
+                      st.bSug.map(function (sg) {
+                        return React.createElement('button', { key: sg.id, type: 'button',
+                          onMouseDown: function (e3) { e3.preventDefault(); self.pickSug(sg); },
+                          style: css('text-align:left;border:none;cursor:pointer;background:transparent;color:var(--lp-ink);font-family:var(--font-ui);padding:10px 12px;border-radius:8px;display:flex;flex-direction:column;gap:1px;') },
+                          React.createElement('span', { style: css('font-size:13.5px;font-weight:500;') }, sg.main || sg.label),
+                          React.createElement('span', { style: css('font-size:11.5px;color:var(--lp-faint);') }, sg.secondary || '')
+                        );
+                      }).concat([React.createElement('span', { key: '_g', style: css('align-self:flex-end;font-size:10px;color:var(--lp-faint);letter-spacing:.04em;padding:6px 12px 4px;border-top:1px solid var(--lp-hair);margin-top:4px;width:100%;box-sizing:border-box;text-align:right;') }, 'suggestions Google')])
+                    ),
+                    React.createElement('span', { style: css('font-size:12px;color:var(--lp-faint);line-height:1.5;') }, c.bfAddressHelp)
+                  ),
+                  React.createElement('label', { style: css('display:flex;flex-direction:column;gap:8px;') },
+                    React.createElement('span', { style: css('font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--lp-faint);') }, c.bfZip),
+                    React.createElement('input', { type: 'text', required: true, inputMode: 'numeric', value: st.bZip,
+                      onChange: function (e2) { self.setState({ bZip: e2.target.value }); },
+                      style: css('width:100%;font-family:var(--font-ui);font-size:15px;color:var(--lp-ink);background:rgba(251,243,236,.05);border:1px solid var(--lp-hair);border-radius:10px;padding:12px 15px;') })
+                  ),
+                  React.createElement('label', { style: css('display:flex;flex-direction:column;gap:8px;') },
+                    React.createElement('span', { style: css('font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--lp-faint);') }, c.bfCity),
+                    React.createElement('input', { type: 'text', required: true, value: st.bCity,
+                      onChange: function (e2) { self.setState({ bCity: e2.target.value }); },
+                      style: css('width:100%;font-family:var(--font-ui);font-size:15px;color:var(--lp-ink);background:rgba(251,243,236,.05);border:1px solid var(--lp-hair);border-radius:10px;padding:12px 15px;') })
+                  ),
+                  React.createElement('label', { style: css('display:flex;flex-direction:column;gap:8px;') },
+                    React.createElement('span', { style: css('font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--lp-faint);') }, c.bfDept),
+                    React.createElement('input', { type: 'text', value: st.bDept, placeholder: c.bfDeptPh,
+                      onChange: function (e2) { self.setState({ bDept: e2.target.value }); },
+                      style: css('width:100%;font-family:var(--font-ui);font-size:15px;color:var(--lp-ink);background:rgba(251,243,236,.05);border:1px solid var(--lp-hair);border-radius:10px;padding:12px 15px;') })
+                  ),
+                  React.createElement('label', { style: css('display:flex;flex-direction:column;gap:8px;') },
+                    React.createElement('span', { style: css('font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--lp-faint);') }, c.bfHead),
+                    React.createElement('input', { type: 'number', min: '1', value: st.bHead, placeholder: '—',
+                      onChange: function (e2) { self.setState({ bHead: e2.target.value }); },
+                      style: css('width:100%;font-family:var(--font-ui);font-size:15px;color:var(--lp-ink);background:rgba(251,243,236,.05);border:1px solid var(--lp-hair);border-radius:10px;padding:12px 15px;') })
+                  )
+                ),
+                /* ── Volet ÉVÉNEMENT : champs historiques, inchangés ── */
+                st.formTab === 'bureau' ? null : React.createElement(React.Fragment, { key: 'event' },
                 React.createElement('label', { style: css('grid-column:1/-1;display:flex;flex-direction:column;gap:8px;') },
                   React.createElement('span', { style: css('font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--lp-faint);') }, c.fType),
                   React.createElement('div', { style: css('position:relative;') },
@@ -675,7 +916,9 @@
                 React.createElement('label', { style: css('display:flex;flex-direction:column;gap:8px;') },
                   React.createElement('span', { style: css('font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--lp-faint);') }, c.fVat),
                   React.createElement('input', { type: 'text', name: 'numero_tva', placeholder: 'BE 0000.000.000', style: css('width:100%;font-family:var(--font-ui);font-size:15px;color:var(--lp-ink);background:rgba(251,243,236,.05);border:1px solid var(--lp-hair);border-radius:10px;padding:12px 15px;') })
+                )
                 ),
+                /* ── Champs COMMUNS aux deux volets : contact + consentement ── */
                 React.createElement('label', { style: css('grid-column:1/-1;display:flex;flex-direction:column;gap:8px;') },
                   React.createElement('span', { style: css('font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--lp-faint);') }, c.fName),
                   React.createElement('input', { type: 'text', name: 'contact_nom', required: true, autoComplete: 'name', style: css('width:100%;font-family:var(--font-ui);font-size:15px;color:var(--lp-ink);background:rgba(251,243,236,.05);border:1px solid var(--lp-hair);border-radius:10px;padding:12px 15px;') })
@@ -688,18 +931,18 @@
                   React.createElement('span', { style: css('font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--lp-faint);') }, c.fPhone),
                   React.createElement('input', { type: 'tel', name: 'telephone', autoComplete: 'tel', placeholder: '+32 …', style: css('width:100%;font-family:var(--font-ui);font-size:15px;color:var(--lp-ink);background:rgba(251,243,236,.05);border:1px solid var(--lp-hair);border-radius:10px;padding:12px 15px;') })
                 ),
-                React.createElement('label', { style: css('grid-column:1/-1;display:flex;flex-direction:column;gap:8px;') },
+                st.formTab === 'bureau' ? null : React.createElement('label', { style: css('grid-column:1/-1;display:flex;flex-direction:column;gap:8px;') },
                   React.createElement('span', { style: css('font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--lp-faint);') }, c.fNeeds),
                   React.createElement('textarea', { name: 'besoins_specifiques', rows: 3, placeholder: c.needsPh, style: css('width:100%;resize:vertical;font-family:var(--font-ui);font-size:15px;line-height:1.5;color:var(--lp-ink);background:rgba(251,243,236,.05);border:1px solid var(--lp-hair);border-radius:10px;padding:12px 15px;') })
                 ),
                 React.createElement('label', { style: css('grid-column:1/-1;display:flex;align-items:flex-start;gap:11px;cursor:pointer;margin-top:2px;') },
                   React.createElement('input', { type: 'checkbox', name: 'consentement', required: true, style: css('width:17px;height:17px;margin-top:3px;accent-color:var(--lp-ruby);flex:0 0 auto;') }),
-                  React.createElement('span', { style: css('font-size:12.5px;line-height:1.55;color:var(--lp-muted);') }, c.consent)
+                  React.createElement('span', { style: css('font-size:12.5px;line-height:1.55;color:var(--lp-muted);') }, st.formTab === 'bureau' ? c.consentBureau : c.consent)
                 )
               ),
-              React.createElement('button', { type: 'submit', style: css('margin-top:26px;width:100%;display:inline-flex;align-items:center;justify-content:center;gap:10px;background:var(--lp-ruby);color:#fff;border:none;cursor:pointer;font-family:var(--font-ui);font-size:15px;font-weight:500;letter-spacing:.01em;border-radius:999px;padding:16px 24px;') },
-                c.submit, React.createElement('span', { style: css('font-size:17px;') }, '→')),
-              React.createElement('p', { style: css('margin:16px 0 0;font-size:12px;line-height:1.55;color:var(--lp-faint);text-align:center;') }, c.formNote)
+              React.createElement('button', { type: 'submit', disabled: st.bSending, style: css('margin-top:26px;width:100%;display:inline-flex;align-items:center;justify-content:center;gap:10px;background:var(--lp-ruby);color:#fff;border:none;cursor:pointer;font-family:var(--font-ui);font-size:15px;font-weight:500;letter-spacing:.01em;border-radius:999px;padding:16px 24px;opacity:' + (st.bSending ? '.6' : '1') + ';') },
+                st.formTab === 'bureau' ? c.submitBureau : c.submit, React.createElement('span', { style: css('font-size:17px;') }, '→')),
+              React.createElement('p', { style: css('margin:16px 0 0;font-size:12px;line-height:1.55;color:var(--lp-faint);text-align:center;') }, st.formTab === 'bureau' ? c.bFormNote : c.formNote)
             )
           )
         ),

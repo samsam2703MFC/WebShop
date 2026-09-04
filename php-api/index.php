@@ -2796,6 +2796,99 @@ function dispatch($m, $p) {
     json_out(['ok' => true]);
   }
 
+  /* ── Landing B2B, volet « Livraison bureau » (formulaire fusionné) ─────────
+     Aides de saisie PUBLIQUES (rate-limitées serrées) : proxy Google Places —
+     la clé API ne vit qu'en base (ws_param google_api_key), jamais côté
+     navigateur. Sans clé configurée : 501, le front dégrade en saisie manuelle. */
+  if ($m === 'GET' && $p === '/b2b/geo-suggest') {
+    rate_limit('pub_geo_suggest', 30, 60);
+    $qq = trim((string) qp('q', ''));
+    if (mb_strlen($qq) < 3) json_out(['ok' => true, 'suggestions' => []]);
+    $key = geo_google_key();
+    if ($key === '') json_out(['ok' => false, 'error' => 'indisponible'], 501);
+    $r = geo_suggest($qq, $key);
+    json_out($r, !empty($r['ok']) ? 200 : 502);
+  }
+  if ($m === 'GET' && $p === '/b2b/geo-place') {
+    rate_limit('pub_geo_place', 20, 60);
+    $gid = trim((string) qp('id', ''));
+    if ($gid === '') json_out(['ok' => false, 'error' => 'id requis'], 400);
+    $key = geo_google_key();
+    if ($key === '') json_out(['ok' => false, 'error' => 'indisponible'], 501);
+    $r = geo_place($gid, $key);
+    json_out($r, !empty($r['ok']) ? 200 : 502);
+  }
+
+  /* Création d'un bureau depuis le landing (remplace l'ancienne landing
+     /landing/office et son intake lp_od_*). Écrit DIRECTEMENT un ws_offices en
+     attente (active=1 + status='pending', convention 0118) : il apparaît dans
+     le back-office franchisé, qui valide et complète ensuite (accès, horaires,
+     personnel). Routage boutique par le code postal via les zones primaires du
+     franchiseur (ws_franchisor_catchment.postcodes) ; sans correspondance →
+     shop_id NULL (repris par la direction). */
+  if ($m === 'POST' && $p === '/b2b/office-request') {
+    rate_limit('office_request', 5, 3600);
+    $b = body();
+    $email = trim((string) ($b['email'] ?? ''));
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) json_out(['error' => 'E-mail professionnel requis.'], 400);
+    $contact = trim((string) ($b['contactName'] ?? ''));
+    if ($contact === '') json_out(['error' => 'Nom du contact requis.'], 400);
+    $company = trim((string) ($b['company'] ?? ''));
+    if ($company === '') json_out(['error' => 'Raison sociale requise.'], 400);
+    $addr = trim((string) ($b['address'] ?? ''));
+    $zip  = trim((string) ($b['postalCode'] ?? ''));
+    $city = trim((string) ($b['city'] ?? ''));
+    if ($addr === '' || $zip === '' || $city === '') json_out(['error' => 'Adresse complète requise.'], 400);
+    if (empty($b['consent'])) json_out(['error' => 'Consentement requis.'], 400);
+    $vat = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string) ($b['vat'] ?? '')));
+    // Garde doublon : un bureau actif portant déjà cette TVA → pas de 2e fiche.
+    if ($vat !== '') {
+      $dup = row("SELECT id FROM ws_offices
+                   WHERE active=1 AND REPLACE(REPLACE(UPPER(COALESCE(vat,'')),' ',''),'.','') = ? LIMIT 1", [$vat]);
+      if ($dup) json_out(['error' => 'Un bureau existe déjà pour ce numéro de TVA. Écrivez-nous si vous souhaitez le modifier.'], 409);
+    }
+    // Boutique de zone par code postal (zones primaires du franchiseur).
+    $shopId = null; $shopName = null;
+    try {
+      $cpNum = preg_replace('/\D/', '', $zip);
+      if ($cpNum !== '' && row("SELECT 1 x FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='ws_franchisor_catchment' AND column_name='shop_id'")) {
+        $z = row("SELECT shop_id FROM ws_franchisor_catchment
+                   WHERE active=1 AND shop_id IS NOT NULL
+                     AND postcodes REGEXP CONCAT('(^|[^0-9])', ?, '($|[^0-9])')
+                   ORDER BY exclusive DESC, id LIMIT 1", [$cpNum]);
+        if ($z && $z['shop_id'] !== null) {
+          $shopId = (int) $z['shop_id'];
+          $SH = row("SELECT 1 x FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='shops'") ? 'shops' : 'ws_shops';
+          $shopName = row("SELECT name FROM $SH WHERE id=?", [$shopId])['name'] ?? null;
+        }
+      }
+    } catch (Throwable $e) { /* zones absentes — routage direction */ }
+    // Colonnes d'intake 0121 gardées par col_exists (déploiement décalé sans casse).
+    $cols = ['name', 'address', 'postal_code', 'city', 'contact', 'email', 'phone', 'vat', 'status', 'active'];
+    $vals = [mb_substr($company, 0, 190), mb_substr($addr, 0, 190), mb_substr($zip, 0, 20), mb_substr($city, 0, 100),
+             mb_substr($contact, 0, 100), mb_substr($email, 0, 100),
+             mb_substr(trim((string) ($b['phone'] ?? '')), 0, 30) ?: null,
+             $vat !== '' ? mb_substr($vat, 0, 30) : null, 'pending', 1];
+    if (col_exists('ws_offices', 'shop_id'))    { $cols[] = 'shop_id';    $vals[] = $shopId; }
+    if (col_exists('ws_offices', 'department')) { $cols[] = 'department'; $vals[] = mb_substr(trim((string) ($b['department'] ?? '')), 0, 120) ?: null; }
+    if (col_exists('ws_offices', 'headcount'))  { $cols[] = 'headcount';  $vals[] = is_numeric($b['headcount'] ?? null) ? (int) $b['headcount'] : null; }
+    if (col_exists('ws_offices', 'source'))     { $cols[] = 'source';     $vals[] = 'landing'; }
+    q("INSERT INTO ws_offices (`" . implode('`,`', $cols) . "`) VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $vals);
+    $oid = (int) db()->lastInsertId();
+    $admin = ws_param('zone_request_admin_email', cfg()['mail_from'] ?? '');
+    if ($admin && filter_var($admin, FILTER_VALIDATE_EMAIL)) {
+      $from = cfg()['mail_from'] ?? 'no-reply@atelierby.be';
+      @mail($admin, 'Nouveau bureau à activer — landing',
+            "Société: $company\nTVA: " . ($vat ?: '—') . " (VIES " . (!empty($b['viesValid']) ? 'validé' : 'non vérifié') . ")\n"
+            . "Adresse: $addr, $zip $city\nDépartement: " . (($b['department'] ?? '') !== '' ? $b['department'] : '—')
+            . "\nEffectif: " . (($b['headcount'] ?? '') !== '' ? $b['headcount'] : '—') . "\nContact: $contact\nEmail: $email\nTel: "
+            . (($b['phone'] ?? '') !== '' ? $b['phone'] : '—') . "\nBoutique de zone: " . ($shopName ?: 'aucune (direction)')
+            . "\nFiche ws_offices #$oid (statut pending)\n",
+            "From: $from\r\nContent-Type: text/plain; charset=utf-8\r\n");
+    }
+    json_out(['ok' => true, 'id' => $oid, 'shopName' => $shopName]);
+  }
+
   /* Créneaux de livraison d'un bureau = les fenêtres de SA tournée (ws_tour_availability).
      window_label 'afternoon' → slot 'soir' (ex. livraison 17:00, cutoff 15:00). Par tournée :
      seules celles ayant une ligne 'afternoon' renvoient le créneau soir. */
