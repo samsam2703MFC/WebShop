@@ -3940,6 +3940,7 @@ function dispatch($m, $p) {
        de passe local tranche, comme avant : aucun client n'est enfermé
        dehors parce que l'ERP ne connaît pas encore son mot de passe. */
     $passIn = (string) ($b['password'] ?? '');
+    $erpRefus = false;   // l'ERP connaît ce compte et a refusé le mot de passe
     if (function_exists('erp_client_auth_enabled') && erp_client_auth_enabled() && $passIn !== '') {
       $loginErp = (strpos($ident, '@') !== false) ? $ident : ($identE164 !== '' ? $identE164 : $ident);
       $er = erp_client_login($loginErp, $passIn);
@@ -3974,9 +3975,14 @@ function dispatch($m, $p) {
         json_out(['user' => user_payload($uid), 'token' => sign_token(['id' => $uid, 'exp' => time() + 30 * 86400]), 'authSource' => 'erp']);
       }
       if (($er['code'] ?? 0) === 403) json_out(['error' => 'compte_bloque', 'message' => 'Ce compte est inactif ou bloqué. Contactez votre boutique.'], 403);
+      $erpRefus = (($er['code'] ?? 0) === 401);
     }
     // Compte existant mais sans mot de passe (client importé / créé côté PWA) :
     // on ne renvoie pas "identifiants incorrects" -> on invite à définir un mot de passe.
+    // Sauf si l'ERP vient de REFUSER le mot de passe pour ce compte : c'est
+    // alors une faute de frappe, pas un compte à réclamer — « identifiants
+    // incorrects », sans proposer de définir un mot de passe local.
+    if ($u && empty($u['password_hash']) && $erpRefus) json_out(['error' => 'Identifiants incorrects.'], 401);
     if ($u && empty($u['password_hash'])) {
       json_out(['error' => 'no_password', 'message' => 'Ce compte existe mais n’a pas encore de mot de passe.', 'needsPassword' => true], 409);
     }
