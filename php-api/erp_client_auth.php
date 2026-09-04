@@ -229,3 +229,16 @@ function erp_client_patch(int $localId, array $fields): bool {
   [$code] = erp_client_request('PATCH', 'clients/' . $erpId, $fields, $tok);
   return $code >= 200 && $code < 300;
 }
+
+/* ── OPTION A : POSER LE MOT DE PASSE D'UN CLIENT avec le jeton d'intégration
+ * (PUT /clients/{id}/password) — le webshop a vérifié l'identité par code SMS.
+ * Tant que l'ERP ne l'expose pas, l'appel répond 404 : rendu tel quel, pour
+ * que l'écran dise « pas encore disponible » et non « code incorrect ». */
+function erp_client_password_set(int $erpId, string $new): array {
+  if ($erpId <= 0) return ['ok' => false, 'code' => 0, 'message' => 'fiche ERP inconnue'];
+  $tok = function_exists('erp_token') ? (string) erp_token() : '';
+  if ($tok === '') return ['ok' => false, 'code' => 0, 'message' => 'jeton d\'intégration ERP absent'];
+  [$code, $d] = erp_client_request('PUT', 'clients/' . $erpId . '/password', ['password' => $new], $tok);
+  if ($code >= 200 && $code < 300) return ['ok' => true];
+  return ['ok' => false, 'code' => $code, 'message' => (string) ($d['description'] ?? '')];
+}

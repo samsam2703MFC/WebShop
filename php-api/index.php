@@ -4066,11 +4066,16 @@ function dispatch($m, $p) {
    * fenêtre entre « code validé » et « mot de passe posé » où quelqu'un
    * pourrait s'intercaler. */
   if ($m === 'POST' && $p === '/auth/otp-set-password') {
-    json_out(['error' => 'mdp_erp', 'message' => 'Le mot de passe se réinitialise par e-mail : « Mot de passe oublié » sur l\'écran de connexion.'], 410);
+    /* MOT DE PASSE OUBLIÉ, PAR SMS SEULEMENT. Le webshop prouve l'identité
+       (code envoyé au numéro de la fiche, vérifié par SMSAPI), puis demande à
+       l'ERP de poser le mot de passe (option A : PUT /clients/{id}/password,
+       jeton d'intégration) et reconnecte le client. Aucun hash local. Tant
+       que l'ERP n'a pas l'endpoint, 501 explicite : la preuve est faite, mais
+       l'enregistrement ne peut pas avoir lieu. */
     rate_limit('otpset', 8, 900);
     $b = body();
     $pass = (string) ($b['password'] ?? '');
-    if (strlen($pass) < 6) json_out(['error' => 'Mot de passe trop court (min. 6 caractères).'], 400);
+    if (strlen($pass) < 8) json_out(['error' => 'Mot de passe trop court (8 caractères minimum).'], 400);
     if (!sms_enabled()) json_out(['error' => "L'envoi de code est indisponible.", 'code' => 'sms_off'], 503);
     $r = $otpResoudre($b);
     if (isset($r['err'])) json_out(['error' => $r['err'], 'code' => $r['code'] ?? null], $r['http']);
@@ -4079,11 +4084,23 @@ function dispatch($m, $p) {
     if ($v === 'indisponible')  json_out(['error' => "Vérification indisponible.", 'code' => 'sms_off'], 503);
     if ($v !== 'ok')            json_out(['error' => 'Code incorrect.', 'code' => 'faux'], 401);
     $id = (int) $r['u']['id'];
-    q("UPDATE client SET password_hash = ? WHERE id = ?", [password_hash($pass, PASSWORD_BCRYPT), $id]);
-    // Compte réclamé par SMS depuis la PWA : même drapeau qu'à la connexion.
-    if (($b['channel'] ?? '') === 'pwa' && col_exists('client', 'pwa_user'))
-      q("UPDATE client SET pwa_user = 1 WHERE id = ?", [$id]);
-    json_out(['user' => user_payload($id), 'token' => sign_token(['id' => $id, 'exp' => time() + 30 * 86400])]);
+    $fiche = row("SELECT " . (col_exists('client', 'erp_client_id') ? 'erp_client_id' : 'NULL AS erp_client_id') . ", email, phone_e164 FROM client WHERE id=?", [$id]);
+    $erpId = (int) ($fiche['erp_client_id'] ?? 0);
+    if ($erpId <= 0) json_out(['error' => "Ce compte n'est pas rattaché à une fiche ERP : contactez la boutique.", 'code' => 'sans_fiche'], 409);
+    $ps = erp_client_password_set($erpId, $pass);
+    if (empty($ps['ok'])) {
+      $c = (int) ($ps['code'] ?? 0);
+      if ($c === 404) json_out(['error' => "Code vérifié, mais l'enregistrement du mot de passe n'est pas encore disponible : l'ERP doit fournir PUT /clients/{id}/password.", 'code' => 'erp_endpoint_absent'], 501);
+      if ($c === 422) json_out(['error' => "Refusé par l'ERP : " . (($ps['message'] ?? '') ?: 'mot de passe invalide') . '.'], 400);
+      json_out(['error' => 'erp_indisponible', 'message' => 'Service indisponible, réessayez dans un instant.'], 503);
+    }
+    $login = (string) (($fiche['email'] ?? '') ?: ($fiche['phone_e164'] ?? '') ?: $r['tel']);
+    $er = erp_client_login($login, $pass);
+    if (empty($er['ok'])) json_out(['error' => "Mot de passe enregistré, mais la connexion a échoué : connectez-vous avec votre nouveau mot de passe.", 'code' => 'reconnexion'], 502);
+    erp_client_session_store($id, $er);
+    if (col_exists('client', 'erp_auth_at')) q("UPDATE client SET erp_auth_at = NOW() WHERE id = ?", [$id]);
+    if (($b['channel'] ?? '') === 'pwa' && col_exists('client', 'pwa_user')) q("UPDATE client SET pwa_user = 1 WHERE id = ?", [$id]);
+    json_out(['user' => user_payload($id), 'token' => sign_token(['id' => $id, 'exp' => time() + 30 * 86400]), 'authSource' => 'erp']);
   }
 
   if ($m === 'POST' && $p === '/auth/handoff') {

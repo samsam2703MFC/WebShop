@@ -2562,9 +2562,22 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
   const [form, setForm] = useState({ identifier: '', email: '', phone: '', phonePrefix: '+32', password: '', firstName: '', lastName: '', postalCode: '', locality: '', authMethod: 'email' });
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
-  const [forgot, setForgot] = useState(false);       // panneau « mot de passe oublié » (e-mail via l'ERP)
-  const [forgotDone, setForgotDone] = useState(false);
-  const [forgotEmail, setForgotEmail] = useState('');
+  /* Mot de passe oublié, PAR SMS SEULEMENT : code envoyé au numéro de la
+     fiche (SMSAPI), puis nouveau mot de passe posé dans l'ERP et connexion.
+     On n'affiche que ce que le serveur a réellement fait : le numéro masqué
+     vient de sa réponse, le décompte suit la validité annoncée. */
+  const [forgot, setForgot] = useState(false);
+  const [forgotIdent, setForgotIdent] = useState('');
+  const [otpPhase, setOtpPhase] = useState('');      // '' | 'code'
+  const [otpMask, setOtpMask]   = useState('');
+  const [otpCode, setOtpCode]   = useState('');
+  const [otpLeft, setOtpLeft]   = useState(0);
+  const [newPw, setNewPw]       = useState('');
+  useEffect(() => {
+    if (otpPhase !== 'code' || otpLeft <= 0) return;
+    const id = setTimeout(() => setOtpLeft((n) => n - 1), 1000);
+    return () => clearTimeout(id);
+  }, [otpPhase, otpLeft]);
   const [cpOpts, setCpOpts] = useState([]);      // localités du CP saisi (validation « localité choisie »)
   /* Reconnaissance par la boutique : l'inscription a trouvé une fiche au même
      numéro. On ne referme PAS la fenêtre tant que le client n'a pas répondu
@@ -2608,7 +2621,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
           ? await window.WSAuth.register({ ...form, shopId })
           : SRV_REQUIRED("d'inscription");
         if (!r.ok) {
-          if (r.exists) { setForgotEmail(form.email || ''); setErr(r.error || 'Ce compte existe déjà : connectez-vous, ou utilisez « Mot de passe oublié ».'); return; }
+          if (r.exists) { setForgotIdent(form.email || form.phone || ''); setErr(r.error || 'Ce compte existe déjà : connectez-vous, ou utilisez « Mot de passe oublié » (code par SMS).'); return; }
           setErr(r.error || "Erreur lors de l'inscription."); return;
         }
         /* Reconnu par la boutique : le compte est créé et valide, on le
@@ -2635,18 +2648,28 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
     setLienEtat('pending');
   }
 
-  /* Mot de passe oublié : l'ERP envoie un e-mail avec un lien d'une heure
-     vers /reset-password. Le serveur répond 202 que l'adresse ait un compte
-     ou non ; l'écran reste neutre, comme l'exige l'ERP. */
-  async function demanderReset() {
+  function fermerOubli() { setForgot(false); setOtpPhase(''); setOtpCode(''); setNewPw(''); setOtpMask(''); setOtpLeft(0); setTab('login'); setErr(''); }
+  async function demanderCode() {
     setErr('');
-    const em = (forgotEmail || '').trim();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { setErr('Indiquez une adresse e-mail valide.'); return; }
+    const ident = (forgotIdent || '').trim();
+    if (!ident) { setErr('Indiquez votre e-mail ou votre téléphone.'); return null; }
     setLoading(true);
     try {
-      const r = await window.WSAuth.resetRequest({ email: em });
-      if (!r.ok) { setErr(r.error || 'Envoi impossible.'); return; }
-      setForgotDone(true);
+      const r = await window.WSAuth.otpRequest({ identifier: ident, phonePrefix: form.phonePrefix });
+      if (r.ok) { setOtpMask(r.phoneMasked); setOtpLeft(r.expiresIn || 180); setOtpPhase('code'); setOtpCode(''); return r; }
+      setErr(r.error || "Envoi impossible."); return r;
+    } catch (_) { setErr('Erreur réseau. Veuillez réessayer.'); return null; }
+    finally { setLoading(false); }
+  }
+  async function validerCode() {
+    setErr('');
+    if (!/^\d{4,8}$/.test(otpCode.trim())) { setErr('Saisissez le code reçu par SMS.'); return; }
+    if (!newPw || newPw.length < 8) { setErr('Mot de passe : 8 caractères minimum.'); return; }
+    setLoading(true);
+    try {
+      const r = await window.WSAuth.otpSetPassword({ identifier: (forgotIdent || '').trim(), phonePrefix: form.phonePrefix, code: otpCode.trim(), password: newPw });
+      if (!r.ok) { if (r.code === 'perime') setOtpLeft(0); setErr(r.error || 'Code incorrect.'); return; }
+      onLogin(r.user); onClose();
     } catch (_) { setErr('Erreur réseau. Veuillez réessayer.'); }
     finally { setLoading(false); }
   }
@@ -2708,19 +2731,35 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
       ) : forgot ? (
         <>
           <h2 className="ws-modal__title">Mot de passe oublié</h2>
-          <p className="ws-modal__lede">Indiquez l'adresse e-mail de votre compte : vous recevrez un lien pour choisir un nouveau mot de passe.</p>
+          <p className="ws-modal__lede">{otpPhase === 'code'
+            ? <>Code envoyé au <strong>{otpMask}</strong>, le numéro enregistré sur votre fiche. Saisissez-le avec votre nouveau mot de passe.</>
+            : 'Indiquez votre e-mail ou votre téléphone : un code vous est envoyé par SMS au numéro de votre fiche.'}</p>
           <div className="ws-form">
-            {forgotDone ? (
-              <p className="ws-modal__lede">Si un compte existe pour cette adresse, un e-mail vient d'être envoyé. Le lien est valable une heure.</p>
-            ) : (
-              <label className="ws-field"><span>Email</span>
-                <input type="email" value={forgotEmail} onChange={(e) => { setForgotEmail(e.target.value); setErr(''); }} autoComplete="email" autoFocus/></label>
+            {otpPhase !== 'code' && (
+              <label className="ws-field"><span>Email ou téléphone</span>
+                <input type="text" value={forgotIdent} onChange={(e) => { setForgotIdent(e.target.value); setErr(''); }} autoComplete="username" autoFocus/></label>
+            )}
+            {otpPhase === 'code' && (
+              <div className="ws-otp">
+                <label className="ws-field"><span>Code reçu par SMS</span>
+                  <input type="text" value={otpCode} inputMode="numeric" autoComplete="one-time-code" maxLength={8} placeholder="123456" autoFocus
+                    onChange={(e) => { setOtpCode(e.target.value.replace(/\D/g, '')); setErr(''); }}/></label>
+                <label className="ws-field"><span>Nouveau mot de passe</span>
+                  <input type="password" value={newPw} onChange={(e) => { setNewPw(e.target.value); setErr(''); }} autoComplete="new-password" placeholder="8 caractères minimum"/></label>
+                <p className="ws-otp__timer">
+                  {otpLeft > 0
+                    ? `Valable encore ${Math.floor(otpLeft / 60)}:${String(otpLeft % 60).padStart(2, '0')}`
+                    : 'Ce code a expiré.'}
+                  {' '}
+                  <button type="button" className="ws-linkbtn ws-linkbtn--inline" disabled={loading || otpLeft > 150} onClick={demanderCode}>Recevoir un nouveau code</button>
+                </p>
+              </div>
             )}
             {err && <p className="ws-form__err">{err}</p>}
-            {!forgotDone && (
-              <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={demanderReset}>{loading ? 'Envoi…' : 'Recevoir le lien'}</button>
-            )}
-            <button type="button" className="ws-linkbtn" onClick={() => { setForgot(false); setForgotDone(false); setTab('login'); setErr(''); }}>Retour à la connexion</button>
+            {otpPhase === 'code'
+              ? <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={validerCode}>{loading ? 'Vérification…' : 'Valider & se connecter'}</button>
+              : <button type="button" className="ws-cta ws-cta--block" disabled={loading} onClick={demanderCode}>{loading ? 'Envoi…' : 'Recevoir le code par SMS'}</button>}
+            <button type="button" className="ws-linkbtn" onClick={fermerOubli}>Retour à la connexion</button>
           </div>
         </>
       ) : (
@@ -2772,7 +2811,7 @@ function LoginModal({ open, onClose, onLogin, onRegister, shopId }) {
               )}
             </label>
             <label className="ws-field"><span>{t('auth.password')}</span><input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="current-password"/></label>
-            <button type="button" className="ws-linkbtn" onClick={() => { setForgot(true); setForgotDone(false); setForgotEmail(form.identifier.includes('@') ? form.identifier : ''); setErr(''); }}>Mot de passe oublié ?</button>
+            <button type="button" className="ws-linkbtn" onClick={() => { setForgot(true); setOtpPhase(''); setForgotIdent(form.identifier || ''); setErr(''); }}>Mot de passe oublié ?</button>
           </>
         )}
         {err && <p className="ws-form__err">{err}</p>}
