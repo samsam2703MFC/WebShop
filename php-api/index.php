@@ -7507,6 +7507,26 @@ function dispatch($m, $p) {
       $ids = array_values(array_unique(array_map(static fn ($x) => (int) ($x['cat_id'] ?? $x['cat'] ?? 0), $liste)));
       $cats = $ids ? rows("SELECT id, slug, label FROM ws_categories WHERE id IN (" . implode(',', array_fill(0, count($ids), '?')) . ") ORDER BY sort_order, label", $ids) : [];
       $n = []; foreach ($liste as $x) { $k = (int) ($x['cat_id'] ?? $x['cat'] ?? 0); $n[$k] = ($n[$k] ?? 0) + 1; }
+      /* Sous-catégories de chaque gamme, DANS L'ORDRE OÙ LE DOSSIER LES IMPRIMERA
+         (réglage de la boutique, sinon ordre du webshop) : la modale les
+         montre et laisse les réordonner. Seules celles qui ont un produit
+         servi sont listées — ce sont celles qui s'imprimeront. */
+      require_once __DIR__ . '/brochure_doc.php';
+      $subsParCat = [];
+      if ($tblExists('ws_category_subs')) {
+        $sidsL = array_values(array_unique(array_filter(array_map(static fn ($x) => (int) ($x['sub_cat_id'] ?? 0), $liste))));
+        $subRows = $sidsL ? rows("SELECT id, category_id, label FROM ws_category_subs WHERE id IN (" . implode(',', array_fill(0, count($sidsL), '?')) . ") ORDER BY sort_order, label", $sidsL) : [];
+        $ordW = []; foreach ($subRows as $i => $sr) $ordW[(int) $sr['id']] = $i;
+        $cfgB = brochure_sub_order($shopB);
+        $present = []; foreach ($liste as $x) { $present[(int) ($x['cat_id'] ?? $x['cat'] ?? 0)][(int) ($x['sub_cat_id'] ?? 0)] = true; }
+        foreach ($subRows as $sr) {
+          $cidS = (int) $sr['category_id']; $sidS = (int) $sr['id'];
+          if (empty($present[$cidS][$sidS])) continue;
+          $subsParCat[$cidS][] = ['id' => $sidS, 'label' => (string) $sr['label'], 'rang' => brochure_sub_rang($cfgB, $ordW, $cidS, $sidS)];
+        }
+        foreach ($subsParCat as &$l0) { usort($l0, static fn ($a, $b) => $a['rang'] <=> $b['rang']); $l0 = array_map(static fn ($z) => ['id' => $z['id'], 'label' => $z['label']], $l0); }
+        unset($l0);
+      }
       /* Saisons : TOUTES les gammes saisonnières publiées de l'ERP
          (product-availability-periods), pas seulement celles en période à la
          date. Pour chacune : n = produits de cette gamme dans l'assortiment du
@@ -7529,7 +7549,21 @@ function dispatch($m, $p) {
         usort($saisL, static fn ($a, $b) => strcasecmp($a['nom'], $b['nom']));
       }
       json_out(['ok' => true, 'date' => $dateB, 'produits' => count($liste), 'saisonniers' => $sais, 'saisons' => $saisL,
-                'cats' => array_map(static fn ($c) => ['key' => (string) ($c['slug'] ?: $c['label']), 'nom' => (string) $c['label'], 'n' => $n[(int) $c['id']] ?? 0], $cats)]);
+                'cats' => array_map(static fn ($c) => ['key' => (string) ($c['slug'] ?: $c['label']), 'id' => (int) $c['id'], 'nom' => (string) $c['label'], 'n' => $n[(int) $c['id']] ?? 0, 'subs' => $subsParCat[(int) $c['id']] ?? []], $cats)]);
+    }
+
+    /* ORDRE DES SOUS-CATÉGORIES DU DOSSIER IMPRIMÉ — réglage de la boutique,
+       { order: { "<catId>": [subId, …] } } → ws_param brochure_sub_order_<shop>.
+       Lu par le dossier (brochure_doc), la modale d'impression et l'éditeur
+       d'assortiment. Ids seulement : rien d'autre n'est stocké. */
+    if ($m === 'POST' && $p === '/franchisee/brochure-sub-order') {
+      if (!$shopId) json_out(['ok' => false, 'error' => 'Boutique non résolue : ouvrez la console avec ?shop=<id>.'], 400);
+      $b = body(); $ord = is_array($b['order'] ?? null) ? $b['order'] : [];
+      $clean = [];
+      foreach ($ord as $cid => $l) { if (!is_array($l)) continue; $ids = []; foreach ($l as $v) { if (is_numeric($v) && (int) $v > 0 && !in_array((int) $v, $ids, true)) $ids[] = (int) $v; } if ($ids) $clean[(string) (int) $cid] = $ids; }
+      q("INSERT INTO ws_param (param_key, param_value) VALUES (?,?) ON DUPLICATE KEY UPDATE param_value=VALUES(param_value)",
+        ['brochure_sub_order_' . (int) $shopId, json_encode($clean, JSON_UNESCAPED_UNICODE)]);
+      json_out(['ok' => true, 'order' => $clean]);
     }
 
     /* LE DOSSIER « CARTE & TARIFS » (HTML A4, à imprimer ou enregistrer en PDF)
@@ -8924,14 +8958,19 @@ function dispatch($m, $p) {
       // Sous-catégories : libellé par identifiant, pour trier et regrouper
       // dans l'éditeur (demande du 03/09). Un produit sans sous-catégorie
       // tombe dans « Autres », en fin de catégorie.
-      $subNom = [];
+      $subNom = []; $subOrdW = [];
       if (tbl_exists('ws_category_subs'))
-        foreach (rows("SELECT id, label FROM ws_category_subs") as $sr) $subNom[(int) $sr['id']] = (string) $sr['label'];
-      usort($liste, static function ($a, $b) use ($subNom) {
+        foreach (rows("SELECT id, label FROM ws_category_subs ORDER BY sort_order, label") as $i => $sr) { $subNom[(int) $sr['id']] = (string) $sr['label']; $subOrdW[(int) $sr['id']] = $i; }
+      // Même ordre de sous-catégories que le dossier imprimé (réglage de la
+      // boutique, sinon ordre du webshop) : l'éditeur et le papier se lisent pareil.
+      require_once __DIR__ . '/brochure_doc.php';
+      $subCfgA = brochure_sub_order((int) $shopCat);
+      usort($liste, static function ($a, $b) use ($subNom, $subOrdW, $subCfgA) {
         $ca = (int) ($a['cat_id'] ?? $a['cat'] ?? 0); $cb = (int) ($b['cat_id'] ?? $b['cat'] ?? 0);
         if ($ca !== $cb) return $ca <=> $cb;
-        $sa = $subNom[(int) ($a['sub_cat_id'] ?? 0)] ?? "\u{FFFF}"; $sb = $subNom[(int) ($b['sub_cat_id'] ?? 0)] ?? "\u{FFFF}";
-        $c = strcasecmp($sa, $sb); if ($c !== 0) return $c;
+        $sia = (int) ($a['sub_cat_id'] ?? 0); $sib = (int) ($b['sub_cat_id'] ?? 0);
+        $ra = $sia ? brochure_sub_rang($subCfgA, $subOrdW, $ca, $sia) : 9999; $rb = $sib ? brochure_sub_rang($subCfgA, $subOrdW, $cb, $sib) : 9999;
+        if ($ra !== $rb) return $ra <=> $rb;
         return strcasecmp((string) $a['name'], (string) $b['name']);
       });
       $cats = []; $checked = 0;

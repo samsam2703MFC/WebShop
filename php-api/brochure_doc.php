@@ -63,6 +63,21 @@ function brochure_photo($img, $racine) {
 }
 
 /* ── LES DONNÉES (lecture seule) ────────────────────────────────────────── */
+/* ORDRE DES SOUS-CATÉGORIES DANS LE DOSSIER, réglé par la boutique (modale
+   « Imprimer le dossier » → ws_param brochure_sub_order_<shop>, JSON
+   { "<catId>": [subId, …] }). Une sous-catégorie absente du réglage suit
+   l'ordre du webshop (sort_order, libellé), après celles réglées. */
+function brochure_sub_order(int $shopId): array {
+  $raw = function_exists('ws_param') ? (string) ws_param('brochure_sub_order_' . $shopId, '') : '';
+  $d = $raw !== '' ? json_decode($raw, true) : null;
+  $out = [];
+  if (is_array($d)) foreach ($d as $cid => $l) { if (!is_array($l)) continue; $out[(int) $cid] = array_values(array_map('intval', $l)); }
+  return $out;
+}
+function brochure_sub_rang(array $cfg, array $subOrder, int $cid, int $sid): int {
+  $i = array_search($sid, $cfg[$cid] ?? [], true);
+  return $i !== false ? (int) $i : 500 + (int) ($subOrder[$sid] ?? 499);
+}
 function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null, $sansSaison = false, $catsKeys = null, $saisonsKeys = null) {
   $shopId = (int) $shopId; $officeId = $officeId ? (int) $officeId : null;
   // Disponibilité : le catalogue tel qu'il sera servi À CETTE DATE (saisons,
@@ -143,6 +158,7 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
   $subs = $subIds ? rows("SELECT id, category_id, label, sort_order FROM ws_category_subs WHERE id IN (" . implode(',', array_fill(0, count($subIds), '?')) . ") ORDER BY sort_order, label", $subIds) : [];
   $subLabel = []; foreach ($subs as $s) $subLabel[(int) $s['id']] = (string) $s['label'];
   $subOrder = []; foreach ($subs as $i => $s) $subOrder[(int) $s['id']] = $i;
+  $subCfg = brochure_sub_order($shopId);
 
   $produitsParCat = [];
   foreach ($liste as $x) $produitsParCat[(int) ($x['cat_id'] ?? $x['cat'] ?? 0)][] = $x;
@@ -154,7 +170,7 @@ function brochure_donnees($shopId, $officeId = null, $racine = '', $date = null,
     foreach ($prods as $x) {
       $sid = (int) ($x['sub_cat_id'] ?? $x['subCat'] ?? 0);
       $k = isset($subLabel[$sid]) ? $sid : 0;
-      if (!isset($groupes[$k])) $groupes[$k] = ['id' => $k, 'label' => $k ? $subLabel[$k] : 'Autres', 'ordre' => $k ? ($subOrder[$k] ?? 999) : 1000, 'products' => []];
+      if (!isset($groupes[$k])) $groupes[$k] = ['id' => $k, 'label' => $k ? $subLabel[$k] : 'Autres', 'ordre' => $k ? brochure_sub_rang($subCfg, $subOrder, $cid, $k) : 1000, 'products' => []];
       $portions = [];
       foreach ((array) ($x['portionOptions'] ?? []) as $po)
         if (($po['v'] ?? '') !== 'entier' && isset($po['price']) && $po['price'] !== null)
