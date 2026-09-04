@@ -43,7 +43,10 @@ function geo_google_statut(?array $d, int $code): string {
 
 function geo_suggest(string $q, string $key, string $pays = 'be|fr|nl|lu|de'): array {
   $comp = implode('|', array_map(static fn ($c) => 'country:' . $c, array_filter(explode('|', $pays))));
-  $url = geo_google_base() . '/place/autocomplete/json?input=' . rawurlencode($q) . '&language=fr&types=address&components=' . rawurlencode($comp) . '&key=' . rawurlencode($key);
+  // Sans `types=address` : Google propose AUSSI les entreprises et lieux
+  // (« IBA Louvain-la-Neuve ») — un site se cherche par son nom autant que
+  // par sa rue. La fiche du lieu rend ensuite l'adresse structurée.
+  $url = geo_google_base() . '/place/autocomplete/json?input=' . rawurlencode($q) . '&language=fr&components=' . rawurlencode($comp) . '&key=' . rawurlencode($key);
   [$code, $d] = geo_http_json($url);
   if (!$d) return ['ok' => false, 'error' => geo_google_statut($d, $code)];
   $st = (string) ($d['status'] ?? '');
@@ -60,7 +63,7 @@ function geo_suggest(string $q, string $key, string $pays = 'be|fr|nl|lu|de'): a
 }
 
 function geo_place(string $placeId, string $key): array {
-  $url = geo_google_base() . '/place/details/json?place_id=' . rawurlencode($placeId) . '&fields=' . rawurlencode('address_component,geometry,formatted_address,place_id') . '&language=fr&key=' . rawurlencode($key);
+  $url = geo_google_base() . '/place/details/json?place_id=' . rawurlencode($placeId) . '&fields=' . rawurlencode('address_component,geometry,formatted_address,place_id,name') . '&language=fr&key=' . rawurlencode($key);
   [$code, $d] = geo_http_json($url);
   if (!$d || (string) ($d['status'] ?? '') !== 'OK') return ['ok' => false, 'error' => geo_google_statut($d, $code)];
   $r = $d['result'] ?? [];
@@ -77,7 +80,8 @@ function geo_place(string $placeId, string $key): array {
   }
   $lat = $r['geometry']['location']['lat'] ?? null; $lng = $r['geometry']['location']['lng'] ?? null;
   return ['ok' => true] + $c + ['lat' => is_numeric($lat) ? (float) $lat : null, 'lng' => is_numeric($lng) ? (float) $lng : null,
-          'placeId' => (string) ($r['place_id'] ?? $placeId), 'formatted' => (string) ($r['formatted_address'] ?? '')];
+          'placeId' => (string) ($r['place_id'] ?? $placeId), 'formatted' => (string) ($r['formatted_address'] ?? ''),
+          'name' => (string) ($r['name'] ?? '')];
 }
 
 /* $origin ['lat','lng'] ; $stops [['lat','lng'], …] dans l'ordre ; $back : retour au dépôt. */
