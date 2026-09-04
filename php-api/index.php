@@ -7980,7 +7980,7 @@ function dispatch($m, $p) {
       if (!$tblExists('client')) json_vide(['client']);
       $cc = fn ($c) => col_exists('client', $c);
       $sel = "c.id, c.name, c.surname, c.email, c.phone, c.zip";
-      foreach (['company_name','phone_e164','locality','city','is_b2b','office_id','department_id','active','tax_number','office_delivery'] as $col)
+      foreach (['company_name','phone_e164','locality','city','is_b2b','office_id','department_id','active','tax_number','office_delivery','street','street_number'] as $col)
         if ($cc($col)) $sel .= ", c.$col";
       $sel .= $cc('status') ? ", c.status" : ", 0 AS status";
       $sel .= $cc('blocked') ? ", c.blocked" : ", 0 AS blocked";
@@ -12079,7 +12079,12 @@ function dispatch($m, $p) {
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1" . ($obShop ? "," . (int) $obShop : "") . ")",
         [$tourId, $raison, (string) ($b['adr'] ?? ''), $obZip, $obLoc, (string) ($b['contactNom'] ?? ''),
          (string) ($b['contactEmail'] ?? ''), (string) ($b['contactTel'] ?? ''), (string) ($b['tva'] ?? ''),
-         'pending', (stripos((string) ($b['paiement'] ?? ''), 'compt') === false) ? 1 : 0,
+         // Facturation différée SI le moyen de paiement choisi est le paiement sur
+         // compte (« Sur compte (facturation) », crédit, différé) : la facture
+         // est alors établie à la société, pas aux utilisateurs. Carte ou paiement
+         // en boutique → 0. L'ancien test « contient compt » rendait 0 pour
+         // « Sur compte » : l'inverse de ce qu'il voulait dire.
+         'pending', preg_match('/compte|factur|diff[ée]r|cr[ée]dit/iu', (string) ($b['paiement'] ?? '')) ? 1 : 0,
          (float) ($b['drop'] ?? 5)]);
       $officeId = (int) db()->lastInsertId();
       if (!empty($b['logo'])) office_logo_apply($officeId, (string) $b['logo']);
@@ -12143,6 +12148,24 @@ function dispatch($m, $p) {
         // Adresse choisie dans la liste Google à l'onboarding : position et
         // composantes posées sur le site (itinéraire, ETA) — rien sans lat/lng.
         site_geo_poser($newSiteId, $b);
+        /* AUTRES SITES DE LA SOCIÉTÉ, saisis à l'onboarding : une ligne par
+           site, rattachée au même bureau ; chaque site porte sa tournée (repli :
+           celle du bureau), son étage, son temps d'accès et sa position Google. */
+        foreach ((array) ($b['sitesExtra'] ?? []) as $xs) {
+          if (!is_array($xs)) continue;
+          $xAdr = trim((string) ($xs['adr'] ?? '')); if ($xAdr === '') continue;
+          $xTour = $tourId; $xTn = trim((string) ($xs['tour'] ?? ''));
+          if ($xTn !== '' && $tblExists('ws_tours')) {
+            $xt = row("SELECT id FROM ws_tours WHERE TRIM(name)=TRIM(?) AND active=1" . ($obShop ? " AND (shop_id=" . (int) $obShop . " OR shop_id IS NULL)" : "") . " LIMIT 1", [$xTn]);
+            if ($xt) $xTour = (int) $xt['id'];
+          }
+          $xLoc = trim(((string) ($xs['cp'] ?? '')) . ' ' . ((string) ($xs['localite'] ?? '')));
+          q("INSERT INTO ws_office_delivery_sites (office_client_id, name, address, floor_room, tournee_id, site_access_minutes, active" . ($obShop ? ", shop_id" : "") . ")
+              VALUES (?,?,?,?,?,?,1" . ($obShop ? "," . (int) $obShop : "") . ")",
+            [$officeId, $raison . ' — ' . (trim((string) ($xs['office'] ?? '')) ?: $xAdr), $xAdr . ($xLoc !== '' ? (', ' . $xLoc) : ''),
+             (string) ($xs['etage'] ?? ''), $xTour, (($xs['acc'] ?? '') === '' || !is_numeric($xs['acc'])) ? null : (float) $xs['acc']]);
+          site_geo_poser((int) db()->lastInsertId(), $xs);
+        }
       }
       /* Départements B2B. L'INSERT écrivait SEPT colonnes (client_id, company,
          site, office, name, effectif, contact) dans une table ERP qui n'en a
