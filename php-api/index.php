@@ -20,6 +20,7 @@ require __DIR__ . '/erp_promos.php';
 require __DIR__ . '/erp_seasons.php';
 require __DIR__ . '/erp_clients.php';
 require __DIR__ . '/erp_link.php';
+require __DIR__ . '/erp_client_auth.php';
 require __DIR__ . '/sms.php';
 
 /* CORS */
@@ -3931,6 +3932,49 @@ function dispatch($m, $p) {
       }
       $u = $cands2[0] ?? null;
     }
+    /* ── L'ERP D'ABORD (0116). Il authentifie par e-mail ou téléphone E.164.
+       200 : connecté par l'ERP, session ERP mémorisée, compte local rattaché
+       par erp_client_id (créé a minima s'il n'existe pas : l'ERP vient de
+       reconnaître ce client). 403 : l'ERP le dit inactif ou bloqué → refus,
+       quel que soit le mot de passe local. 401 / 422 / injoignable → le mot
+       de passe local tranche, comme avant : aucun client n'est enfermé
+       dehors parce que l'ERP ne connaît pas encore son mot de passe. */
+    $passIn = (string) ($b['password'] ?? '');
+    if (function_exists('erp_client_auth_enabled') && erp_client_auth_enabled() && $passIn !== '') {
+      $loginErp = (strpos($ident, '@') !== false) ? $ident : ($identE164 !== '' ? $identE164 : $ident);
+      $er = erp_client_login($loginErp, $passIn);
+      if (!empty($er['ok'])) {
+        $uid = $u ? (int) $u['id'] : 0;
+        $hasErpId = col_exists('client', 'erp_client_id');
+        if (!$uid && $hasErpId && $er['clientId'] > 0) {
+          $byErp = row("SELECT id FROM client WHERE erp_client_id=? AND active=1 ORDER BY id LIMIT 1", [$er['clientId']]);
+          if ($byErp) $uid = (int) $byErp['id'];
+        }
+        if (!$uid) {
+          // Compte local a minima : identifiant, boutique préférée de l'ERP,
+          // pas de mot de passe local (l'ERP le porte), canal webshop.
+          $fiche = ($er['preferredShopId'] > 0 && function_exists('erp_client_par_id')) ? erp_client_par_id($er['preferredShopId'], $er['clientId']) : null;
+          $isMail = strpos($ident, '@') !== false;
+          $ms = $er['preferredShopId'] ?: (int) (qp('shopId', 0) ?: 0);
+          if ($ms <= 0) { $r0 = row("SELECT MIN(id) m FROM shops WHERE webshop_enabled = 1"); $ms = (int) ($r0['m'] ?? 0); }
+          $hasPref = col_exists('client', 'preferred_shop_id');
+          $cols = ['id_main_shop', 'email', 'phone', 'phone_e164', 'name', 'surname', 'zip', 'active', 'source_channel', 'webshop_user', 'preferred_auth_method'];
+          $vals = [$ms, $isMail ? $ident : (($fiche['email'] ?? '') ?: null), $isMail ? (($fiche['tel'] ?? '') ?: null) : $identNat, $isMail ? null : $identE164,
+                   (string) ($fiche['prenom'] ?? ''), (string) ($fiche['nom'] ?? ''), (string) ($fiche['cp'] ?? ''), 1, 'webshop', 1, $isMail ? 'email' : 'phone'];
+          if ($hasPref) { $cols[] = 'preferred_shop_id'; $vals[] = $ms; }
+          if ($hasErpId && $er['clientId'] > 0) { $cols[] = 'erp_client_id'; $vals[] = $er['clientId']; }
+          q("INSERT INTO client (" . implode(',', $cols) . ") VALUES (" . implode(',', array_fill(0, count($cols), '?')) . ")", $vals);
+          $uid = (int) db()->lastInsertId();
+        } elseif ($hasErpId && $er['clientId'] > 0) {
+          q("UPDATE client SET erp_client_id = COALESCE(erp_client_id, ?) WHERE id = ?", [$er['clientId'], $uid]);
+        }
+        if (col_exists('client', 'erp_auth_at')) q("UPDATE client SET erp_auth_at = NOW() WHERE id = ?", [$uid]);
+        erp_client_session_store($uid, $er);
+        if (($b['channel'] ?? '') === 'pwa' && col_exists('client', 'pwa_user')) q("UPDATE client SET pwa_user = 1 WHERE id = ?", [$uid]);
+        json_out(['user' => user_payload($uid), 'token' => sign_token(['id' => $uid, 'exp' => time() + 30 * 86400]), 'authSource' => 'erp']);
+      }
+      if (($er['code'] ?? 0) === 403) json_out(['error' => 'compte_bloque', 'message' => 'Ce compte est inactif ou bloqué. Contactez votre boutique.'], 403);
+    }
     // Compte existant mais sans mot de passe (client importé / créé côté PWA) :
     // on ne renvoie pas "identifiants incorrects" -> on invite à définir un mot de passe.
     if ($u && empty($u['password_hash'])) {
@@ -3941,7 +3985,14 @@ function dispatch($m, $p) {
     // posait ce drapeau elle-même, en SQL direct, à chaque connexion).
     if (($b['channel'] ?? '') === 'pwa' && col_exists('client', 'pwa_user'))
       q("UPDATE client SET pwa_user = 1 WHERE id = ?", [(int) $u['id']]);
-    json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400])]);
+    json_out(['user' => user_payload($u['id']), 'token' => sign_token(['id' => (int) $u['id'], 'exp' => time() + 30 * 86400]), 'authSource' => 'local']);
+  }
+  // Déconnexion : ferme la session ERP du client (0116) ; le jeton webshop,
+  // sans table de session, expire de lui-même — le front l'oublie.
+  if ($m === 'POST' && $p === '/auth/logout') {
+    $id = auth_uid();
+    if ($id && function_exists('erp_client_logout')) { try { erp_client_logout((int) $id); } catch (Throwable $e) { /* best-effort */ } }
+    json_out(['ok' => true]);
   }
   // Définit / met à jour le mot de passe d'un compte existant, puis connecte.
   // ⚠️ SÉCURITÉ : aucune vérification d'identité (pas d'OTP). Choix produit assumé
