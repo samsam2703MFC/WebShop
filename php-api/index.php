@@ -7533,6 +7533,32 @@ function dispatch($m, $p) {
                 . ($hasAud ? " AND (audience='b2b' OR audience IS NULL)" : "") . "
                  ORDER BY is_active DESC, ends_at DESC LIMIT 60")
         : [];
+      /* Les CAMPAGNES MARKETING de la marque (module marketing, tables mar_*,
+         même base). C'est là que la marque déclare une campagne avec sa
+         clientèle cible : b2c, b2b ou mixte. Le tableau de prospection ne
+         montre que celles qui visent des clients B2B — b2b et mixte — et qui
+         sont ouvertes : en cours, ou planifiées (on prospecte AVANT le début).
+         Une campagne du réseau (scope RESEAU) vaut pour toutes les boutiques ;
+         une campagne locale (LOCALE) seulement pour celles qui y participent —
+         la même règle que Scope::campaignFilter() du module marketing, la
+         boutique étant reconnue par mar_shop.erp_shop_id.
+         Ces campagnes gardent leur identifiant marketing, rendu NÉGATIF :
+         ws_crm_carte.campagne_id est un INT partagé avec ws_promo_campaign, et
+         deux tables ne peuvent pas se partager les mêmes numéros. Le signe dit
+         la source, sans migration ni changement d'écran. */
+      $campMar = [];
+      if ($tblExists('mar_campaign') && col_exists('mar_campaign', 'client_target')) {
+        $porteeSql = "c.scope='RESEAU'";
+        if ($shopId && $tblExists('mar_campaign_shop') && $tblExists('mar_shop'))
+          $porteeSql .= " OR EXISTS (SELECT 1 FROM mar_campaign_shop cs JOIN mar_shop s ON s.id=cs.shop_id
+                                      WHERE cs.campaign_id=c.id AND s.erp_shop_id=" . (int) $shopId . ")";
+        $campMar = rows("SELECT c.id, c.name, c.scope, c.client_target, c.status_code, c.starts_on, c.ends_on
+                           FROM mar_campaign c
+                          WHERE c.client_target IN ('b2b','mixte')
+                            AND c.status_code IN ('live','planned')
+                            AND ($porteeSql)
+                          ORDER BY c.status_code='live' DESC, c.starts_on DESC, c.id DESC LIMIT 60");
+      }
       $scC = $shopId ? " WHERE (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
       $cartes = $tblExists('ws_crm_carte') ? rows("SELECT * FROM ws_crm_carte$scC ORDER BY ordre, id LIMIT 800") : [];
       $gestes = [];
@@ -7544,11 +7570,20 @@ function dispatch($m, $p) {
       json_out(['ok' => true,
         'colonnes' => array_map(fn ($c) => ['id' => (int) $c['id'], 'cle' => $c['cle'], 'label' => $c['label'],
           'ordre' => (int) $c['ordre'], 'couleur' => $c['couleur'], 'gagne' => (int) $c['gagne'] === 1, 'perdu' => (int) $c['perdu'] === 1], $cols),
-        'campagnes' => array_map(fn ($c) => ['id' => (int) $c['id'], 'nom' => $c['name'],
-          'reseau' => $c['id_shop'] === null, 'active' => (int) $c['is_active'] === 1,
-          'du' => $c['starts_at'], 'au' => $c['ends_at'],
-          // 'b2b' : cible déclarée. null : jamais précisée — dit, pas supposé.
-          'audience' => $c['audience'] ?? null], $camp),
+        'campagnes' => array_merge(
+          // D'abord les campagnes marketing : ce sont elles que la marque déclare.
+          array_map(fn ($c) => ['id' => -(int) $c['id'], 'nom' => $c['name'], 'source' => 'marketing',
+            'reseau' => $c['scope'] === 'RESEAU', 'active' => true,
+            'statut' => $c['status_code'] === 'live' ? 'En cours' : 'Planifiée',
+            'du' => $c['starts_on'], 'au' => $c['ends_on'],
+            // b2b et mixte visent toutes deux des clients B2B ; la cible brute
+            // reste lisible à côté.
+            'audience' => 'b2b', 'cible' => $c['client_target']], $campMar),
+          array_map(fn ($c) => ['id' => (int) $c['id'], 'nom' => $c['name'], 'source' => 'bons',
+            'reseau' => $c['id_shop'] === null, 'active' => (int) $c['is_active'] === 1,
+            'du' => $c['starts_at'], 'au' => $c['ends_at'],
+            // 'b2b' : cible déclarée. null : jamais précisée — dit, pas supposé.
+            'audience' => $c['audience'] ?? null], $camp)),
         'cartes' => array_map(fn ($c) => ['id' => (int) $c['id'], 'campagneId' => $c['campagne_id'] !== null ? (int) $c['campagne_id'] : null,
           'campagneNom' => $c['campagne_nom'], 'cibleType' => $c['cible_type'], 'cibleId' => $c['cible_id'] !== null ? (int) $c['cible_id'] : null,
           'nom' => $c['nom'], 'colonne' => $c['colonne'], 'ordre' => (int) $c['ordre'], 'voucher' => $c['voucher_code'],
