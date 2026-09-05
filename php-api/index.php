@@ -7501,10 +7501,100 @@ function dispatch($m, $p) {
        localité seulement, n'est PAS gardée : elle est rendue dans le rapport
        pour être choisie à la main dans la liste Google. */
     /* ═══ CRM DE PROSPECTION B2B ═══════════════════════════════════════
-       Un tableau par campagne. La marque décide les campagnes (portée réseau,
-       ws_promo_campaign.id_shop NULL) ; le franchisé choisit la sienne, y pose
-       ses cibles et les fait avancer de colonne en colonne. TOUT est variable :
+       Un tableau par campagne. La marque décide les campagnes DANS LE MODULE
+       MARKETING (tables mar_*) ; le franchisé choisit la sienne, y pose ses
+       cibles et les fait avancer de colonne en colonne. TOUT est variable :
        les colonnes se renomment, se réordonnent, s'ajoutent et se retirent. */
+
+    /* LA CAMPAGNE N'APPARTIENT PAS AU WEBSHOP. Elle est déclarée dans le module
+       marketing : mar_campaign porte son nom, sa portée (scope : RESEAU |
+       LOCALE), son statut (mar_campaign_status : draft | planned | live | done),
+       ses dates, et SA CLIENTÈLE CIBLE (mar_campaign.client_target : b2c | b2b |
+       mixte, libellés dans mar_client_target). Les boutiques qui y participent
+       sont dans mar_campaign_shop, rattachées à l'ERP par mar_shop.erp_shop_id —
+       le même identifiant que `shops.id`, donc que la portée reçue ici.
+       Cette liste était lue dans ws_promo_campaign, qui est la table des BONS du
+       webshop : une campagne du réseau n'y figure pas, et le tableau de
+       prospection s'ouvrait donc SANS AUCUNE CAMPAGNE À CHOISIR.
+       Rien n'est supposé : module absent, colonne absente ou pont de boutique
+       absent, la liste est vide ET la raison est dite (`campagnesNote`), au lieu
+       de laisser croire que la marque n'a rien déclaré. */
+    $marCampagnes = function ($cibles = ['b2b'], &$note = null) use ($shopId, $tblExists) {
+      $note = null;
+      if (!$tblExists('mar_campaign')) {
+        $note = 'Module marketing absent de cette base : la table mar_campaign n’existe pas. '
+              . 'Les campagnes sont déclarées dans la console consultant ; tant que ce module n’est pas '
+              . 'dans la base du webshop, aucune campagne ne peut être proposée ici.';
+        return [];
+      }
+      $hasCible  = col_exists('mar_campaign', 'client_target');
+      $hasStatut = $tblExists('mar_campaign_status');
+      // Le libellé de la cible ne se joint que si la COLONNE existe aussi :
+      // joindre sur c.client_target absente ferait échouer toute la requête.
+      $hasLibel  = $hasCible && $tblExists('mar_client_target');
+      $hasLien   = $tblExists('mar_campaign_shop') && $tblExists('mar_shop');
+      if (!$hasCible)
+        $note = 'Colonne mar_campaign.client_target absente (migration 011 du module marketing non passée) : '
+              . 'la clientèle cible ne peut pas être lue, la liste n’est donc filtrée sur aucune cible.';
+
+      $sel = "c.id, c.name, c.scope, c.status_code, c.starts_on, c.ends_on"
+           . ($hasCible  ? ", c.client_target"          : ", NULL AS client_target")
+           . ($hasStatut ? ", st.label AS statut_label" : ", NULL AS statut_label")
+           . ($hasLibel  ? ", ct.label AS cible_label"  : ", NULL AS cible_label");
+      $sql = "SELECT $sel FROM mar_campaign c"
+           . ($hasStatut ? " LEFT JOIN mar_campaign_status st ON st.code = c.status_code" : "")
+           . ($hasLibel  ? " LEFT JOIN mar_client_target ct ON ct.code = c.client_target" : "");
+      $w = ["c.status_code <> 'draft'"];   // un brouillon n'est pas annoncé au réseau
+      $args = [];
+      if ($hasCible && $cibles) {
+        $w[] = "c.client_target IN (" . implode(',', array_fill(0, count($cibles), '?')) . ")";
+        foreach ($cibles as $x) $args[] = $x;
+      }
+      /* PORTÉE BOUTIQUE, DÉCIDÉE ICI. Une campagne locale ne se voit que par les
+         boutiques qui y participent ; une campagne réseau qui ne déclare aucune
+         boutique est ouverte à tout le réseau. Sans le pont mar_shop.erp_shop_id,
+         on ne devine pas quelle boutique est concernée : seul le réseau sort. */
+      if ($shopId) {
+        if ($hasLien) {
+          $w[] = "(EXISTS (SELECT 1 FROM mar_campaign_shop cs JOIN mar_shop ms ON ms.id = cs.shop_id
+                            WHERE cs.campaign_id = c.id AND ms.erp_shop_id = ?)
+                   OR (UPPER(c.scope) = 'RESEAU'
+                       AND NOT EXISTS (SELECT 1 FROM mar_campaign_shop cs2 WHERE cs2.campaign_id = c.id)))";
+          $args[] = (int) $shopId;
+        } else {
+          $note = 'Tables mar_campaign_shop / mar_shop absentes : impossible de dire quelles campagnes '
+                . 'concernent cette boutique. Seules les campagnes réseau sont proposées.';
+          $w[] = "UPPER(c.scope) = 'RESEAU'";
+        }
+      }
+      $sql .= " WHERE " . implode(' AND ', $w)
+            . " ORDER BY (c.status_code = 'live') DESC, c.ends_on IS NULL, c.ends_on DESC, c.id DESC LIMIT 60";
+      $out = [];
+      foreach (rows($sql, $args) as $c) {
+        $out[] = ['id' => (int) $c['id'], 'nom' => $c['name'],
+          'reseau' => strtoupper((string) $c['scope']) === 'RESEAU',
+          // « Ouverte » = lancée ou programmée. Terminée : dite close, pas cachée.
+          'active' => in_array((string) $c['status_code'], ['live', 'planned'], true),
+          'statut' => $c['status_code'], 'statutLabel' => $c['statut_label'] ?: $c['status_code'],
+          'du' => $c['starts_on'], 'au' => $c['ends_on'],
+          // 'b2b' | 'mixte' | 'b2c' : la cible DÉCLARÉE. null = colonne absente,
+          // jamais « supposée B2B » — la console le dit à l'écran.
+          'audience' => $c['client_target'], 'cibleLabel' => $c['cible_label'] ?: $c['client_target']];
+      }
+      return $out;
+    };
+
+    /* La liste seule, sans le tableau : un écran qui n'a besoin que des
+       campagnes ne charge pas 800 cartes pour en afficher trois.
+       ?cible=b2b (défaut) — liste séparée par des virgules, « tous » ne filtre
+       sur aucune clientèle. */
+    if ($m === 'GET' && $p === '/franchisee/campagnes') {
+      $req = strtolower(trim((string) qp('cible', 'b2b')));
+      $cibles = ($req === '' || $req === 'tous') ? []
+              : array_values(array_filter(array_map('trim', explode(',', $req))));
+      $note = null; $lst = $marCampagnes($cibles, $note);
+      json_out(['ok' => true, 'cible' => $req, 'campagnes' => $lst, 'campagnesNote' => $note]);
+    }
 
     // Les colonnes de la boutique, ou le cycle par défaut si elle n'en a pas
     // encore : le tableau ne s'ouvre jamais vide.
@@ -7525,14 +7615,11 @@ function dispatch($m, $p) {
             [$shopId ?: null, $cle, $lab, $i, $coul, $cle === 'gagne' ? 1 : 0, $cle === 'perdu' ? 1 : 0]);
         $cols = rows("SELECT id, cle, label, ordre, couleur, gagne, perdu FROM ws_crm_colonne WHERE actif=1$sc ORDER BY ordre, id");
       }
-      $hasAud = $tblExists('ws_promo_campaign') && col_exists('ws_promo_campaign', 'audience');
-      $camp = $tblExists('ws_promo_campaign')
-        ? rows("SELECT id, name, id_shop, starts_at, ends_at, is_active" . ($hasAud ? ", audience" : ", NULL AS audience") . "
-                  FROM ws_promo_campaign
-                 WHERE (id_shop IS NULL" . ($shopId ? " OR id_shop=" . (int) $shopId : "") . ")"
-                . ($hasAud ? " AND (audience='b2b' OR audience IS NULL)" : "") . "
-                 ORDER BY is_active DESC, ends_at DESC LIMIT 60")
-        : [];
+      /* Les campagnes du module marketing dont la clientèle cible EST le B2B.
+         Une campagne grand public — ou mixte — ne se prospecte pas bureau par
+         bureau : elle n'a rien à faire dans ce sélecteur. */
+      $campNote = null;
+      $camp = $marCampagnes(['b2b'], $campNote);
       $scC = $shopId ? " WHERE (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
       $cartes = $tblExists('ws_crm_carte') ? rows("SELECT * FROM ws_crm_carte$scC ORDER BY ordre, id LIMIT 800") : [];
       $gestes = [];
@@ -7544,11 +7631,7 @@ function dispatch($m, $p) {
       json_out(['ok' => true,
         'colonnes' => array_map(fn ($c) => ['id' => (int) $c['id'], 'cle' => $c['cle'], 'label' => $c['label'],
           'ordre' => (int) $c['ordre'], 'couleur' => $c['couleur'], 'gagne' => (int) $c['gagne'] === 1, 'perdu' => (int) $c['perdu'] === 1], $cols),
-        'campagnes' => array_map(fn ($c) => ['id' => (int) $c['id'], 'nom' => $c['name'],
-          'reseau' => $c['id_shop'] === null, 'active' => (int) $c['is_active'] === 1,
-          'du' => $c['starts_at'], 'au' => $c['ends_at'],
-          // 'b2b' : cible déclarée. null : jamais précisée — dit, pas supposé.
-          'audience' => $c['audience'] ?? null], $camp),
+        'campagnes' => $camp, 'campagnesNote' => $campNote,
         'cartes' => array_map(fn ($c) => ['id' => (int) $c['id'], 'campagneId' => $c['campagne_id'] !== null ? (int) $c['campagne_id'] : null,
           'campagneNom' => $c['campagne_nom'], 'cibleType' => $c['cible_type'], 'cibleId' => $c['cible_id'] !== null ? (int) $c['cible_id'] : null,
           'nom' => $c['nom'], 'colonne' => $c['colonne'], 'ordre' => (int) $c['ordre'], 'voucher' => $c['voucher_code'],
@@ -14848,6 +14931,10 @@ function bo_endpoint_section($name) {
     // Clients B2B
     'ws-office-delivery-sites' => 'sites',
     // CRM de prospection : même section que les clients B2B.
+    // 'campagnes' sert la liste des campagnes du module marketing, que seul ce
+    // tableau consomme aujourd'hui : sans cette ligne, un compte à PIN se voit
+    // refuser l'écran (« section inconnue »), le jeton admin n'y passant pas.
+    'campagnes' => 'b2bClients',
     'crm' => 'b2bClients', 'crm-carte' => 'b2bClients', 'crm-colonnes' => 'b2bClients', 'crm-rapport' => 'b2bClients',
     'crm-actions' => 'b2bClients', 'crm-modele' => 'b2bClients', 'crm-piece' => 'b2bClients', 'crm-mail' => 'b2bClients', 'crm-sms' => 'b2bClients',
     'ws-offices' => 'offices', 'onboard-office' => 'offices', 'route-office' => 'offices',
