@@ -7524,9 +7524,13 @@ function dispatch($m, $p) {
             [$shopId ?: null, $cle, $lab, $i, $coul, $cle === 'gagne' ? 1 : 0, $cle === 'perdu' ? 1 : 0]);
         $cols = rows("SELECT id, cle, label, ordre, couleur, gagne, perdu FROM ws_crm_colonne WHERE actif=1$sc ORDER BY ordre, id");
       }
+      $hasAud = $tblExists('ws_promo_campaign') && col_exists('ws_promo_campaign', 'audience');
       $camp = $tblExists('ws_promo_campaign')
-        ? rows("SELECT id, name, id_shop, starts_at, ends_at, is_active FROM ws_promo_campaign
-                 WHERE id_shop IS NULL" . ($shopId ? " OR id_shop=" . (int) $shopId : "") . " ORDER BY is_active DESC, ends_at DESC LIMIT 60")
+        ? rows("SELECT id, name, id_shop, starts_at, ends_at, is_active" . ($hasAud ? ", audience" : ", NULL AS audience") . "
+                  FROM ws_promo_campaign
+                 WHERE (id_shop IS NULL" . ($shopId ? " OR id_shop=" . (int) $shopId : "") . ")"
+                . ($hasAud ? " AND (audience='b2b' OR audience IS NULL)" : "") . "
+                 ORDER BY is_active DESC, ends_at DESC LIMIT 60")
         : [];
       $scC = $shopId ? " WHERE (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
       $cartes = $tblExists('ws_crm_carte') ? rows("SELECT * FROM ws_crm_carte$scC ORDER BY ordre, id LIMIT 800") : [];
@@ -7541,7 +7545,9 @@ function dispatch($m, $p) {
           'ordre' => (int) $c['ordre'], 'couleur' => $c['couleur'], 'gagne' => (int) $c['gagne'] === 1, 'perdu' => (int) $c['perdu'] === 1], $cols),
         'campagnes' => array_map(fn ($c) => ['id' => (int) $c['id'], 'nom' => $c['name'],
           'reseau' => $c['id_shop'] === null, 'active' => (int) $c['is_active'] === 1,
-          'du' => $c['starts_at'], 'au' => $c['ends_at']], $camp),
+          'du' => $c['starts_at'], 'au' => $c['ends_at'],
+          // 'b2b' : cible déclarée. null : jamais précisée — dit, pas supposé.
+          'audience' => $c['audience'] ?? null], $camp),
         'cartes' => array_map(fn ($c) => ['id' => (int) $c['id'], 'campagneId' => $c['campagne_id'] !== null ? (int) $c['campagne_id'] : null,
           'campagneNom' => $c['campagne_nom'], 'cibleType' => $c['cible_type'], 'cibleId' => $c['cible_id'] !== null ? (int) $c['cible_id'] : null,
           'nom' => $c['nom'], 'colonne' => $c['colonne'], 'ordre' => (int) $c['ordre'], 'voucher' => $c['voucher_code'],
@@ -12805,6 +12811,8 @@ function dispatch($m, $p) {
     // Campagnes « objectif d'achat cumulé → produit cadeau » — gestion admin.
     if ($m === 'GET' && $p === '/admin/promo-campaigns') {
       $list = rows("SELECT * FROM ws_promo_campaign ORDER BY is_active DESC, ends_at DESC");
+      // La clientèle cible voyage avec la campagne : 'b2b' la rend visible au
+      // CRM de prospection, null veut dire « jamais précisée ».
       json_out(array_map(fn ($c) => promo_campaign_public($c) + [
         'isActive'         => (int) $c['is_active'],
         'conditionScope'   => $c['condition_scope'],
@@ -12826,17 +12834,22 @@ function dispatch($m, $p) {
                $c['threshold_amount'], $c['currency'], $c['condition_scope'], $c['reward_product_id'],
                $c['reward_delivery_date'], $c['voucher_code_prefix'], $c['per_customer_limit']];
 
+      $aud = in_array((string) ($b['audience'] ?? ''), ['b2b', 'b2c'], true) ? (string) $b['audience'] : null;
+      $hasAud = col_exists('ws_promo_campaign', 'audience');
       if (!empty($b['id'])) {
         q("UPDATE ws_promo_campaign SET name=?, id_shop=?, is_active=?, starts_at=?, ends_at=?,
               threshold_amount=?, currency=?, condition_scope=?, reward_product_id=?,
-              reward_delivery_date=?, voucher_code_prefix=?, per_customer_limit=? WHERE id=?",
+              reward_delivery_date=?, voucher_code_prefix=?, per_customer_limit=?"
+              . ($hasAud && array_key_exists('audience', $b) ? ", audience=" . ($aud === null ? "NULL" : db()->quote($aud)) : "") . " WHERE id=?",
           array_merge($cols, [(int) $b['id']]));
         json_out(['ok' => true, 'id' => (int) $b['id']]);
       }
       q("INSERT INTO ws_promo_campaign
            (name, id_shop, is_active, starts_at, ends_at, threshold_amount, currency,
-            condition_scope, reward_product_id, reward_delivery_date, voucher_code_prefix, per_customer_limit)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", $cols);
+            condition_scope, reward_product_id, reward_delivery_date, voucher_code_prefix, per_customer_limit"
+            . ($hasAud ? ", audience" : "") . ")
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?" . ($hasAud ? ",?" : "") . ")",
+        $hasAud ? array_merge($cols, [$aud]) : $cols);
       json_out(['ok' => true, 'id' => (int) db()->lastInsertId()], 201);
     }
     // Activer / désactiver une campagne.
