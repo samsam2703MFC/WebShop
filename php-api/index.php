@@ -7553,6 +7553,7 @@ function dispatch($m, $p) {
           'nom' => $c['nom'], 'colonne' => $c['colonne'], 'ordre' => (int) $c['ordre'], 'voucher' => $c['voucher_code'],
           'contactNom' => $c['contact_nom'], 'contactRole' => $c['contact_role'], 'contactTel' => $c['contact_tel'],
           'contactEmail' => $c['contact_email'], 'adresse' => $c['adresse'], 'note' => $c['note'],
+          'gagneLe' => $c['gagne_le'] ?? null,
           'prochaine' => $c['prochaine_action'],
           // Heure et nature de l'action : l'agenda de semaine en a besoin pour
           // ranger et pour colorer. NULL = non fixée, dit tel quel.
@@ -7564,6 +7565,57 @@ function dispatch($m, $p) {
 
     // Créer, modifier, déplacer ou supprimer une carte. Une seule route : le
     // tableau ne fait qu'une chose, poser une carte quelque part.
+    if ($m === 'GET' && $p === '/franchisee/crm-rapport') {
+      if (!$tblExists('ws_crm_carte')) json_out(['ok' => false, 'error' => 'Migration 0125 non passée.'], 501);
+      $sc = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
+      $scW = $shopId ? " WHERE (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
+      $cols = rows("SELECT cle, label, gagne, perdu FROM ws_crm_colonne WHERE actif=1$sc ORDER BY ordre, id");
+      $gagneCles = array_map(fn ($c) => $c['cle'], array_filter($cols, fn ($c) => (int) $c['gagne'] === 1));
+      $cartes = rows("SELECT * FROM ws_crm_carte$scW ORDER BY id LIMIT 2000");
+      $gestes = [];
+      if ($tblExists('ws_crm_geste') && $cartes) {
+        $ids = implode(',', array_map(fn ($c) => (int) $c['id'], $cartes));
+        foreach (rows("SELECT carte_id, type FROM ws_crm_geste WHERE carte_id IN ($ids)") as $g)
+          $gestes[(string) $g['carte_id']][] = (string) $g['type'];
+      }
+      $hasO = $tblExists('ws_orders') && col_exists('ws_orders', 'customer_id');
+      $par = []; $clients = [];
+      foreach ($cartes as $c) {
+        $k = $c['campagne_id'] !== null ? (string) (int) $c['campagne_id'] : '0';
+        if (!isset($par[$k])) $par[$k] = ['campagneId' => $c['campagne_id'] !== null ? (int) $c['campagne_id'] : null,
+          'campagneNom' => $c['campagne_nom'] ?: 'Sans campagne', 'cibles' => 0, 'mail' => 0, 'tel' => 0,
+          'visite' => 0, 'bon' => 0, 'gagnes' => 0, 'ca' => 0.0, 'commandes' => 0];
+        $par[$k]['cibles']++;
+        foreach ($gestes[(string) $c['id']] ?? [] as $t) if (isset($par[$k][$t])) $par[$k][$t]++;
+        if (!in_array((string) $c['colonne'], $gagneCles, true)) continue;
+        $par[$k]['gagnes']++;
+        // Le CA développé : les commandes du client DEPUIS son gain. Un gain
+        // sans client rattachable (prospect libre, bureau non lié) ne peut pas
+        // porter de chiffre — il vaut zéro, et le rapport le dit.
+        $ca = 0.0; $nb = 0; $der = null; $lie = false;
+        if ($hasO && (string) $c['cible_type'] === 'client' && $c['cible_id'] !== null) {
+          $lie = true;
+          $depuis = $c['gagne_le'] ?: ($c['maj'] ?: $c['cree_le']);
+          $r2 = row("SELECT COUNT(*) n, COALESCE(SUM(total),0) t, MAX(created_at) d FROM ws_orders
+                      WHERE customer_id=?" . ($depuis ? " AND created_at >= ?" : ""),
+                    $depuis ? [(int) $c['cible_id'], $depuis] : [(int) $c['cible_id']]);
+          $ca = (float) ($r2['t'] ?? 0); $nb = (int) ($r2['n'] ?? 0); $der = $r2['d'] ?? null;
+        }
+        $par[$k]['ca'] += $ca; $par[$k]['commandes'] += $nb;
+        $clients[] = ['campagneId' => $c['campagne_id'] !== null ? (int) $c['campagne_id'] : null,
+          'nom' => $c['nom'], 'gagneLe' => $c['gagne_le'], 'commandes' => $nb, 'ca' => round($ca, 2),
+          'derniere' => $der, 'lie' => $lie, 'cibleType' => $c['cible_type']];
+      }
+      usort($clients, fn ($a, $b2) => $b2['ca'] <=> $a['ca']);
+      $out = array_values($par);
+      foreach ($out as &$o) { $o['ca'] = round($o['ca'], 2);
+        $o['transfo'] = $o['cibles'] > 0 ? round($o['gagnes'] / $o['cibles'] * 100, 1) : 0; }
+      unset($o);
+      usort($out, fn ($a, $b2) => $b2['cibles'] <=> $a['cibles']);
+      json_out(['ok' => true, 'campagnes' => $out, 'clients' => $clients,
+        'etapes' => array_map(fn ($c) => ['cle' => $c['cle'], 'label' => $c['label']], $cols),
+        'caLisible' => $hasO]);
+    }
     if ($m === 'POST' && $p === '/franchisee/crm-carte') {
       if (!$tblExists('ws_crm_carte')) json_out(['ok' => false, 'error' => 'Migration 0125 non passée (ws_crm_carte).'], 501);
       $b = body(); $id = (int) ($b['id'] ?? 0);
@@ -7591,6 +7643,12 @@ function dispatch($m, $p) {
         if (array_key_exists('prochaineType', $b) && col_exists('ws_crm_carte', 'prochaine_type')) {
           $t2 = trim((string) $b['prochaineType']);
           $sets[] = 'prochaine_type=?'; $vals[] = in_array($t2, ['visite', 'tel', 'mail', 'bon', 'assort'], true) ? $t2 : null;
+        }
+        if (array_key_exists('colonne', $b) && col_exists('ws_crm_carte', 'gagne_le')) {
+          $cle = mb_substr(trim((string) $b['colonne']), 0, 40);
+          $scG = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
+          $colG = row("SELECT gagne FROM ws_crm_colonne WHERE cle=? AND actif=1$scG LIMIT 1", [$cle]);
+          $sets[] = (int) ($colG['gagne'] ?? 0) === 1 ? 'gagne_le=COALESCE(gagne_le, NOW())' : 'gagne_le=NULL';
         }
         if (!$sets) json_out(['ok' => false, 'error' => 'rien à modifier'], 422);
         $sets[] = 'maj=?'; $vals[] = $now; $vals[] = $id;
@@ -14584,7 +14642,7 @@ function bo_endpoint_section($name) {
     // Clients B2B
     'ws-office-delivery-sites' => 'sites',
     // CRM de prospection : même section que les clients B2B.
-    'crm' => 'b2bClients', 'crm-carte' => 'b2bClients', 'crm-colonnes' => 'b2bClients',
+    'crm' => 'b2bClients', 'crm-carte' => 'b2bClients', 'crm-colonnes' => 'b2bClients', 'crm-rapport' => 'b2bClients',
     'ws-offices' => 'offices', 'onboard-office' => 'offices', 'route-office' => 'offices',
     'office-invite' => 'offices', 'invite-revoke' => 'offices',
     'office-invite-pdf' => 'offices', 'office-invite-send' => 'offices',
