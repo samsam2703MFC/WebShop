@@ -7553,7 +7553,12 @@ function dispatch($m, $p) {
           'nom' => $c['nom'], 'colonne' => $c['colonne'], 'ordre' => (int) $c['ordre'], 'voucher' => $c['voucher_code'],
           'contactNom' => $c['contact_nom'], 'contactRole' => $c['contact_role'], 'contactTel' => $c['contact_tel'],
           'contactEmail' => $c['contact_email'], 'adresse' => $c['adresse'], 'note' => $c['note'],
-          'prochaine' => $c['prochaine_action'], 'maj' => $c['maj'],
+          'prochaine' => $c['prochaine_action'],
+          // Heure et nature de l'action : l'agenda de semaine en a besoin pour
+          // ranger et pour colorer. NULL = non fixée, dit tel quel.
+          'prochaineHeure' => isset($c['prochaine_heure']) && $c['prochaine_heure'] !== null ? substr((string) $c['prochaine_heure'], 0, 5) : null,
+          'prochaineType' => $c['prochaine_type'] ?? null,
+          'maj' => $c['maj'],
           'gestes' => $gestes[(string) $c['id']] ?? []], $cartes)]);
     }
 
@@ -7579,6 +7584,14 @@ function dispatch($m, $p) {
         }
         if (array_key_exists('ordre', $b)) { $sets[] = 'ordre=?'; $vals[] = (int) $b['ordre']; }
         if (array_key_exists('prochaine', $b)) { $sets[] = 'prochaine_action=?'; $vals[] = $date($b['prochaine'] ?? ''); }
+        if (array_key_exists('prochaineHeure', $b) && col_exists('ws_crm_carte', 'prochaine_heure')) {
+          $h = trim((string) $b['prochaineHeure']);
+          $sets[] = 'prochaine_heure=?'; $vals[] = preg_match('/^\d{1,2}:\d{2}$/', $h) ? $h : null;
+        }
+        if (array_key_exists('prochaineType', $b) && col_exists('ws_crm_carte', 'prochaine_type')) {
+          $t2 = trim((string) $b['prochaineType']);
+          $sets[] = 'prochaine_type=?'; $vals[] = in_array($t2, ['visite', 'tel', 'mail', 'bon', 'assort'], true) ? $t2 : null;
+        }
         if (!$sets) json_out(['ok' => false, 'error' => 'rien à modifier'], 422);
         $sets[] = 'maj=?'; $vals[] = $now; $vals[] = $id;
         q("UPDATE ws_crm_carte SET " . implode(',', $sets) . " WHERE id=?", $vals);
