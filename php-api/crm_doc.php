@@ -68,10 +68,12 @@ function crm_modeles_defaut(): array {
      'corps' => "Bonjour {contact},\n\nMerci pour votre accueil lors de ma visite. Comme convenu, voici notre carte, et le bon {bon} pour votre première commande.\n\nSouhaitez-vous que je prépare un plateau de dégustation pour votre équipe ? Un mot et je le dépose.\n\nBien à vous,\n{boutique} · {tel_boutique}"],
     ['type' => 'sms', 'nom' => 'Annonce de passage',
      'sujet' => null,
-     'corps' => "Bonjour {contact}, {boutique} : je passe vous présenter notre gamme {campagne}. Votre bon {bon} vous attend. À bientôt ! {tel_boutique}"],
+     // Sans caractère hors table GSM 7 bits (ç, ê, À, ’…) : un tel caractère
+     // fait tomber le SMS de 160 à 70 caractères, et un texte de 120 en coûte deux.
+     'corps' => "Bonjour {contact}, {boutique} : je passe vous présenter notre gamme {campagne}. Votre bon {bon} vous attend. A bientôt ! {tel_boutique}"],
     ['type' => 'sms', 'nom' => 'Relance courte',
      'sujet' => null,
-     'corps' => "Bonjour {contact}, avez-vous pu goûter ? Le bon {bon} reste valable pour votre première commande chez {boutique}. {tel_boutique}"],
+     'corps' => "Bonjour {contact}, avez-vous pu déguster ? Le bon {bon} reste valable pour votre première commande chez {boutique}. {tel_boutique}"],
     ['type' => 'tel', 'nom' => 'Script — secrétariat / RH',
      'sujet' => 'Objectif : obtenir un créneau pour déposer un plateau de dégustation',
      'corps' => "1. Bonjour, {boutique}, pâtisserie artisanale à côté de chez vous. Je cherche la personne qui organise les pauses et les réunions chez {societe} — est-ce vous ?\n2. Nous livrons au bureau : viennoiseries le matin, plateaux pour les réunions, tartes pour les anniversaires.\n3. Pour {campagne}, vous avez un bon de découverte : {bon}.\n4. Je passe volontiers déposer un plateau de dégustation — mardi ou jeudi, lequel vous arrange ?\n5. À quelle adresse e-mail puis-je vous envoyer la carte ?"],

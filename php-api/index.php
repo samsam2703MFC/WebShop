@@ -7885,10 +7885,12 @@ function dispatch($m, $p) {
       if ($e164 === '') json_out(['ok' => false, 'error' => 'Numéro du destinataire absent ou invalide.'], 422);
       if ($texte === '') json_out(['ok' => false, 'error' => 'Message vide.'], 422);
       if (mb_strlen($texte) > 612) json_out(['ok' => false, 'error' => 'Message trop long (4 SMS maximum).'], 422);
-      if (!sms_envoyer($e164, $texte)) {
+      $det = null;
+      if (!sms_envoyer($e164, $texte, $det)) {
         $notes = function_exists('sms_notes') ? sms_notes() : [];
         json_out(['ok' => false, 'error' => 'L’opérateur a refusé le SMS' . ($notes ? (' : ' . end($notes)) : '.')], 502);
       }
+      $cout = $det ? (($det['parties'] > 1 ? $det['parties'] . ' SMS' : '1 SMS') . ($det['points'] > 0 ? (' · ' . rtrim(rtrim(number_format($det['points'], 2, ',', ''), '0'), ',') . ' pt') : '')) : '';
       $now = date('Y-m-d H:i:s');
       $sets = ['maj=?']; $vals = [$now];
       if (trim((string) $carte['contact_tel']) === '') { $sets[] = 'contact_tel=?'; $vals[] = mb_substr((string) $b['to'], 0, 40); }
@@ -7896,8 +7898,8 @@ function dispatch($m, $p) {
       q("UPDATE ws_crm_carte SET " . implode(',', $sets) . " WHERE id=?", $vals);
       if ($tblExists('ws_crm_geste'))
         q("INSERT INTO ws_crm_geste (carte_id, type, texte, par, quand) VALUES (?,?,?,?,?)",
-          [$id, 'sms', mb_substr('💬 SMS → ' . sms_masque($e164) . ' : ' . $texte, 0, 255), null, $now]);
-      json_out(['ok' => true, 'message' => 'SMS envoyé au ' . sms_masque($e164)]);
+          [$id, 'sms', mb_substr('💬 SMS → ' . sms_masque($e164) . ($cout ? (' (' . $cout . ')') : '') . ' : ' . $texte, 0, 255), null, $now]);
+      json_out(['ok' => true, 'message' => 'SMS envoyé au ' . sms_masque($e164) . ($cout ? (' — ' . $cout) : ''), 'cout' => $cout]);
     }
 
     if ($m === 'POST' && $p === '/franchisee/geo-backfill') {

@@ -134,8 +134,10 @@ function sms_otp_verifier($e164, $code) {
   return 'indisponible';
 }
 
-/* Envoi libre, pour les usages ultérieurs (confirmation de commande, etc.). */
-function sms_envoyer($e164, $message) {
+/* Envoi libre (prospection CRM, plus tard confirmations). $detail reçoit ce
+ * que l'opérateur a facturé : ['parties' => n, 'points' => x] — un texte
+ * hors table GSM 7 bits se scinde à 70 caractères, et ça se voit ici. */
+function sms_envoyer($e164, $message, &$detail = null) {
   $num = sms_num($e164);
   if ($num === '' || !sms_enabled()) return false;
   $p = ['to' => $num, 'message' => (string) $message, 'format' => 'json', 'encoding' => 'utf-8'];
@@ -143,10 +145,13 @@ function sms_envoyer($e164, $message) {
   if ($from !== '') $p['from'] = $from;
   $r = sms_http('/sms.do', $p);
   if (!$r['ok'] || isset($r['json']['error'])) {
-    $e = $r['json']['error'] ?? '?';
+    $e = $r['json']['error'] ?? ($r['json']['message'] ?? $r['err'] ?? '?');
     sms_notes("SMS vers " . sms_masque($e164) . " : " . (is_numeric($e) ? sms_cause($e) : $e));
     return false;
   }
+  $l = $r['json']['list'][0] ?? null;
+  if (is_array($l)) $detail = ['parties' => (int) ($l['parts'] ?? 1) ?: 1, 'points' => (float) ($l['points'] ?? 0),
+                               'statut' => (string) ($l['status'] ?? '')];
   return true;
 }
 
