@@ -7806,6 +7806,7 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/franchisee/crm-mail') {
       if (!$tblExists('ws_crm_carte')) json_out(['ok' => false, 'error' => 'Migration 0125 non passée.'], 501);
       rate_limit('crm_mail', 60, 3600);
+      rate_limit('crm_mail:s' . (int) $shopId . ':u' . (int) ($pinSes['user_id'] ?? 0), 60, 3600, true);
       $b = body(); $id = (int) ($b['id'] ?? 0);
       $scC = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
       $carte = $id ? row("SELECT * FROM ws_crm_carte WHERE id=?$scC", [$id]) : null;
@@ -7872,6 +7873,7 @@ function dispatch($m, $p) {
     if ($m === 'POST' && $p === '/franchisee/crm-sms') {
       if (!$tblExists('ws_crm_carte')) json_out(['ok' => false, 'error' => 'Migration 0125 non passée.'], 501);
       rate_limit('crm_sms', 60, 3600);
+      rate_limit('crm_sms:s' . (int) $shopId . ':u' . (int) ($pinSes['user_id'] ?? 0), 40, 3600, true);
       $b = body(); $id = (int) ($b['id'] ?? 0);
       $scC = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
       $carte = $id ? row("SELECT * FROM ws_crm_carte WHERE id=?$scC", [$id]) : null;
@@ -14659,12 +14661,15 @@ function geo_private_clients($shopId = null) {
  * fenêtre glissante simple (table ws_rate_limit, migration 0016). Fail-open :
  * toute erreur DB laisse passer (la disponibilité prime) ; un dépassement
  * renvoie 429 sans révéler le seuil exact. */
-function rate_limit($bucket, $max, $windowSec) {
+function rate_limit($bucket, $max, $windowSec, $sansIp = false) {
   $blocked = false;
   try {
     $ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '?');
     $ip = trim(explode(',', (string) $ip)[0]);
-    $key = substr($bucket . '|' . $ip, 0, 120);
+    // $sansIp : un seau par IDENTITÉ (boutique, utilisateur), pas par adresse.
+    // L'en-tête X-Forwarded-For vient du client : un envoi payant (SMS) borné
+    // par l'IP seule se déborde en changeant l'en-tête à chaque requête.
+    $key = substr($bucket . ($sansIp ? '' : '|' . $ip), 0, 120);
     $now = time();
     $r = row("SELECT hits, window_start FROM ws_rate_limit WHERE rl_key=?", [$key]);
     if (!$r || ($now - (int) $r['window_start']) >= $windowSec) {
