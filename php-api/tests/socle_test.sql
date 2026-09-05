@@ -280,3 +280,112 @@ CREATE TABLE IF NOT EXISTS `client` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
 ;
+
+-- Production : bureaux B2B livrés. Comme ws_products, cette table n'est créée
+-- par AUCUNE migration — elle préexiste ; vingt-deux migrations se contentent
+-- de l'ALTERer. La 0113 est la première du rejeu à le faire, et la CI s'y
+-- arrêtait (« Table 'citest.ws_offices' doesn't exist »), donc toutes les
+-- migrations suivantes n'étaient jamais essayées.
+-- Les colonnes posées par les migrations ≤ 0069 y figurent — client_id (0019,
+-- avec sa clé unique), shop_id (0021), delivery_notes (0028) ; celles des
+-- migrations postérieures NON : c'est le rejeu qui doit les ajouter.
+CREATE TABLE IF NOT EXISTS `ws_offices` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `client_id` int(11) DEFAULT NULL,
+  `shop_id` int(11) DEFAULT NULL,
+  `tour_id` int(11) DEFAULT NULL,
+  `name` varchar(190) DEFAULT NULL,
+  `address` varchar(255) DEFAULT NULL,
+  `postal_code` varchar(10) DEFAULT NULL,
+  `city` varchar(120) DEFAULT NULL,
+  `contact` varchar(120) DEFAULT NULL,
+  `email` varchar(190) DEFAULT NULL,
+  `phone` varchar(30) DEFAULT NULL,
+  `vat` varchar(40) DEFAULT NULL,
+  `status` varchar(20) DEFAULT NULL,
+  `deferred_billing_enabled` tinyint(1) NOT NULL DEFAULT 0,
+  `drop_minutes` int(11) DEFAULT NULL,
+  `delivery_notes` varchar(500) DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_ws_offices_client` (`client_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+;
+
+-- Production : tournées de livraison. Elle non plus n'est créée par aucune
+-- migration. Colonnes des migrations ≤ 0069 comprises : delivery_fee et
+-- vehicle (0018), return_to_depot (0028) ; celles de la 0120 (price_per_km,
+-- route_km, route_min, route_at) sont laissées au rejeu.
+CREATE TABLE IF NOT EXISTS `ws_tours` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `shop_id` int(11) DEFAULT NULL,
+  `name` varchar(190) DEFAULT NULL,
+  `max_items` int(11) DEFAULT NULL,
+  `delivery_fee` decimal(8,2) DEFAULT NULL,
+  `vehicle` varchar(60) DEFAULT NULL,
+  `return_to_depot` tinyint(1) NOT NULL DEFAULT 1,
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+;
+
+-- Production : sites de livraison d'un bureau (un bureau, plusieurs adresses).
+-- site_access_minutes existe AVANT la 0064, qui ne fait que la rendre nullable
+-- (MODIFY) : sans la colonne, cette migration lit un COLUMN_TYPE nul. Les
+-- colonnes d'adresse et de position de la 0120 sont laissées au rejeu.
+CREATE TABLE IF NOT EXISTS `ws_office_delivery_sites` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `office_client_id` int(11) DEFAULT NULL,
+  `shop_id` int(11) DEFAULT NULL,
+  `name` varchar(190) DEFAULT NULL,
+  `address` varchar(255) DEFAULT NULL,
+  `tournee_id` int(11) DEFAULT NULL,
+  `tournee_stop_id` int(11) DEFAULT NULL,
+  `site_access_minutes` int(11) DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+;
+
+-- Créée par la migration 0035 — donc APPLIQUÉE avant le niveau du socle, et
+-- jamais rejouée par la CI. Recopiée telle qu'elle : la 0122 ajoute lat, lng
+-- et position_at par-dessus, et c'est le rejeu qui doit le faire.
+CREATE TABLE IF NOT EXISTS `ws_tour_tracking` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `tour_id` int(11) NOT NULL,
+  `driver_name` varchar(120) DEFAULT NULL,
+  `vehicle` varchar(80) DEFAULT NULL,
+  `stops_done` int(11) NOT NULL DEFAULT 0,
+  `stops_total` int(11) NOT NULL DEFAULT 0,
+  `dispatched_at` datetime DEFAULT NULL,
+  `driver_validated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_tour` (`tour_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+;
+
+-- Créée par la migration 0012, donc déjà appliquée au niveau du socle.
+-- Recopiée telle qu'elle : la 0126 lui ajoute `audience` par-dessus, et c'est
+-- au rejeu de le faire.
+CREATE TABLE IF NOT EXISTS `ws_promo_campaign` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `name` varchar(150) NOT NULL,
+  `id_shop` int(11) DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT 1,
+  `starts_at` datetime NOT NULL,
+  `ends_at` datetime NOT NULL,
+  `threshold_amount` decimal(10,2) NOT NULL,
+  `currency` varchar(3) NOT NULL DEFAULT 'EUR',
+  `condition_scope` varchar(10) NOT NULL DEFAULT 'total',
+  `reward_product_id` int(11) NOT NULL,
+  `reward_delivery_date` date DEFAULT NULL,
+  `voucher_code_prefix` varchar(20) NOT NULL DEFAULT 'GIFT',
+  `per_customer_limit` int(11) NOT NULL DEFAULT 1,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_promo_campaign_active` (`is_active`,`starts_at`,`ends_at`),
+  KEY `idx_promo_campaign_shop` (`id_shop`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+;
