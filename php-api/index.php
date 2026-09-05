@@ -7552,6 +7552,9 @@ function dispatch($m, $p) {
         'cartes' => array_map(fn ($c) => ['id' => (int) $c['id'], 'campagneId' => $c['campagne_id'] !== null ? (int) $c['campagne_id'] : null,
           'campagneNom' => $c['campagne_nom'], 'cibleType' => $c['cible_type'], 'cibleId' => $c['cible_id'] !== null ? (int) $c['cible_id'] : null,
           'nom' => $c['nom'], 'colonne' => $c['colonne'], 'ordre' => (int) $c['ordre'], 'voucher' => $c['voucher_code'],
+          // Plusieurs bons par cible (0130) : la colonne porte les codes
+          // séparés par des virgules, l'API les sert en tableau.
+          'bons' => crm_bons_liste($c['voucher_code']),
           'contactNom' => $c['contact_nom'], 'contactRole' => $c['contact_role'], 'contactTel' => $c['contact_tel'],
           'contactEmail' => $c['contact_email'], 'adresse' => $c['adresse'], 'note' => $c['note'],
           'gagneLe' => $c['gagne_le'] ?? null,
@@ -7635,6 +7638,7 @@ function dispatch($m, $p) {
                   'adresse' => 'adresse', 'note' => 'note'] as $k => $col) {
           if (array_key_exists($k, $b)) { $sets[] = "$col=?"; $vals[] = $txt($k, $k === 'note' ? 2000 : 160); }
         }
+        if (is_array($b['bons'] ?? null)) { $sets[] = 'voucher_code=?'; $vals[] = crm_bons_joindre($b['bons']); }
         if (array_key_exists('ordre', $b)) { $sets[] = 'ordre=?'; $vals[] = (int) $b['ordre']; }
         if (array_key_exists('prochaine', $b)) { $sets[] = 'prochaine_action=?'; $vals[] = $date($b['prochaine'] ?? ''); }
         if (array_key_exists('prochaineHeure', $b) && col_exists('ws_crm_carte', 'prochaine_heure')) {
@@ -7665,7 +7669,7 @@ function dispatch($m, $p) {
           [$shopId ?: null, isset($b['campagneId']) && $b['campagneId'] !== '' ? (int) $b['campagneId'] : null, $txt('campagneNom', 120),
            mb_substr((string) ($b['cibleType'] ?? 'prospect'), 0, 16), isset($b['cibleId']) && $b['cibleId'] !== '' ? (int) $b['cibleId'] : null,
            $nom, mb_substr((string) ($b['colonne'] ?? 'a_contacter'), 0, 40), (int) ($b['ordre'] ?? 0),
-           $txt('voucher', 60), $txt('contactNom', 120), $txt('contactRole', 60), $txt('contactTel', 40), $txt('contactEmail'),
+           is_array($b['bons'] ?? null) ? crm_bons_joindre($b['bons']) : $txt('voucher', 255), $txt('contactNom', 120), $txt('contactRole', 60), $txt('contactTel', 40), $txt('contactEmail'),
            $txt('adresse', 255), $txt('note', 2000), $date($b['prochaine'] ?? ''), $now, $now]);
         $id = (int) db()->lastInsertId();
       }

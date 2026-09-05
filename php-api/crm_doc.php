@@ -24,7 +24,7 @@ function crm_variables(array $carte, ?array $boutique, $campagneNom = null): arr
   return [
     'contact'        => $contact !== '' ? $contact : 'Madame, Monsieur',
     'societe'        => (string) ($carte['nom'] ?? ''),
-    'bon'            => (string) ($carte['voucher_code'] ?? ''),
+    'bon'            => implode(', ', crm_bons_liste($carte['voucher_code'] ?? '')),
     'campagne'       => (string) ($campagneNom ?: ($carte['campagne_nom'] ?? '')),
     'boutique'       => (string) ($b['name'] ?? ''),
     'tel_boutique'   => (string) ($b['phone'] ?? ''),
@@ -39,13 +39,36 @@ function crm_variables_doc(): array {
   return [
     ['cle' => 'contact', 'aide' => 'nom du contact (sinon « Madame, Monsieur »)'],
     ['cle' => 'societe', 'aide' => 'nom de la cible'],
-    ['cle' => 'bon', 'aide' => 'code du bon remis'],
+    ['cle' => 'bon', 'aide' => 'le ou les bons remis, séparés par des virgules'],
     ['cle' => 'campagne', 'aide' => 'nom de la campagne'],
     ['cle' => 'boutique', 'aide' => 'nom de votre boutique'],
     ['cle' => 'tel_boutique', 'aide' => 'téléphone de la boutique'],
     ['cle' => 'email_boutique', 'aide' => 'e-mail de la boutique'],
     ['cle' => 'adresse', 'aide' => 'adresse de la cible'],
   ];
+}
+
+/* ── Les bons d'une cible ──────────────────────────────────────────────
+   Une cible peut porter plusieurs bons (0130) : la colonne voucher_code les
+   garde séparés par des virgules. Ces deux fonctions sont le seul endroit qui
+   connaît ce détail — partout ailleurs c'est un tableau de codes. */
+function crm_bons_liste($brut): array {
+  $out = [];
+  foreach (explode(',', (string) ($brut ?? '')) as $c) {
+    $c = mb_strtoupper(trim($c));
+    if ($c !== '' && !in_array($c, $out, true)) $out[] = $c;
+  }
+  return $out;
+}
+
+function crm_bons_joindre($liste): ?string {
+  $out = [];
+  foreach (is_array($liste) ? $liste : [] as $c) {
+    $c = mb_substr(mb_strtoupper(trim((string) $c)), 0, 60);
+    if ($c !== '' && !in_array($c, $out, true)) $out[] = $c;
+  }
+  $j = implode(',', $out);
+  return mb_substr($j, 0, 255) ?: null;
 }
 
 /* « Bonjour {contact}, » → « Bonjour Xavier, ». Accolades simples, à dessein
