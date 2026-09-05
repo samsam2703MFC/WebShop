@@ -22,6 +22,7 @@ require __DIR__ . '/erp_clients.php';
 require __DIR__ . '/erp_link.php';
 require __DIR__ . '/erp_client_auth.php';
 require __DIR__ . '/sms.php';
+require __DIR__ . '/crm_doc.php';
 require __DIR__ . '/geo_google.php';
 
 /* CORS */
@@ -7583,7 +7584,7 @@ function dispatch($m, $p) {
       foreach ($cartes as $c) {
         $k = $c['campagne_id'] !== null ? (string) (int) $c['campagne_id'] : '0';
         if (!isset($par[$k])) $par[$k] = ['campagneId' => $c['campagne_id'] !== null ? (int) $c['campagne_id'] : null,
-          'campagneNom' => $c['campagne_nom'] ?: 'Sans campagne', 'cibles' => 0, 'mail' => 0, 'tel' => 0,
+          'campagneNom' => $c['campagne_nom'] ?: 'Sans campagne', 'cibles' => 0, 'mail' => 0, 'sms' => 0, 'tel' => 0,
           'visite' => 0, 'bon' => 0, 'gagnes' => 0, 'ca' => 0.0, 'commandes' => 0];
         $par[$k]['cibles']++;
         foreach ($gestes[(string) $c['id']] ?? [] as $t) if (isset($par[$k][$t])) $par[$k][$t]++;
@@ -7650,7 +7651,10 @@ function dispatch($m, $p) {
           $colG = row("SELECT gagne FROM ws_crm_colonne WHERE cle=? AND actif=1$scG LIMIT 1", [$cle]);
           $sets[] = (int) ($colG['gagne'] ?? 0) === 1 ? 'gagne_le=COALESCE(gagne_le, NOW())' : 'gagne_le=NULL';
         }
-        if (!$sets) json_out(['ok' => false, 'error' => 'rien à modifier'], 422);
+        // Un geste seul (« mail envoyé », « visite faite ») est une modification :
+        // la carte bouge (maj), le journal s'allonge. Refuser ici, c'était
+        // rendre inertes tous les boutons de consignation.
+        if (!$sets && empty($b['geste'])) json_out(['ok' => false, 'error' => 'rien à modifier'], 422);
         $sets[] = 'maj=?'; $vals[] = $now; $vals[] = $id;
         q("UPDATE ws_crm_carte SET " . implode(',', $sets) . " WHERE id=?", $vals);
       } else {
@@ -7701,6 +7705,197 @@ function dispatch($m, $p) {
           array_merge([$prem], $gardees));
       }
       json_out(['ok' => true, 'colonnes' => count($gardees)]);
+    }
+
+    /* ═══ ACTIONS DEPUIS LA FICHE : MAIL, SMS, APPEL ═══════════════════
+       Les modèles et la bibliothèque de pièces jointes de la boutique, puis
+       l'envoi. Chaque envoi se consigne comme un geste sur la carte : le
+       journal et le rapport de campagne en vivent. */
+
+    // Ce qu'il faut pour composer : modèles, pièces, variables, et ce que
+    // le serveur sait envoyer (mail ? SMS ?) — dit d'avance, pas au clic.
+    if ($m === 'GET' && $p === '/franchisee/crm-actions') {
+      if (!$tblExists('ws_crm_modele')) json_out(['ok' => false, 'error' => 'Migration 0129 non passée (ws_crm_modele).'], 501);
+      $sc = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
+      $sid = $shopId ?: null;
+      $scM = $sid === null ? "shop_id IS NULL" : "shop_id=" . (int) $sid;
+      if (!row("SELECT 1 x FROM ws_crm_modele WHERE actif=1$sc LIMIT 1")) {
+        $now = date('Y-m-d H:i:s'); $i = 0;
+        foreach (crm_modeles_defaut() as $d)
+          q("INSERT INTO ws_crm_modele (shop_id, type, nom, sujet, corps, ordre, actif, maj) VALUES (?,?,?,?,?,?,1,?)",
+            [$sid, $d['type'], $d['nom'], $d['sujet'], $d['corps'], $i++, $now]);
+      }
+      $mods = rows("SELECT id, shop_id, type, nom, sujet, corps FROM ws_crm_modele WHERE actif=1$sc ORDER BY type, ordre, id");
+      $pieces = $tblExists('ws_crm_piece')
+        ? rows("SELECT id, shop_id, nom, chemin, mime, taille FROM ws_crm_piece WHERE actif=1$sc ORDER BY id DESC") : [];
+      $bq = $shopId ? row("SELECT name, email, phone, city FROM shops WHERE id=?", [(int) $shopId]) : null;
+      $from = (string) (cfg()['mail_from'] ?? '');
+      json_out(['ok' => true,
+        'mailPret' => $from !== '' && function_exists('mail'),
+        'mailFrom' => $from,
+        'smsPret'  => function_exists('sms_enabled') && sms_enabled(),
+        'smsFrom'  => function_exists('sms_cfg') ? sms_cfg('sms_from') : '',
+        'boutique' => $bq ? ['nom' => $bq['name'], 'email' => $bq['email'], 'tel' => $bq['phone'], 'ville' => $bq['city']] : null,
+        'variables' => crm_variables_doc(),
+        'modeles' => array_map(fn ($x) => ['id' => (int) $x['id'], 'type' => $x['type'], 'nom' => $x['nom'],
+          'sujet' => $x['sujet'], 'corps' => $x['corps'], 'reseau' => $x['shop_id'] === null && $sid !== null], $mods),
+        'pieces' => array_map(fn ($x) => ['id' => (int) $x['id'], 'nom' => $x['nom'], 'url' => $x['chemin'],
+          'mime' => $x['mime'], 'taille' => (int) $x['taille'], 'reseau' => $x['shop_id'] === null && $sid !== null], $pieces)]);
+    }
+
+    // Un modèle : créé, modifié ou retiré. Un modèle du réseau ne se touche
+    // pas depuis une boutique — elle le duplique en le renommant.
+    if ($m === 'POST' && $p === '/franchisee/crm-modele') {
+      if (!$tblExists('ws_crm_modele')) json_out(['ok' => false, 'error' => 'Migration 0129 non passée.'], 501);
+      $b = body(); $id = (int) ($b['id'] ?? 0); $sid = $shopId ?: null;
+      $scM = $sid === null ? "shop_id IS NULL" : "shop_id=" . (int) $sid;
+      if (!empty($b['supprimer']) && $id) {
+        q("UPDATE ws_crm_modele SET actif=0 WHERE id=? AND $scM", [$id]);
+        json_out(['ok' => true, 'supprime' => $id]);
+      }
+      $type = in_array($b['type'] ?? '', ['mail', 'sms', 'tel'], true) ? $b['type'] : 'mail';
+      $nom = mb_substr(trim((string) ($b['nom'] ?? '')), 0, 80);
+      if ($nom === '') json_out(['ok' => false, 'error' => 'Un nom pour le modèle.'], 422);
+      $sujet = mb_substr(trim((string) ($b['sujet'] ?? '')), 0, 200) ?: null;
+      $corps = mb_substr(trim(str_replace("\r", '', (string) ($b['corps'] ?? ''))), 0, 6000);
+      if ($corps === '') json_out(['ok' => false, 'error' => 'Le texte du modèle est vide.'], 422);
+      $now = date('Y-m-d H:i:s');
+      if ($id) {
+        q("UPDATE ws_crm_modele SET type=?, nom=?, sujet=?, corps=?, maj=? WHERE id=? AND $scM", [$type, $nom, $sujet, $corps, $now, $id]);
+        if (!row("SELECT 1 x FROM ws_crm_modele WHERE id=? AND $scM", [$id]))
+          json_out(['ok' => false, 'error' => 'Modèle inconnu, ou modèle du réseau : dupliquez-le pour le modifier.'], 404);
+      } else {
+        $ord = (int) (row("SELECT COALESCE(MAX(ordre),0)+1 n FROM ws_crm_modele WHERE $scM AND type=?", [$type])['n'] ?? 0);
+        q("INSERT INTO ws_crm_modele (shop_id, type, nom, sujet, corps, ordre, actif, maj) VALUES (?,?,?,?,?,?,1,?)",
+          [$sid, $type, $nom, $sujet, $corps, $ord, $now]);
+        $id = (int) db()->lastInsertId();
+      }
+      json_out(['ok' => true, 'id' => $id]);
+    }
+
+    // Une pièce de la bibliothèque : déposée (data: URL) ou retirée.
+    if ($m === 'POST' && $p === '/franchisee/crm-piece') {
+      if (!$tblExists('ws_crm_piece')) json_out(['ok' => false, 'error' => 'Migration 0129 non passée (ws_crm_piece).'], 501);
+      rate_limit('crm_piece', 40, 3600);
+      $b = body(); $id = (int) ($b['id'] ?? 0); $sid = $shopId ?: null;
+      $scM = $sid === null ? "shop_id IS NULL" : "shop_id=" . (int) $sid;
+      if (!empty($b['supprimer']) && $id) {
+        $pc = row("SELECT chemin FROM ws_crm_piece WHERE id=? AND $scM", [$id]);
+        if (!$pc) json_out(['ok' => false, 'error' => 'Pièce inconnue, ou pièce du réseau.'], 404);
+        q("UPDATE ws_crm_piece SET actif=0 WHERE id=?", [$id]);
+        crm_piece_supprimer_fichier($pc['chemin']);
+        json_out(['ok' => true, 'supprime' => $id]);
+      }
+      $lu = crm_piece_lire($b['data'] ?? '');
+      if ($lu[0] !== null) json_out(['ok' => false, 'error' => $lu[0]], 422);
+      [, $mime, $bin] = $lu;
+      // Le nom affiché garde celui du fichier, mais son extension est celle
+      // du type VÉRIFIÉ : un « carte.exe » déclaré PDF repart en « carte.pdf ».
+      $nom = preg_replace('/\.[a-z0-9]{1,5}$/i', '', trim((string) ($b['nom'] ?? '')));
+      $nom = mb_substr($nom !== '' ? $nom : 'piece', 0, 110) . '.' . crm_piece_types()[$mime];
+      [$chemin, $err] = crm_piece_ecrire($sid, $mime, $bin);
+      if ($err) json_out(['ok' => false, 'error' => $err], 500);
+      q("INSERT INTO ws_crm_piece (shop_id, nom, chemin, mime, taille, actif, cree_le) VALUES (?,?,?,?,?,1,?)",
+        [$sid, $nom, $chemin, $mime, strlen($bin), date('Y-m-d H:i:s')]);
+      json_out(['ok' => true, 'id' => (int) db()->lastInsertId(), 'url' => $chemin, 'nom' => $nom, 'taille' => strlen($bin)]);
+    }
+
+    // L'e-mail part avec le texte TEL QUE MONTRÉ, les pièces cochées, et
+    // l'invitation PDF du bureau si demandée. Puis le geste, et — si rien
+    // n'est prévu sur la carte — une relance téléphonique à J+7.
+    if ($m === 'POST' && $p === '/franchisee/crm-mail') {
+      if (!$tblExists('ws_crm_carte')) json_out(['ok' => false, 'error' => 'Migration 0125 non passée.'], 501);
+      rate_limit('crm_mail', 60, 3600);
+      $b = body(); $id = (int) ($b['id'] ?? 0);
+      $scC = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
+      $carte = $id ? row("SELECT * FROM ws_crm_carte WHERE id=?$scC", [$id]) : null;
+      if (!$carte) json_out(['ok' => false, 'error' => 'Carte inconnue.'], 404);
+      $to = trim((string) ($b['to'] ?? ''));
+      $sujet = trim((string) ($b['sujet'] ?? '')); $texte = trim(str_replace("\r", '', (string) ($b['corps'] ?? '')));
+      if (!filter_var($to, FILTER_VALIDATE_EMAIL)) json_out(['ok' => false, 'error' => 'Adresse e-mail du destinataire invalide.'], 422);
+      if ($sujet === '' || $texte === '') json_out(['ok' => false, 'error' => 'Objet ou message vide.'], 422);
+      $bq = $shopId ? row("SELECT name, email, phone, city FROM shops WHERE id=?", [(int) $shopId]) : null;
+      // Les pièces : celles de la bibliothèque cochées…
+      $pieces = [];
+      $ids = array_values(array_filter(array_map('intval', is_array($b['pieces'] ?? null) ? $b['pieces'] : [])));
+      if ($ids && $tblExists('ws_crm_piece')) {
+        $sc = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        foreach (rows("SELECT nom, chemin, mime FROM ws_crm_piece WHERE actif=1 AND id IN ($in)$sc", $ids) as $pc) {
+          $f = __DIR__ . '/../' . $pc['chemin'];
+          if (strpos($pc['chemin'], 'assets/crm_pieces/') !== 0 || strpos($pc['chemin'], '..') !== false || !is_file($f))
+            json_out(['ok' => false, 'error' => 'Pièce « ' . $pc['nom'] . ' » introuvable sur le serveur — rien n’a été envoyé.'], 409);
+          $pieces[] = ['nom' => $pc['nom'], 'mime' => $pc['mime'], 'bin' => file_get_contents($f)];
+        }
+        if (count($pieces) !== count($ids)) json_out(['ok' => false, 'error' => 'Une pièce cochée n’existe plus — rien n’a été envoyé.'], 409);
+      }
+      // … et l'invitation PDF du bureau, qui suppose un lien émis.
+      if (!empty($b['invitation'])) {
+        if ((string) $carte['cible_type'] !== 'office' || !$carte['cible_id'])
+          json_out(['ok' => false, 'error' => 'L’invitation PDF ne vaut que pour un bureau — rien n’a été envoyé.'], 422);
+        $oSc = ($shopId && col_exists('ws_offices', 'shop_id')) ? " AND (shop_id IS NULL OR shop_id=" . (int) $shopId . ")" : "";
+        if (!row("SELECT 1 x FROM ws_offices WHERE id=?$oSc", [(int) $carte['cible_id']]))
+          json_out(['ok' => false, 'error' => 'Bureau inconnu, ou hors de votre boutique — rien n’a été envoyé.'], 404);
+        [$inv, $why] = invite_for_office((int) $carte['cible_id']);
+        if (!$inv) json_out(['ok' => false, 'error' => $why . ' Émettez le lien du bureau avant de joindre l’invitation — rien n’a été envoyé.'], 409);
+        require_once __DIR__ . '/invite_doc.php';
+        $recap = invite_recap((int) $carte['cible_id']);
+        $pdf = $recap ? invite_pdf($recap, $inv['urlCourt'], date('d/m/Y', strtotime($inv['expiresAt']))) : null;
+        if (!$pdf) json_out(['ok' => false, 'error' => 'L’invitation PDF n’a pas pu être produite — rien n’a été envoyé.'], 500);
+        $pieces[] = ['nom' => 'invitation-' . preg_replace('/[^A-Za-z0-9]+/', '-', (string) ($recap['raison'] ?? 'bureau')) . '.pdf',
+                     'mime' => 'application/pdf', 'bin' => $pdf];
+      }
+      $html = crm_mail_html($texte, $bq);
+      [$ok, $motif] = crm_mail_envoyer($to, $sujet, $texte, $html, $pieces, $bq['email'] ?? null, $bq['name'] ?? null);
+      if (!$ok) json_out(['ok' => false, 'error' => $motif], 502);
+      $now = date('Y-m-d H:i:s');
+      $sets = ['maj=?']; $vals = [$now];
+      if (trim((string) $carte['contact_email']) === '') { $sets[] = 'contact_email=?'; $vals[] = mb_substr($to, 0, 160); }
+      $relance = null;
+      if (empty($carte['prochaine_action']) && ($b['relance'] ?? true)) {
+        $relance = date('Y-m-d', strtotime('+7 days'));
+        $sets[] = 'prochaine_action=?'; $vals[] = $relance;
+        if (col_exists('ws_crm_carte', 'prochaine_type')) { $sets[] = 'prochaine_type=?'; $vals[] = 'tel'; }
+      }
+      $vals[] = $id;
+      q("UPDATE ws_crm_carte SET " . implode(',', $sets) . " WHERE id=?", $vals);
+      if ($tblExists('ws_crm_geste'))
+        q("INSERT INTO ws_crm_geste (carte_id, type, texte, par, quand) VALUES (?,?,?,?,?)",
+          [$id, 'mail', mb_substr('✉ ' . $sujet . ' → ' . $to . ($pieces ? (' · ' . count($pieces) . ' pièce(s)') : ''), 0, 255), null, $now]);
+      json_out(['ok' => true, 'message' => 'E-mail envoyé à ' . $to . ($pieces ? (' avec ' . count($pieces) . ' pièce(s) jointe(s)') : ''),
+        'relance' => $relance]);
+    }
+
+    // Le SMS part par SMSAPI quand un jeton est posé. Sans jeton, la console
+    // le sait d'avance (smsPret) et ouvre le téléphone : cet endpoint ne
+    // simule rien.
+    if ($m === 'POST' && $p === '/franchisee/crm-sms') {
+      if (!$tblExists('ws_crm_carte')) json_out(['ok' => false, 'error' => 'Migration 0125 non passée.'], 501);
+      rate_limit('crm_sms', 60, 3600);
+      $b = body(); $id = (int) ($b['id'] ?? 0);
+      $scC = $shopId ? " AND (shop_id=" . (int) $shopId . " OR shop_id IS NULL)" : "";
+      $carte = $id ? row("SELECT * FROM ws_crm_carte WHERE id=?$scC", [$id]) : null;
+      if (!$carte) json_out(['ok' => false, 'error' => 'Carte inconnue.'], 404);
+      if (!function_exists('sms_enabled') || !sms_enabled())
+        json_out(['ok' => false, 'error' => 'Aucun opérateur SMS configuré sur le serveur (ws_param sms_token) — envoyez-le depuis le téléphone.'], 501);
+      $e164 = crm_tel_e164($b['to'] ?? '');
+      $texte = trim(str_replace("\r", '', (string) ($b['corps'] ?? '')));
+      if ($e164 === '') json_out(['ok' => false, 'error' => 'Numéro du destinataire absent ou invalide.'], 422);
+      if ($texte === '') json_out(['ok' => false, 'error' => 'Message vide.'], 422);
+      if (mb_strlen($texte) > 612) json_out(['ok' => false, 'error' => 'Message trop long (4 SMS maximum).'], 422);
+      if (!sms_envoyer($e164, $texte)) {
+        $notes = function_exists('sms_notes') ? sms_notes() : [];
+        json_out(['ok' => false, 'error' => 'L’opérateur a refusé le SMS' . ($notes ? (' : ' . end($notes)) : '.')], 502);
+      }
+      $now = date('Y-m-d H:i:s');
+      $sets = ['maj=?']; $vals = [$now];
+      if (trim((string) $carte['contact_tel']) === '') { $sets[] = 'contact_tel=?'; $vals[] = mb_substr((string) $b['to'], 0, 40); }
+      $vals[] = $id;
+      q("UPDATE ws_crm_carte SET " . implode(',', $sets) . " WHERE id=?", $vals);
+      if ($tblExists('ws_crm_geste'))
+        q("INSERT INTO ws_crm_geste (carte_id, type, texte, par, quand) VALUES (?,?,?,?,?)",
+          [$id, 'sms', mb_substr('💬 SMS → ' . sms_masque($e164) . ' : ' . $texte, 0, 255), null, $now]);
+      json_out(['ok' => true, 'message' => 'SMS envoyé au ' . sms_masque($e164)]);
     }
 
     if ($m === 'POST' && $p === '/franchisee/geo-backfill') {
@@ -14643,6 +14838,7 @@ function bo_endpoint_section($name) {
     'ws-office-delivery-sites' => 'sites',
     // CRM de prospection : même section que les clients B2B.
     'crm' => 'b2bClients', 'crm-carte' => 'b2bClients', 'crm-colonnes' => 'b2bClients', 'crm-rapport' => 'b2bClients',
+    'crm-actions' => 'b2bClients', 'crm-modele' => 'b2bClients', 'crm-piece' => 'b2bClients', 'crm-mail' => 'b2bClients', 'crm-sms' => 'b2bClients',
     'ws-offices' => 'offices', 'onboard-office' => 'offices', 'route-office' => 'offices',
     'office-invite' => 'offices', 'invite-revoke' => 'offices',
     'office-invite-pdf' => 'offices', 'office-invite-send' => 'offices',
