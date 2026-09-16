@@ -4106,3 +4106,35 @@
 }
 .ws-grid__office svg { color: var(--color-primary); flex: none; }
 .ws-grid__office strong { color: var(--color-text); }
+
+/* ── Page de garde : catégories illustrées à l'arrivée (CategoryCover) ── */
+.ws-cover { display: flex; flex-direction: column; gap: 14px; }
+.ws-cover__head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.ws-cover__title { margin: 0; font-family: var(--font-display); font-size: 20px; font-weight: 600; color: var(--color-text); }
+.ws-cover__all { font-size: 12.5px; }
+.ws-cover__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.ws-cover__card {
+  --cat-accent: var(--color-primary);
+  display: flex; flex-direction: column; text-align: left;
+  padding: 0; border: 0.5px solid var(--color-border-tertiary); border-radius: 14px;
+  background: var(--color-surface); overflow: hidden; cursor: pointer;
+  transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease;
+}
+.ws-cover__card:hover, .ws-cover__card:focus-visible { transform: translateY(-2px); border-color: var(--cat-accent); box-shadow: 0 6px 18px rgba(0,0,0,.07); outline: none; }
+.ws-cover__pic { position: relative; aspect-ratio: 4/3; background: #f5efe6; display: grid; place-items: center; overflow: hidden; padding: 14px; }
+.ws-cover__pic img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.ws-cover__initial { font-family: var(--font-display); font-size: 52px; font-weight: 600; color: var(--cat-accent); opacity: .55; line-height: 1; }
+.ws-cover__card--season .ws-cover__pic { background: linear-gradient(180deg, #fbf3e7, #f5e9d6); }
+.ws-cover__body { display: flex; flex-direction: column; gap: 3px; padding: 12px 14px 14px; }
+.ws-cover__lbl { font-family: var(--font-display); font-size: 15.5px; font-weight: 600; color: var(--color-text); }
+.ws-cover__meta { font-size: 11.5px; font-weight: 600; color: var(--cat-accent); }
+.ws-cover__subs { font-size: 11px; color: var(--color-text-muted); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@media (max-width: 1240px) { .ws-cover__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 1024px) { .ws-cover__grid { gap: 10px; } }
+@media (max-width: 720px) {
+  .ws-cover__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .ws-cover__title { font-size: 17px; }
+  .ws-cover__pic { padding: 10px; }
+  .ws-cover__body { padding: 9px 10px 11px; }
+  .ws-cover__lbl { font-size: 13.5px; }
+}

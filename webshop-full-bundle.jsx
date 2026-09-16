@@ -5214,6 +5214,62 @@ function bug(source, quoi, e) {
   console.error('[' + source + '] ' + quoi, e || '');
 }
 
+/* PAGE DE GARDE : à l'arrivée (aucune catégorie choisie), la vitrine ne
+   déroule plus la grille entière — elle présente les CATÉGORIES avec leur
+   illustration (ws_categories.img, la même que la barre), le nombre de
+   produits réellement disponibles pour le créneau, et les sous-catégories.
+   Un clic ouvre la catégorie ; « Voir tout le catalogue » redonne la grille
+   complète. Les gammes de saison présentes dans le créneau s'y ajoutent, avec
+   la même teinte chaude que dans la barre. Rien n'est inventé : une catégorie
+   sans illustration montre sa lettre, pas une image de repli. */
+function CategoryCover({ cats, seasons, products, onPick, onPickSeason, onAll, accent }) {
+  const { t, tCategory } = wsUseT();
+  const inCat = (p, c) => String(p.cat_id) === String(c.id) || p.cat === c.id;
+  const cnt = (n) => (n === 1 ? t('cover.count1') : t('cover.count', { count: n }));
+  const style = { '--cat-accent': accent };
+  return (
+    <section className="ws-cover" aria-label={t('cover.aria')}>
+      <div className="ws-cover__head">
+        <h2 className="ws-cover__title">{t('cover.title')}</h2>
+        <button type="button" className="ws-linkbtn ws-cover__all" onClick={onAll}>{t('cover.all', { count: products.length })}</button>
+      </div>
+      <div className="ws-cover__grid">
+        {cats.map((c) => {
+          const label = tCategory(c.id, c.label);
+          const n = products.filter((p) => inCat(p, c)).length;
+          const subs = (c.subs || []).map((x) => x.label).filter(Boolean);
+          return (
+            <button key={c.id} type="button" className="ws-cover__card" style={style} {...wsTap(() => onPick(c.id))}>
+              <span className="ws-cover__pic">
+                {c.img ? <img src={c.img} alt="" loading="lazy"/> : <span className="ws-cover__initial" aria-hidden="true">{String(label || '').charAt(0)}</span>}
+              </span>
+              <span className="ws-cover__body">
+                <span className="ws-cover__lbl">{label}</span>
+                <span className="ws-cover__meta">{cnt(n)}</span>
+                {subs.length > 0 && <span className="ws-cover__subs">{subs.slice(0, 4).join(' · ')}{subs.length > 4 ? ' · …' : ''}</span>}
+              </span>
+            </button>
+          );
+        })}
+        {(seasons || []).map((a) => {
+          const n = products.filter((p) => (p.season || '') === String(a.id)).length;
+          return (
+            <button key={'s:' + a.id} type="button" className="ws-cover__card ws-cover__card--season" style={style} {...wsTap(() => onPickSeason(a.id))}>
+              <span className="ws-cover__pic">
+                {a.img ? <img src={a.img} alt="" loading="lazy"/> : <span className="ws-cover__initial" aria-hidden="true">{String(a.label || '').charAt(0)}</span>}
+              </span>
+              <span className="ws-cover__body">
+                <span className="ws-cover__lbl">{a.label}</span>
+                <span className="ws-cover__meta">{t('cover.season')} · {cnt(n)}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function ShopSwitcher({ open, currentId, onPick, onClose, shops }) {
   const { t } = wsUseT();
   const swPanelRef = useSwipeDownToClose(onClose);
@@ -5298,6 +5354,10 @@ function ShopFrame({ variant }) {
   // directement au niveau sous-catégories.
   const [cat, setCat] = useState(_deep.cat || 'all');
   const [subCat, setSubCat] = useState(_deep.sub != null ? _deep.sub : null);
+  // Page de garde : sans catégorie choisie, la vitrine montre les catégories
+  // illustrées ; « Tout » dans la barre ou « Voir tout le catalogue » donne
+  // la grille complète ; le retour aux catégories rend la page de garde.
+  const [allGrid, setAllGrid] = useState(false);
   const [basket, setBasket] = useState([]);
   const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
   // Voucher state : may be pre-filled by deep link
@@ -5831,13 +5891,16 @@ function ShopFrame({ variant }) {
     return !!c && (c.subs || []).length >= 1;
   }, [navCats]);
   const selectCat = React.useCallback((cid) => {
-    setCat(cid); setSubCat(null);
-    // Entrer au niveau sous-catégories = étape d'historique ; une catégorie
-    // sans aucune sous-catégorie peuplée filtre sans changer de niveau.
-    syncCatUrl(cid, null, cid !== 'all' && catHasSubLevel(cid));
-  }, [syncCatUrl, catHasSubLevel]);
+    // Quitter la page de garde est TOUJOURS une étape d'historique : le
+    // retour navigateur y ramène. Sinon, entrer au niveau sous-catégories
+    // l'est ; une catégorie sans sous-catégorie peuplée filtre sans changer
+    // de niveau.
+    const fromCover = cat === 'all' && !allGrid;
+    setCat(cid); setSubCat(null); setAllGrid(cid === 'all');
+    syncCatUrl(cid, null, cid !== 'all' && (fromCover || catHasSubLevel(cid)));
+  }, [syncCatUrl, catHasSubLevel, cat, allGrid]);
   const backToCats = React.useCallback(() => {
-    setCat('all'); setSubCat(null);
+    setCat('all'); setSubCat(null); setAllGrid(false);
     syncCatUrl('all', null, true);       // sortie de niveau = étape d'historique
   }, [syncCatUrl]);
   const selectSub = React.useCallback((sid) => {
@@ -5852,6 +5915,7 @@ function ShopFrame({ variant }) {
         const p = new URLSearchParams(window.location.search);
         setCat(p.get('category') || 'all');
         setSubCat(p.get('sub'));
+        setAllGrid(false);
       } catch (_) {}
     };
     window.addEventListener('popstate', onPop);
@@ -6369,6 +6433,11 @@ function ShopFrame({ variant }) {
               <span>{t('catalog.officeSelection', { count: user.office.productCount == null ? '' : user.office.productCount })} · <strong>{user.office.name}</strong></span>
             </div>
           )}
+          {cat === 'all' && !allGrid ? (
+            <CategoryCover cats={navCats} seasons={seasonChips} products={slotFiltered}
+                           onPick={selectCat} onPickSeason={(id) => selectCat(`season:${id}`)} onAll={() => setAllGrid(true)}
+                           accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'}/>
+          ) : (
           <div className="ws-grid">
             {products.map((p) => {
               const bqty = basket.filter((l) => l.productId === p.id).reduce((t, l) => t + l.qty, 0);
@@ -6376,6 +6445,7 @@ function ShopFrame({ variant }) {
               return <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpen={openProductDetail} mode={mode} basketQty={bqty} stock={stock} platsBadge={mode === 'delivery' && selectedSlot === 'soir' && p.cat === 'plats'}/>;
             })}
           </div>
+          )}
         </main>
 
         <button
