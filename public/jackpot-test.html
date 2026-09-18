@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Jackpot de l'Atelier — page de test</title>
+<link rel="icon" href="favicon-32.png" sizes="32x32">
+<!--
+  PAGE DE TEST — machine à sous « Jackpot de l'Atelier ».
+  Hors boutique : rien ici ne touche une commande, un compte ni un bon d'achat.
+  Le résultat est tiré PAR LA PAGE (fonction decide()), là où la version réelle
+  demandera le résultat au serveur (POST /jackpot/play après paiement) et ne
+  fera qu'animer les rouleaux vers ce résultat. Les symboles, lots et codes
+  affichés sont des exemples, marqués comme tels.
+-->
+<style>
+@font-face{font-family:Gotham;src:url('fonts/Gotham_Book.otf') format('opentype');font-weight:400}
+@font-face{font-family:Gotham;src:url('fonts/Gotham_Medium.otf') format('opentype');font-weight:600}
+@font-face{font-family:Vank;src:url('fonts/GC_Vank.ttf') format('truetype')}
+:root{--p:#8D1D2C;--sec:#F2C9A0;--bg:#EAE4DC;--sur:#fff;--t:#222;--m:#666;--gold:#c9a24a;--gold2:#f3d98b;--sym:84px}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);font-family:Gotham,system-ui,sans-serif;color:var(--t);padding:22px 18px 40px}
+h1{font:600 14px Gotham;margin:0 0 4px;color:var(--m);letter-spacing:.04em;text-transform:uppercase}
+.sub{font-size:12px;color:var(--m);margin:0 0 16px;max-width:760px;line-height:1.45}
+.wrap{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+.cart{width:360px;background:var(--sur);border:.5px solid #e5ddd3;border-radius:14px;padding:16px 16px 18px;box-shadow:0 8px 24px rgba(0,0,0,.05)}
+.line{display:flex;justify-content:space-between;font-size:12px;color:var(--m);padding:3px 0}
+.tot{display:flex;justify-content:space-between;align-items:baseline;border-top:.5px solid #eee;margin-top:8px;padding-top:10px}
+.tot b{font-size:12.5px}.tot .v{font:600 22px Gotham;color:var(--p)}
+.slot{margin-top:14px;position:relative;padding-right:26px}
+.cab{border-radius:18px;background:linear-gradient(180deg,#a2233a,#8D1D2C 40%,#6f1522);border:2px solid #5c1019;box-shadow:0 10px 26px rgba(141,29,44,.28),inset 0 1px 0 rgba(255,255,255,.25);padding:12px 12px 14px;position:relative;overflow:hidden}
+.marq{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.marq .ttl{font:700 17px Vank,Gotham;color:var(--gold2);letter-spacing:.03em;text-shadow:0 1px 0 #3a0810}
+.leds{display:flex;gap:4px}.leds i{width:7px;height:7px;border-radius:50%;background:#5a2a33;transition:background .2s}
+.on .leds i{background:var(--gold2);box-shadow:0 0 6px var(--gold2)}
+.spin .leds i{animation:chase .5s linear infinite}.spin .leds i:nth-child(2){animation-delay:.1s}.spin .leds i:nth-child(3){animation-delay:.2s}.spin .leds i:nth-child(4){animation-delay:.3s}.spin .leds i:nth-child(5){animation-delay:.4s}
+@keyframes chase{0%,60%{background:#5a2a33;box-shadow:none}30%{background:#fff;box-shadow:0 0 8px #fff}}
+.won .leds i{animation:blink .35s steps(1) infinite}.won .leds i:nth-child(even){animation-delay:.17s}
+@keyframes blink{0%{background:#fff;box-shadow:0 0 8px #fff}50%{background:var(--gold2);box-shadow:0 0 6px var(--gold2)}}
+.window{background:#fdf8ef;border-radius:12px;padding:10px 8px;display:flex;gap:6px;justify-content:center;box-shadow:inset 0 6px 14px rgba(0,0,0,.22),inset 0 -6px 14px rgba(0,0,0,.12);position:relative}
+.reel{width:84px;height:118px;border-radius:8px;background:#fff;border:1px solid #cdbfa6;position:relative;overflow:hidden;transition:box-shadow .3s}
+.reel:before,.reel:after{content:"";position:absolute;left:0;right:0;height:34px;z-index:2;pointer-events:none}
+.reel:before{top:0;background:linear-gradient(180deg,#d9cdb8,rgba(255,255,255,0))}.reel:after{bottom:0;background:linear-gradient(0deg,#d9cdb8,rgba(255,255,255,0))}
+.strip{position:absolute;left:0;right:0;top:17px;will-change:transform}
+.strip span{display:block;height:var(--sym);line-height:var(--sym);text-align:center;font-size:40px;filter:drop-shadow(0 2px 2px rgba(0,0,0,.15))}
+.reel.blur .strip span{filter:blur(2px)}
+.won .reel{box-shadow:0 0 0 2px var(--gold),0 0 14px var(--gold2)}
+.payline{position:absolute;left:8px;right:8px;top:50%;height:2px;background:rgba(141,29,44,.45);pointer-events:none;z-index:3}
+.payline:before,.payline:after{content:"";position:absolute;top:-5px;border:6px solid transparent}
+.payline:before{left:-8px;border-left:8px solid var(--p)}.payline:after{right:-8px;border-right:8px solid var(--p)}
+.tray{margin-top:10px;background:#4a0d16;border-radius:10px;padding:8px 10px;color:#f7e6c3;font-size:11px;display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:34px}
+.tray b{color:var(--gold2);white-space:nowrap}
+.btn{display:block;width:100%;margin-top:10px;border:0;border-radius:12px;padding:12px;font:600 13px Gotham;color:var(--p);background:linear-gradient(180deg,#fff2cf,var(--gold2));cursor:pointer;box-shadow:0 4px 0 #a5822f,0 8px 14px rgba(0,0,0,.25);transition:transform .08s}
+.btn:active{transform:translateY(3px);box-shadow:0 1px 0 #a5822f}
+.btn[disabled]{background:#b58b95;color:#fff;box-shadow:none;opacity:.7;cursor:default;transform:none}
+.lever{position:absolute;right:0;top:36px;width:26px;height:150px;cursor:pointer;user-select:none}
+.lever .rod{position:absolute;left:9px;top:14px;width:8px;height:96px;background:linear-gradient(90deg,#9a9a9a,#e8e8e8,#8a8a8a);border-radius:4px;transition:top .25s,height .25s}
+.lever .knob{position:absolute;left:0;top:0;width:26px;height:26px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#ff8a8a,#b3151f 60%,#6f0a12);box-shadow:0 2px 4px rgba(0,0,0,.4);transition:top .25s,background .3s}
+.lever .base{position:absolute;left:2px;top:104px;width:22px;height:30px;border-radius:6px;background:linear-gradient(180deg,#6f1522,#4a0d16)}
+.lever.down .rod{top:60px;height:56px}.lever.down .knob{top:96px}
+.locked .lever{cursor:not-allowed}.locked .lever .knob{background:radial-gradient(circle at 35% 30%,#ddd,#999 60%,#666)}
+.locked .window{filter:grayscale(.7) opacity(.75)}
+.prog{height:8px;border-radius:99px;background:#5c1019;margin-top:10px;overflow:hidden}.prog i{display:block;height:100%;background:linear-gradient(90deg,var(--sec),var(--gold2));transition:width .3s}
+.note{font-size:11px;color:#f7e6c3;margin-top:8px;line-height:1.4}.note b{color:#fff}
+.winbox{margin-top:12px;background:#fff;border:1.5px dashed var(--gold);border-radius:12px;padding:12px 12px 10px;text-align:center;animation:pop .35s ease-out}
+@keyframes pop{0%{transform:scale(.85);opacity:0}100%{transform:none;opacity:1}}
+.winbox .big{font:700 21px Vank,Gotham;color:var(--p);margin:2px 0}
+.winbox .code{display:inline-block;margin:6px 0 4px;font:600 13px ui-monospace,monospace;letter-spacing:.12em;background:#fdf3e7;border:1px solid #ead9c3;border-radius:8px;padding:6px 10px}
+.winbox small{display:block;font-size:10.5px;color:var(--m)}
+.exp{position:absolute;right:38px;top:-10px;font:600 9px Gotham;color:#b26a00;text-transform:uppercase;letter-spacing:.08em}
+.hidden{display:none}
+/* panneau de test */
+.panel{width:340px;background:var(--sur);border:.5px solid #e5ddd3;border-radius:14px;padding:14px 16px 16px;font-size:12px}
+.panel h2{font:600 12.5px Gotham;margin:0 0 10px;color:var(--p)}
+.panel label{display:block;color:var(--m);margin:10px 0 4px;font-size:11px}
+.panel input[type=range]{width:100%}
+.panel select,.panel button.sm{font:inherit;padding:6px 8px;border-radius:8px;border:.5px solid #cfc4b6;background:#fff}
+.panel button.sm{cursor:pointer;margin-top:10px}
+.table{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin-top:6px}
+.table span:nth-child(odd){font-size:15px}.table span:nth-child(even){align-self:center;color:var(--m)}
+.log{margin-top:10px;max-height:150px;overflow:auto;font-size:11px;color:var(--m);border-top:.5px solid #eee;padding-top:6px}
+.log div{padding:2px 0}
+.stats{margin-top:8px;font-size:11px;color:var(--m)}
+</style>
+</head>
+<body>
+<h1>Page de test · Jackpot de l'Atelier</h1>
+<p class="sub">Machine à sous du panier : une partie offerte par commande à partir de 50 €, trois symboles alignés = bon d'achat sur la prochaine commande. <b>Page hors boutique</b> : aucun bon n'est réellement créé, le résultat est tiré ici (dans la version réelle, par le serveur après paiement). Symboles, lots et codes : exemples.</p>
+
+<div class="wrap">
+  <div class="cart">
+    <div id="lines"></div>
+    <div class="tot"><b>Total</b><span class="v" id="total">0,00 €</span></div>
+
+    <div class="slot locked" id="slot"><span class="exp">exemple</span>
+      <div class="cab" id="cab">
+        <div class="marq"><span class="ttl">Jackpot de l'Atelier</span><span class="leds"><i></i><i></i><i></i><i></i><i></i></span></div>
+        <div class="window">
+          <div class="reel" id="r0"><div class="strip"></div></div>
+          <div class="reel" id="r1"><div class="strip"></div></div>
+          <div class="reel" id="r2"><div class="strip"></div></div>
+          <span class="payline"></span>
+        </div>
+        <div class="prog" id="prog"><i style="width:0"></i></div>
+        <div class="note" id="note"></div>
+        <div class="tray hidden" id="tray"><span id="trayL"></span><b id="trayR"></b></div>
+        <div class="winbox hidden" id="winbox">
+          <div class="big" id="winTxt"></div>
+          <span class="code" id="winCode"></span>
+          <small id="winCond"></small>
+        </div>
+        <div class="note hidden" id="lost" style="text-align:center"></div>
+        <button class="btn" id="play" disabled>Levier bloqué · dès 50 €</button>
+      </div>
+      <div class="lever" id="lever" title="Tirer le levier"><span class="rod"></span><span class="knob"></span><span class="base"></span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Réglages du test</h2>
+    <label>Montant du panier : <b id="amtLbl"></b> (seuil 50 €)</label>
+    <input type="range" id="amt" min="0" max="100" step="1" value="41">
+    <label>Probabilité de gain (décidée côté serveur dans la version réelle)</label>
+    <select id="proba"><option value="1">toujours (démo)</option><option value="0.5">1 partie sur 2</option><option value="0.3333" selected>1 partie sur 3</option><option value="0.2">1 partie sur 5</option><option value="0">jamais (démo)</option></select>
+    <label>Table des lots (exemples)</label>
+    <div class="table" id="paytable"></div>
+    <button class="sm" id="reset">Nouvelle commande (remet une partie)</button>
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var SYMS=[
+    {k:'tarte',    e:'🍰', lot:'−5 € sur votre prochaine commande', tray:'−5 €'},
+    {k:'croissant',e:'🥐', lot:'−10 % sur votre prochaine commande', tray:'−10 %'},
+    {k:'fraise',   e:'🍓', lot:'Livraison offerte sur votre prochaine commande', tray:'livraison offerte'},
+    {k:'cafe',     e:'☕', lot:'Un café offert à l’atelier', tray:'café offert'},
+    {k:'sandwich', e:'🥪', lot:null, tray:''},
+    {k:'donut',    e:'🍩', lot:null, tray:''}
+  ];
+  var WIN_SYMS=SYMS.filter(function(s){return !!s.lot;});
+  var SEUIL=50, LOOPS=6, H=84;
+  var LINES=[['Tarte aux fraises · entière',24],['2 × Sandwich poulet',11],['3 × Coca-Cola',6],['Melocake · boîte de 10',11.9],['Quiche lorraine',8.5]];
+  var $=function(id){return document.getElementById(id);};
+  var fmt=function(v){return v.toFixed(2).replace('.',',')+' €';};
+  var state={amount:41,played:false,spinning:false,cur:[0,1,3],games:0,wins:0};
+
+  // Rouleaux : bande de symboles répétée LOOPS fois ; l'arrêt sur un symbole
+  // = translation jusqu'à sa position dans la dernière boucle.
+  var strips=[0,1,2].map(function(i){ var st=$('r'+i).querySelector('.strip'); var h=''; for(var l=0;l<LOOPS+1;l++) SYMS.forEach(function(s){ h+='<span>'+s.e+'</span>'; }); st.innerHTML=h; st.style.transform='translateY(-'+(state.cur[i]*H)+'px)'; return st; });
+
+  function cartLines(){ var a=state.amount, out=[], sum=0; for(var i=0;i<LINES.length&&sum<a;i++){ var v=Math.min(LINES[i][1],a-sum); if(v<=0) break; out.push([LINES[i][0],v]); sum+=v; } if(sum<a) out.push(['Divers',a-sum]); return out; }
+  function render(){
+    $('amtLbl').textContent=fmt(state.amount);
+    $('lines').innerHTML=cartLines().map(function(l){return '<div class="line"><span>'+l[0]+'</span><span>'+fmt(l[1])+'</span></div>';}).join('');
+    $('total').textContent=fmt(state.amount);
+    var ok=state.amount>=SEUIL, slot=$('slot'), cab=$('cab'), play=$('play');
+    slot.classList.toggle('locked',!ok); cab.classList.toggle('on',ok);
+    $('prog').classList.toggle('hidden',ok); $('prog').querySelector('i').style.width=Math.min(100,state.amount/SEUIL*100)+'%';
+    if(!ok){ $('note').classList.remove('hidden'); $('note').innerHTML='<b>Encore '+fmt(SEUIL-state.amount)+'</b> et le levier se débloque : à partir de '+SEUIL+' € de commande, une partie offerte, un bon d’achat à gagner.'; $('tray').classList.add('hidden'); play.disabled=true; play.textContent='Levier bloqué · dès '+SEUIL+' €'; }
+    else { $('note').classList.add('hidden'); $('tray').classList.remove('hidden'); if(!state.played&&!state.spinning){ $('trayL').textContent='1 partie offerte · commande ≥ '+SEUIL+' €'; $('trayR').textContent='3 × 🍰 = −5 €'; play.disabled=false; play.textContent='🎰 Tirer le levier'; } }
+    if(!ok||(!state.played&&!state.spinning)){ $('winbox').classList.add('hidden'); $('lost').classList.add('hidden'); cab.classList.remove('won'); }
+    $('stats').textContent=state.games?('Parties : '+state.games+' · gains : '+state.wins+' ('+Math.round(state.wins/state.games*100)+' %)'):'';
+  }
+  $('paytable').innerHTML=WIN_SYMS.map(function(s){return '<span>'+s.e+s.e+s.e+'</span><span>'+s.lot+'</span>';}).join('')+'<span style="font-size:11px">2 identiques</span><span>rien (à décider)</span>';
+
+  // ── Tirage. Dans la version réelle : POST /jackpot/play {orderId} → le
+  //    serveur rend {win, symbols, voucher} ; ici la page décide. ──
+  function decide(){
+    var p=parseFloat($('proba').value);
+    if(Math.random()<p){ var s=WIN_SYMS[Math.floor(Math.random()*WIN_SYMS.length)]; var i=SYMS.indexOf(s); return {win:true,sym:s,idx:[i,i,i]}; }
+    var a=Math.floor(Math.random()*SYMS.length), b=Math.floor(Math.random()*SYMS.length), c=Math.floor(Math.random()*SYMS.length);
+    if(a===b&&b===c) c=(c+1)%SYMS.length;             // perdu : jamais trois identiques
+    return {win:false,idx:[a,b,c]};
+  }
+  function code(){ var A='ABCDEFGHJKLMNPQRSTUVWXYZ23456789', s=''; for(var i=0;i<4;i++) s+=A[Math.floor(Math.random()*A.length)]; return 'JACKPOT-'+s; }
+  function log(t){ var d=document.createElement('div'); d.textContent=new Date().toLocaleTimeString('fr-BE')+' · '+t; $('log').prepend(d); }
+
+  function spin(){
+    if(state.spinning||state.played||state.amount<SEUIL) return;
+    var r=decide(); state.spinning=true; state.games++;
+    var cab=$('cab'), play=$('play'), lever=$('lever');
+    lever.classList.add('down'); setTimeout(function(){ lever.classList.remove('down'); },500);
+    cab.classList.add('spin'); cab.classList.remove('won'); $('winbox').classList.add('hidden'); $('lost').classList.add('hidden');
+    play.disabled=true; play.textContent='Rouleaux en cours…'; $('trayL').textContent='Bonne chance…'; $('trayR').textContent='';
+    strips.forEach(function(st,i){
+      var reel=$('r'+i); reel.classList.add('blur');
+      // repart de la position courante (modulo une boucle) pour ne pas sauter
+      st.style.transition='none'; st.style.transform='translateY(-'+(state.cur[i]*H)+'px)';
+      void st.offsetHeight;
+      var target=(LOOPS*SYMS.length+r.idx[i])*H, dur=1.6+i*0.55;
+      st.style.transition='transform '+dur+'s cubic-bezier(.15,.85,.25,1)';
+      st.style.transform='translateY(-'+target+'px)';
+      setTimeout(function(){ reel.classList.remove('blur'); state.cur[i]=r.idx[i]; }, dur*1000-150);
+    });
+    setTimeout(function(){ finish(r); }, (1.6+2*0.55)*1000+120);
+  }
+  function finish(r){
+    var cab=$('cab'), play=$('play'); cab.classList.remove('spin'); state.spinning=false; state.played=true;
+    play.textContent='Partie jouée · une par commande';
+    if(r.win){
+      state.wins++; cab.classList.add('won');
+      $('trayL').textContent='JACKPOT · '+r.sym.e+' '+r.sym.e+' '+r.sym.e; $('trayR').textContent=r.sym.tray+' gagné';
+      $('winTxt').textContent=r.sym.lot; $('winCode').textContent=code(); $('winCond').textContent='Bon ajouté à votre compte · valable 30 jours · dès 20 € · non cumulable (exemple, page de test : aucun bon créé)';
+      $('winbox').classList.remove('hidden'); log('GAGNÉ '+r.sym.e+r.sym.e+r.sym.e+' → '+r.sym.tray);
+    } else {
+      var s=r.idx.map(function(i){return SYMS[i].e;}).join(' ');
+      $('trayL').textContent=s; $('trayR').textContent='pas d’alignement';
+      $('lost').innerHTML='Presque ! Nouvelle partie à votre prochaine commande de '+SEUIL+' €.'; $('lost').classList.remove('hidden'); log('perdu '+s);
+    }
+    render();
+  }
+  $('lever').addEventListener('click',spin); $('play').addEventListener('click',spin);
+  $('amt').addEventListener('input',function(){ state.amount=+this.value; render(); });
+  $('reset').addEventListener('click',function(){ state.played=false; render(); log('nouvelle commande — une partie disponible'); });
+  render();
+})();
+</script>
+</body>
+</html>
