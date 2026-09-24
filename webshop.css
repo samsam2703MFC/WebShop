@@ -4145,3 +4145,45 @@
    autres blocs de la fiche. */
 .ws-xsell--product { border-top: 0; border-radius: 12px; margin: 4px 0 2px; }
 .ws-xsell--product .ws-xsell__i { border: .5px solid var(--color-border-tertiary); }
+
+/* ── Suggestions dans la FICHE PRODUIT : carrousel de vignettes ───────────
+   Une règle peut porter jusqu'à SIX suggestions : la pile verticale du
+   panier pousserait alors « Ajouter au panier » hors de l'écran. Sur la
+   fiche, les articles défilent horizontalement — quatre visibles sur
+   ordinateur, trois sur téléphone. Rien n'interrompt le client : le bloc
+   reste dans le défilement de la fiche et le bouton d'achat ne bouge pas.
+   Le bord droit s'estompe pour DIRE qu'il y en a d'autres, sans flèche ni
+   pastille à cliquer. Le + est toujours visible et jamais sous 30 px,
+   c'est une cible de doigt. */
+.ws-xsell--product .ws-xsell__list {
+  display: flex; gap: 9px; overflow-x: auto; scroll-snap-type: x proximity;
+  padding-bottom: 3px; scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+          mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+}
+.ws-xsell--product .ws-xsell__list::-webkit-scrollbar { display: none; }
+/* min-width:auto est la valeur par défaut d'un élément flex : sans 0, un nom
+   long refuse de se plier et étire la vignette bien au-delà des 96 px. */
+.ws-xsell--product .ws-xsell__i {
+  flex: 0 0 96px; min-width: 0; scroll-snap-align: start; position: relative;
+  display: flex; flex-direction: column; gap: 0;
+  padding: 0; background: transparent; border: 0; border-radius: 0;
+}
+.ws-xsell--product .ws-xsell__img {
+  width: 96px; height: 96px; border-radius: 12px; object-fit: cover;
+  background: var(--color-bg-secondary); border: .5px solid var(--color-border-tertiary);
+}
+.ws-xsell--product .ws-xsell__n {
+  white-space: normal; word-break: break-word; text-overflow: clip;
+  font: 500 11.5px/1.3 var(--font-ui); color: var(--color-text); margin-top: 6px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; min-height: 30px;
+}
+.ws-xsell--product .ws-xsell__p {
+  margin: 2px 0 0; font: 600 12px var(--font-ui); color: var(--color-primary);
+}
+/* Posé sur le coin bas de la vignette, dont la hauteur est fixe (96 px). */
+.ws-xsell--product .ws-xsell__add {
+  position: absolute; right: 5px; top: 66px; width: 30px; height: 30px;
+  box-shadow: 0 2px 7px rgba(0,0,0,.25); border: 2px solid var(--color-surface);
+}

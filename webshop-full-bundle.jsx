@@ -1793,6 +1793,7 @@ function CrossSell({ shopId, mode, date, time, basket, productIds, placement, on
   return (
     <div className={'ws-xsell ws-xsell--' + (placement || 'cart')}>
       <div className="ws-xsell__h">{t(title || 'xsell.title')}</div>
+      <div className="ws-xsell__list">
       {items.map((it) => (
         <div className="ws-xsell__i" key={it.productId}>
           {it.img ? <img className="ws-xsell__img" src={it.img} alt="" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}/>
@@ -1810,6 +1811,7 @@ function CrossSell({ shopId, mode, date, time, basket, productIds, placement, on
             }}>+</button>
         </div>
       ))}
+      </div>
     </div>
   );
 }
