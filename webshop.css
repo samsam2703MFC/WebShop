@@ -4138,3 +4138,10 @@
   .ws-cover__body { padding: 9px 10px 11px; }
   .ws-cover__lbl { font-size: 13.5px; }
 }
+
+/* Suggestions du Panier Croisé DANS la fiche produit : même anatomie que dans
+   le panier, mais posée dans le flux de la modale — pas de bord supérieur qui
+   la ferait passer pour un pied de page, et des coins arrondis comme les
+   autres blocs de la fiche. */
+.ws-xsell--product { border-top: 0; border-radius: 12px; margin: 4px 0 2px; }
+.ws-xsell--product .ws-xsell__i { border: .5px solid var(--color-border-tertiary); }

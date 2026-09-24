@@ -841,7 +841,7 @@ function PortionOptions({ value, onChange, product }) {
 // =========================================================================
 // PRODUCT DETAIL MODAL : options, upsells, bundles
 // =========================================================================
-function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
+function ProductDetail({ open, product, mode, onClose, onAdd, stock, shopId, date, time, onCrossAdd }) {
   const { t, lang } = wsUseT();
   // ── Hooks (must run unconditionally; never gate behind early-return) ──
   const initSelections = React.useMemo(() => {
@@ -1429,6 +1429,17 @@ function ProductDetail({ open, product, mode, onClose, onAdd, stock }) {
                 </div>
               </div>
             )}
+
+            {/* SUGGESTIONS « Panier Croisé » — emplacement « Fiche produit ».
+                La console marque propose cet emplacement depuis toujours et le
+                serveur le filtre déjà ; le front ne le demandait nulle part,
+                donc une règle réglée sur « Fiche produit » ne s'affichait
+                jamais. Le déclencheur envoyé est le produit REGARDÉ. */}
+            {typeof onCrossAdd === 'function' && product && (
+              <CrossSell shopId={shopId} mode={mode} date={date} time={time}
+                         productIds={[product.id]} placement="product"
+                         title="xsell.titleProduct" onAdd={onCrossAdd}/>
+            )}
           </div>
 
           {/* In-place swipe hint */}
@@ -1740,10 +1751,14 @@ function CrossPortionStrip({ calc }) {
    décide de rien. L'heure comparée est celle du CRÉNEAU DE RETRAIT, pas de la
    commande : on commande le soir pour le lendemain midi.
    Aucune suggestion → aucun bloc : pas de rubrique vide. */
-function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
+function CrossSell({ shopId, mode, date, time, basket, productIds, placement, onAdd, title }) {
   const { t } = wsUseT();
   const [items, setItems] = React.useState([]);
-  const ids = basket.map((l) => l.productId).filter(Boolean);
+  // Sur la FICHE PRODUIT, le déclencheur est le produit REGARDÉ, pas le panier :
+  // il n'y est pas encore. Ailleurs (panier, paiement), c'est le panier.
+  const ids = (productIds && productIds.length)
+    ? productIds.filter(Boolean)
+    : (basket || []).map((l) => l.productId).filter(Boolean);
   const key = ids.slice().sort().join(',') + '|' + (date || '') + '|' + (time || '') + '|' + mode;
   React.useEffect(() => {
     let alive = true;
@@ -1776,8 +1791,8 @@ function CrossSell({ shopId, mode, date, time, basket, placement, onAdd }) {
 
   if (!items.length) return null;
   return (
-    <div className="ws-xsell">
-      <div className="ws-xsell__h">{t('xsell.title')}</div>
+    <div className={'ws-xsell ws-xsell--' + (placement || 'cart')}>
+      <div className="ws-xsell__h">{t(title || 'xsell.title')}</div>
       {items.map((it) => (
         <div className="ws-xsell__i" key={it.productId}>
           {it.img ? <img className="ws-xsell__img" src={it.img} alt="" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}/>
@@ -5357,7 +5372,7 @@ function ShopFrame({ variant }) {
   // Page de garde : sans catégorie choisie, la vitrine montre les catégories
   // illustrées ; « Tout » dans la barre ou « Voir tout le catalogue » donne
   // la grille complète ; le retour aux catégories rend la page de garde.
-  const [allGrid, setAllGrid] = useState(false);
+  const [allGrid, setAllGrid] = useState(() => { try { return new URLSearchParams(window.location.search).get('tout') === '1'; } catch (_) { return false; } });
   const [basket, setBasket] = useState([]);
   const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
   // Voucher state : may be pre-filled by deep link
@@ -5872,11 +5887,15 @@ function ShopFrame({ variant }) {
   // filtre au sein d'un niveau la remplacent (replaceState). Le « précédent »
   // du navigateur remonte donc d'un cran, comme la touche de retour, il ne
   // quitte pas la boutique tant qu'il reste des étapes.
-  const syncCatUrl = React.useCallback((nextCat, nextSub, push) => {
+  const syncCatUrl = React.useCallback((nextCat, nextSub, push, nextAll) => {
     try {
       const p = new URLSearchParams(window.location.search);
       if (nextCat && nextCat !== 'all') p.set('category', String(nextCat)); else p.delete('category');
       if (nextSub != null && nextSub !== '') p.set('sub', String(nextSub)); else p.delete('sub');
+      // La grille complète est une VUE, au même titre qu'une catégorie : si
+      // elle ne vit qu'en mémoire, toute navigation d'historique la perd et
+      // renvoie le client à la page de garde sans qu'il ait rien demandé.
+      if (nextAll) p.set('tout', '1'); else p.delete('tout');
       const qs = p.toString();
       const url = window.location.pathname + (qs ? '?' + qs : '') + window.location.hash;
       if (push) window.history.pushState({ wsCatNav: 1 }, '', url);
@@ -5897,11 +5916,11 @@ function ShopFrame({ variant }) {
     // de niveau.
     const fromCover = cat === 'all' && !allGrid;
     setCat(cid); setSubCat(null); setAllGrid(cid === 'all');
-    syncCatUrl(cid, null, cid !== 'all' && (fromCover || catHasSubLevel(cid)));
+    syncCatUrl(cid, null, cid !== 'all' && (fromCover || catHasSubLevel(cid)), cid === 'all');
   }, [syncCatUrl, catHasSubLevel, cat, allGrid]);
   const backToCats = React.useCallback(() => {
     setCat('all'); setSubCat(null); setAllGrid(false);
-    syncCatUrl('all', null, true);       // sortie de niveau = étape d'historique
+    syncCatUrl('all', null, true, false);  // sortie de niveau = étape d'historique
   }, [syncCatUrl]);
   const selectSub = React.useCallback((sid) => {
     setSubCat(sid);
@@ -5915,7 +5934,10 @@ function ShopFrame({ variant }) {
         const p = new URLSearchParams(window.location.search);
         setCat(p.get('category') || 'all');
         setSubCat(p.get('sub'));
-        setAllGrid(false);
+        // On RELIT la vue : la remettre à zéro renvoyait à la page de garde
+        // à chaque retour d'historique, y compris celui que produit la
+        // fermeture d'une fiche produit.
+        setAllGrid(p.get('tout') === '1');
       } catch (_) {}
     };
     window.addEventListener('popstate', onPop);
@@ -6435,7 +6457,7 @@ function ShopFrame({ variant }) {
           )}
           {cat === 'all' && !allGrid ? (
             <CategoryCover cats={navCats} seasons={seasonChips} products={slotFiltered}
-                           onPick={selectCat} onPickSeason={(id) => selectCat(`season:${id}`)} onAll={() => setAllGrid(true)}
+                           onPick={selectCat} onPickSeason={(id) => selectCat(`season:${id}`)} onAll={() => { setAllGrid(true); syncCatUrl('all', null, true, true); }}
                            accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'}/>
           ) : (
           <div className="ws-grid">
@@ -6546,7 +6568,8 @@ function ShopFrame({ variant }) {
         office={userOffice}
         tour={userTour}
       />
-      <ProductDetail open={!!detailProduct} product={detailProduct} mode={mode} onClose={closeProductDetail} onAdd={handleAddConfigured} stock={detailProduct ? (productStock[detailProduct.id] || null) : null}/>
+      <ProductDetail open={!!detailProduct} product={detailProduct} mode={mode} onClose={closeProductDetail} onAdd={handleAddConfigured} stock={detailProduct ? (productStock[detailProduct.id] || null) : null}
+                     shopId={shop && shop.id} date={date} time={crossSlotTime} onCrossAdd={handleCrossAdd}/>
       {window.AllergensModal && <window.AllergensModal open={allergensOpen} onClose={() => setAllergensOpen(false)}/>}
       <CheckoutWizard open={checkoutOpen} onClose={() => setCheckoutOpen(false)} shop={shop} mode={mode} basket={basket} user={user} onLogin={() => setAuthOpen(true)} onPlaced={handlePlaced}
         voucherInput={voucherInput} setVoucherInput={setVoucherInput}
