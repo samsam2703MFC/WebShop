@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Habillage saisonnier — page de test</title>
+<link rel="icon" href="favicon-32.png" sizes="32x32">
+<!--
+  PAGE DE TEST — habillage saisonnier de la vitrine.
+
+  Elle ne modifie RIEN : elle charge la vraie boutique dans un cadre (même
+  origine) et lui applique la peau choisie à la volée. Fermer la page suffit
+  à tout annuler ; aucun client ne voit quoi que ce soit.
+
+  Ce qui est montré tel qu'il serait en vrai : la palette, la frise, le
+  bandeau de gamme, l'épinglage de la vignette de saison et les badges.
+  Ce qui manque tant que la gamme n'existe pas au catalogue : la vignette
+  de saison et les produits de fête. Le bandeau affiche alors un texte
+  d'exemple — c'est écrit sur la page.
+-->
+<style>
+@font-face{font-family:Gotham;src:url('fonts/Gotham_Book.otf') format('opentype');font-weight:400}
+@font-face{font-family:Gotham;src:url('fonts/Gotham_Medium.otf') format('opentype');font-weight:600}
+@font-face{font-family:Vank;src:url('fonts/GC_Vank.ttf') format('truetype')}
+:root{--p:#8D1D2C;--bg:#EAE4DC;--sur:#fff;--t:#222;--m:#666;--bd:#e5ddd3;--bg2:#F4EFE8}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);font-family:Gotham,system-ui,sans-serif;color:var(--t);display:flex;flex-direction:column}
+header{flex:none;background:var(--sur);border-bottom:.5px solid var(--bd);padding:12px 20px 13px;box-shadow:0 2px 10px rgba(0,0,0,.04)}
+.hd{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:11px}
+h1{margin:0;font:600 13px Gotham;letter-spacing:.05em;text-transform:uppercase;color:var(--m)}
+.hd p{margin:0;font-size:11.5px;color:var(--m);line-height:1.45}
+.hd b{color:var(--t)}
+.ctr{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.grp{display:flex;align-items:center;gap:7px}
+.grp>span{font-size:10.5px;color:var(--m);text-transform:uppercase;letter-spacing:.07em;margin-right:2px}
+button.s{border:.5px solid var(--bd);background:var(--bg2);color:var(--t);border-radius:999px;padding:7px 14px;font:600 12px Gotham;cursor:pointer;transition:.13s;display:inline-flex;align-items:center;gap:7px}
+button.s:hover{border-color:#c9bfb0}
+button.s i{width:11px;height:11px;border-radius:3px;display:block;flex:none;font-style:normal}
+button.s[aria-pressed="true"]{background:var(--p);color:#fff;border-color:var(--p)}
+.seg{display:inline-flex;border:.5px solid var(--bd);border-radius:9px;overflow:hidden}
+.seg button{border:0;background:var(--sur);color:var(--m);padding:7px 13px;font:600 12px Gotham;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--p);color:#fff}
+.note{margin-top:10px;font-size:11px;color:var(--m);line-height:1.5;max-width:1000px}
+.note b{color:var(--t)}
+main{flex:1;min-height:0;display:flex;justify-content:center;padding:16px 20px 22px;overflow:auto}
+.frame{width:100%;max-width:1440px;background:#d9d2c7;border-radius:14px;padding:9px;box-shadow:0 12px 34px rgba(0,0,0,.14);align-self:flex-start;transition:max-width .2s}
+.frame .bar{display:flex;align-items:center;gap:6px;padding:2px 4px 8px}
+.frame .bar i{width:9px;height:9px;border-radius:50%;background:#b9afa1;display:block}
+.frame .bar span{margin-left:8px;font-size:10.5px;color:#7d7368;background:#efeae2;border-radius:6px;padding:3px 10px;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+iframe{display:block;width:100%;height:78vh;min-height:520px;border:0;border-radius:9px;background:var(--sur)}
+.warn{margin:0 20px 16px;background:#fdf3e7;border:.5px solid #ead9c3;border-left:3px solid #b26a00;border-radius:9px;padding:10px 14px;font-size:11.5px;color:#6b4420;line-height:1.5;display:none}
+.warn.on{display:block}
+</style>
+</head>
+<body>
+<header>
+  <div class="hd">
+    <h1>Page de test · habillage saisonnier</h1>
+    <p>La <b>vraie vitrine</b> est chargée ci-dessous et reçoit la tenue choisie en direct. <b>Rien n'est modifié</b> : aucun client ne voit ceci, fermer la page suffit à tout annuler.</p>
+  </div>
+  <div class="ctr">
+    <div class="grp" id="saisons"><span>Tenue</span></div>
+    <div class="grp"><span>Écran</span>
+      <div class="seg" id="ecran">
+        <button data-w="0" aria-pressed="true">Bureau</button>
+        <button data-w="414" aria-pressed="false">Téléphone</button>
+      </div>
+    </div>
+    <div class="grp"><button class="s" id="reload">↻ Recharger la vitrine</button></div>
+  </div>
+  <p class="note">Ce que vous voyez pour de vrai : la <b>palette</b>, la <b>frise</b> sous la barre du haut, le <b>bandeau de gamme</b> avec son décompte, l'<b>épinglage</b> de la vignette de saison et les <b>badges</b> produit. Les textes du bandeau et le décompte sont des <b>exemples</b> ; en vrai ils viendraient de la gamme et du cut-off réel de la boutique.</p>
+</header>
+<div class="warn" id="warn"></div>
+<main><div class="frame" id="frame">
+  <div class="bar"><i></i><i></i><i></i><span id="url">…</span></div>
+  <iframe id="shop" title="Vitrine"></iframe>
+</div></main>
+
+<script>
+(function(){
+  var SKIN = `/* ══ PEAU SAISONNIÈRE ══════════════════════════════════════════════════════
+   Ce que le « niveau 2 » ajouterait au webshop. Aucune date, aucun nom de
+   fête n'est écrit ici : la classe est posée par la GAMME en cours
+   (data-saison="noel" | "rois"), donc une nouvelle fête ne touche pas ce
+   fichier. La palette, elle, vient des tokens servis par /brand.           */
+
+/* ── Frise sous la barre du haut ─────────────────────────────────────────── */
+.ws-nav{position:relative}
+[data-saison] .ws-nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:4px;z-index:2}
+[data-saison="noel"] .ws-nav::after{background:repeating-linear-gradient(90deg,#1f4d3a 0 10px,#c9a24a 10px 20px,var(--color-primary) 20px 30px)}
+[data-saison="rois"] .ws-nav::after{background:repeating-linear-gradient(90deg,#c9a24a 0 7px,#f0dcae 7px 14px)}
+
+/* ── Bandeau de saison ───────────────────────────────────────────────────── */
+.sn-hero{position:relative;border-radius:16px;overflow:hidden;margin-bottom:18px;isolation:isolate}
+.sn-hero__bg{position:absolute;inset:0;z-index:-2}
+[data-saison="noel"] .sn-hero__bg{background:linear-gradient(118deg,#0f2f23 0%,#1f4d3a 48%,#123a2b 100%)}
+[data-saison="rois"] .sn-hero__bg{background:linear-gradient(118deg,#f9eed6 0%,#efdcae 48%,#e5c886 100%)}
+.sn-hero__deco{position:absolute;inset:0;z-index:-1;opacity:.5}
+.sn-hero__in{position:relative;padding:30px 34px 32px;display:flex;align-items:flex-end;justify-content:space-between;gap:26px;min-height:196px}
+.sn-hero__txt{max-width:520px}
+.sn-hero__kicker{display:inline-flex;align-items:center;gap:7px;font:600 10px var(--font-ui);letter-spacing:.14em;text-transform:uppercase;margin-bottom:9px;padding:5px 11px;border-radius:999px}
+[data-saison="noel"] .sn-hero__kicker{color:#f0dcae;background:rgba(240,220,174,.12);border:1px solid rgba(240,220,174,.35)}
+[data-saison="rois"] .sn-hero__kicker{color:#6b4c11;background:rgba(255,255,255,.5);border:1px solid rgba(138,106,30,.28)}
+.sn-hero__t{margin:0 0 9px;font:700 38px/1.02 var(--font-display);letter-spacing:.01em}
+[data-saison="noel"] .sn-hero__t{color:#fff;text-shadow:0 2px 14px rgba(0,0,0,.28)}
+[data-saison="rois"] .sn-hero__t{color:#5e410c}
+.sn-hero__p{margin:0;font:400 13.5px/1.55 var(--font-ui);max-width:430px}
+[data-saison="noel"] .sn-hero__p{color:#cfe0d6}
+[data-saison="rois"] .sn-hero__p{color:#7a5b1c}
+.sn-hero__cta{display:inline-flex;align-items:center;gap:8px;margin-top:17px;border:0;border-radius:11px;padding:12px 20px;font:600 13px var(--font-ui);cursor:pointer;transition:transform .12s,box-shadow .12s}
+.sn-hero__cta:hover{transform:translateY(-1px)}
+[data-saison="noel"] .sn-hero__cta{background:linear-gradient(180deg,#e2be6a,#c9a24a);color:#16291f;box-shadow:0 5px 16px rgba(201,162,74,.38)}
+[data-saison="rois"] .sn-hero__cta{background:var(--color-primary);color:#fff;box-shadow:0 5px 16px rgba(141,29,44,.3)}
+/* compte à rebours : calculé sur le cut-off réel de la boutique */
+.sn-hero__cnt{flex:none;text-align:center;border-radius:14px;padding:14px 20px;backdrop-filter:blur(3px)}
+[data-saison="noel"] .sn-hero__cnt{background:rgba(255,255,255,.1);border:1px solid rgba(240,220,174,.4)}
+[data-saison="rois"] .sn-hero__cnt{background:rgba(255,255,255,.62);border:1px solid rgba(138,106,30,.26)}
+.sn-hero__cnt b{display:block;font:700 34px/1 var(--font-display)}
+[data-saison="noel"] .sn-hero__cnt b{color:#f0dcae}
+[data-saison="rois"] .sn-hero__cnt b{color:#8a6a1e}
+.sn-hero__cnt small{display:block;margin-top:5px;font:600 9.5px var(--font-ui);letter-spacing:.1em;text-transform:uppercase}
+[data-saison="noel"] .sn-hero__cnt small{color:#a9c2b6}
+[data-saison="rois"] .sn-hero__cnt small{color:#8a7440}
+.sn-hero__cnt em{display:block;margin-top:7px;padding-top:7px;font:400 10.5px var(--font-ui);font-style:normal}
+[data-saison="noel"] .sn-hero__cnt em{color:#8fae9f;border-top:1px solid rgba(240,220,174,.25)}
+[data-saison="rois"] .sn-hero__cnt em{color:#9a8352;border-top:1px solid rgba(138,106,30,.18)}
+
+/* ── Vignette de la gamme sur la page de garde ───────────────────────────── */
+.ws-cover__card.sn-pin{position:relative}
+[data-saison="noel"] .sn-pin{border:1.5px solid #1f4d3a;box-shadow:0 6px 20px rgba(31,77,58,.22)}
+[data-saison="rois"] .sn-pin{border:1.5px solid #c9a24a;box-shadow:0 6px 20px rgba(201,162,74,.28)}
+[data-saison="noel"] .sn-pin .ws-cover__pic{background:linear-gradient(160deg,#e8f1eb,#cfe0d6)}
+[data-saison="rois"] .sn-pin .ws-cover__pic{background:linear-gradient(160deg,#fbf1d8,#f2dfae)}
+.sn-pin__tag{position:absolute;top:9px;left:9px;z-index:2;font:600 9px var(--font-ui);letter-spacing:.09em;text-transform:uppercase;border-radius:999px;padding:4px 9px}
+[data-saison="noel"] .sn-pin__tag{background:#1f4d3a;color:#f0dcae}
+[data-saison="rois"] .sn-pin__tag{background:#c9a24a;color:#3a2c08}
+[data-saison="noel"] .sn-pin .ws-cover__meta{color:#1f4d3a}
+[data-saison="rois"] .sn-pin .ws-cover__meta{color:#8a6a1e}
+
+/* ── Badge sur les produits de la gamme ──────────────────────────────────── */
+.sn-badge{position:absolute;top:9px;left:9px;z-index:3;display:inline-flex;align-items:center;gap:4px;font:600 9.5px var(--font-ui);letter-spacing:.05em;border-radius:999px;padding:4px 9px;box-shadow:0 2px 6px rgba(0,0,0,.18)}
+[data-saison="noel"] .sn-badge{background:#1f4d3a;color:#f0dcae}
+[data-saison="rois"] .sn-badge{background:#c9a24a;color:#3a2c08}
+
+/* ── Fond de page très légèrement teinté ─────────────────────────────────── */
+[data-saison="noel"] .ws-main{background-image:radial-gradient(1100px 380px at 12% -8%,rgba(31,77,58,.07),transparent 65%)}
+[data-saison="rois"] .ws-main{background-image:radial-gradient(1100px 380px at 12% -8%,rgba(201,162,74,.13),transparent 65%)}
+
+/* ── Respect du réglage « moins d'animations » ───────────────────────────── */
+@media (prefers-reduced-motion:reduce){.sn-hero__cta{transition:none}.sn-hero__cta:hover{transform:none}}
+
+/* ── Téléphone ───────────────────────────────────────────────────────────── */
+@media (max-width:720px){
+  .sn-hero{margin-bottom:14px}
+  .sn-hero__in{flex-direction:column;align-items:stretch;gap:14px;padding:18px 17px 18px;min-height:0}
+  .sn-hero__kicker{font-size:9px;letter-spacing:.1em;padding:4px 9px;margin-bottom:7px}
+  .sn-hero__t{font-size:26px;margin-bottom:7px}
+  .sn-hero__p{font-size:12.5px;max-width:none}
+  .sn-hero__cta{margin-top:13px;width:100%;justify-content:center;padding:11px 16px}
+  .sn-hero__cnt{display:flex;align-items:center;gap:11px;text-align:left;padding:10px 14px;border-radius:11px}
+  .sn-hero__cnt b{font-size:22px}
+  .sn-hero__cnt small{margin-top:0}
+  .sn-hero__cnt em{margin:0 0 0 auto;padding:0;border:0 !important}
+  .sn-hero__deco{opacity:.3}
+}
+
+/* ── Autres moments, même tenue lumineuse ────────────────────────────────── */
+[data-saison="stnicolas"] .ws-nav::after{background:repeating-linear-gradient(90deg,var(--color-primary) 0 9px,#e8a86a 9px 18px,#f6d9b8 18px 27px)}
+[data-saison="stnicolas"] .sn-hero__bg{background:linear-gradient(118deg,#fdf1e3 0%,#f7d6b0 46%,#eeb87f 100%)}
+[data-saison="stnicolas"] .sn-hero__kicker{color:#7d4418;background:rgba(255,255,255,.55);border:1px solid rgba(125,68,24,.25)}
+[data-saison="stnicolas"] .sn-hero__t{color:#6e3a12}
+[data-saison="stnicolas"] .sn-hero__p{color:#8a5527}
+[data-saison="stnicolas"] .sn-hero__cta{background:var(--color-primary);color:#fff;box-shadow:0 5px 16px rgba(141,29,44,.3)}
+[data-saison="stnicolas"] .sn-hero__cnt{background:rgba(255,255,255,.66);border:1px solid rgba(125,68,24,.22)}
+[data-saison="stnicolas"] .sn-hero__cnt b{color:#a2541b}
+[data-saison="stnicolas"] .sn-hero__cnt small{color:#9a6a3c}
+[data-saison="stnicolas"] .sn-hero__cnt em{color:#a5784d;border-top:1px solid rgba(125,68,24,.16)}
+[data-saison="stnicolas"] .sn-pin{border:1.5px solid #d98b3f;box-shadow:0 6px 20px rgba(217,139,63,.26)}
+[data-saison="stnicolas"] .sn-pin .ws-cover__pic{background:linear-gradient(160deg,#fdeedd,#f6d6b4)}
+[data-saison="stnicolas"] .sn-pin__tag,[data-saison="stnicolas"] .sn-badge{background:#b8641f;color:#fff5e8}
+[data-saison="stnicolas"] .sn-pin .ws-cover__meta{color:#a2541b}
+[data-saison="stnicolas"] .ws-main{background-image:radial-gradient(1100px 380px at 12% -8%,rgba(217,139,63,.13),transparent 65%)}
+
+[data-saison="paques"] .ws-nav::after{background:repeating-linear-gradient(90deg,#6b8f3a 0 8px,#f6e7a8 8px 16px,#e3a3b4 16px 24px)}
+[data-saison="paques"] .sn-hero__bg{background:linear-gradient(118deg,#f6f9ec 0%,#e2eec9 46%,#cbe0a8 100%)}
+[data-saison="paques"] .sn-hero__kicker{color:#47631c;background:rgba(255,255,255,.6);border:1px solid rgba(71,99,28,.24)}
+[data-saison="paques"] .sn-hero__t{color:#3d5617}
+[data-saison="paques"] .sn-hero__p{color:#55702c}
+[data-saison="paques"] .sn-hero__cta{background:var(--color-primary);color:#fff;box-shadow:0 5px 16px rgba(141,29,44,.28)}
+[data-saison="paques"] .sn-hero__cnt{background:rgba(255,255,255,.7);border:1px solid rgba(71,99,28,.2)}
+[data-saison="paques"] .sn-hero__cnt b{color:#5a7d22}
+[data-saison="paques"] .sn-hero__cnt small{color:#6d8542}
+[data-saison="paques"] .sn-hero__cnt em{color:#7d9256;border-top:1px solid rgba(71,99,28,.15)}
+[data-saison="paques"] .sn-pin{border:1.5px solid #8bae4e;box-shadow:0 6px 20px rgba(139,174,78,.26)}
+[data-saison="paques"] .sn-pin .ws-cover__pic{background:linear-gradient(160deg,#f3f8e6,#dcebc2)}
+[data-saison="paques"] .sn-pin__tag,[data-saison="paques"] .sn-badge{background:#5a7d22;color:#f4f9e4}
+[data-saison="paques"] .sn-pin .ws-cover__meta{color:#5a7d22}
+[data-saison="paques"] .ws-main{background-image:radial-gradient(1100px 380px at 12% -8%,rgba(139,174,78,.13),transparent 65%)}
+
+[data-saison="valentin"] .ws-nav::after{background:repeating-linear-gradient(90deg,var(--color-primary) 0 8px,#e8aab4 8px 16px)}
+[data-saison="valentin"] .sn-hero__bg{background:linear-gradient(118deg,#fdf1f2 0%,#f7d5da 46%,#eeb3bd 100%)}
+[data-saison="valentin"] .sn-hero__kicker{color:#8a2b3a;background:rgba(255,255,255,.58);border:1px solid rgba(138,43,58,.22)}
+[data-saison="valentin"] .sn-hero__t{color:#7a1f2d}
+[data-saison="valentin"] .sn-hero__p{color:#95404e}
+[data-saison="valentin"] .sn-hero__cta{background:var(--color-primary);color:#fff;box-shadow:0 5px 16px rgba(141,29,44,.3)}
+[data-saison="valentin"] .sn-hero__cnt{background:rgba(255,255,255,.7);border:1px solid rgba(138,43,58,.2)}
+[data-saison="valentin"] .sn-hero__cnt b{color:#a12b3d}
+[data-saison="valentin"] .sn-hero__cnt small{color:#9c5561}
+[data-saison="valentin"] .sn-hero__cnt em{color:#ab6f79;border-top:1px solid rgba(138,43,58,.15)}
+[data-saison="valentin"] .sn-pin{border:1.5px solid #d4818f;box-shadow:0 6px 20px rgba(212,129,143,.28)}
+[data-saison="valentin"] .sn-pin .ws-cover__pic{background:linear-gradient(160deg,#fdeef0,#f4d3d9)}
+[data-saison="valentin"] .sn-pin__tag,[data-saison="valentin"] .sn-badge{background:#a12b3d;color:#fdeef0}
+[data-saison="valentin"] .sn-pin .ws-cover__meta{color:#a12b3d}
+[data-saison="valentin"] .ws-main{background-image:radial-gradient(1100px 380px at 12% -8%,rgba(212,129,143,.15),transparent 65%)}
+`;
+
+  // Une tenue = un dégradé, un motif, une frise, une couleur d'étiquette et
+  // un libellé de décompte. Rien d'autre ne change d'une fête à l'autre.
+  var SAISONS = {
+    aucune:{label:'Normale', dot:'#c9bfb0'},
+    stnicolas:{label:'Saint-Nicolas', dot:'#d98b3f', hero:{kicker:'Gamme Saint-Nicolas · en ligne', t:'Le grand saint passe bientôt', p:'Spéculoos, cougnous, mannele et ballotins de chocolat, pétris et cuits à l’atelier. À retirer dès le 4 décembre.', cta:'Voir la gamme', cnt:'6 déc.', cntl:'saint-nicolas', cnte:'commandez 48 h avant'}, tag:'St-Nicolas'},
+    noel:{label:'Noël', dot:'#1f4d3a', hero:{kicker:'Gamme de Noël · en ligne', t:'Les fêtes se préparent ici', p:'Bûches, plateaux apéritifs et pains de fête, préparés à l’atelier. Commandez jusqu’au lundi 22 décembre à 12 h pour un retrait le 24.', cta:'Voir la gamme de Noël', cnt:'6 j', cntl:'pour commander', cnte:'jusqu’au 22 déc. · 12 h'}, tag:'Noël'},
+    rois:{label:'Galette des rois', dot:'#c9a24a', hero:{kicker:'Gamme Épiphanie · en ligne', t:'Qui aura la fève ?', p:'Galettes frangipane, pommes ou chocolat-noisette, et la brioche des rois. Couronne et fève offertes avec chaque galette.', cta:'Choisir ma galette', cnt:'6 jan.', cntl:'jour des rois', cnte:'commandez 48 h avant'}, tag:'Rois'},
+    valentin:{label:'Saint-Valentin', dot:'#d4818f', hero:{kicker:'Gamme Saint-Valentin · en ligne', t:'À déguster à deux', p:'Cœur framboise, entremets chocolat-passion, macarons et brunch à deux. Tout est prévu pour deux parts.', cta:'Voir la gamme', cnt:'14 fév.', cntl:'saint-valentin', cnte:'commandez avant le 12 fév.'}, tag:'Valentin'},
+    paques:{label:'Pâques', dot:'#8bae4e', hero:{kicker:'Gamme de Pâques · en ligne', t:'Le printemps se met à table', p:'Nids de Pâques, agneau pascal, œufs pralinés et tresse briochée. À emporter ou à faire livrer pour le week-end pascal.', cta:'Voir la gamme de Pâques', cnt:'5 avr.', cntl:'dimanche de pâques', cnte:'commandez avant le 2 avr.'}, tag:'Pâques'}
+  };
+  var DECO = {
+    stnicolas:'<svg width="100%" height="100%" viewBox="0 0 900 220" preserveAspectRatio="xMaxYMid slice" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="#7d4418" stroke-width="2" opacity=".17"><g transform="translate(716 58)"><path d="M0 -38 L9 -12 L36 -12 L14 5 L22 32 L0 16 L-22 32 L-14 5 L-36 -12 L-9 -12 Z"/></g><g transform="translate(820 134) scale(.66)"><path d="M0 -38 L9 -12 L36 -12 L14 5 L22 32 L0 16 L-22 32 L-14 5 L-36 -12 L-9 -12 Z"/></g><g transform="translate(642 160) scale(.45)"><path d="M0 -38 L9 -12 L36 -12 L14 5 L22 32 L0 16 L-22 32 L-14 5 L-36 -12 L-9 -12 Z"/></g></g></svg>',
+    noel:'<svg width="100%" height="100%" viewBox="0 0 900 220" preserveAspectRatio="xMaxYMid slice" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" opacity=".30">'+[[700,44,30],[800,120,22],[628,150,17],[860,40,14],[752,186,12]].map(function(a){var x=a[0],y=a[1],r=a[2];var o="<g transform=\"translate("+x+" "+y+")\">";[0,60,120].forEach(function(g){o+="<line x1=\""+(-r)+"\" y1=\"0\" x2=\""+r+"\" y2=\"0\" transform=\"rotate("+g+")\"/>";});[0,60,120,180,240,300].forEach(function(g){o+="<g transform=\"rotate("+g+")\"><line x1=\""+(r*.55)+"\" y1=\"0\" x2=\""+(r*.8)+"\" y2=\""+(-r*.25)+"\"/><line x1=\""+(r*.55)+"\" y1=\"0\" x2=\""+(r*.8)+"\" y2=\""+(r*.25)+"\"/></g>";});return o+"</g>";}).join('')+'</g></svg>',
+    rois:'<svg width="100%" height="100%" viewBox="0 0 900 220" preserveAspectRatio="xMaxYMid slice" xmlns="http://www.w3.org/2000/svg"><g fill="#8a6a1e" opacity=".16"><path transform="translate(712 60)" d="M-40 14 L-40 -20 L-24 -4 L-8 -28 L8 -4 L24 -20 L24 14 Z"/><path transform="translate(818 132) scale(.65)" d="M-40 14 L-40 -20 L-24 -4 L-8 -28 L8 -4 L24 -20 L24 14 Z"/><path transform="translate(640 158) scale(.44)" d="M-40 14 L-40 -20 L-24 -4 L-8 -28 L8 -4 L24 -20 L24 14 Z"/></g></svg>',
+    valentin:'<svg width="100%" height="100%" viewBox="0 0 900 220" preserveAspectRatio="xMaxYMid slice" xmlns="http://www.w3.org/2000/svg"><g fill="#8a2b3a" opacity=".13"><path transform="translate(716 62)" d="M0 30 C-34 6 -40 -16 -26 -28 C-14 -38 -2 -32 0 -22 C2 -32 14 -38 26 -28 C40 -16 34 6 0 30 Z"/><path transform="translate(820 134) scale(.66)" d="M0 30 C-34 6 -40 -16 -26 -28 C-14 -38 -2 -32 0 -22 C2 -32 14 -38 26 -28 C40 -16 34 6 0 30 Z"/><path transform="translate(642 158) scale(.45)" d="M0 30 C-34 6 -40 -16 -26 -28 C-14 -38 -2 -32 0 -22 C2 -32 14 -38 26 -28 C40 -16 34 6 0 30 Z"/></g></svg>',
+    paques:'<svg width="100%" height="100%" viewBox="0 0 900 220" preserveAspectRatio="xMaxYMid slice" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="#47631c" stroke-width="2" opacity=".2"><g transform="translate(714 60)"><ellipse cx="0" cy="0" rx="26" ry="34"/><path d="M-26 -4 q13 -9 26 0 t26 0"/><path d="M-24 12 q12 -8 24 0 t24 0"/></g><g transform="translate(818 132) scale(.68)"><ellipse cx="0" cy="0" rx="26" ry="34"/><path d="M-26 -4 q13 -9 26 0 t26 0"/><path d="M-24 12 q12 -8 24 0 t24 0"/></g><g transform="translate(640 158) scale(.48)"><ellipse cx="0" cy="0" rx="26" ry="34"/><path d="M-26 -4 q13 -9 26 0 t26 0"/><path d="M-24 12 q12 -8 24 0 t24 0"/></g></g></svg>'
+  };
+  // Palette : en vrai servie par /brand (tokens), donc réglable en base.
+  var TOKENS = { noel:{'color-bg':'#e7e3d9','color-secondary':'#c9a24a'}, rois:{'color-bg':'#ebe4d5','color-secondary':'#e4c98d'},
+                 stnicolas:{'color-bg':'#ece3d7','color-secondary':'#e8a86a'}, paques:{'color-bg':'#e9ebdd','color-secondary':'#bcd392'},
+                 valentin:{'color-bg':'#ece1e2','color-secondary':'#eebcc4'} };
+
+  var $=function(s){return document.querySelector(s);};
+  var fr=$('#shop'), cur='aucune', obs=null;
+
+  // Boutons de tenue
+  Object.keys(SAISONS).forEach(function(k){
+    var b=document.createElement('button'); b.className='s'; b.dataset.k=k;
+    b.setAttribute('aria-pressed', k==='aucune' ? 'true':'false');
+    b.innerHTML='<i style="background:'+SAISONS[k].dot+'"></i>'+SAISONS[k].label;
+    b.onclick=function(){ cur=k; document.querySelectorAll('#saisons button').forEach(function(x){ x.setAttribute('aria-pressed', x.dataset.k===k?'true':'false'); }); apply(); };
+    $('#saisons').appendChild(b);
+  });
+  $('#ecran').onclick=function(e){ var b=e.target.closest('button'); if(!b) return;
+    [].forEach.call(this.children,function(x){ x.setAttribute('aria-pressed', x===b?'true':'false'); });
+    var w=+b.dataset.w; $('#frame').style.maxWidth = w ? (w+18)+'px' : '';
+  };
+  $('#reload').onclick=function(){ load(); };
+
+  function doc(){ try{ return fr.contentDocument; }catch(e){ return null; } }
+
+  function strip(d){
+    if(obs){ obs.disconnect(); obs=null; }
+    if(!d) return;
+    d.documentElement.removeAttribute('data-saison');
+    var h=d.getElementById('sn-hero'); if(h) h.remove();
+    d.querySelectorAll('.sn-pin').forEach(function(e){ e.classList.remove('sn-pin'); });
+    d.querySelectorAll('.sn-pin__tag,.sn-badge').forEach(function(e){ e.remove(); });
+    Object.keys(TOKENS).forEach(function(k){ Object.keys(TOKENS[k]).forEach(function(t){ d.documentElement.style.removeProperty('--'+t); }); });
+  }
+
+  function paint(){
+    var d=doc(); if(!d||!d.body) return false;
+    var S=SAISONS[cur];
+    if(!d.getElementById('sn-skin')){ var st=d.createElement('style'); st.id='sn-skin'; st.textContent=SKIN; d.head.appendChild(st); }
+    strip(d);
+    if(cur==='aucune'){ warn(''); return true; }
+    // palette (ce que /brand poserait)
+    Object.keys(TOKENS[cur]||{}).forEach(function(t){ d.documentElement.style.setProperty('--'+t, TOKENS[cur][t]); });
+    d.documentElement.dataset.saison=cur;
+    var main=d.querySelector('.ws-main'); if(!main) return false;
+    var anchor=d.querySelector('.ws-cover')||d.querySelector('.ws-grid');
+    var el=d.createElement('section'); el.className='sn-hero'; el.id='sn-hero';
+    var H=S.hero;
+    el.innerHTML='<span class="sn-hero__bg"></span><span class="sn-hero__deco">'+(DECO[cur]||'')+'</span>'+
+      '<div class="sn-hero__in"><div class="sn-hero__txt"><span class="sn-hero__kicker">'+H.kicker+'</span>'+
+      '<h2 class="sn-hero__t">'+H.t+'</h2><p class="sn-hero__p">'+H.p+'</p>'+
+      '<button class="sn-hero__cta" type="button">'+H.cta+' →</button></div>'+
+      '<div class="sn-hero__cnt"><b>'+H.cnt+'</b><small>'+H.cntl+'</small><em>'+H.cnte+'</em></div></div>';
+    if(anchor) anchor.parentNode.insertBefore(el, anchor); else main.insertBefore(el, main.firstChild);
+    // vignette de la gamme : épinglée en 1re position, encadrée, étiquetée
+    var grid=d.querySelector('.ws-cover__grid'), pinned=false;
+    if(grid){ var cards=[].slice.call(grid.children);
+      var pin=cards.filter(function(c){ return /Gamme de saison/.test(c.textContent||''); })[0];
+      if(pin){ pin.classList.add('sn-pin'); grid.insertBefore(pin, grid.firstChild);
+        var t=d.createElement('span'); t.className='sn-pin__tag'; t.textContent=S.tag; pin.insertBefore(t, pin.firstChild); pinned=true; } }
+    warn(pinned ? '' : 'Aucune gamme de saison n’est publiée dans cette boutique : la vignette épinglée et les produits de fête n’apparaissent donc pas. Le reste de l’habillage est bien celui qui serait en ligne. Publiez une gamme dans l’ERP pour voir l’ensemble.');
+    // React redessine : on remet le bandeau s'il disparaît
+    obs=new MutationObserver(function(){ if(cur!=='aucune' && !d.getElementById('sn-hero')) paint(); });
+    obs.observe(main,{childList:true});
+    return true;
+  }
+  function warn(t){ var w=$('#warn'); w.textContent=t; w.className='warn'+(t?' on':''); }
+
+  function apply(){ var n=0, iv=setInterval(function(){ if(paint()||++n>40) clearInterval(iv); },180); }
+
+  function load(){
+    var u=new URL(location.href); var shop=u.searchParams.get('shop')||'';
+    var src='./' + (shop?('?shop='+encodeURIComponent(shop)):'');
+    $('#url').textContent = new URL(src, location.href).href;
+    fr.onload=function(){ apply(); };
+    fr.src=src;
+  }
+  load();
+})();
+</script>
+</body>
+</html>
