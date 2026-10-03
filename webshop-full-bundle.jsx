@@ -5239,6 +5239,126 @@ function bug(source, quoi, e) {
    complète. Les gammes de saison présentes dans le créneau s'y ajoutent, avec
    la même teinte chaude que dans la barre. Rien n'est inventé : une catégorie
    sans illustration montre sa lettre, pas une image de repli. */
+/* ═══ FILTRE « SELON MON BUDGET » — deux jauges au-dessus de la grille ═══
+   Ne s'appuie QUE sur ce que le catalogue porte vraiment : le prix affiché
+   de chaque produit. Le budget masque ce qui coûte plus ; le nombre de
+   convives ne filtre rien, il donne le budget par personne. Sucré / salé et
+   les étiquettes (sans gluten, végétarien…) attendent que les produits
+   portent ces informations : on ne les montre pas avant.
+   L'échelle suit les prix des produits affichés (catégorie en cours) : du
+   moins cher, arrondi à l'euro inférieur, au plus cher, arrondi à la dizaine
+   supérieure. Tout en haut, « Sans limite » : rien n'est masqué. */
+const FZ_CX = 100, FZ_CY = 104, FZ_R = 76;
+const fzPt = (u, r = FZ_R) => [FZ_CX - r * Math.cos(Math.PI * u), FZ_CY - r * Math.sin(Math.PI * u)];
+const fzArc = (a, b) => { const [x1, y1] = fzPt(a), [x2, y2] = fzPt(b); return `M${x1.toFixed(1)} ${y1.toFixed(1)} A${FZ_R} ${FZ_R} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`; };
+const fzEur = (v) => '€' + (Math.abs(v - Math.round(v)) < 0.005 ? String(Math.round(v)) : v.toFixed(2));
+const FZ_PEOPLE_MAX = 12;
+
+function FzGauge({ t, big, small, ends, ticks, dots, label, valueText, min, max, value, onValue, step = 1 }) {
+  const ref = React.useRef(null);
+  const drag = React.useRef(false);
+  const fromEvent = (ev) => {
+    const svg = ref.current && ref.current.querySelector('svg');
+    if (!svg || !svg.getScreenCTM) return;
+    const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+    const q = pt.matrixTransform(svg.getScreenCTM().inverse());
+    let a = Math.atan2(FZ_CY - q.y, q.x - FZ_CX);
+    if (a < 0) a = q.x < FZ_CX ? Math.PI : 0;
+    const u = 1 - a / Math.PI;
+    onValue(Math.round((min + u * (max - min)) / step) * step);
+  };
+  const onKey = (ev) => {
+    const k = ev.key;
+    let v = null;
+    if (k === 'ArrowRight' || k === 'ArrowUp') v = value + step;
+    else if (k === 'ArrowLeft' || k === 'ArrowDown') v = value - step;
+    else if (k === 'Home') v = min;
+    else if (k === 'End') v = max;
+    if (v == null) return;
+    ev.preventDefault();
+    onValue(Math.max(min, Math.min(max, v)));
+  };
+  const [kx, ky] = fzPt(t);
+  return (
+    <div className="ws-fz__ill" ref={ref} tabIndex={0} role="slider" aria-label={label}
+         aria-valuemin={min} aria-valuemax={max} aria-valuenow={value} aria-valuetext={valueText}
+         onKeyDown={onKey}
+         onPointerDown={(ev) => { drag.current = true; try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (_) {} fromEvent(ev); }}
+         onPointerMove={(ev) => { if (drag.current) fromEvent(ev); }}
+         onPointerUp={() => { drag.current = false; }}
+         onPointerCancel={() => { drag.current = false; }}>
+      <svg viewBox="0 0 200 142" aria-hidden="true">
+        <path d={fzArc(0, 1)} className="ws-fz__track"/>
+        {t > 0.001 && <path d={fzArc(0, t)} className="ws-fz__fill"/>}
+        {ticks ? Array.from({ length: ticks + 1 }, (_, i) => {
+          const [a, b] = fzPt(i / ticks, FZ_R + 13), [c, d] = fzPt(i / ticks, FZ_R + 18);
+          return <path key={i} d={`M${a} ${b}L${c} ${d}`} className="ws-fz__tick"/>;
+        }) : null}
+        {(dots || []).map((d, i) => { const [x, y] = fzPt(d[0], FZ_R + 17); return <circle key={i} cx={x} cy={y} r="3.6" className={d[1] ? 'ws-fz__dot ws-fz__dot--on' : 'ws-fz__dot'}/>; })}
+        <circle cx={kx} cy={ky} r="12" className="ws-fz__knob"/>
+        <text x={fzPt(0)[0]} y="134" textAnchor="middle" className="ws-fz__end">{ends[0]}</text>
+        <text x={fzPt(1)[0]} y="134" textAnchor="middle" className="ws-fz__end">{ends[1]}</text>
+        <text x="100" y="96" textAnchor="middle" className="ws-fz__big">{big}</text>
+        <text x="100" y="116" textAnchor="middle" className="ws-fz__small">{small}</text>
+      </svg>
+    </div>
+  );
+}
+
+function BudgetFilter({ products, budget, people, onBudget, onPeople, open, onToggle }) {
+  const { t } = wsUseT();
+  const prices = products.map((p) => Number(p.price)).filter((v) => isFinite(v) && v > 0);
+  if (prices.length < 2) return null;
+  const lo = Math.max(1, Math.floor(Math.min(...prices)));
+  let hi = Math.ceil(Math.max(...prices) / 10) * 10;
+  if (hi <= lo) hi = lo + 10;
+  const free = budget == null || budget >= hi;
+  const b = free ? hi : Math.max(lo, budget);
+  const u = (v) => Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+  const kept = free ? prices.length : prices.filter((v) => v <= b).length;
+  const above = prices.length - kept;
+  const pp = b / people;
+  const peopleTxt = people >= FZ_PEOPLE_MAX ? `${FZ_PEOPLE_MAX}+` : String(people);
+  return (
+    <section className={`ws-fz${open ? '' : ' ws-fz--closed'}`} aria-label={t('fz.title')}>
+      <button type="button" className="ws-fz__head" aria-expanded={open} onClick={onToggle}>
+        <span className="ws-fz__title">{t('fz.title')}</span>
+        {!open && !free && <span className="ws-fz__sum">{t('fz.budget.upTo', { v: fzEur(b) })} · {t('fz.people.value', { n: peopleTxt })}</span>}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={open ? 'M6 15l6-6 6 6' : 'M6 9l6 6 6-6'}/></svg>
+      </button>
+      {open && (<>
+        <div className="ws-fz__cards">
+          <div className="ws-fz__card">
+            <FzGauge t={(people - 1) / (FZ_PEOPLE_MAX - 1)} big={peopleTxt} small={t('fz.people.short')} ends={['1', `${FZ_PEOPLE_MAX}+`]} ticks={FZ_PEOPLE_MAX - 1}
+                     label={t('fz.people.aria')} valueText={t('fz.people.value', { n: peopleTxt })}
+                     min={1} max={FZ_PEOPLE_MAX} value={people} onValue={onPeople}/>
+            <div className="ws-fz__l">{t('fz.people.label')}</div>
+            <div className="ws-fz__v">{t('fz.people.value', { n: peopleTxt })}</div>
+            <div className="ws-fz__h">{free ? t('fz.people.hintFree') : t('fz.people.hint', { pp: fzEur(pp) })}</div>
+          </div>
+          <div className="ws-fz__card">
+            <FzGauge t={u(b)} big={free ? t('fz.budget.freeShort') : fzEur(b)} small={free ? t('fz.budget.free') : t('fz.budget.perPers', { pp: fzEur(pp) })}
+                     ends={[fzEur(lo), fzEur(hi)]} dots={prices.map((v) => [u(v), free || v <= b])}
+                     label={t('fz.budget.aria')} valueText={free ? t('fz.budget.free') : t('fz.budget.upTo', { v: fzEur(b) })}
+                     min={lo} max={hi} value={b} onValue={(v) => onBudget(v >= hi ? null : v)}/>
+            <div className="ws-fz__l">{t('fz.budget.label')}</div>
+            <div className="ws-fz__v">{free ? t('fz.budget.free') : t('fz.budget.upTo', { v: fzEur(b) })}</div>
+            <div className="ws-fz__leg">
+              <span><i className="on"/>{t('fz.kept', { count: kept })}</span>
+              <span><i/>{t('fz.above', { count: above })}</span>
+            </div>
+          </div>
+        </div>
+        <div className="ws-fz__res">
+          <span>{free ? t('fz.resFree', { count: kept }) : t('fz.res', { count: kept, v: fzEur(b), pp: fzEur(pp), n: peopleTxt })}</span>
+          {(!free || people !== FZ_PEOPLE_DEFAULT) && <button type="button" onClick={() => { onBudget(null); onPeople(FZ_PEOPLE_DEFAULT); }}>{t('fz.reset')}</button>}
+        </div>
+      </>)}
+    </section>
+  );
+}
+const FZ_PEOPLE_DEFAULT = 6;
+
 function CategoryCover({ cats, seasons, products, onPick, onPickSeason, onAll, accent }) {
   const { t, tCategory } = wsUseT();
   const inCat = (p, c) => String(p.cat_id) === String(c.id) || p.cat === c.id;
@@ -5375,6 +5495,12 @@ function ShopFrame({ variant }) {
   // illustrées ; « Tout » dans la barre ou « Voir tout le catalogue » donne
   // la grille complète ; le retour aux catégories rend la page de garde.
   const [allGrid, setAllGrid] = useState(() => { try { return new URLSearchParams(window.location.search).get('tout') === '1'; } catch (_) { return false; } });
+  // Filtre « selon mon budget » : budget null = sans limite. L'état replié se
+  // retient sur cet appareil (confort de lecture, rien de plus).
+  const [fzBudget, setFzBudget] = useState(null);
+  const [fzPeople, setFzPeople] = useState(FZ_PEOPLE_DEFAULT);
+  const [fzOpen, setFzOpen] = useState(() => { try { return localStorage.getItem('ws_fz_closed') !== '1'; } catch (_) { return true; } });
+  const toggleFz = () => setFzOpen((o) => { try { localStorage.setItem('ws_fz_closed', o ? '1' : '0'); } catch (_) {} return !o; });
   const [basket, setBasket] = useState([]);
   const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
   // Voucher state : may be pre-filled by deep link
@@ -6413,6 +6539,10 @@ function ShopFrame({ variant }) {
   // PRIX MASQUÉS (0113) : le bureau du client l'impose ; le prix reste résolu
   // et facturé serveur, seul l'affichage disparaît (classe sur la racine).
   const hidePrices = !!(user && user.office && user.office.showPrices === false);
+  // Le budget ne masque que ce qui a un prix ET le dépasse ; sans prix
+  // affichés (bureau qui les cache), pas de filtre du tout.
+  const fzShown = (hidePrices || fzBudget == null) ? products
+    : products.filter((p) => { const v = Number(p.price); return !(isFinite(v) && v > 0 && v > fzBudget); });
   return (
     <div className={`ws ws--${variant}${hidePrices ? ' ws-noprice' : ''}`} data-mode={mode}>
       <Nav shop={shop} mode={mode} onMode={handleMode} onSwitchShop={() => setSwitcherOpen(true)}
@@ -6461,15 +6591,25 @@ function ShopFrame({ variant }) {
             <CategoryCover cats={navCats} seasons={seasonChips} products={slotFiltered}
                            onPick={selectCat} onPickSeason={(id) => selectCat(`season:${id}`)} onAll={() => { setAllGrid(true); syncCatUrl('all', null, true, true); }}
                            accent={mode === 'delivery' ? '#c17a2a' : 'var(--color-primary)'}/>
-          ) : (
+          ) : (<>
+          {!hidePrices && (
+            <BudgetFilter products={products} budget={fzBudget} people={fzPeople}
+                          onBudget={setFzBudget} onPeople={setFzPeople} open={fzOpen} onToggle={toggleFz}/>
+          )}
           <div className="ws-grid">
-            {products.map((p) => {
+            {fzShown.length === 0 && products.length > 0 && (
+              <div className="ws-fz__none">
+                <span>{t('fz.none')}</span>
+                <button type="button" className="ws-linkbtn" onClick={() => setFzBudget(null)}>{t('fz.budget.free')}</button>
+              </div>
+            )}
+            {fzShown.map((p) => {
               const bqty = basket.filter((l) => l.productId === p.id).reduce((t, l) => t + l.qty, 0);
               const stock = productStock[p.id] || null;
               return <ProductCard key={p.id} p={p} onAdd={handleAdd} onOpen={openProductDetail} mode={mode} basketQty={bqty} stock={stock} platsBadge={mode === 'delivery' && selectedSlot === 'soir' && p.cat === 'plats'}/>;
             })}
           </div>
-          )}
+          </>)}
         </main>
 
         <button
