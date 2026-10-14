@@ -6307,6 +6307,22 @@ function ShopFrame({ variant }) {
     }
     setDetailProduct(p);
   }, []);
+  /* LIEN DIRECT VERS UNE FICHE (?product=ID&open=product). parseDeepLink lisait
+     ces deux paramètres sans que rien ne s'en serve : un lien publié sur
+     Facebook ou Instagram (module Social & Ads) arrivait sur la bonne boutique
+     mais laissait le client chercher le produit dans la grille. La fiche
+     s'ouvre maintenant une seule fois, dès que le catalogue de la boutique du
+     lien est chargé. Produit absent de ce catalogue (pas vendu ici, hors
+     saison à cette date) : on reste sur la grille, sans erreur. */
+  const deepOpenRef = React.useRef(_deep.openProduct ? { id: String(_deep.openProduct), shop: _deep.shopId != null ? String(_deep.shopId) : null } : null);
+  React.useEffect(() => {
+    const want = deepOpenRef.current;
+    if (!want || !allProducts.length) return;
+    if (want.shop && String(shopId) !== want.shop) return;   // attendre le catalogue de la boutique du lien
+    deepOpenRef.current = null;
+    const p = allProducts.find((x) => String(x.id) === want.id);
+    if (p) openProductDetail(p);
+  }, [allProducts, shopId, openProductDetail]);
   function handleAddConfigured(line) {
     const product = allProducts.find((p) => p.id === line.productId);
     // Même rattachement ligne ↔ réservation que dans handleAdd : sans lui, les
