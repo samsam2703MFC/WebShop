@@ -773,6 +773,10 @@ function dispatch($m, $p) {
       // ws_param sans redéploiement.
       'categoryNavAllIcon'     => ws_param('category_nav_all_icon',  '/webshop/assets/all.png'),
       'categoryNavBackIcon'    => ws_param('category_nav_back_icon', '/webshop/assets/back.png'),
+      // Identifiant de mesure Google Analytics 4 (ws_param.ga4_measurement_id, « G-… ») : le
+      // webshop ne charge GA4 qu'après accord au bandeau de consentement. Vide ou mal formé : null,
+      // et rien n'est chargé.
+      'ga4MeasurementId'       => preg_match('/^G-[A-Z0-9]{4,20}$/', $ga4 = trim((string) ws_param('ga4_measurement_id', ''))) ? $ga4 : null,
     ]);
   }
 

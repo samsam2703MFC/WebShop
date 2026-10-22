@@ -85,6 +85,14 @@
                 </button>
               </li>
             ))}
+            {/* Les choix de cookies se rouvrent ici, toujours accessibles (webshop-consent.jsx). */}
+            {window.WSConsent && (
+              <li className="ws-langchip__sep">
+                <button type="button" className="ws-langchip__opt" onClick={() => { setOpen(false); window.WSConsent.open(); }}>
+                  <span className="ws-langchip__optname">{t('consent.manage')}</span>
+                </button>
+              </li>
+            )}
           </ul>
         )}
       </div>

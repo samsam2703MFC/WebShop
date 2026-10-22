@@ -42,5 +42,6 @@ import '../api-config.js';
 
 // React components + the main app (mounts on import).
 import '../webshop-i18n-react.jsx';
+import '../webshop-consent.jsx';     // consentement (Consent Mode v2) + suivi GA4 : avant l'application
 import '../webshop-allergens.jsx';
 import '../webshop-full-bundle.jsx';
