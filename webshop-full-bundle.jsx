@@ -63,15 +63,25 @@ document.addEventListener('click', (e) => {
 /* ── SUIVI MARKETING : un seul point d'envoi vers Google Tag Manager.
    Le conteneur (index.html) ne mesure rien par lui-même ; c'est l'application
    qui pousse les faits métier dans dataLayer, et l'agence configure ses
-   balises dessus sans toucher au code. Rien n'est envoyé si dataLayer
-   n'existe pas (page servie sans le conteneur, bloqueur) : jamais d'erreur
-   côté client pour du suivi. Un achat = un événement « purchase » au
-   vocabulaire Google Ads / GA4 : transaction_id, value, currency. */
-function wsTrack(event, data) {
+   balises dessus sans toucher au code. Un achat = un événement « purchase »
+   au vocabulaire Google Ads / GA4 : transaction_id, value, currency, à plat
+   comme avant. `ecommerce` (articles, boutique) part en plus, au format GA4,
+   via window.WSConsent (webshop-consent.jsx), qui respecte le consentement.
+   Jamais d'erreur côté client pour du suivi. */
+function wsTrack(event, data, ecommerce) {
   try {
+    if (window.WSConsent) { window.WSConsent.track(event, data, ecommerce); return; }
     if (!Array.isArray(window.dataLayer)) return;
     window.dataLayer.push(Object.assign({ event: event }, data || {}));
   } catch (_) { /* le suivi ne casse jamais l'achat */ }
+}
+/* Lignes de panier → articles GA4 (item_id, item_name, price, quantity…). */
+function wsArticles(lines) {
+  const conv = window.WSConsent && window.WSConsent.article;
+  return (lines || []).map((l) => (conv ? conv(l) : { item_id: String(l.productId), item_name: l.name, price: Number(l.price) || 0, quantity: Number(l.qty) || 1 }));
+}
+function wsMontant(lines) {
+  return Math.round((lines || []).reduce((s, l) => s + (Number(l.price) || 0) * (Number(l.qty) || 1), 0) * 100) / 100;
 }
 
 function wsTap(fn, opts) {
@@ -4441,6 +4451,9 @@ function CheckoutWizard({ open, onClose, shop, mode, basket, user, onLogin, onPl
           sessionStorage.setItem('ws.pendingPay', JSON.stringify({
             orderId: result.orderId,
             orderRef: result.orderRef || '',
+            // Pour l'événement « purchase » du retour de paiement (articles, boutique, bon).
+            items: wsArticles(basket), shopName: (shop && shop.name) || '',
+            coupon: (voucherApplied && voucherApplied.voucher && voucherApplied.voucher.code) || '',
             slot: (typeof slot === 'object' && slot) ? slot.label : slot,
             paymentLabel: (paymentMethods.find((x) => x.id === payment) || {}).label || payment,
             total: (typeof result.total === 'number') ? result.total : total,
@@ -5868,6 +5881,7 @@ function ShopFrame({ variant }) {
 
   function handleCheckout() {
     if (!basket.length) return;
+    wsTrack('begin_checkout', null, { currency: 'EUR', value: wsMontant(basket), items: wsArticles(basket) });
     setCheckoutOpen(true);
   }
   function handlePlaced(payload) {
@@ -5877,7 +5891,10 @@ function ShopFrame({ variant }) {
        même vocabulaire que le retour Stripe, pour que Google Ads compte les
        deux chemins de la même façon. */
     wsTrack('purchase', { transaction_id: payload.orderRef || '', value: Number(payload.total) || 0,
-                          currency: 'EUR', payment: payload.paymentLabel || 'autre' });
+                          currency: 'EUR', payment: payload.paymentLabel || 'autre' },
+            { transaction_id: payload.orderRef || '', value: Number(payload.total) || 0, currency: 'EUR',
+              affiliation: (shop && shop.name) || '', items: wsArticles(basket),
+              ...(voucherApplied && voucherApplied.voucher && voucherApplied.voucher.code ? { coupon: voucherApplied.voucher.code } : {}) });
     setOrderToast({ ...payload, ts: Date.now() });
     setBasket([]);
     stockReleaseAll(); // reservations converted to qty_sold by the order endpoint
@@ -6003,6 +6020,8 @@ function ShopFrame({ variant }) {
     let alive = true;
     if (window.WSAuth && typeof window.WSAuth.config === 'function') {
       window.WSAuth.config().then((c) => {
+        // L'identifiant GA4 (ws_param.ga4_measurement_id) : chargé seulement après accord.
+        if (window.WSConsent && c) window.WSConsent.setConfig(c);
         if (alive && c) setNavIcons({ all: c.categoryNavAllIcon || null, back: c.categoryNavBackIcon || null });
       }).catch(() => {});
     }
@@ -6148,7 +6167,10 @@ function ShopFrame({ variant }) {
          voir. transaction_id = la référence de commande, pour que deux
          rechargements de la page de retour ne comptent qu'un achat. */
       wsTrack('purchase', { transaction_id: pend.orderRef || String(pend.orderId || ''),
-                            value: Number(pend.total), currency: 'EUR', payment: 'stripe' });
+                            value: Number(pend.total), currency: 'EUR', payment: 'stripe' },
+              { transaction_id: pend.orderRef || String(pend.orderId || ''), value: Number(pend.total), currency: 'EUR',
+                affiliation: pend.shopName || '', items: Array.isArray(pend.items) ? pend.items : [],
+                ...(pend.coupon ? { coupon: pend.coupon } : {}) });
       setOrderToast({ orderRef: pend.orderRef, slot: pend.slot,
                       paymentLabel: pend.paymentLabel, total: Number(pend.total), ts: Date.now() });
       setTimeout(() => setOrderToast(null), 6500);
@@ -6239,15 +6261,17 @@ function ShopFrame({ variant }) {
 
   function handleAdd(p, portion) {
     const lineId = Date.now();
-    setBasket((b) => [...b, {
+    const ligne = {
       line: lineId, productId: p.id,
       name: p.name + (portion === 'demi' ? ', 1/2' : portion === 'quart' ? ', 1/4' : ''),
       qty: 1, price: p.price, options: [],
       portion: portion || null, cat: p.cat, crossPortion: !!p.crossPortion,
       lead_time: p.lead_time || 0, no_delivery: !!p.no_delivery,
       available_slots: Array.isArray(p.available_slots) ? p.available_slots : null,
-    }]);
+    };
+    setBasket((b) => [...b, ligne]);
     stockReserve(p.id, 1, lineId);
+    wsTrack('add_to_cart', null, { currency: 'EUR', value: wsMontant([ligne]), items: wsArticles([ligne]) });
   }
 
   // Configurable-product detail
@@ -6291,6 +6315,8 @@ function ShopFrame({ variant }) {
   }, []);
   const openProductDetail = React.useCallback((p) => {
     if (!p) return;
+    wsTrack('view_item', null, { currency: 'EUR', value: Number(p.price) || 0,
+      items: wsArticles([{ productId: p.id, name: p.name, price: p.price, qty: 1, cat: p.cat }]) });
     if (p.has_menu_options && !p.available_bundles &&
         window.WSCatalog && typeof window.WSCatalog.listBundles === 'function') {
       const cached = bundleCache.current[p.id];
@@ -6307,6 +6333,22 @@ function ShopFrame({ variant }) {
     }
     setDetailProduct(p);
   }, []);
+  /* LIEN DIRECT VERS UNE FICHE (?product=ID&open=product). parseDeepLink lisait
+     ces deux paramètres sans que rien ne s'en serve : un lien publié sur
+     Facebook ou Instagram (module Social & Ads) arrivait sur la bonne boutique
+     mais laissait le client chercher le produit dans la grille. La fiche
+     s'ouvre maintenant une seule fois, dès que le catalogue de la boutique du
+     lien est chargé. Produit absent de ce catalogue (pas vendu ici, hors
+     saison à cette date) : on reste sur la grille, sans erreur. */
+  const deepOpenRef = React.useRef(_deep.openProduct ? { id: String(_deep.openProduct), shop: _deep.shopId != null ? String(_deep.shopId) : null } : null);
+  React.useEffect(() => {
+    const want = deepOpenRef.current;
+    if (!want || !allProducts.length) return;
+    if (want.shop && String(shopId) !== want.shop) return;   // attendre le catalogue de la boutique du lien
+    deepOpenRef.current = null;
+    const p = allProducts.find((x) => String(x.id) === want.id);
+    if (p) openProductDetail(p);
+  }, [allProducts, shopId, openProductDetail]);
   function handleAddConfigured(line) {
     const product = allProducts.find((p) => p.id === line.productId);
     // Même rattachement ligne ↔ réservation que dans handleAdd : sans lui, les
@@ -6321,6 +6363,7 @@ function ShopFrame({ variant }) {
       no_delivery: line.no_delivery ?? !!product?.no_delivery,
     }]);
     stockReserve(line.productId, line.qty || 1, lineId);
+    wsTrack('add_to_cart', null, { currency: 'EUR', value: wsMontant([line]), items: wsArticles([line]) });
   }
 
   /* Heure de RETRAIT du créneau choisi, décision validée : c'est elle que les
@@ -6766,6 +6809,8 @@ function ShopFrame({ variant }) {
             style={{ marginLeft: 'auto', background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', font: '600 13px var(--font-ui)' }}>{t('common.close2')}</button>
         </div>
       )}
+      {/* Bandeau de consentement (webshop-consent.jsx) : tant qu'aucun choix n'est fait. */}
+      {window.WSConsentBanner ? React.createElement(window.WSConsentBanner) : null}
       {orderToast && (
         <div className="ws-toast" role="status">
           <span className="ws-toast__check"><Pict d={<path d="M5 12l4 4 10-10"/>} s={14}/></span>

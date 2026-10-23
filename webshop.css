@@ -4228,3 +4228,35 @@
   .ws-fz__h,.ws-fz__leg{font-size:10.5px}
   .ws-fz__res{padding:10px 14px;font-size:11.5px}
 }
+
+/* =====================================================================
+   Bandeau de consentement (webshop-consent.jsx) : en bas de l'écran, au-dessus
+   du contenu mais sous les modales ; trois boutons de même poids.
+   ===================================================================== */
+.ws-consent {
+  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+  width: min(720px, calc(100% - 32px)); box-sizing: border-box;
+  background: var(--color-surface, #fff); color: var(--color-text, #222);
+  border: 1px solid var(--color-border-tertiary, rgba(20,14,10,.08));
+  border-radius: 16px; padding: 16px 18px;
+  box-shadow: 0 16px 40px -12px rgba(20,14,10,.28);
+  z-index: 250; display: flex; flex-direction: column; gap: 12px;
+  font: 400 13px/1.5 var(--font-ui, system-ui);
+}
+.ws-consent__title { display: block; font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.ws-consent__text p { margin: 0; color: var(--color-text-muted, #555); }
+.ws-consent__choices { display: flex; flex-direction: column; gap: 8px; }
+.ws-consent__choice { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.ws-consent__choice input { margin-top: 3px; accent-color: var(--color-primary, #8D1D2C); }
+.ws-consent__choice span { display: flex; flex-direction: column; }
+.ws-consent__choice small { color: var(--color-text-muted, #666); font-size: 12px; }
+.ws-consent__actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ws-consent__btn {
+  min-height: 40px; padding: 0 12px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--color-primary, #8D1D2C); background: transparent;
+  color: var(--color-primary, #8D1D2C); font: 600 13px var(--font-ui, system-ui);
+}
+.ws-consent__btn--main { background: var(--color-primary, #8D1D2C); color: #fff; }
+@media (max-width: 520px) {
+  .ws-consent { bottom: 0; width: 100%; border-radius: 16px 16px 0 0; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+}

@@ -3,6 +3,23 @@
 <head>
 <meta charset="utf-8">
 <title>L'Atelier By · Webshop</title>
+<!-- Consentement (Consent Mode v2) — AVANT le conteneur : tant que la personne
+     n'a pas choisi, aucune balise Google ne dépose de cookie (mesure ni
+     publicité). Le choix gardé dans ce navigateur (ws.consent, posé par le
+     bandeau de webshop-consent.jsx) est rejoué ici, avant que GTM ne démarre. -->
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('consent', 'default', { ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'denied', wait_for_update: 500 });
+gtag('set', 'ads_data_redaction', true);
+try {
+  var wsC = JSON.parse(localStorage.getItem('ws.consent') || 'null');
+  if (wsC && wsC.v === 1) {
+    var wsP = wsC.pub ? 'granted' : 'denied';
+    gtag('consent', 'update', { analytics_storage: wsC.mesure ? 'granted' : 'denied', ad_storage: wsP, ad_user_data: wsP, ad_personalization: wsP });
+  }
+} catch (e) {}
+</script>
 <!-- Google Tag Manager — GTM-53D3FLG5, le conteneur déjà posé sur la landing
      B2B. Il n'était pas sur le webshop : la campagne Google Ads y envoyait des
      visiteurs sans qu'aucune balise ne puisse les voir (constaté par l'agence
