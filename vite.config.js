@@ -34,6 +34,12 @@ export default defineConfig({
           { src: 'pwa-512.png', sizes: '512x512', type: 'image/png' },
           { src: 'pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
+        // Raccourci de l'app installée (appui long sur l'icône) : la carte de
+        // fidélité à scanner en caisse, ouverte directement (?open=loyalty).
+        shortcuts: [
+          { name: 'Ma carte de fidélité', short_name: 'Fidélité', url: base + '?open=loyalty',
+            icons: [{ src: 'pwa-192.png', sizes: '192x192', type: 'image/png' }] },
+        ],
       },
       // FRAÎCHEUR GARANTIE. Un service worker qui précache la coquille HTML a
       // re-servi en production une version PÉRIMÉE du webshop (l'ancien bundle

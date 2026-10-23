@@ -48,6 +48,8 @@ These files contain business logic, API integration, and seed data.
 | `webshop-vies.jsx` | `window.WSVies` — VAT number lookup |
 | `webshop-i18n.jsx` | `window.WSI18n` — translations (fr/nl/en/de) |
 | `webshop-delivery-fees-api.jsx` | `window.WSDeliveryFees` — delivery fee resolution per site/office/tour/shop |
+| `webshop-loyalty-api.jsx` | `window.WSLoyalty` — loyalty app data (points, stamp cards, rewards) + claim |
+| `webshop-instore-api.jsx` | `window.WSInstore` — in-store basket « scan & go » (create, status, cancel) |
 | `api-config.js` | Sets `BASE_URL` to activate live HTTP endpoints |
 
 ### 🟡 MERGE carefully — React logic + visual components
@@ -70,6 +72,12 @@ while preserving the logic sections listed below.
 - `AccountModal` props: `office`, `tour` — passed from ShopFrame async state
 - `CheckoutWizard` props: `office`, `tour` — passed from ShopFrame async state
 - Seed constants (`W_PRODUCTS`, `W_SHOPS`, etc.) and `window._CATALOG_SEED` exposure
+- Loyalty: `useLoyalty(user, shopId)` in `ShopFrame` (single source for the header chip,
+  the 3rd mobile tab, `LoyaltyDrawer` and `AccountModal`'s `loyalty` prop) and the
+  `?open=loyalty` deep link — see `FIDELITE_WEBSHOP.md`
+- In-store basket: `instoreCta` gating (collect mode + today + prices shown +
+  `instoreBasketEnabled` from `/config`), `Basket` prop `instore`, `InstoreBasketModal`
+  status polling and `onPaid` (empties the basket) — see `SCAN_CAISSE.md`
 
 ### 🟢 FREE to redesign — Pure visual files
 
@@ -84,6 +92,7 @@ Replace or regenerate these freely. They contain only styling and markup.
 | `webshop-allergens.css` | Allergen icon styles |
 | `webshop-i18n-react.jsx` | `<LangChip>` / `<LangMenu>` visual components |
 | `webshop-allergens.jsx` | `<AllergensModal>` visual component |
+| `webshop-loyalty.css` | Loyalty screen, drawer, header chip, in-store basket modal |
 
 ---
 
@@ -123,6 +132,8 @@ window.WSTours.endpoint     = BASE_URL + '/tours';
 window.WSOrders.endpoint    = BASE_URL + '/orders';
 window.WSBrand.endpoint         = BASE_URL + '/brand';
 window.WSAvailability.endpoint  = BASE_URL + '/availability';
+window.WSLoyalty.endpoint       = BASE_URL + '/auth/loyalty';
+window.WSInstore.endpoint       = BASE_URL + '/instore/baskets';
 ```
 
 All stubs automatically switch from seed data to live HTTP. No other changes needed.

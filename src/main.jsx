@@ -10,6 +10,7 @@ import '../webshop-detail.css';
 import '../webshop-i18n.css';
 import '../webshop-profile-extras.css';
 import '../webshop-allergens.css';
+import '../webshop-loyalty.css';
 
 // Bandeau d'erreur : EN PREMIER : il doit pouvoir signaler l'échec de
 // n'importe quel import qui suit, y compris celui qui monte l'application.
@@ -35,6 +36,8 @@ import '../webshop-tours-api.jsx';
 import '../webshop-orders-api.jsx';
 import '../webshop-companies-api.jsx';
 import '../webshop-payments-api.jsx';
+import '../webshop-loyalty-api.jsx';     // fidélité de l'app (points, tampons, récompenses)
+import '../webshop-instore-api.jsx';     // panier caisse « scan & go »
 import '../qr.jsx';                    // encodeur QR (window.QR) : modale fidélité
 
 // Central config (sets endpoints from BASE_URL).

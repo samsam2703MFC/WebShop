@@ -1547,3 +1547,32 @@ Brand-level configuration of the PWA's **product loyalty cards** (stamp cards: "
 | GET | `/franchisor/loyalty-cards` | `{cards[], config, cafeCategories[], shops[], pwaBase}` — every card (all shops, active or not) with a read-only `usage` (`stamps` in progress, `clients`) and `ready` (rewards waiting); `config` = `euros_per_point`, `voucher_points`, `voucher_value`, `voucher_label`, `voucher_editable`; `cafeCategories` = `pwa_cafe_categories` codes; `shops` for the scope selector; `pwaBase` = `ws_param pwa_url` (image previews). |
 | POST | `/franchisor/loyalty-card` | Create (`id` 0) or update a card: `card_code` (slug, unique; derived from `name` when empty), `name`, `img` (image path on the PWA side), `color_tint` / `color_fill` / `color_accent` (`#RRGGBB`), `stamps_required` (1–50), `reward_label`, `reward_validity_days` (0 = no expiry), `match_keywords` (CSV), `cafe_cat_codes` (CSV), `shop_id` (null = whole network), `active`, `sort_order`. `{id, delete:true}` deletes a card that carries **no** stamp yet (409 otherwise: deactivate it instead). |
 | POST | `/franchisor/loyalty-config` | `{euros_per_point, voucher_points, voucher_value, voucher_label}` — the earn ratio and the voucher gauge (501 until migration 025 adds the `voucher_*` columns). |
+
+## Customer loyalty — `/auth/loyalty`
+
+The loyalty app's screen, served to the webshop (PWA and desktop). Same tables
+and same rules as the loyalty app (`latelier-by-pwa`, docs/LOYALTY.md) — see
+`php-api/loyalty.php` and [`FIDELITE_WEBSHOP.md`](FIDELITE_WEBSHOP.md).
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/auth/loyalty?shopId=` | Bearer required. `{enabled:false}` when the loyalty app schema is absent. Otherwise `{enabled, member{code,name,tier,perk,nextTier,visits,visitsTarget,visitsRemaining,period}, appUrl, points{balance,progress,voucherPoints,voucherValue,remaining,pct,eurosPerPoint,vouchersAvailable,affordableCount,nextReward}, today[], rules[], cards[], vouchers[], catalog[]}` — same shape as the app's `bootstrap.loyaltyCards`. Syncs the stamp book from tickets (idempotent) before answering. |
+| POST | `/auth/loyalty/claim` | `{catalogId, shopId}` — exchanges points for a catalogue reward (never below zero; 400 with the missing points otherwise; 501 before migration 028). Returns the refreshed payload + `rewardId`. Rate-limited 10/min per client. |
+
+## In-store basket ("scan & go") — `/instore`, `/pos/instore`
+
+Basket composed on the phone, scanned at the till, paid by the customer at the
+terminal (auto-payment). Full till contract: [`SCAN_CAISSE.md`](SCAN_CAISSE.md).
+
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| POST | `/instore/baskets` | optional Bearer (links loyalty) | `{shopId, basket[]}` (same line shape as `POST /orders`). Prices resolved server-side for today; 409 with the product name otherwise. 201 → `{code:"PC-XXXXXX", token, status:"open", total, lines[], expiresAt, pointsEstimate, loyaltyLinked}` |
+| GET | `/instore/baskets/:code?token=` | creator token | status polling |
+| DELETE | `/instore/baskets/:code?token=` | creator token | cancel (409 once the till has it) |
+| GET | `/pos/instore/:code` | `X-Device-Token` | lines, total, `client{code,name}` |
+| POST | `/pos/instore/:code/claim` | `X-Device-Token` | `{till?}` → `at_till` (exclusive, idempotent for the same till) |
+| POST | `/pos/instore/:code/release` | `X-Device-Token` | back to `open` (payment refused) |
+| POST | `/pos/instore/:code/paid` | `X-Device-Token` | `{amount, method, ticketNo, posRef, till}` → `paid` (idempotent) |
+
+`GET /config` exposes `instoreBasketEnabled` (false until migration 0134, or with
+`ws_param.instore_basket_enabled = '0'`).

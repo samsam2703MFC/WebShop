@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Caisse de test — panier caisse</title>
+<link rel="icon" href="favicon-32.png" sizes="32x32">
+<!--
+  PAGE DE TEST — la caisse du « panier caisse » (scan & go), pour essayer le
+  parcours de bout en bout AVANT que le logiciel de caisse ne l'intègre.
+  Elle appelle la VRAIE API (/api/pos/instore/…), avec le jeton d'appareil de
+  la boutique (ws_shop_device_token, le même que la tablette Kitchen) :
+    1. scan du QR du client (douchette = clavier, ou caméra) ou code tapé ;
+    2. le panier est PRIS aussitôt (claim) : il arrive « dans la caisse » ;
+    3. AUTO-PAIEMENT : le montant part au terminal ; ici, deux boutons simulent
+       la réponse du terminal (accepté → paid avec un n° de ticket fictif
+       marqué TEST, refusé → release, le panier redevient scannable).
+  Le téléphone du client suit le statut en direct. Rien n'est encaissé : c'est
+  une page d'essai, le ticket porte le préfixe TEST.
+  Le contrat complet pour l'éditeur de caisse : SCAN_CAISSE.md.
+-->
+<style>
+@font-face{font-family:Gotham;src:url('fonts/Gotham_Book.otf') format('opentype');font-weight:400}
+@font-face{font-family:Gotham;src:url('fonts/Gotham_Medium.otf') format('opentype');font-weight:600}
+:root{--p:#8D1D2C;--blue:#2463B5;--ok:#1f7a3f;--bg:#EAE4DC;--sur:#fff;--t:#222;--m:#666;--bd:#e5ddd3}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);font-family:Gotham,system-ui,sans-serif;color:var(--t);padding:22px 16px 40px}
+h1{font:600 14px Gotham;margin:0 0 4px;color:var(--m);letter-spacing:.04em;text-transform:uppercase}
+.sub{font-size:12px;color:var(--m);margin:0 0 16px;max-width:820px;line-height:1.5}
+.wrap{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:18px;max-width:1100px}
+@media (max-width:820px){.wrap{grid-template-columns:1fr}}
+.card{background:var(--sur);border:.5px solid var(--bd);border-radius:14px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,.05)}
+.card h2{font:600 11px Gotham;letter-spacing:.1em;text-transform:uppercase;color:var(--m);margin:0 0 10px}
+label{display:block;font-size:11.5px;color:var(--m);margin:10px 0 4px}
+input{width:100%;font:600 15px Gotham;padding:11px 12px;border:1px solid var(--bd);border-radius:10px;background:#fbf9f6;color:var(--t)}
+input#code{font-size:22px;letter-spacing:.14em;text-transform:uppercase;text-align:center}
+button{font:600 13px Gotham;border:0;border-radius:10px;padding:11px 14px;cursor:pointer}
+.row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.row button{flex:1}
+.b-blue{background:var(--blue);color:#fff}.b-ok{background:var(--ok);color:#fff}.b-ko{background:#f3e3e3;color:#8a1f1f}.b-soft{background:#efeae2;color:var(--t)}
+video{width:100%;border-radius:10px;background:#111;margin-top:10px;display:none}
+.msg{margin-top:10px;font-size:12.5px;line-height:1.45;padding:9px 12px;border-radius:10px;display:none}
+.msg.on{display:block}.msg.err{background:#fdeceb;color:#8a1f1f}.msg.inf{background:#EEF4FC;color:#1d3d66}
+.empty{color:var(--m);font-size:13px;padding:30px 0;text-align:center}
+.head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
+.code{font:600 20px Gotham;letter-spacing:.12em}
+.st{font:600 11px Gotham;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:4px 10px;background:#efeae2}
+.st.at_till{background:#FDF0D5;color:#7a4d00}.st.paid{background:#E3F2E8;color:var(--ok)}.st.open{background:#EEF4FC;color:var(--blue)}
+.client{font-size:12.5px;color:var(--m);margin-bottom:10px}.client b{color:var(--t)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td{padding:6px 0;border-bottom:.5px solid #eee;vertical-align:top}
+td.q{width:42px;color:var(--m)}td.r{text-align:right;white-space:nowrap}
+td small{display:block;color:var(--m);font-size:11px}
+.tot{display:flex;justify-content:space-between;align-items:baseline;margin-top:12px}
+.tot .v{font:600 26px Gotham;color:var(--p)}
+.term{margin-top:14px;border-radius:12px;background:#1d2633;color:#fff;padding:16px;text-align:center}
+.term .amt{font:600 30px Gotham;margin:6px 0}
+.term .lbl{font-size:12px;opacity:.75}
+.pulse{display:inline-block;width:9px;height:9px;border-radius:50%;background:#E09B2D;margin-right:6px;animation:p 1.2s infinite}
+@keyframes p{50%{opacity:.3;transform:scale(1.5)}}
+.done{margin-top:14px;padding:14px;border-radius:12px;background:#E3F2E8;color:var(--ok);font-weight:600;text-align:center}
+</style>
+</head>
+<body>
+<h1>Caisse de test · panier caisse</h1>
+<p class="sub">Scannez le QR affiché par le webshop (bouton <b>« Je suis en boutique · payer à la caisse »</b> du panier). Le panier arrive dans cette caisse et passe aussitôt en <b>auto-paiement</b> : le montant part au terminal, le client règle seul. Ici le terminal est simulé : <b>aucun encaissement réel</b>, ticket préfixé TEST.</p>
+<div class="wrap">
+  <div class="card">
+    <h2>Caisse</h2>
+    <label for="tok">Jeton d'appareil de la boutique (Kitchen / back-office franchisé)</label>
+    <input id="tok" type="password" autocomplete="off" placeholder="jeton d'appareil">
+    <label for="till">Nom de la caisse</label>
+    <input id="till" type="text" value="caisse 1">
+    <label for="code">Code du panier (douchette ou clavier, puis Entrée)</label>
+    <input id="code" type="text" autocomplete="off" placeholder="PC-XXXXXX" autofocus>
+    <div class="row">
+      <button class="b-blue" id="go">Lire le panier</button>
+      <button class="b-soft" id="cam">Scanner (caméra)</button>
+    </div>
+    <video id="vid" playsinline muted></video>
+    <div class="msg" id="msg"></div>
+  </div>
+  <div class="card" id="pane"><div class="empty">Aucun panier lu.</div></div>
+</div>
+<script>
+(function(){
+  var API = new URL('api/', location.href).href;
+  var $ = function(s){ return document.querySelector(s); };
+  var tok = $('#tok'), till = $('#till'), code = $('#code'), pane = $('#pane'), msg = $('#msg');
+  try { tok.value = localStorage.getItem('caisse-test.tok') || ''; till.value = localStorage.getItem('caisse-test.till') || till.value; } catch (e) {}
+  tok.onchange = function(){ try { localStorage.setItem('caisse-test.tok', tok.value.trim()); } catch (e) {} };
+  till.onchange = function(){ try { localStorage.setItem('caisse-test.till', till.value.trim()); } catch (e) {} };
+  var cur = null;
+  var ST = { open: 'en attente', at_till: 'dans la caisse', paid: 'payé', cancelled: 'annulé par le client', expired: 'expiré' };
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function eur(n){ return (Number(n) || 0).toLocaleString('fr-BE', { style: 'currency', currency: 'EUR' }); }
+  function say(t, kind){ msg.textContent = t || ''; msg.className = 'msg' + (t ? ' on ' + (kind || 'err') : ''); }
+  function call(path, method, body){
+    return fetch(API + 'pos/instore/' + path, {
+      method: method || 'GET',
+      headers: { 'Content-Type': 'application/json', 'X-Device-Token': tok.value.trim() },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ if (!r.ok) throw new Error(j.error || ('Erreur ' + r.status)); return j; }); });
+  }
+  function render(b){
+    cur = b;
+    var lines = (b.lines || []).map(function(l){
+      var tot = (l.lineTotal || 0) + (l.children || []).reduce(function(s, c){ return s + (c.lineTotal || 0); }, 0);
+      return '<tr><td class="q">×' + l.qty + '</td><td>' + esc(l.name) + (l.portion ? ' · ' + esc(l.portion) : '') +
+        (l.children || []).map(function(c){ return '<small>' + esc(c.name) + '</small>'; }).join('') +
+        '<small>#' + esc(l.productId) + (l.externalId ? ' · ERP ' + esc(l.externalId) : '') + '</small></td><td class="r">' + eur(tot) + '</td></tr>';
+    }).join('');
+    var stLbl = ST[b.status] || b.status;
+    var html = '<div class="head"><span class="code">' + esc(b.code) + '</span><span class="st ' + esc(b.status) + '">' + esc(stLbl) + '</span></div>' +
+      '<div class="client">' + (b.client ? 'Client fidélité : <b>' + esc(b.client.name) + '</b> · code <b>' + esc(b.client.code || '—') + '</b> (attaché au ticket)' : 'Client non connecté : pas de fidélité') + '</div>' +
+      '<table>' + lines + '</table>' +
+      (b.promo > 0 ? '<div class="tot"><span>Promotion</span><span>−' + eur(b.promo) + '</span></div>' : '') +
+      '<div class="tot"><b>Total</b><span class="v">' + eur(b.total) + '</span></div>';
+    if (b.status === 'at_till') {
+      html += '<div class="term"><div class="lbl"><span class="pulse"></span>AUTO-PAIEMENT · terminal</div><div class="amt">' + eur(b.total) + '</div><div class="lbl">Le client présente sa carte ou son téléphone.</div></div>' +
+        '<div class="row"><button class="b-ok" id="ok">Terminal : paiement accepté</button><button class="b-ko" id="ko">Refusé / abandon</button></div>';
+    } else if (b.status === 'paid') {
+      html += '<div class="done">Payé · ' + eur(b.paidAmount) + (b.ticketNo ? ' · ticket ' + esc(b.ticketNo) : '') + '</div>';
+    }
+    pane.innerHTML = html;
+    var ok = $('#ok'), ko = $('#ko');
+    if (ok) ok.onclick = function(){
+      ok.disabled = true;
+      call(b.code + '/paid', 'POST', { till: till.value.trim(), amount: b.total, method: 'card', ticketNo: 'TEST-' + Date.now().toString().slice(-6) })
+        .then(function(r){ render(r); say('Payé : le téléphone du client affiche la confirmation.', 'inf'); code.value = ''; code.focus(); })
+        .catch(function(e){ ok.disabled = false; say(e.message); });
+    };
+    if (ko) ko.onclick = function(){
+      call(b.code + '/release', 'POST', { till: till.value.trim() })
+        .then(function(r){ render(r); say('Panier rendu : il redevient scannable.', 'inf'); })
+        .catch(function(e){ say(e.message); });
+    };
+  }
+  // Lecture → prise immédiate (le panier « tombe » dans la caisse) → auto-paiement.
+  function lire(raw){
+    var c = String(raw || '').trim();
+    if (!c) return;
+    if (!tok.value.trim()) { say('Saisissez d\'abord le jeton d\'appareil de la boutique.'); return; }
+    say('');
+    call(encodeURIComponent(c))
+      .then(function(b){
+        if (b.status !== 'open' && b.status !== 'at_till') { render(b); say('Panier ' + (ST[b.status] || b.status) + ' : rien à encaisser.'); return; }
+        return call(encodeURIComponent(b.code) + '/claim', 'POST', { till: till.value.trim() }).then(render);
+      })
+      .catch(function(e){ say(e.message); });
+  }
+  $('#go').onclick = function(){ lire(code.value); };
+  code.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); lire(code.value); } });
+  // Caméra : BarcodeDetector (Chrome Android, Chrome/Edge desktop). Sinon : douchette ou saisie.
+  $('#cam').onclick = function(){
+    var vid = $('#vid');
+    if (!('BarcodeDetector' in window) || !navigator.mediaDevices) { say('Ce navigateur ne lit pas les QR par la caméra : utilisez une douchette ou tapez le code.'); return; }
+    var det = new window.BarcodeDetector({ formats: ['qr_code'] });
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(function(stream){
+      vid.srcObject = stream; vid.style.display = 'block'; vid.play();
+      var stop = function(){ stream.getTracks().forEach(function(t){ t.stop(); }); vid.style.display = 'none'; };
+      var tick = function(){
+        det.detect(vid).then(function(r){
+          if (r && r.length) { stop(); code.value = r[0].rawValue; lire(r[0].rawValue); return; }
+          requestAnimationFrame(tick);
+        }).catch(function(){ requestAnimationFrame(tick); });
+      };
+      tick();
+    }).catch(function(){ say('Caméra refusée.'); });
+  };
+})();
+</script>
+</body>
+</html>

@@ -24,6 +24,11 @@ require __DIR__ . '/erp_client_auth.php';
 require __DIR__ . '/sms.php';
 require __DIR__ . '/crm_doc.php';
 require __DIR__ . '/geo_google.php';
+// Fidélité de l'app (points, cartes à tampons, récompenses) montrée dans le
+// webshop, et panier caisse « scan & go » (composé au téléphone, scanné en
+// boutique, payé seul au terminal).
+require __DIR__ . '/loyalty.php';
+require __DIR__ . '/instore.php';
 
 /* CORS */
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -37,7 +42,7 @@ if ($origin && (in_array($origin, $allowed, true) || in_array('*', $allowed, tru
   // inutilisable la surcharge « ?api=… » que api-config.js documente pour
   // les tests. En production les deux sont sur la même origine, d'où un
   // défaut invisible jusqu'à ce qu'on essaie de tester autrement.
-  header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Admin-Token, X-Pin-Token');
+  header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Admin-Token, X-Pin-Token, X-Device-Token');
   header('Access-Control-Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS');
 }
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') { http_response_code(204); exit; }
@@ -751,6 +756,10 @@ function dispatch($m, $p) {
     json_out(['error' => 'Not found', 'path' => $p], 404);
   }
 
+  /* ── Panier caisse : /instore/* (téléphone du client) et /pos/instore/*
+     (caisse, jeton d'appareil). Rend la main si le chemin ne le concerne pas. ── */
+  instore_dispatch($m, $p);
+
   /* ── Health ── */
   if ($m === 'GET' && $p === '/health') { db()->query('SELECT 1'); json_out(['ok' => true]); }
 
@@ -766,6 +775,10 @@ function dispatch($m, $p) {
       // endroit à changer si le domaine bouge. null = non configurée.
       'webshopBaseUrl'         => (($wb = rtrim((string) ws_param('webshop_base_url', ''), '/')) !== '') ? $wb : null,
       'fidelityTabEnabled'     => ws_param('fidelity_tab_enabled', '1') !== '0',
+      // Panier caisse (« payer à la caisse » depuis le panier, jour même, en
+      // retrait) : coupable sans redéploiement (ws_param.instore_basket_enabled
+      // = '0') ; faux tant que la migration 0134 n'est pas passée.
+      'instoreBasketEnabled'   => instore_enabled(),
       'invoiceRequestDeadline' => ws_param('invoice_request_deadline', 'end_of_month'),
       // Nav catégories : icônes des deux touches de première position (Tout /
       // retour). Ce ne sont PAS des lignes de category — juste des références
@@ -4343,6 +4356,27 @@ function dispatch($m, $p) {
     q("INSERT INTO pwa_client_office (client_id, office_id) VALUES (?,?)", [$id, $poid]);
     json_out(['user' => user_payload($id)]);
   }
+  /* ── Fidélité du client connecté (mêmes tables et mêmes règles que l'app
+     fidélité, voir loyalty.php) : carte d'identification, points, cartes à
+     tampons, catalogue de récompenses et récompenses obtenues. { enabled:false }
+     tant que le schéma de l'app n'est pas installé. ── */
+  if ($m === 'GET' && $p === '/auth/loyalty') {
+    $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    $sid = qp('shopId');
+    json_out(loy_payload((int) $id, is_numeric($sid) ? (int) $sid : null));
+  }
+  /* Échange de points contre une récompense du catalogue (deux taps côté
+     écran : Échanger puis Confirmer). Rend la charge fidélité à jour. */
+  if ($m === 'POST' && $p === '/auth/loyalty/claim') {
+    $id = auth_uid(); if (!$id) json_out(['error' => 'Non connecté.'], 401);
+    rate_limit('loyalty-claim|' . $id, 10, 60, true);
+    $b = body();
+    $sid = isset($b['shopId']) && is_numeric($b['shopId']) ? (int) $b['shopId'] : null;
+    $r = loy_claim_reward((int) $id, (int) ($b['catalogId'] ?? 0), $sid);
+    if (!$r['ok']) json_out(['error' => $r['error']], $r['code']);
+    json_out(['ok' => true, 'rewardId' => $r['rewardId']] + loy_payload((int) $id, $sid));
+  }
+
   /* ── Mes achats : liste UNIFIÉE tickets (pwa_purchases) + commandes webshop
      (ws_orders) de l'utilisateur de session, 12 derniers mois, paginée. Chaque
      ligne porte un état dérivé : open (ticket) | requested (facture demandée) |

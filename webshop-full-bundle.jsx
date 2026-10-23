@@ -1827,7 +1827,7 @@ function CrossSell({ shopId, mode, date, time, basket, productIds, placement, on
 }
 
 function Basket({ hidePrices, officeName, shop, mode, basket, onClose, onCheckout, onRemove, onNote, notesEnabled, deliveryFeeResult,
-                  date, slotTime, onCrossAdd }) {
+                  date, slotTime, onCrossAdd, instore }) {
   /* Les totaux affichés sont un APERÇU, calculé par wsTotaux() : miroir exact
      de l'addition du serveur, seule à faire foi. La commande, elle, est
      recalculée serveur depuis les prix ERP : c'est son total qui s'affiche à
@@ -1971,6 +1971,18 @@ function Basket({ hidePrices, officeName, shop, mode, basket, onClose, onCheckou
         {t('cart.checkout')}
         <Pict d={<path d="M5 12h14M13 5l7 7-7 7"/>} s={13}/>
       </button>
+
+      {/* Panier caisse : en boutique, le panier devient un QR que la caisse
+          scanne (auto-paiement). Proposé par ShopFrame en retrait, jour même. */}
+      {instore && basket.length > 0 && !hidePrices && (
+        <div className="ws-basket__instore">
+          <button type="button" className="ws-instore-cta" {...wsTap(instore.onOpen, { shield: true })}>
+            <Pict d={INSTORE_SCAN} s={15}/>
+            {t('instore.cta')}
+          </button>
+          <p className="ws-basket__instore-hint">{t('instore.ctaHint')}</p>
+        </div>
+      )}
 
       <div className="ws-basket__foot">
         <Pict d={ICONS.pin} s={11}/> {shop.address}
@@ -2222,7 +2234,8 @@ function GiftProgressBanner({ shop, user }) {
 }
 
 function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, user, onAccount, onAllergens,
-                   collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays }) {
+                   collectCutoffPassed, collectCutoffLabel, deliveryCutoffPassed, deliveryCutoffLabel, minLeadDays,
+                   loyalty, onLoyalty }) {
   const { t } = wsUseT();
   return (
     <header className="ws-nav ws-nav--A">
@@ -2250,6 +2263,9 @@ function NavbarA({ shop, mode, onMode, onSwitchShop, cartCount, date, onDate, us
             vide le bloc de droite sur mobile → le nom de la boutique récupère
             toute la ligne (fin de la troncature « Atelier by Ber… »). */}
         {window.AllergenNavButton && <window.AllergenNavButton onClick={onAllergens}/>}
+        {/* Fidélité : solde de points à côté du compte (desktop ; sur mobile,
+            c'est le 3e bouton de la barre d'onglets). */}
+        <LoyaltyNavChip loy={loyalty} onOpen={onLoyalty}/>
         <button className="ws-nav__icon" aria-label={t('nav.accountAria')} onClick={onAccount}>
           {user
             ? <span className="ws-nav__avatar" aria-hidden="true">{user.firstName?.[0] || user.email?.[0]?.toUpperCase() || '·'}</span>
@@ -2865,6 +2881,8 @@ const ACCOUNT_TAB_LS = 'ws.accountTab';
 
 // Onglet Fidélité : coquille volontairement explicite, pas d'écran nu ni de
 // compteur à zéro qui laisserait croire que le client a perdu ses points.
+// C'est désormais le REPLI de LoyaltyView (schéma de l'app fidélité absent,
+// ou fidélité non chargée) ; l'écran réel est plus bas, section FIDÉLITÉ.
 function FideliteShell() {
   const { t } = wsUseT();
   return (
@@ -3245,7 +3263,7 @@ if (typeof document !== 'undefined' && !document.getElementById('ws-bureau-style
   document.head.appendChild(_st);
 }
 
-function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdateUser, shops, currentShopId, onChangePreferredShop, office, tour }) {
+function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdateUser, shops, currentShopId, onChangePreferredShop, office, tour, loyalty }) {
   const { t } = wsUseT();
   const [form, setForm] = useState({
     firstName: user?.firstName || '',
@@ -3668,7 +3686,7 @@ function AccountModal({ open, user, onClose, onLogout, onRequestOffice, onUpdate
       </div>
 
       {activeTab === 'achats' && <AccountPurchases user={user} />}
-      {activeTab === 'fidelite' && <FideliteShell />}
+      {activeTab === 'fidelite' && (loyalty ? <LoyaltyView loy={loyalty} shopId={currentShopId} layout="stack"/> : <FideliteShell />)}
 
       {activeTab === 'profil' && <>
       {form.fidelityApp?.active && (
@@ -4189,6 +4207,520 @@ function FidelityLinkPanel({ open, user, onClose }) {
         )}
         <div className="ws-fid__foot ws-fid__foot--sm">
           <button type="button" className="ws-cta ws-fid__confirm" onClick={onClose}>{t('common.close2')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =========================================================================
+// FIDÉLITÉ : l'app fidélité DANS le webshop (PWA installée comme desktop).
+// -------------------------------------------------------------------------
+// Données : GET /auth/loyalty (php-api/loyalty.php), MÊMES tables et MÊMES
+// règles que l'écran Fidélité de l'app (dépôt latelier-by-pwa) : un client lit
+// les mêmes chiffres des deux côtés. Une seule source d'état (useLoyalty,
+// chargée par ShopFrame), trois portes d'entrée :
+//   • l'onglet « Fidélité » de Mon compte (une colonne) ;
+//   • le panneau « Ma fidélité » (LoyaltyDrawer) ouvert par la puce de points
+//     de l'en-tête sur desktop, et par le 3e bouton de la barre d'onglets
+//     mobile (PWA) : deux colonnes sur grand écran, la carte à scanner
+//     toujours visible à gauche ;
+//   • le lien direct ?open=loyalty (raccourci de l'app installée).
+// Rien n'est inventé : sans tables de l'app, enabled:false → écran « bientôt ».
+// =========================================================================
+const LOY_STAR = <path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>;
+const LOY_GIFT = <><path d="M20 12v9H4v-9"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></>;
+const LOY_BOLT = <path d="M13 2L3 14h7l-1 8 10-12h-7z"/>;
+const INSTORE_SCAN = <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M10 8v8M13 8v8M17 8v8"/>;
+
+function wsLoyDate(s, withYear = true) {
+  if (!s) return '';
+  const d = new Date(String(s).replace(' ', 'T'));
+  return isNaN(d) ? '' : d.toLocaleDateString(wsLocale(), withYear ? { day: '2-digit', month: '2-digit', year: 'numeric' } : { day: '2-digit', month: '2-digit' });
+}
+function wsLoyTime(s) {
+  if (!s) return '';
+  const d = new Date(String(s).replace(' ', 'T'));
+  return isNaN(d) ? '' : d.toLocaleTimeString(wsLocale(), { hour: '2-digit', minute: '2-digit' });
+}
+function wsLoyEur(n) { return (Number(n) || 0).toLocaleString(wsLocale(), { style: 'currency', currency: 'EUR' }); }
+function wsLoyNum(n) { return (Math.round(Number(n) * 100) / 100).toLocaleString(wsLocale()); }
+
+/* État fidélité partagé. Rechargé au retour sur l'app (onglet redevenu
+   visible) : après un passage en caisse, les points arrivent avec le ticket. */
+function useLoyalty(user, shopId) {
+  const [state, setState] = React.useState({ data: null, loading: false, error: '' });
+  const uid = user ? (user.id || user.email || 'u') : null;
+  const lastRef = React.useRef(0);
+  const load = React.useCallback(() => {
+    if (!uid || !window.WSLoyalty) { setState({ data: null, loading: false, error: '' }); return Promise.resolve(null); }
+    lastRef.current = Date.now();
+    setState((s) => ({ ...s, loading: true, error: '' }));
+    return window.WSLoyalty.get({ shopId })
+      .then((d) => { setState({ data: d, loading: false, error: '' }); return d; })
+      .catch((e) => { setState((s) => ({ ...s, loading: false, error: (e && e.message) || 'error' })); return null; });
+  }, [uid, shopId]);
+  React.useEffect(() => { load(); }, [load]);
+  React.useEffect(() => {
+    const onVis = () => { if (document.visibilityState === 'visible' && Date.now() - lastRef.current > 30000) load(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [load]);
+  const set = React.useCallback((d) => setState({ data: d, loading: false, error: '' }), []);
+  return { ...state, reload: load, set };
+}
+
+/* QR scannable (window.QR, qr.jsx) : modules pleins et sombres, lus par tous
+   les scanners de caisse. Sans encodeur, le code en clair. */
+function WsQr({ value, size = 220, label }) {
+  const svg = React.useMemo(() => {
+    try {
+      if (value && window.QR && typeof window.QR.render === 'function') {
+        return window.QR.render(String(value), { size, margin: 4, branded: false, color: '#111111' });
+      }
+    } catch (_) {}
+    return null;
+  }, [value, size]);
+  if (!svg) return <div className="ws-qr ws-qr--txt">{value}</div>;
+  return <div className="ws-qr" role="img" aria-label={label || String(value)} dangerouslySetInnerHTML={{ __html: svg }}/>;
+}
+
+/* Le QR d'une récompense (BON-…, PRD-…, carte complète), à faire scanner. */
+function LoyaltyCodeSheet({ item, onClose }) {
+  const { t } = wsUseT();
+  if (!item) return null;
+  return (
+    <div className="ws-loyqr" role="dialog" aria-modal="true" aria-label={t('loy.qrTitle')} onClick={onClose}>
+      <div className="ws-loyqr__card" onClick={(e) => e.stopPropagation()}>
+        <div className="ws-loyqr__top">
+          <b>{t('loy.qrTitle')}</b>
+          <button type="button" onClick={onClose} aria-label={t('common.close2')}><Pict d={ICONS.close} s={14}/></button>
+        </div>
+        <div className="ws-loyqr__name">{item.label}</div>
+        {item.meta && <div className="ws-loyqr__meta">{item.meta}</div>}
+        <div className="ws-loyqr__qr"><WsQr value={item.code} size={240}/></div>
+        <div className="ws-loyqr__code">{item.code}</div>
+      </div>
+    </div>
+  );
+}
+
+function LoyaltyView({ loy, shopId, layout = 'stack' }) {
+  const { t } = wsUseT();
+  const [sheet, setSheet] = React.useState(null);
+  const [openCard, setOpenCard] = React.useState(undefined);   // undefined = carte prête dépliée d'office
+  const [rulesOpen, setRulesOpen] = React.useState(false);
+  const [confirm, setConfirm] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [flash, setFlash] = React.useState('');
+  const d = loy && loy.data;
+  if (loy && loy.loading && !d) return <div className="ws-loy ws-loy--state"><p className="ws-loy__note">{t('loy.loading')}</p></div>;
+  if (loy && loy.error && !d) {
+    return (
+      <div className="ws-loy ws-loy--state">
+        <p className="ws-loy__note">{t('loy.error')}</p>
+        <button type="button" className="ws-linkbtn" onClick={loy.reload}>{t('loy.retry')}</button>
+      </div>
+    );
+  }
+  if (!d || !d.enabled) return <FideliteShell/>;
+
+  const say = (msg, ms) => { setFlash(msg); setTimeout(() => setFlash(''), ms || 2600); };
+  async function claim(c) {
+    // Deux taps, comme dans l'app : « Échanger », puis « Confirmer · n pts ».
+    if (confirm !== c.id) { setConfirm(c.id); return; }
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await window.WSLoyalty.claim({ catalogId: c.id, shopId });
+      if (r && r.enabled) loy.set(r);
+      say(t('loy.claimedOk'));
+    } catch (e) {
+      say((e && e.message) || t('loy.error'), 3600);
+    } finally {
+      setBusy(false); setConfirm(null);
+    }
+  }
+
+  const m = d.member || {};
+  const p = d.points || {};
+  const balance = Number(p.balance) || 0;
+  const cards = Array.isArray(d.cards) ? d.cards : [];
+  const catalog = Array.isArray(d.catalog) ? d.catalog : [];
+  const vouchers = Array.isArray(d.vouchers) ? d.vouchers : [];
+  const todayRule = (d.today || [])[0] || null;
+  const next = p.nextReward || null;
+  let target, line1, line2;
+  if (catalog.length) {
+    target = next ? next.pointsCost : Math.max(1, balance);
+    line1 = next ? t('loy.nextReward', { name: next.name }) : t('loy.allAffordable');
+    line2 = next ? t('loy.remainingPts', { n: Math.max(0, target - balance) }) : '';
+  } else {
+    target = Math.max(1, Number(p.voucherPoints) || 1);
+    line1 = p.voucherLabel || t('loy.voucherAt', { value: wsLoyEur(p.voucherValue), points: p.voucherPoints });
+    line2 = t('loy.remainingPts', { n: p.remaining || 0 });
+  }
+  const pct = Math.max(0, Math.min(100, Math.round((catalog.length ? Math.min(balance, target) : (Number(p.progress) || 0)) / target * 100)));
+  const ruleItems = [];
+  if (p.eurosPerPoint) ruleItems.push(<li key="base"><span className="ws-loy__coef">{t('loy.onePt')}</span>{t('loy.baseRule', { e: wsLoyNum(p.eurosPerPoint) })}</li>);
+  (d.rules || []).forEach((r) => {
+    const nm = String(r.name || '').trim(); const lbl = String(r.label || '');
+    const name = (lbl && nm.startsWith(lbl)) ? nm.slice(lbl.length).trim() : nm;
+    ruleItems.push(<li key={r.id}><span className="ws-loy__coef">{lbl}</span>{name}{r.hint && <span className="ws-loy__when">{r.hint}</span>}</li>);
+  });
+  const readyCount = cards.filter((c) => c.reward).length;
+  const openCode = openCard !== undefined ? openCard : ((cards.find((c) => c.reward) || {}).code || '');
+  const avail = vouchers.filter((v) => v.status === 'available' || v.status === 'active').length;
+
+  const member = (
+    <section className="ws-loy__member">
+      <div className="ws-loy__member-head">
+        <span className="ws-loy__eyebrow">{t('loy.cardEyebrow')}</span>
+        {m.tier && <span className="ws-loy__tier">{m.tier}</span>}
+      </div>
+      {m.name && <div className="ws-loy__member-name">{m.name}</div>}
+      {m.perk && <div className="ws-loy__member-perk">{m.perk}</div>}
+      {m.nextTier && m.visitsRemaining > 0 && (
+        <div className="ws-loy__level">
+          <span className="ws-loy__level-bar"><span style={{ width: Math.round(Math.min(1, (m.visits || 0) / Math.max(1, m.visitsTarget || 1)) * 100) + '%' }}/></span>
+          <span>{t('loy.nextTier', { tier: m.nextTier, n: m.visitsRemaining, period: m.period || '' })}</span>
+        </div>
+      )}
+      {m.code ? (
+        <>
+          <div className="ws-loy__member-qr"><WsQr value={m.code} size={200} label={t('loy.codeLabel') + ' ' + m.code}/></div>
+          <div className="ws-loy__member-code"><span>{t('loy.codeLabel')}</span><b>{m.code}</b></div>
+        </>
+      ) : <p className="ws-loy__note">{t('loy.noCode')}</p>}
+      <p className="ws-loy__hint">{t('loy.cardHint')}</p>
+    </section>
+  );
+
+  const points = (
+    <section className="ws-loy__points">
+      <div className="ws-loy__row">
+        <div>
+          <span className="ws-loy__eyebrow">{t('loy.points')}</span>
+          <div className="ws-loy__big">{balance}<small>{t('loy.pointsUnit')}</small></div>
+        </div>
+        {todayRule && (
+          <span className="ws-loy__chip"><Pict d={LOY_BOLT} s={12}/>{t('loy.today', { coef: todayRule.label })}{todayRule.hours ? ' · ' + todayRule.hours : ''}</span>
+        )}
+      </div>
+      <div className="ws-loy__gauge" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+        <span style={{ width: pct + '%' }}/>
+      </div>
+      <div className="ws-loy__meta"><span>{line1}</span>{line2 && <b>{line2}</b>}</div>
+      {ruleItems.length > 0 && (
+        <div className={'ws-loy__rules' + (rulesOpen ? ' is-open' : '')}>
+          <button type="button" className="ws-loy__rules-trigger" aria-expanded={rulesOpen} onClick={() => setRulesOpen((o) => !o)}>
+            {t('loy.rules')}<Pict d={<path d="M6 9l6 6 6-6"/>} s={13}/>
+          </button>
+          {rulesOpen && <ul className="ws-loy__rules-list">{ruleItems}</ul>}
+        </div>
+      )}
+    </section>
+  );
+
+  const cardsSec = cards.length > 0 && (
+    <section className="ws-loy__cards">
+      <div className="ws-loy__head">
+        <span className="ws-loy__eyebrow">{t('loy.cardsTitle')}</span>
+        <span className="ws-loy__badge">{t('loy.cardsCount', { n: cards.length })}{readyCount ? ' · ' + t('loy.cardsReady', { n: readyCount }) : ''}</span>
+      </div>
+      <div className="ws-loy__cardlist">
+        {cards.map((c) => {
+          const col = c.colors || {};
+          const isReady = !!c.reward;
+          const shown = isReady ? c.required : Math.min(c.count, c.required);
+          const isOpen = openCode === c.code;
+          const sub = isReady
+            ? (c.reward.expiresAt ? t('loy.cardReadyUntil', { reward: c.rewardLabel, date: wsLoyDate(c.reward.expiresAt, false) }) : c.rewardLabel)
+            : (c.remaining === 1 ? t('loy.cardLast', { reward: c.rewardLabel }) : t('loy.cardRemaining', { n: c.remaining, reward: c.rewardLabel }));
+          return (
+            <div key={c.code} className={'ws-loycard' + (isReady ? ' is-ready' : '') + (isOpen ? ' is-open' : '')}
+                 style={{ '--c-tint': col.tint || '#F4EFE8', '--c-fill': col.fill || '#F2C9A0', '--c-accent': col.accent || '#c17a2a' }}>
+              <button type="button" className="ws-loycard__trigger" aria-expanded={isOpen} onClick={() => setOpenCard(isOpen ? '' : c.code)}>
+                <span className="ws-loycard__illus">{c.img ? <img src={c.img} alt="" loading="lazy"/> : null}</span>
+                <span className="ws-loycard__body">
+                  <span className="ws-loycard__name">{c.name}{isReady && <span className="ws-loycard__ready">{t('loy.cardReady')}</span>}</span>
+                  <span className="ws-loycard__sub">{sub}</span>
+                  <span className="ws-loycard__mini"><span style={{ width: (isReady ? 100 : Math.round(shown / c.required * 100)) + '%' }}/></span>
+                </span>
+                <span className="ws-loycard__count">{shown}<small>/{c.required}</small></span>
+              </button>
+              {isOpen && (
+                <div className="ws-loycard__panel">
+                  <div className="ws-loycard__stamps">
+                    {Array.from({ length: c.required }, (_, i) => {
+                      const on = isReady || i < shown;
+                      const st = (c.stamps || [])[i];
+                      return (
+                        <span key={i} className={'ws-loystamp' + (on ? ' is-on' : '')}
+                              title={st ? [wsLoyDate(st.date), st.label].filter(Boolean).join(' · ') : undefined}>
+                          {on && c.img ? <img src={c.img} alt=""/> : null}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  {isReady ? (
+                    <>
+                      <button type="button" className="ws-cta ws-loycard__redeem"
+                        onClick={() => setSheet({ code: c.reward.code, label: c.rewardLabel + ' · ' + c.name,
+                                                  meta: c.reward.expiresAt ? t('loy.validUntil', { date: wsLoyDate(c.reward.expiresAt) }) : '' })}>
+                        <Pict d={LOY_GIFT} s={15}/>{t('loy.cardRedeem')}
+                      </button>
+                      <div className="ws-loycard__code">{t('loy.rewardCode')} · <b>{c.reward.code}</b></div>
+                    </>
+                  ) : <div className="ws-loycard__foot">{t('loy.cardRule', { n: c.required, reward: c.rewardLabel })}</div>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+
+  const rewardsSec = (
+    <section className="ws-loy__rewards">
+      {catalog.length > 0 && (
+        <>
+          <div className="ws-loy__head">
+            <span className="ws-loy__eyebrow">{t('loy.catalogTitle')}</span>
+            <span className="ws-loy__badge">{t('loy.cost', { n: balance })}</span>
+          </div>
+          <div className="ws-loy__catalog">
+            {catalog.map((c) => (
+              <div key={c.id} className={'ws-loyrw' + (c.affordable ? ' is-ok' : '')}>
+                <span className="ws-loyrw__illus">{c.img ? <img src={c.img} alt="" loading="lazy"/> : <Pict d={LOY_GIFT} s={18}/>}</span>
+                <span className="ws-loyrw__body">
+                  <span className="ws-loyrw__name">{c.name}</span>
+                  {c.description && <span className="ws-loyrw__desc">{c.description}</span>}
+                </span>
+                <span className="ws-loyrw__side">
+                  <span className="ws-loyrw__cost">{t('loy.cost', { n: c.pointsCost })}</span>
+                  {c.affordable
+                    ? <button type="button" className={'ws-loyrw__btn' + (confirm === c.id ? ' is-confirm' : '')} disabled={busy} onClick={() => claim(c)}>
+                        {confirm === c.id ? t('loy.confirm', { n: c.pointsCost }) : t('loy.claim')}
+                      </button>
+                    : <span className="ws-loyrw__missing">{t('loy.missing', { n: Math.max(0, c.pointsCost - balance) })}</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      <div className="ws-loy__head">
+        <span className="ws-loy__eyebrow">{t('loy.myRewards')}</span>
+        {avail > 0 && <span className="ws-loy__badge ws-loy__badge--on">{avail}</span>}
+      </div>
+      {vouchers.length ? (
+        <div className="ws-loy__bons">
+          {vouchers.map((v) => {
+            const st = v.status; const kind = v.kind || 'voucher';
+            const tappable = st === 'available' || st === 'active';
+            const title = kind === 'voucher' ? wsLoyEur(v.value) : (v.label || '');
+            const stLabel = t(st === 'active' ? 'loy.statusActive' : st === 'available' ? 'loy.statusAvailable' : st === 'used' ? 'loy.statusUsed' : 'loy.statusExpired');
+            const when = (st === 'used' && v.usedAt) ? t('loy.usedOn', { date: wsLoyDate(v.usedAt) })
+                       : (v.expiresAt ? t('loy.validUntil', { date: wsLoyDate(v.expiresAt) }) : '');
+            const body = (
+              <>
+                <span className="ws-loybon__top"><span className="ws-loybon__value">{title}</span><span className="ws-loybon__status">{stLabel}</span></span>
+                <span className="ws-loybon__code">{v.code}</span>
+                <span className="ws-loybon__meta">{t('loy.issued', { date: wsLoyDate(v.issuedAt), pts: v.pointsSpent })}{when ? ' · ' + when : ''}</span>
+                {tappable && <span className="ws-loybon__qr">{t('loy.tapQr')}</span>}
+              </>
+            );
+            return tappable
+              ? <button key={v.id || v.code} type="button" className="ws-loybon is-available" onClick={() => setSheet({ code: v.code, label: title, meta: when })}>{body}</button>
+              : <div key={v.id || v.code} className={'ws-loybon is-' + st}>{body}</div>;
+          })}
+        </div>
+      ) : <p className="ws-loy__note">{t('loy.rewardsEmpty')}</p>}
+    </section>
+  );
+
+  return (
+    <div className={'ws-loy ws-loy--' + layout}>
+      {flash && <div className="ws-loy__flash" role="status">{flash}</div>}
+      <div className="ws-loy__col ws-loy__col--side">{member}{points}</div>
+      <div className="ws-loy__col ws-loy__col--main">
+        {cardsSec}
+        {rewardsSec}
+        {d.appUrl && (
+          <a className="ws-loy__app" href={d.appUrl} target="_blank" rel="noopener noreferrer">{t('loy.openApp')}</a>
+        )}
+      </div>
+      <LoyaltyCodeSheet item={sheet} onClose={() => setSheet(null)}/>
+    </div>
+  );
+}
+
+/* Panneau « Ma fidélité » : tiroir latéral sur desktop (deux colonnes),
+   feuille plein écran sur mobile. Rechargé à chaque ouverture. */
+function LoyaltyDrawer({ open, onClose, loy, shopId }) {
+  const { t } = wsUseT();
+  const reload = loy && loy.reload;
+  React.useEffect(() => { if (open && reload) reload(); }, [open]);
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const k = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <div className="ws-loydrawer" role="dialog" aria-modal="true" aria-label={t('loy.title')} onClick={onClose}>
+      <div className="ws-loydrawer__panel" onClick={(e) => e.stopPropagation()}>
+        <div className="ws-loydrawer__head">
+          <span className="ws-loydrawer__title">{t('loy.title')}</span>
+          <button type="button" className="ws-loydrawer__close" onClick={onClose} aria-label={t('common.close2')}><Pict d={ICONS.close} s={14}/></button>
+        </div>
+        <div className="ws-loydrawer__body"><LoyaltyView loy={loy} shopId={shopId} layout="wide"/></div>
+      </div>
+    </div>
+  );
+}
+
+/* Puce de points de l'en-tête (desktop) : solde + pastille quand une
+   récompense attend d'être retirée. Absente sans fidélité active. */
+function LoyaltyNavChip({ loy, onOpen }) {
+  const { t } = wsUseT();
+  const d = loy && loy.data;
+  if (!d || !d.enabled || typeof onOpen !== 'function') return null;
+  const pts = Number(d.points && d.points.balance) || 0;
+  const ready = (d.cards || []).filter((c) => c.reward).length + (Number(d.points && d.points.vouchersAvailable) || 0);
+  return (
+    <button type="button" className="ws-loychip" onClick={onOpen} aria-label={t('loy.navAria', { n: pts })}>
+      <Pict d={LOY_STAR} s={14}/>
+      <span className="ws-loychip__pts">{t('loy.ptsShort', { n: pts })}</span>
+      {ready > 0 && <span className="ws-loychip__dot" aria-hidden="true">{ready}</span>}
+    </button>
+  );
+}
+
+// =========================================================================
+// PANIER CAISSE (« scan & go ») : en boutique, le panier devient un QR que la
+// caisse scanne ; elle reprend les lignes et passe en auto-paiement, le client
+// règle seul au terminal. Le téléphone suit le statut toutes les 3 s
+// (open → at_till → paid) et vide le panier une fois payé. Le webshop
+// n'encaisse rien : la caisse fait foi (montant, ticket fiscal).
+// Voir php-api/instore.php et SCAN_CAISSE.md.
+// =========================================================================
+function InstoreBasketModal({ open, shop, basket, user, onClose, onPaid, onLogin }) {
+  const { t } = wsUseT();
+  const [b, setB] = React.useState(null);
+  const [err, setErr] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const paidRef = React.useRef(false);
+  const shopId = shop && shop.id;
+  async function create() {
+    if (!window.WSInstore || !shopId) { setErr(t('instore.error')); return; }
+    setBusy(true); setErr(''); setB(null); paidRef.current = false;
+    try { setB(await window.WSInstore.create({ shopId, basket })); }
+    catch (e) { setErr((e && e.message) || t('instore.error')); }
+    finally { setBusy(false); }
+  }
+  React.useEffect(() => { if (open) create(); else { setB(null); setErr(''); } }, [open]);
+  const code = b && b.code; const status = b && b.status; const token = b && b.token;
+  // Suivi du statut tant que le panier attend la caisse ou y est.
+  React.useEffect(() => {
+    if (!open || !code || !token || (status !== 'open' && status !== 'at_till')) return undefined;
+    const id = setInterval(() => {
+      window.WSInstore.status({ code, token })
+        .then((s) => setB((cur) => (cur && cur.code === s.code ? { ...cur, ...s } : cur)))
+        .catch(() => {});
+    }, 3000);
+    return () => clearInterval(id);
+  }, [open, code, token, status]);
+  React.useEffect(() => {
+    if (status === 'paid' && !paidRef.current) { paidRef.current = true; if (typeof onPaid === 'function') onPaid(b); }
+  }, [status]);
+  // L'écran ne s'éteint pas pendant qu'on marche vers la caisse (si permis).
+  React.useEffect(() => {
+    if (!open || !navigator.wakeLock || typeof navigator.wakeLock.request !== 'function') return undefined;
+    let lock = null;
+    navigator.wakeLock.request('screen').then((l) => { lock = l; }).catch(() => {});
+    return () => { if (lock) lock.release().catch(() => {}); };
+  }, [open]);
+  function close() {
+    // Un code encore affiché et pas scanné ne doit pas rester encaissable.
+    if (b && b.status === 'open' && b.token) window.WSInstore.cancel({ code: b.code, token: b.token }).catch(() => {});
+    onClose();
+  }
+  async function cancel() {
+    if (!b) return;
+    try { const s = await window.WSInstore.cancel({ code: b.code, token: b.token }); setB((cur) => ({ ...cur, ...s })); }
+    catch (e) { setErr((e && e.message) || t('instore.error')); }
+  }
+  if (!open) return null;
+  const live = b && (b.status === 'open' || b.status === 'at_till');
+  return (
+    <div className="ws-instore" role="dialog" aria-modal="true" aria-label={t('instore.title')} onClick={close}>
+      <div className={'ws-instore__card' + (b ? ' is-' + b.status : '')} onClick={(e) => e.stopPropagation()}>
+        <div className="ws-instore__top">
+          <span><Pict d={INSTORE_SCAN} s={16}/><b>{t('instore.title')}</b></span>
+          <button type="button" onClick={close} aria-label={t('common.close2')}><Pict d={ICONS.close} s={14}/></button>
+        </div>
+        {!b && busy && <p className="ws-instore__msg">{t('instore.creating')}</p>}
+        {!b && !busy && err && (
+          <div className="ws-instore__msg">
+            <p className="ws-instore__err">{err}</p>
+            <button type="button" className="ws-cta ws-instore__btn" onClick={create}>{t('instore.retry')}</button>
+          </div>
+        )}
+        {live && (
+          <>
+            <div className={'ws-instore__qr' + (b.status === 'at_till' ? ' is-dim' : '')}>
+              <WsQr value={b.code} size={240} label={t('instore.code') + ' ' + b.code}/>
+            </div>
+            <div className="ws-instore__code"><span>{t('instore.code')}</span><b>{b.code}</b></div>
+            <div className={'ws-instore__state ws-instore__state--' + b.status}>
+              {b.status === 'at_till' && <span className="ws-instore__pulse" aria-hidden="true"/>}
+              {t(b.status === 'at_till' ? 'instore.atTill' : 'instore.show')}
+            </div>
+          </>
+        )}
+        {b && b.status === 'paid' && (
+          <div className="ws-instore__done">
+            <span className="ws-instore__check"><Pict d={ICONS.check} s={30}/></span>
+            <b>{t('instore.paid')}</b>
+            <span>{t('instore.paidAmount', { amount: wsLoyEur(b.paidAmount != null ? b.paidAmount : b.total) })}{b.ticketNo ? ' · ' + t('instore.ticket', { n: b.ticketNo }) : ''}</span>
+            {b.pointsEstimate > 0 && <span className="ws-instore__pts"><Pict d={LOY_STAR} s={13}/>{t('instore.points', { n: b.pointsEstimate })}</span>}
+          </div>
+        )}
+        {b && (b.status === 'expired' || b.status === 'cancelled') && (
+          <div className="ws-instore__msg">
+            <p>{t(b.status === 'expired' ? 'instore.expired' : 'instore.cancelled')}</p>
+            <button type="button" className="ws-cta ws-instore__btn" onClick={create} disabled={busy || !basket.length}>{t('instore.newCode')}</button>
+          </div>
+        )}
+        {live && Array.isArray(b.lines) && (
+          <div className="ws-instore__lines">
+            {b.lines.map((l, i) => (
+              <div key={i} className="ws-instore__line">
+                <span>×{l.qty} {l.name}{l.portion ? ' · ' + l.portion : ''}
+                  {(l.children || []).map((c, j) => <small key={j}>{c.name}</small>)}
+                </span>
+                <span>{wsLoyEur((l.lineTotal || 0) + (l.children || []).reduce((s, c) => s + (c.lineTotal || 0), 0))}</span>
+              </div>
+            ))}
+            {b.promo > 0 && <div className="ws-instore__line ws-instore__line--promo"><span>{t('instore.promo')}</span><span>−{wsLoyEur(b.promo)}</span></div>}
+            <div className="ws-instore__line ws-instore__line--tot"><span>{t('instore.total')}</span><span>{wsLoyEur(b.total)}</span></div>
+            <p className="ws-instore__note">{t('instore.totalNote')}</p>
+          </div>
+        )}
+        {b && b.status === 'open' && !b.loyaltyLinked && (
+          <p className="ws-instore__nudge">
+            {t('instore.loginForPoints')}{' '}
+            {typeof onLogin === 'function' && !user && <button type="button" className="ws-linkbtn" onClick={() => { close(); onLogin(); }}>{t('nav.signin')}</button>}
+          </p>
+        )}
+        <div className="ws-instore__foot">
+          {b && b.status === 'open' && <span className="ws-instore__exp">{t('instore.expiresAt', { time: wsLoyTime(b.expiresAt) })}</span>}
+          {b && b.status === 'open' && <button type="button" className="ws-linkbtn" onClick={cancel}>{t('instore.cancel')}</button>}
+          {b && b.status === 'paid' && <button type="button" className="ws-cta ws-instore__btn" onClick={onClose}>{t('instore.done')}</button>}
         </div>
       </div>
     </div>
@@ -5545,6 +6077,19 @@ function ShopFrame({ variant }) {
   // route that serves the office. Front only renders /slots + /next-slot.
   // Déclaré AVANT le slot-effect ci-dessous (qui lit `user` dans ses deps), sinon TDZ.
   const [user, setUser] = useState(null);
+  // Fidélité (app fidélité dans le webshop) : une source d'état pour la puce
+  // de l'en-tête, le 3e onglet mobile, le panneau « Ma fidélité » et l'onglet
+  // Fidélité de Mon compte. Panier caisse : la modale du code à scanner.
+  const loy = useLoyalty(user, shopId);
+  const [loyaltyOpen, setLoyaltyOpen] = useState(false);
+  const [instoreOpen, setInstoreOpen] = useState(false);
+  const [wsFlags, setWsFlags] = useState({});
+  // Lien direct ?open=loyalty (raccourci de l'app installée) : le panneau
+  // s'ouvre dès que la fidélité du client est chargée.
+  const deepLoyRef = React.useRef((() => { try { return new URLSearchParams(window.location.search).get('open') === 'loyalty'; } catch (_) { return false; } })());
+  React.useEffect(() => {
+    if (deepLoyRef.current && wsFlags.fidelity !== false && loy.data && loy.data.enabled) { deepLoyRef.current = false; setLoyaltyOpen(true); }
+  }, [loy.data, wsFlags.fidelity]);
   // SSO handoff PWA -> webshop : si l'URL porte ?handoff=<jeton>, on l'échange
   // contre une session webshop, puis on retire le jeton de l'URL (usage unique,
   // ne doit pas rester visible/partageable).
@@ -6023,6 +6568,9 @@ function ShopFrame({ variant }) {
         // L'identifiant GA4 (ws_param.ga4_measurement_id) : chargé seulement après accord.
         if (window.WSConsent && c) window.WSConsent.setConfig(c);
         if (alive && c) setNavIcons({ all: c.categoryNavAllIcon || null, back: c.categoryNavBackIcon || null });
+        // Interrupteurs serveur (ws_param) : panier caisse, et fidélité
+        // (fidelity_tab_enabled masque aussi la puce et le 3e onglet).
+        if (alive && c) setWsFlags({ instoreBasket: !!c.instoreBasketEnabled, fidelity: c.fidelityTabEnabled !== false });
       }).catch(() => {});
     }
     return () => { alive = false; };
@@ -6582,6 +7130,12 @@ function ShopFrame({ variant }) {
   // PRIX MASQUÉS (0113) : le bureau du client l'impose ; le prix reste résolu
   // et facturé serveur, seul l'affichage disparaît (classe sur la racine).
   const hidePrices = !!(user && user.office && user.office.showPrices === false);
+  // Panier caisse : en RETRAIT, pour AUJOURD'HUI (on est dans la boutique),
+  // quand le serveur l'active et que les prix sont affichés.
+  const instoreCta = (wsFlags.instoreBasket && mode === 'collect' && isToday(date) && !hidePrices)
+    ? { onOpen: () => { setCartDrawerOpen(false); setInstoreOpen(true); } } : null;
+  const loyOn = wsFlags.fidelity !== false && !!(loy.data && loy.data.enabled);
+  const loyPts = loyOn ? (Number(loy.data.points && loy.data.points.balance) || 0) : 0;
   // Le budget ne masque que ce qui a un prix ET le dépasse ; sans prix
   // affichés (bureau qui les cache), pas de filtre du tout.
   const fzShown = (hidePrices || fzBudget == null) ? products
@@ -6593,7 +7147,8 @@ function ShopFrame({ variant }) {
            onAllergens={() => setAllergensOpen(true)}
            collectCutoffPassed={collectCutoffPassed} collectCutoffLabel={collectCutoffLabel}
            deliveryCutoffPassed={deliveryCutoffPassed} deliveryCutoffLabel={deliveryCutoffLabel}
-           minLeadDays={minLeadDays}/>
+           minLeadDays={minLeadDays}
+           loyalty={loyOn ? loy : null} onLoyalty={() => setLoyaltyOpen(true)}/>
 
       <div className="ws-body">
         <main className="ws-main" ref={mainScrollRef} onScroll={updateScrollState}>
@@ -6681,11 +7236,12 @@ function ShopFrame({ variant }) {
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
         </button>
 
-        <Basket hidePrices={hidePrices} officeName={user && user.office ? user.office.name : ''} shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} deliveryFeeResult={deliveryFeeResult} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
+        <Basket hidePrices={hidePrices} officeName={user && user.office ? user.office.name : ''} shop={shop} mode={mode} basket={basket} onCheckout={handleCheckout} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} deliveryFeeResult={deliveryFeeResult} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd} instore={instoreCta}/>
       </div>
 
-      {/* Mobile bottom tab bar : 2 buttons, 50/50 split */}
-      <nav className="ws-tabbar" aria-label={t('nav.navAria')}>
+      {/* Mobile bottom tab bar : 2 buttons, 50/50 split — 3 avec la fidélité
+          (client connecté, fidélité active) : Panier · Fidélité · Profil. */}
+      <nav className={'ws-tabbar' + (loyOn ? ' ws-tabbar--3' : '')} aria-label={t('nav.navAria')}>
         <button className="ws-tabbar__btn ws-tabbar__btn--cart" onClick={() => setCartDrawerOpen(true)} aria-label={t('nav.cart')}>
           <span className="ws-tabbar__cart-wrap">
             <Pict d={ICONS.bag} s={20}/>
@@ -6693,6 +7249,12 @@ function ShopFrame({ variant }) {
           </span>
           <span className="ws-tabbar__label">{t('nav.cart')}</span>
         </button>
+        {loyOn && (
+          <button className="ws-tabbar__btn ws-tabbar__btn--loyalty" onClick={() => setLoyaltyOpen(true)} aria-label={t('loy.navAria', { n: loyPts })}>
+            <Pict d={LOY_STAR} s={20}/>
+            <span className="ws-tabbar__label">{t('loy.ptsShort', { n: loyPts })}</span>
+          </button>
+        )}
         <button className="ws-tabbar__btn ws-tabbar__btn--account" onClick={handleAccount} aria-label={user ? t('nav.profile') : t('nav.signin')}>
           <Pict d={ICONS.user} s={20}/>
           <span className="ws-tabbar__label">{user ? t('nav.profile') : t('nav.signin')}</span>
@@ -6715,7 +7277,7 @@ function ShopFrame({ variant }) {
           <div className="ws-drawer__panel">
             <button className="ws-drawer__close" onClick={() => setCartDrawerOpen(false)} aria-label={t('common.close2')}>×</button>
             <div className="ws-drawer__handle" aria-hidden="true"/>
-            <Basket hidePrices={hidePrices} officeName={user && user.office ? user.office.name : ''} shop={shop} mode={mode} basket={basket} onCheckout={() => { setCartDrawerOpen(false); handleCheckout(); }} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd}/>
+            <Basket hidePrices={hidePrices} officeName={user && user.office ? user.office.name : ''} shop={shop} mode={mode} basket={basket} onCheckout={() => { setCartDrawerOpen(false); handleCheckout(); }} onRemove={handleRemove} onNote={handleNote} notesEnabled={lineNotesEnabled} date={date} slotTime={crossSlotTime} onCrossAdd={handleCrossAdd} instore={instoreCta}/>
           </div>
         </div>
       )}
@@ -6752,7 +7314,12 @@ function ShopFrame({ variant }) {
         onUpdateUser={(u) => setUser(u)}
         office={userOffice}
         tour={userTour}
+        loyalty={loy}
       />
+      <LoyaltyDrawer open={loyaltyOpen} onClose={() => setLoyaltyOpen(false)} loy={loy} shopId={shopId}/>
+      <InstoreBasketModal open={instoreOpen} shop={shop} basket={basket} user={user}
+        onClose={() => setInstoreOpen(false)} onLogin={() => setAuthOpen(true)}
+        onPaid={() => { setBasket([]); stockReleaseAll(); loy.reload(); }}/>
       <ProductDetail open={!!detailProduct} product={detailProduct} mode={mode} onClose={closeProductDetail} onAdd={handleAddConfigured} stock={detailProduct ? (productStock[detailProduct.id] || null) : null}
                      shopId={shop && shop.id} date={date} time={crossSlotTime} onCrossAdd={handleCrossAdd}/>
       {window.AllergensModal && <window.AllergensModal open={allergensOpen} onClose={() => setAllergensOpen(false)}/>}
