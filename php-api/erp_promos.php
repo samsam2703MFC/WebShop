@@ -181,6 +181,32 @@ function cross_portion_rule($shopId) {
           'source' => 'local'];
 }
 
+/* L'offre croisée X+Y chiffrée sur des lignes aux prix serveur : les Y moins
+ * chères offertes par tranche de X. Sortie de POST /orders pour que l'aperçu
+ * d'un code (POST /vouchers/redeem) sache, avec le MÊME calcul, quelles pièces
+ * y entrent — une promotion « non cumulable » déclenchée par un code les laisse.
+ * $lines : [{id, cat_id, sub_cat_id, cross, qty, unit}].
+ * Retourne ['amount' => remise, 'locked' => [index de ligne => true]] ; locked
+ * n'est rempli que si l'offre joue. */
+function cross_portion_discount($rule, array $lines) {
+  $promo = 0; $elig = [];
+  if ($rule && (int) $rule['buy'] > 0) {
+    $units = [];
+    foreach ($lines as $i => $l) {
+      if (!cross_portion_eligible($rule, $l['id'] ?? 0, $l['cat_id'] ?? 0, $l['sub_cat_id'] ?? 0, $l['cross'] ?? 0)) continue;
+      $elig[$i] = true;
+      for ($k = 0; $k < $l['qty']; $k++) $units[] = $l['unit'];
+    }
+    if (count($units) >= (int) $rule['threshold']) {
+      sort($units); // les moins chers d'abord
+      $freeCount = intdiv(count($units), (int) $rule['buy']) * (int) $rule['free'];
+      for ($k = 0; $k < $freeCount && $k < count($units); $k++) $promo += $units[$k];
+    }
+  }
+  $promo = round($promo, 2);
+  return ['amount' => $promo, 'locked' => $promo > 0 ? $elig : []];
+}
+
 /* Ce produit est-il ÉLIGIBLE à la promo ? Sans périmètre ERP (règle locale),
  * on garde le drapeau ws_products.cross_portion — c'est la règle historique. */
 function cross_portion_eligible(array $regle, $productId, $catId, $subCatId, $flagLocal) {
