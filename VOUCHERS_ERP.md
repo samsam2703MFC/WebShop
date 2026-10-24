@@ -198,10 +198,15 @@ Croisement fait par la sonde le 24/10/2026 :
 | Colonnes en plus | `office_id` sur les codes | `id_shop`, `id_brand`, `target_kind`, `target_id`, `reason_kind`, `reason_note`, `created_by` (migrations 0009, 0041) |
 
 **Restes de l'essai dans l'ERP (24/10/2026) :**
-- la campagne #9, « [SONDE COCKPIT — à désactiver] essai bons webshop 24/10 » : DRAFT, sans promotion, 4 codes
-  ZZSONDE… tous désactivés ;
+- la campagne #9, « [SONDE COCKPIT — à désactiver] essai bons webshop 24/10 », est **complète mais hors service**,
+  pour qu'on la voie dans le panel (mode `visible`, accord de Sam) :
+  - campagne INACTIVE jusqu'au 31/12/2026 ;
+  - promotion #36 rattachée et INACTIVE : 1 % sur la Baguette Poivre & Sel, Halle ;
+  - 5 codes ZZSONDE… tous désactivés ;
 - son encaissement #1 : boutique 4, sans transaction, montant `null`, impossible à annuler par l'API (§3) ;
-- la promotion #35 a été supprimée.
+- la promotion #35 du premier essai a été supprimée.
+
+Après le nettoyage, la campagne vide (DRAFT, sans promotion) n'apparaissait pas dans le panel.
 
 L'API ne supprime pas les campagnes. Pour retirer la campagne et l'encaissement, il faut demander à TFBuddy.
 
