@@ -360,23 +360,53 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
                             VALUES (?, ?, 0, ?, ?, ?, ?, ?)");
       $existe = [];
       foreach ($pdo->query("SELECT id FROM ws_products")->fetchAll(PDO::FETCH_COLUMN) as $x) $existe[(int) $x] = true;
-      $chg = 0; $crees = 0;
+      /* TAXONOMIE CONNUE ICI. cat_id et sub_cat_id sont des clés étrangères
+         vers ws_categories / ws_category_subs, que le BO tient. Une
+         (sous-)catégorie que l'ERP vient de créer n'y est pas encore : la
+         recopier faisait échouer l'UPDATE (1452), et l'exception arrêtait
+         TOUT le script — miroir des canaux, puis téléchargement des photos,
+         jamais atteint. Une catégorie inconnue est donc laissée de côté :
+         le produit garde son classement actuel (COALESCE), le reste de sa
+         ligne suit l'ERP, et la liste des catégories à créer est donnée. */
+      $catsIci = array_flip(array_map('intval', $pdo->query("SELECT id FROM ws_categories")->fetchAll(PDO::FETCH_COLUMN)));
+      $subsIci = array_flip(array_map('intval', $pdo->query("SELECT id FROM ws_category_subs")->fetchAll(PDO::FETCH_COLUMN)));
+      $inconnues = [];
+      $chg = 0; $crees = 0; $echecs = 0;
       foreach ($apiRows as $pid => $pr) {
         if (!isset($pr['webshop_active'], $pr['click_and_collect'], $pr['office_delivery'])) continue;
         $a = (int) !!$pr['webshop_active']; $cc = (int) !!$pr['click_and_collect']; $od = (int) !!$pr['office_delivery'];
         $nom = trim((string) ($pr['base_name'] ?? ($pr['name'] ?? '')));
         $sub = !empty($pr['id_category']) ? (int) $pr['id_category'] : null;
         $cat = (isset($pr['category']['groups'][0]['id'])) ? (int) $pr['category']['groups'][0]['id'] : null;
-        if (isset($existe[(int) $pid])) {
-          if ($nom === '') continue;
-          $upd->execute([$a, $cc, $od, $nom, $cat, $sub, (int) $pid, $a, $cc, $od, $nom, $cat, $sub]);
-          $chg += $upd->rowCount();
-        } elseif ($a && $nom !== '') {
-          try { $ins->execute([(int) $pid, $nom, $a, $cc, $od, $cat, $sub]); $crees++; }
-          catch (Throwable $e) { fwrite(STDERR, "  ⚠ création $pid impossible : " . $e->getMessage() . "\n"); }
+        if ($sub !== null && !isset($subsIci[$sub])) {
+          $inconnues['sous-catégorie ' . $sub . ' « ' . trim((string) ($pr['category']['name'] ?? '?')) . ' »'][] = (int) $pid;
+          $sub = null;
+        }
+        if ($cat !== null && !isset($catsIci[$cat])) {
+          $inconnues['catégorie ' . $cat . ' « ' . trim((string) ($pr['category']['groups'][0]['name'] ?? '?')) . ' »'][] = (int) $pid;
+          $cat = null;
+        }
+        // Une ligne refusée par la base ne doit pas arrêter les suivantes,
+        // ni les photos : elle est dite, et le balayage continue.
+        try {
+          if (isset($existe[(int) $pid])) {
+            if ($nom === '') continue;
+            $upd->execute([$a, $cc, $od, $nom, $cat, $sub, (int) $pid, $a, $cc, $od, $nom, $cat, $sub]);
+            $chg += $upd->rowCount();
+          } elseif ($a && $nom !== '') {
+            $ins->execute([(int) $pid, $nom, $a, $cc, $od, $cat, $sub]); $crees++;
+          }
+        } catch (Throwable $e) {
+          $echecs++;
+          fwrite(STDERR, "  ⚠ produit $pid « $nom » : écriture refusée — " . $e->getMessage() . "\n");
         }
       }
-      echo "assortiment ERP → ws_products : $erpOn webshop_active côté ERP, $chg mise(s) à jour, $crees créé(s) (masqués tant que sans prix).\n";
+      echo "assortiment ERP → ws_products : $erpOn webshop_active côté ERP, $chg mise(s) à jour, $crees créé(s) (masqués tant que sans prix)"
+         . ($echecs ? ", $echecs refusé(s)" : '') . ".\n";
+      foreach ($inconnues as $quoi => $pids) {
+        fwrite(STDERR, "  ⚠ $quoi : inconnue du webshop — classement inchangé pour " . count($pids) . " produit(s) ("
+                     . implode(', ', array_slice($pids, 0, 8)) . (count($pids) > 8 ? ', …' : '') . ") ; la créer dans le BO pour l'appliquer\n");
+      }
       /* Actifs ICI absents de l'ERP : DÉSACTIVÉS (décision du 24/08 — « pas de
          fallback miroir, seulement l'API direct »). Un produit retiré de
          Franchise Buddy disparaît donc aussi du chemin de COMMANDE, pas
