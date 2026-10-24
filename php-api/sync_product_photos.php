@@ -72,6 +72,16 @@ function spp_http_get($url, array $headers = [], $timeout = 20, $post = null) {
   return [$code, $body, ''];
 }
 
+/* Slug d'un libellé de catégorie : sans accent, sans espace (même règle que
+ * erp_season_slug, recopiée : ce script ne charge pas l'API). */
+function spp_slug($libelle) {
+  $s = mb_strtolower(trim((string) $libelle));
+  $s = strtr($s, ['à'=>'a','â'=>'a','ä'=>'a','é'=>'e','è'=>'e','ê'=>'e','ë'=>'e',
+                  'î'=>'i','ï'=>'i','ô'=>'o','ö'=>'o','ù'=>'u','û'=>'u','ü'=>'u','ç'=>'c','–'=>'-','’'=>"'"]);
+  $s = preg_replace('/[^a-z0-9]+/', '-', $s);
+  return trim((string) $s, '-');
+}
+
 /* ── La photo d'UNE recette : l'URL à suivre, ou null + motif. ──
  * shop_photo_path d'abord (la photo pensée pour la vitrine, dixit l'ERP),
  * puis main_photo_path, puis photo_1..3 — première non vide. */
@@ -365,11 +375,36 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
          (sous-)catégorie que l'ERP vient de créer n'y est pas encore : la
          recopier faisait échouer l'UPDATE (1452), et l'exception arrêtait
          TOUT le script — miroir des canaux, puis téléchargement des photos,
-         jamais atteint. Une catégorie inconnue est donc laissée de côté :
+         jamais atteint. Une catégorie encore inconnue (parente absente,
+         création refusée) est donc laissée de côté :
          le produit garde son classement actuel (COALESCE), le reste de sa
-         ligne suit l'ERP, et la liste des catégories à créer est donnée. */
+         ligne suit l'ERP, et la liste des catégories manquantes est donnée. */
       $catsIci = array_flip(array_map('intval', $pdo->query("SELECT id FROM ws_categories")->fetchAll(PDO::FETCH_COLUMN)));
       $subsIci = array_flip(array_map('intval', $pdo->query("SELECT id FROM ws_category_subs")->fetchAll(PDO::FETCH_COLUMN)));
+      /* Une SOUS-catégorie que l'ERP vient de créer est créée ici, avec ce
+         que l'ERP en dit — identifiant (même espace), nom, catégorie parente.
+         Le BO n'a pas d'écran pour en créer : sans cela, elle restait
+         introuvable et ses produits mal classés. Seulement si la catégorie
+         parente existe déjà : une catégorie de premier niveau ouvre une
+         entrée de la barre du webshop, elle reste une décision du BO, et
+         son absence est signalée plus bas. */
+      $subsCreees = [];
+      $insSub = $pdo->prepare("INSERT INTO ws_category_subs (id, category_id, slug, label, sort_order, active) VALUES (?, ?, ?, ?, 0, 1)");
+      foreach ($apiRows as $pr) {
+        $sid = !empty($pr['id_category']) ? (int) $pr['id_category'] : 0;
+        $gid = isset($pr['category']['groups'][0]['id']) ? (int) $pr['category']['groups'][0]['id'] : 0;
+        $lib = trim((string) ($pr['category']['name'] ?? ''));
+        if (!$sid || isset($subsIci[$sid]) || !$gid || !isset($catsIci[$gid]) || $lib === '') continue;
+        try {
+          $insSub->execute([$sid, $gid, mb_substr(spp_slug($lib), 0, 50), mb_substr($lib, 0, 100)]);
+          $subsIci[$sid] = true;
+          $subsCreees[] = "$sid « $lib » (catégorie $gid)";
+        } catch (Throwable $e) {
+          fwrite(STDERR, "  ⚠ sous-catégorie $sid « $lib » : création refusée — " . $e->getMessage() . "\n");
+        }
+      }
+      if ($subsCreees) echo "taxonomie ERP → ws_category_subs : " . count($subsCreees) . " sous-catégorie(s) créée(s) — "
+                          . implode(', ', $subsCreees) . ".\n";
       $inconnues = [];
       $chg = 0; $crees = 0; $echecs = 0;
       foreach ($apiRows as $pid => $pr) {
@@ -405,7 +440,7 @@ if (!defined('WS_PHOTOS_AS_LIB')) {
          . ($echecs ? ", $echecs refusé(s)" : '') . ".\n";
       foreach ($inconnues as $quoi => $pids) {
         fwrite(STDERR, "  ⚠ $quoi : inconnue du webshop — classement inchangé pour " . count($pids) . " produit(s) ("
-                     . implode(', ', array_slice($pids, 0, 8)) . (count($pids) > 8 ? ', …' : '') . ") ; la créer dans le BO pour l'appliquer\n");
+                     . implode(', ', array_slice($pids, 0, 8)) . (count($pids) > 8 ? ', …' : '') . ")\n");
       }
       /* Actifs ICI absents de l'ERP : DÉSACTIVÉS (décision du 24/08 — « pas de
          fallback miroir, seulement l'API direct »). Un produit retiré de
