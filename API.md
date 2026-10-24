@@ -701,6 +701,10 @@ Frontend stub: `webshop-vouchers.jsx` → `window.WSVouchers`
 
 The admin app manages vouchers (create / edit / deactivate). The storefront only calls `POST /vouchers/redeem`.
 
+> **24/10/2026 :** ces bons ne vivent que dans la base locale. L'ERP ne les voit pas. L'API ERP des campagnes de
+> bons (`/admin/voucher-campaigns`, `/vouchers/validate|redeem|reverse`) et le plan pour s'y brancher sont dans
+> `VOUCHERS_ERP.md`.
+
 ---
 
 ### POST /vouchers/redeem
