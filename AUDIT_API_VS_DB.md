@@ -73,7 +73,7 @@ atelierby_db », `index.php:408`). Classées par existence d'un équivalent API.
 |---|---|---|---|
 | Gammes saisonnières | `product_availability_period(_connection)` | `availability_where` (`index.php:10357-10385`) | filtre sur la date de retrait ; rien côté API |
 | Comptes clients | `client` | lectures `index.php:665-669, 1828` ; **écritures** `index.php:1973, 3032, 3240` | le webshop CRÉE des clients directement dans la table ERP ; seul `consultant/auth/login` existe côté API — rien pour les clients finaux |
-| Bons & promotions (modèle unifié) | `promotion`, `voucher_campaign(_channel)`, `voucher_code`, `voucher_redemption` | upsert `index.php:223-271` ; lecture `/vouchers/available` `index.php:1215+` ; rachat à la commande `index.php:2918-2932` | écritures directes dans le modèle ERP, canal `'WS'` ; aucune API bons connue |
+| Bons & promotions (modèle unifié) | `promotion`, `voucher_campaign(_channel)`, `voucher_code`, `voucher_redemption` | upsert `index.php:223-271` ; lecture `/vouchers/available` `index.php:1215+` ; rachat à la commande `index.php:2918-2932` | écritures directes dans le modèle ERP, canal `'WS'` ; aucune API bons connue. **24/10/2026 :** l'API existe (`/admin/voucher-campaigns`…), et la sonde montre que ces tables sont dans la base locale, pas dans celle de l'ERP : voir `VOUCHERS_ERP.md` |
 | Garde-fou FK du rachat | `franchisee_shop` | `index.php:2924` | simple test d'existence avant `voucher_redemption` |
 | Départements B2B | `b2b_client_company_department` | `index.php:6016+` | « table ERP si synchronisée » — servie vide sinon |
 | Stats B2B (cron) | `client_order` | `php-api/cron/clientb2b-top5-active.sql:18` | SQL de cron, hors API PHP |
