@@ -253,6 +253,28 @@ Les numéros 2, 3 et 4 existent des deux côtés, mais ce ne sont **pas** les m�
 5. **Ménage dans l'ERP** : les trois campagnes « [SONDE À SUPPRIMER] test technique 25/08 » datent d'un essai
    antérieur. Faute de suppression, les passer `INACTIVE`.
 
+### 6.1 Déjà fait côté cockpit : le bon dans le dashboard du franchisé (24/10/2026)
+
+Le point 2 existe pour les promotions « X achetés + Y » du magasin. Dépôt `consultant_BO`, `src/promos_bons.php`,
+contrat dans `docs/contrat-api.md`, entrée « Le bon de réduction (24/10/2026) » :
+- **Où** : onglet Promotions du dashboard magasin. Il y a une étape « Bon de réduction » dans l'assistant, et un
+  bouton « + Nouveau bon » qui commence par le bon puis enchaîne sur la promotion liée.
+- **Les trois distributions** :
+  - un code pour tous (SHARED) ;
+  - N codes d'une utilisation (UNIQUE) ;
+  - un code personnel par client du magasin, choisi parmi `GET /shops/{id}/clients` (UNIQUE, `requires_customer`).
+- **L'ordre d'écriture**, celui du §2.1 :
+  1. promotion `VOUCHER_ONLY` écrite inactive ;
+  2. campagne en brouillon avec ses codes ;
+  3. rattachement ;
+  4. à l'envoi, promotion puis campagne activées (`PATCH /{id}`).
+
+  Rien n'est gardé en local.
+- **La liste** : « Voir les codes » (codes en clair, nom du client) et une bascule actif / hors service.
+
+Ces codes passent par `/vouchers/validate` et `/redeem` comme ceux de l'essai (§2). Le webshop les lira une fois le
+point 1 branché. Appliquer une « X + Y » au panier du webshop reste à faire.
+
 ## 7. Relancer la sonde
 
 Dépôt `consultant_BO`, branche `claude/admiring-archimedes-8cr84j` :
