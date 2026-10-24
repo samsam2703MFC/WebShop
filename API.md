@@ -814,6 +814,45 @@ module never writes the ERP voucher tables itself.
 
 Response `{ ok, code, created }` (`created` false when an existing code was updated).
 
+**Type `promos` — a voucher that triggers product promotions** (migration
+**0136**, table `ws_voucher_product_promos`). The marketing module sets
+promotions product by product at the « Prix » step of a campaign; a voucher of
+type `promos` carries them and they apply **only with that code**. The voucher
+has no discount of its own (the ERP model gets an order discount of 0 %).
+
+```json
+{ "code": "REVE-NOEL", "type": "promos", "source": "marketing", "cumulative": false,
+  "promos": [
+    { "productId": 12, "mechanic": "BUY_X_GET_Y", "buy": 2, "get": 1 },
+    { "productId": 14, "mechanic": "CROSSED_PRICE", "price": 16.90, "maxQty": 2 },
+    { "productId": 15, "mechanic": "PERCENT", "percent": 15 } ] }
+```
+
+| Mechanic | What it discounts, piece by piece (server prices) |
+|---|---|
+| `PERCENT` | `percent` % of each piece — any portion |
+| `CROSSED_PRICE` | each **whole** piece down to `price` (nothing if the shop already sells it lower) |
+| `BUY_X_GET_Y` | per lot of `buy + get` **whole** pieces, the `get` cheapest are free |
+
+- `maxQty`: at most that many pieces benefit per order (cheapest first); for
+  `BUY_X_GET_Y` it bounds the pieces counted into lots.
+- Formula and bundle lines (`bundleId` / `bundleOfferId`) keep their own price.
+- `cumulative: false` (default): lines that are in the cross-portion offer
+  (« 4 + 1 »), when it applies, are left out. An order carries one code only.
+- Refused with 400 and every error: an unknown mechanic (`BUNDLE_FIXED`,
+  `FREE_DELIVERY` are not applied by the webshop), a value out of range, the
+  same product twice, a product unknown to the webshop. 501 before 0136.
+- Promotions are replaced when the call sends them. A call with
+  `source: "marketing"` and another type removes them; the brand console never
+  touches them.
+
+The **same function** (`voucher_promos_apply`, `voucher_promos.php`) prices the
+basket preview (`POST /vouchers/redeem`) and the order (`POST /orders`). The
+preview answers `{ ok, discount, voucher: { type: "promos" }, promos: [{ label,
+amount }], message }`, or `{ ok: false, message }` saying what to put in the
+basket when no promotion applies. At checkout a code that discounts nothing is
+not counted as used.
+
 **`POST /franchisor/voucher-campaign`** — the link between a voucher and a
 marketing campaign (migration **0135**; the marketing module keeps no table of
 its own). A voucher follows **one** campaign.
@@ -834,7 +873,9 @@ Each row: `code, type, value, minOrder, scopeProductId, scopeProductName,
 scopeMaxQty, shopId, shopName, targetKind, targetId, targetLabel (office name;
 never a private customer's identity), startsAt, expiresAt,
 usageCount, usageLimit, perCustomer, reasonKind, reasonNote, createdBy,
-marCampaignId, marCampaignOrigin, active`.
+marCampaignId, marCampaignOrigin, active`. A `promos` voucher also has
+`cumulative` and `promos[] { productId, productName, mechanic, percent, price,
+buy, get, maxQty, label }` (`value` is null).
 
 **`GET /franchisor/voucher-usage?codes=A,B`** (≤ 100 codes) — what they brought:
 per code `exists, usageCount, usageLimit, orders, revenue, discount` and

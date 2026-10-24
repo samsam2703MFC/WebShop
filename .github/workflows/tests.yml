@@ -140,6 +140,9 @@ jobs:
       - name: Promotions cumulatives
         run: php php-api/tests/promo_cumulative_test.php
 
+      - name: Promotions produit déclenchées par un code
+        run: php php-api/tests/voucher_promos_test.php
+
       - name: Rendu des e-mails
         run: php php-api/tests/mail_render_test.php
 

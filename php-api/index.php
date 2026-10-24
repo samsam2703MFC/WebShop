@@ -3,6 +3,7 @@
  * .htaccess renvoie toutes les requêtes ici ; on route sur méthode + chemin. */
 require __DIR__ . '/lib.php';
 require __DIR__ . '/promo_lib.php';
+require __DIR__ . '/voucher_promos.php';
 require __DIR__ . '/tel.php';
 require __DIR__ . '/erp_alias.php';
 /* erp_catalog.php N'ÉTAIT PAS CHARGÉ — découvert le 31/08 par la sonde de prix.
@@ -329,11 +330,19 @@ function ws_voucher_upsert(array $o) {
     }
     if ($code === '') return ['error' => 'génération du code impossible, réessayez', 'status' => 500];
   }
-  $type    = in_array($o['type'] ?? 'percent', ['percent','fixed','free_delivery'], true) ? $o['type'] : 'percent';
-  $kindMap = ['percent'=>'PERCENT','fixed'=>'FIXED','free_delivery'=>'FREE_DELIVERY'];
+  $type    = in_array($o['type'] ?? 'percent', ['percent','fixed','free_delivery','promos'], true) ? $o['type'] : 'percent';
+  /* « promos » (0136) : le bon n'a pas de remise propre, il DÉCLENCHE des
+     promotions produit ($o['promos'], déjà validées par voucher_promos_validate).
+     Le modèle ERP veut une remise de commande : 0 %, que le chiffrage ignore —
+     un bon qui porte des promotions produit est chiffré par elles seules. */
+  if ($type === 'promos' && empty($o['promos'])) return ['error' => 'promos : au moins une promotion', 'status' => 400];
+  $kindMap = ['percent'=>'PERCENT','fixed'=>'FIXED','free_delivery'=>'FREE_DELIVERY','promos'=>'PERCENT'];
   $kind    = $kindMap[$type];
-  $value   = $type === 'free_delivery' ? null : (float) ($o['value'] ?? 0);
+  $value   = $type === 'free_delivery' ? null : ($type === 'promos' ? 0.0 : (float) ($o['value'] ?? 0));
   $minOrd  = (float) ($o['min_order'] ?? 0);
+  $promosV = array_key_exists('promos', $o) ? (array) $o['promos'] : null;
+  if ($promosV !== null && !tbl_exists('ws_voucher_product_promos'))
+    return ['error' => 'promotions produit indisponibles : migration 0136 non passée', 'status' => 501];
   $maxUses = isset($o['max_uses']) && $o['max_uses'] !== '' ? (int) $o['max_uses'] : null;
   $perCust = isset($o['per_customer']) && $o['per_customer'] !== '' && $o['per_customer'] !== null ? max(1, (int) $o['per_customer']) : null;
   $exp     = !empty($o['expires_at']) ? $o['expires_at'] : null;
@@ -354,7 +363,7 @@ function ws_voucher_upsert(array $o) {
   $custId  = $tkind === 'CUSTOMER' ? $tid : null;
   $hasReason = col_exists('voucher_campaign', 'reason_kind');
   $hasScope = col_exists('promotion_order_discount', 'scope_id_product');
-  $scopePid = isset($o['scope_product_id']) && $o['scope_product_id'] !== '' && $o['scope_product_id'] !== null ? (int) $o['scope_product_id'] : null;
+  $scopePid = $type !== 'promos' && isset($o['scope_product_id']) && $o['scope_product_id'] !== '' && $o['scope_product_id'] !== null ? (int) $o['scope_product_id'] : null;
   $scopeQty = isset($o['scope_max_qty']) && $o['scope_max_qty'] !== '' && $o['scope_max_qty'] !== null ? max(1, (int) $o['scope_max_qty']) : null;
   if ($scopePid === null) $scopeQty = null;   // pas de plafond sans périmètre
   $rKind = isset($o['reason_kind']) && $o['reason_kind'] !== '' ? mb_substr(strtoupper(trim((string) $o['reason_kind'])), 0, 24) : null;
@@ -397,6 +406,7 @@ function ws_voucher_upsert(array $o) {
         q("UPDATE voucher_campaign SET valid_from=? WHERE id=?", [$from, $ex['campaign_id']]);
         q("UPDATE voucher_code SET valid_from=? WHERE id=?", [$from, $ex['code_id']]);
       }
+      $vcId = (int) $ex['campaign_id'];
     } else {
       q("INSERT INTO promotion (name, description, promotion_type, status, priority, is_exclusive,
              valid_from, valid_to, is_repeatable, shop_scope_type, activation_mode, soft_delete)
@@ -426,6 +436,18 @@ function ws_voucher_upsert(array $o) {
       q("INSERT INTO voucher_code (id_voucher_campaign, code, status, valid_from, valid_to, usage_limit, usage_count, id_customer)
          VALUES (?,?,?, ?, ?, ?, 0, ?)", [$cid, $code, $cstatus, $from, $exp, $maxUses, $custId]);
       q("INSERT INTO voucher_campaign_channel (id_voucher_campaign, channel) VALUES (?, 'WS')", [$cid]);
+      $vcId = (int) $cid;
+    }
+    /* Promotions produit (0136) : remplacées seulement quand l'appelant les
+       envoie. Les autres écrans (console marque, BO franchisé) n'en envoient
+       pas et ne les effacent donc pas en modifiant le bon. */
+    if ($promosV !== null) {
+      q("DELETE FROM ws_voucher_product_promos WHERE id_voucher_campaign=?", [$vcId]);
+      foreach ($promosV as $pp)
+        q("INSERT INTO ws_voucher_product_promos (id_voucher_campaign, product_id, mechanic, percent, price,
+                 buy_qty, get_qty, max_qty, cumulative, sort_order) VALUES (?,?,?,?,?,?,?,?,?,?)",
+          [$vcId, (int) $pp['product_id'], $pp['mechanic'], $pp['percent'], $pp['price'],
+           $pp['buy_qty'], $pp['get_qty'], $pp['max_qty'], (int) $pp['cumulative'], (int) $pp['sort_order']]);
     }
     $pdo->commit();
     return ['ok' => true, 'code' => $code];
@@ -433,6 +455,96 @@ function ws_voucher_upsert(array $o) {
     if ($pdo->inTransaction()) $pdo->rollBack();
     throw $e;
   }
+}
+
+/* PROMOTIONS PRODUIT D'UN BON (0136) — celles de l'étape « Prix » d'une
+   campagne marketing, que ce code déclenche. Liste vide = le bon n'en porte
+   pas (ou la migration n'est pas passée) : il se chiffre comme avant, par sa
+   remise de commande. Chaque ligne reçoit son libellé, bâti sur le nom
+   webshop du produit. */
+function ws_voucher_promos_du_code($code) {
+  if (!tbl_exists('ws_voucher_product_promos')) return [];
+  $rs = rows("SELECT pp.product_id, pp.mechanic, pp.percent, pp.price, pp.buy_qty, pp.get_qty,
+                     pp.max_qty, pp.cumulative, p.name AS product_name
+                FROM voucher_code vco
+                JOIN ws_voucher_product_promos pp ON pp.id_voucher_campaign = vco.id_voucher_campaign
+                LEFT JOIN ws_products p ON p.id = pp.product_id
+               WHERE vco.code = ?
+               ORDER BY pp.sort_order, pp.id", [strtoupper(trim((string) $code))]);
+  foreach ($rs as &$r) $r['label'] = voucher_promo_label($r, (string) ($r['product_name'] ?? ''));
+  unset($r);
+  return $rs;
+}
+
+/* Les promotions produit de plusieurs campagnes de bons, par campagne —
+   pour les listes (une requête au lieu d'une par bon). */
+function ws_voucher_promos_des_campagnes(array $ids) {
+  $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+  if (!$ids || !tbl_exists('ws_voucher_product_promos')) return [];
+  $out = [];
+  foreach (rows("SELECT pp.id_voucher_campaign, pp.product_id, pp.mechanic, pp.percent, pp.price,
+                        pp.buy_qty, pp.get_qty, pp.max_qty, pp.cumulative, p.name AS product_name
+                   FROM ws_voucher_product_promos pp
+                   LEFT JOIN ws_products p ON p.id = pp.product_id
+                  WHERE pp.id_voucher_campaign IN (" . implode(',', array_fill(0, count($ids), '?')) . ")
+                  ORDER BY pp.sort_order, pp.id", $ids) as $r) {
+    $r['label'] = voucher_promo_label($r, (string) ($r['product_name'] ?? ''));
+    $out[(int) $r['id_voucher_campaign']][] = $r;
+  }
+  return $out;
+}
+
+/* Les lignes d'un panier aux PRIX SERVEUR, pour l'aperçu d'un code. Mêmes
+   résolveurs que la commande (prix_produits, erp_portion_options) : jamais
+   le prix envoyé par le navigateur. Une pièce sans prix ne compte pas — la
+   commande la refuserait de toute façon. */
+function ws_lignes_apercu($shop, array $basket) {
+  $ids = array_values(array_unique(array_filter(array_map(static fn ($l) => (int) ($l['productId'] ?? 0), $basket))));
+  if (!$shop || !$ids) return [];
+  $px = prix_produits($ids, (int) $shop);
+  $port = erp_portion_options($shop, $ids);
+  $fiches = [];
+  foreach (rows("SELECT id, cross_portion, cat_id, sub_cat_id FROM ws_products
+                  WHERE active=1 AND id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")", $ids) as $f)
+    $fiches[(int) $f['id']] = $f;
+  $lines = [];
+  foreach ($basket as $l) {
+    $pid = (int) ($l['productId'] ?? 0);
+    if (!isset($fiches[$pid], $px[$pid])) continue;
+    $unit = (float) $px[$pid];
+    $po = mb_strtolower(trim((string) ($l['portion'] ?? '')));
+    if ($po !== '' && $po !== 'entier') {
+      $unit = null;
+      foreach (($port[$pid] ?? []) as $c) if ($c['v'] === $po && $c['price'] !== null) { $unit = (float) $c['price']; break; }
+      if ($unit === null) continue;
+    }
+    $lines[] = ['productId' => $pid, 'id' => $pid, 'qty' => max(1, (int) ($l['qty'] ?? 1)), 'unit' => $unit,
+                'portion' => $l['portion'] ?? null, 'cross' => (int) $fiches[$pid]['cross_portion'],
+                'cat_id' => (int) ($fiches[$pid]['cat_id'] ?? 0), 'sub_cat_id' => (int) ($fiches[$pid]['sub_cat_id'] ?? 0),
+                'pack' => !empty($l['bundleOfferId']) || !empty($l['bundleId'])];
+  }
+  return $lines;
+}
+
+/* LE chiffrage d'un bon à promotions produit — aperçu ET commande. L'offre
+   croisée est recalculée par cross_portion_discount, la fonction de la
+   commande, pour savoir quelles pièces y entrent déjà. */
+function ws_voucher_promos_chiffrer(array $promos, array $lines, $rule) {
+  $verrous = cross_portion_discount($rule, $lines)['locked'];
+  foreach ($lines as $i => &$l) $l['crossLocked'] = isset($verrous[$i]);
+  unset($l);
+  return voucher_promos_apply($promos, $lines);
+}
+
+/* Le message d'un bon à promotions qui ne joue pas encore : ce qu'il faut
+   mettre au panier. */
+function ws_voucher_promos_manque(array $unmet) {
+  $a = [];
+  foreach (array_slice($unmet, 0, 3) as $u) {
+    $a[] = $u['mechanic'] === 'BUY_X_GET_Y' ? ($u['need'] . ' × « ' . $u['name'] . ' »') : ('« ' . $u['name'] . ' »');
+  }
+  $fin = count($a) > 1 ? ' ou ' . array_pop($a) : '';
+  return 'Code valable avec ' . implode(', ', $a) . $fin . ' au panier';
 }
 
 /* ─────────────────────────── Routes ─────────────────────────── */
@@ -1840,7 +1952,7 @@ function dispatch($m, $p) {
       }
       $hasScope = col_exists('promotion_order_discount', 'scope_id_product');
       $hasRedem = $tbl('voucher_redemption');
-      $rows = rows("SELECT vco.id AS code_id, vco.code, vc.id_shop, vc.target_kind, vc.target_id, vco.id_customer,
+      $rows = rows("SELECT vco.id AS code_id, vco.code, vc.id AS vc_id, vc.id_shop, vc.target_kind, vc.target_id, vco.id_customer,
                            vc.usage_limit_per_customer, vco.usage_limit, vco.usage_count,
                            pod.discount_kind, pod.discount_value, pod.min_order_amount" .
                            ($hasScope ? ", pod.scope_id_product, pod.scope_max_qty" : ", NULL AS scope_id_product, NULL AS scope_max_qty") . "
@@ -1854,6 +1966,7 @@ function dispatch($m, $p) {
                        AND (vc.id_shop IS NULL OR vc.id_shop = ?)
                        AND (vco.usage_limit IS NULL OR vco.usage_count < vco.usage_limit)
                      ORDER BY vc.id_shop IS NULL, vco.id DESC", [$s]);
+      $promosAv = ws_voucher_promos_des_campagnes(array_column($rows ?: [], 'vc_id'));
       $out = [];
       foreach (($rows ?: []) as $r) {
         $tk = $r['target_kind'] ?: 'NETWORK';
@@ -1881,6 +1994,12 @@ function dispatch($m, $p) {
                 'remise' => $val,
                 'qte'    => $r['scope_max_qty'] !== null ? ((int) $r['scope_max_qty'] . ' × ') : '',
                 'produit'=> $pname]);
+        }
+        // Bon qui déclenche des promotions produit (0136) : ce sont elles
+        // qu'il annonce, pas sa remise de commande (0 %).
+        if (!empty($promosAv[(int) $r['vc_id']])) {
+          $lp = array_column($promosAv[(int) $r['vc_id']], 'label');
+          $val = implode(' · ', array_slice($lp, 0, 2)) . (count($lp) > 2 ? ' · +' . (count($lp) - 2) : '');
         }
         $minOrd = (float) $r['min_order_amount'];
         $out[] = ['code' => $r['code'], 'label' => $val,
@@ -1945,6 +2064,20 @@ function dispatch($m, $p) {
                   [$sc['code_id'], $cidV]);
       if ((int) ($used['n'] ?? 0) >= (int) $sc['usage_limit_per_customer'])
         json_out(['ok' => false, 'message' => 'Vous avez déjà utilisé ce code']);
+    }
+    /* Bon à PROMOTIONS PRODUIT (0136) : chiffré par elles seules, sur les
+       lignes aux prix serveur, par la fonction de la commande. Rien à remiser
+       = refus, avec ce qu'il faut mettre au panier. */
+    $vPromos = ws_voucher_promos_du_code($v['code']);
+    if ($vPromos) {
+      $chif = ws_voucher_promos_chiffrer($vPromos,
+                ws_lignes_apercu($vShop, is_array($b['basket'] ?? null) ? $b['basket'] : []),
+                $vShop ? cross_portion_rule($vShop) : null);
+      if ($chif['discount'] <= 0) json_out(['ok' => false, 'message' => ws_voucher_promos_manque($chif['unmet'])]);
+      json_out(['ok' => true, 'discount' => $chif['discount'], 'freeDelivery' => false,
+                'voucher' => ['code' => $v['code'], 'type' => 'promos', 'value' => 0],
+                'promos' => array_map(static fn ($d) => ['label' => $d['label'], 'amount' => $d['amount']], $chif['details']),
+                'message' => 'Code appliqué · ' . implode(' · ', array_column($chif['details'], 'label'))]);
     }
     $disc = 0; $scopeMsg = '';
     if ($sc && $sc['scope_id_product'] !== null && $v['type'] !== 'free_delivery') {
@@ -3182,6 +3315,9 @@ function dispatch($m, $p) {
                   'portion' => $it['portion'] ?? null, 'cross' => (int) $p2['cross_portion'],
                   'id' => (int) $p2['id'], 'cat_id' => (int) ($p2['cat_id'] ?? 0), 'sub_cat_id' => (int) ($p2['sub_cat_id'] ?? 0),
                   'bundleChoices' => $comp['choices'],
+                  // Formule ou bundle : prix propre, aucune promotion produit
+                  // d'un code ne s'y ajoute (voucher_promos.php).
+                  'pack' => !empty($it['bundleOfferId']) || !empty($it['bundleId']),
                   'note' => isset($it['note']) ? mb_substr((string) $it['note'], 0, 255) : null];
     }
     if (!count($lines)) json_out(['error' => 'aucun produit valide'], 400);
@@ -3192,21 +3328,9 @@ function dispatch($m, $p) {
        garantit que le montant annoncé au panier est celui qu'on débite. Le
        périmètre vient de la règle : drapeau ws_products.cross_portion pour la
        règle locale, listes produits/catégories pour la règle ERP. */
-    $promo = 0;
     $rule = cross_portion_rule($shop);
-    if ($rule && (int) $rule['buy'] > 0) {
-      $units = [];
-      foreach ($lines as $l) {
-        if (!cross_portion_eligible($rule, $l['id'] ?? 0, $l['cat_id'] ?? 0, $l['sub_cat_id'] ?? 0, $l['cross'])) continue;
-        for ($k = 0; $k < $l['qty']; $k++) $units[] = $l['unit'];
-      }
-      if (count($units) >= (int) $rule['threshold']) {
-        sort($units); // les moins chers d'abord
-        $freeCount = intdiv(count($units), (int) $rule['buy']) * (int) $rule['free'];
-        for ($k = 0; $k < $freeCount && $k < count($units); $k++) $promo += $units[$k];
-      }
-    }
-    $promo = round($promo, 2);
+    $croise = cross_portion_discount($rule, $lines);   // même calcul que l'aperçu d'un code
+    $promo = $croise['amount'];
 
     // 2-bis. Remise webshop paramétrée par boutique — colonnes non garanties
     // par les migrations : absentes → pas de remise (jamais un 500).
@@ -3273,7 +3397,14 @@ function dispatch($m, $p) {
           }
         }
       }
-      if ($v && $baseV >= (float) $v['min_order'] && $eligible) {
+      $vPromosC = ($v && $eligible) ? ws_voucher_promos_du_code($v['code']) : [];
+      if ($v && $baseV >= (float) $v['min_order'] && $eligible && $vPromosC) {
+        // Bon à promotions produit (0136) : même chiffrage que l'aperçu, sur
+        // les lignes re-tarifées ici. Rien à remiser -> pas de bon compté.
+        $voucherDisc = ws_voucher_promos_chiffrer($vPromosC, $lines, $rule)['discount'];
+        $voucherCode = $voucherDisc > 0 ? $v['code'] : null;
+        if (!$voucherCode) $voucherDisc = 0;
+      } elseif ($v && $baseV >= (float) $v['min_order'] && $eligible) {
         $voucherCode = $v['code'];
         if ($vScope && $vScope['scope_id_product'] !== null && $v['type'] !== 'free_delivery') {
           $unitsV = [];
@@ -5251,7 +5382,7 @@ function dispatch($m, $p) {
       // Vue unifiée MARQUE : tous les bons WS du réseau — émetteur (marque /
       // boutique), cible, motif (0041) et usages inclus.
       $hasReason = col_exists('voucher_campaign', 'reason_kind');
-      $vs = rows("SELECT vco.code, vc.id_shop, sh.name AS shop_name,
+      $vs = rows("SELECT vco.code, vc.id AS vc_id, vc.id_shop, sh.name AS shop_name,
                          vc.target_kind, vc.target_id, vco.usage_count, vco.usage_limit, vc.usage_limit_per_customer,
                          vco.valid_to AS expires_at," .
                          (col_exists('promotion_order_discount', 'scope_id_product') ? " pod.scope_id_product, pod.scope_max_qty," : " NULL AS scope_id_product, NULL AS scope_max_qty,") .
@@ -5268,6 +5399,7 @@ function dispatch($m, $p) {
                     JOIN promotion_order_discount pod ON pod.id_promotion = pr.id
                     LEFT JOIN $SHOPS sh               ON sh.id = vc.id_shop
                    ORDER BY vc.id_shop IS NOT NULL, sh.name, vco.code");
+      $promosFv = ws_voucher_promos_des_campagnes(array_column($vs, 'vc_id'));
       $REASON = ['RECLAMATION' => 'Réclamation', 'GESTE_CO' => 'Geste commercial',
                  'FIDELITE' => 'Fidélité', 'MARKETING' => 'Marketing',
                  'PARTENARIAT' => 'Partenariat', 'TEST' => 'Test / interne'];
@@ -5280,6 +5412,8 @@ function dispatch($m, $p) {
           $val .= ' sur ' . ($v['scope_max_qty'] !== null ? ((int) $v['scope_max_qty'] . ' × ') : '')
                 . (($pn2['name'] ?? null) ?: ('produit #' . $v['scope_id_product']));
         }
+        // Bon à promotions produit (0136) : il déclenche, il ne remise pas lui-même.
+        if (!empty($promosFv[(int) $v['vc_id']])) $val = implode(' · ', array_column($promosFv[(int) $v['vc_id']], 'label'));
         $cible = 'Réseau';
         if ($v['target_kind'] === 'CUSTOMER' && $v['target_id']) {
           $c2 = row("SELECT CONCAT(COALESCE(name,''),' ',COALESCE(surname,'')) n FROM client WHERE id=?", [(int) $v['target_id']]);
@@ -6150,8 +6284,25 @@ function dispatch($m, $p) {
       $b = body(); $code = strtoupper(trim($b['code'] ?? ''));
       // Upsert dans le modèle ERP (ws_vouchers est désormais une vue) : bon marque réseau
       // (SHARED, id_shop NULL), remise portée par promotion_order_discount, canal WS.
-      $type    = in_array($b['type'] ?? 'percent', ['percent','fixed','free_delivery'], true) ? $b['type'] : 'percent';
-      $kindMap = ['percent'=>'PERCENT','fixed'=>'FIXED','free_delivery'=>'FREE_DELIVERY'];
+      $type    = in_array($b['type'] ?? 'percent', ['percent','fixed','free_delivery','promos'], true) ? $b['type'] : 'percent';
+      /* type « promos » (0136) : le bon déclenche des promotions produit — celles
+         de l'étape « Prix » d'une campagne marketing — au lieu d'une remise propre.
+           promos     : [{productId, mechanic: PERCENT|CROSSED_PRICE|BUY_X_GET_Y,
+                          percent?, price?, buy?, get?, maxQty?}]
+           cumulative : false (défaut) = pas sur les pièces de l'offre croisée « 4 + 1 »
+         Validées ici (400 avec chaque erreur), produits vérifiés au catalogue. */
+      $promosB = null;
+      if ($type === 'promos') {
+        $vp = voucher_promos_validate($b['promos'] ?? null, !empty($b['cumulative']));
+        if ($vp['errors']) json_out(['error' => implode(' ; ', $vp['errors'])], 400);
+        $pids = array_column($vp['clean'], 'product_id');
+        $connus = array_map('intval', array_column(rows("SELECT id FROM ws_products WHERE id IN ("
+                    . implode(',', array_fill(0, count($pids), '?')) . ")", $pids), 'id'));
+        $inconnus = array_values(array_diff($pids, $connus));
+        if ($inconnus) json_out(['error' => 'produit inconnu du webshop : ' . implode(', ', $inconnus)], 400);
+        $promosB = $vp['clean'];
+      }
+      $kindMap = ['percent'=>'PERCENT','fixed'=>'FIXED','free_delivery'=>'FREE_DELIVERY','promos'=>'PERCENT'];
       $kind    = $kindMap[$type];
       $value   = $type === 'free_delivery' ? null : (float) ($b['value'] ?? 0);
       $minOrd  = (float) ($b['min_order'] ?? 0);
@@ -6206,6 +6357,11 @@ function dispatch($m, $p) {
       ];
       if (array_key_exists('starts_at', $b)) $opts['starts_at'] = $b['starts_at'];
       if ($marCamp !== null && !$existait) $opts['mar_campaign_id'] = $marCamp;
+      // Le module marketing réécrit toujours le bon entier : un bon qu'il fait
+      // quitter le type « promos » perd ses promotions produit. La console
+      // marque, elle, ne les connaît pas et n'y touche jamais.
+      if ($promosB !== null) $opts['promos'] = $promosB;
+      elseif ($source === 'marketing' && $existait && tbl_exists('ws_voucher_product_promos')) $opts['promos'] = [];
       $r = ws_voucher_upsert($opts);
       if (!empty($r['error'])) json_out(['error' => $r['error']], $r['status'] ?? 400);
       $audit('voucher.upsert', 'voucher_code', null, null, ['code' => $r['code'], 'source' => $source]);
@@ -6290,7 +6446,7 @@ function dispatch($m, $p) {
         if (!$sh) json_out([]);   // aucune boutique = aucun bon, surtout pas tous
         $where[] = 'vc.id_shop IN (' . implode(',', array_fill(0, count($sh), '?')) . ')'; array_push($par, ...$sh);
       }
-      $vs = rows("SELECT vco.code, vc.id_shop, sh.name AS shop_name, vc.target_kind, vc.target_id,
+      $vs = rows("SELECT vco.code, vc.id AS vc_id, vc.id_shop, sh.name AS shop_name, vc.target_kind, vc.target_id,
                          vco.usage_count, vco.usage_limit, vc.usage_limit_per_customer,
                          vco.valid_from, vco.valid_to, pod.discount_kind, pod.discount_value, pod.min_order_amount," .
                          ($hasScope ? " pod.scope_id_product, pod.scope_max_qty," : " NULL AS scope_id_product, NULL AS scope_max_qty,") .
@@ -6305,6 +6461,8 @@ function dispatch($m, $p) {
                     LEFT JOIN $SHOPS sh               ON sh.id = vc.id_shop
                    WHERE " . implode(' AND ', $where) . "
                    ORDER BY vco.code LIMIT 200", $par);
+      // Promotions produit que chaque bon déclenche (0136).
+      $promosVc = ws_voucher_promos_des_campagnes(array_column($vs, 'vc_id'));
       $out = [];
       foreach ($vs as $v) {
         $pname = null;
@@ -6345,6 +6503,23 @@ function dispatch($m, $p) {
           'marCampaignOrigin' => $v['mar_campaign_origin'],
           'active' => (bool) $v['active'],
         ];
+        // Bon qui déclenche des promotions produit : son type le dit, et la
+        // liste les donne telles que le panier les applique.
+        $pv = $promosVc[(int) $v['vc_id']] ?? [];
+        if ($pv) {
+          $last = count($out) - 1;
+          $out[$last]['type'] = 'promos'; $out[$last]['value'] = null;
+          $out[$last]['promos'] = array_map(static fn ($r) => [
+            'productId' => (int) $r['product_id'], 'productName' => $r['product_name'],
+            'mechanic' => $r['mechanic'],
+            'percent' => $r['percent'] !== null ? (float) $r['percent'] : null,
+            'price' => $r['price'] !== null ? (float) $r['price'] : null,
+            'buy' => $r['buy_qty'] !== null ? (int) $r['buy_qty'] : null,
+            'get' => $r['get_qty'] !== null ? (int) $r['get_qty'] : null,
+            'maxQty' => $r['max_qty'] !== null ? (int) $r['max_qty'] : null,
+            'label' => $r['label']], $pv);
+          $out[$last]['cumulative'] = (bool) $pv[0]['cumulative'];
+        }
       }
       json_out($out);
     }
@@ -9314,7 +9489,7 @@ function dispatch($m, $p) {
     if ($m === 'GET' && $p === '/franchisee/fr-vouchers') {
       if (!$tblExists('voucher_code')) json_vide(['voucher_code']);
       $hasReason = col_exists('voucher_campaign', 'reason_kind');
-      $vs = rows("SELECT vco.code, vc.id_shop, vc.target_kind, vc.target_id,
+      $vs = rows("SELECT vco.code, vc.id AS vc_id, vc.id_shop, vc.target_kind, vc.target_id,
                          vco.usage_count, vco.usage_limit, vc.usage_limit_per_customer, vco.valid_to AS expires_at," .
                          (col_exists('promotion_order_discount', 'scope_id_product') ? " pod.scope_id_product, pod.scope_max_qty," : " NULL AS scope_id_product, NULL AS scope_max_qty,") .
                          ($hasReason ? " vc.reason_kind, vc.reason_note," : " NULL AS reason_kind, NULL AS reason_note,") . "
@@ -9330,6 +9505,7 @@ function dispatch($m, $p) {
                     JOIN promotion_order_discount pod ON pod.id_promotion = pr.id
                    WHERE vc.id_shop IS NULL" . ($shopId ? " OR vc.id_shop = " . (int) $shopId : "") . "
                    ORDER BY vc.id_shop IS NULL, vco.code");
+      $promosFr = ws_voucher_promos_des_campagnes(array_column($vs, 'vc_id'));
       $REASON = ['RECLAMATION' => 'Réclamation', 'GESTE_CO' => 'Geste commercial',
                  'FIDELITE' => 'Fidélité', 'MARKETING' => 'Marketing',
                  'PARTENARIAT' => 'Partenariat', 'TEST' => 'Test / interne'];
@@ -9343,6 +9519,11 @@ function dispatch($m, $p) {
           $scopeName = ($pn3['name'] ?? null) ?: ('produit #' . $v['scope_id_product']);
           $effet .= ' sur ' . ($v['scope_max_qty'] !== null ? ((int) $v['scope_max_qty'] . ' × ') : '') . $scopeName;
         }
+        // Bon à promotions produit (0136) : il les déclenche, et il se gère
+        // depuis sa campagne du module marketing — pas modifiable ici, où le
+        // formulaire ne les connaît pas.
+        $aPromos = !empty($promosFr[(int) $v['vc_id']]);
+        if ($aPromos) $effet = implode(' · ', array_column($promosFr[(int) $v['vc_id']], 'label'));
         if ((float) $v['min_order'] > 0) $effet .= ' dès ' . rtrim(rtrim(number_format((float) $v['min_order'], 2, ',', ''), '0'), ',') . ' €';
         $cible = 'Tous les clients';
         if ($v['target_kind'] === 'CUSTOMER' && $v['target_id']) {
@@ -9354,7 +9535,7 @@ function dispatch($m, $p) {
         } elseif ($v['target_kind'] === 'GROUP' && $v['target_id']) {
           $cible = 'Groupe #' . $v['target_id'];
         }
-        $mine = $v['id_shop'] !== null && $shopId && (int) $v['id_shop'] === (int) $shopId;
+        $mine = $v['id_shop'] !== null && $shopId && (int) $v['id_shop'] === (int) $shopId && !$aPromos;
         $out[] = ['code' => $v['code'], 'effet' => $effet,
                   'origine' => $v['id_shop'] === null ? 'Marque' : 'Ma boutique',
                   'cible' => $cible,
