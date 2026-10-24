@@ -217,6 +217,13 @@ Les numéros 2, 3 et 4 existent des deux côtés, mais ce ne sont **pas** les m�
 - un bon créé dans l'ERP (par exemple les invitations bureau Odoo) est refusé au paiement du webshop, qui ne lit
   que la vue locale `ws_vouchers`.
 
+> **À arbitrer (24/10/2026).** Le même jour, le module marketing (PR #97 et #98) a étendu le modèle local :
+> - campagnes de bons via `ws_voucher_upsert` ;
+> - promotions produit portées par un code, dans la table locale `ws_voucher_product_promos` (migration 0136).
+>
+> Ces bons-là non plus ne sont pas vus par la caisse. Les bons du dashboard franchisé (§6.1), eux, sont écrits dans
+> l'ERP. Les deux voies coexistent tant qu'on n'a pas choisi.
+
 ## 5. Ce que l'ERP ne sait pas encore exprimer — à demander à TFBuddy
 
 | Besoin du webshop (aujourd'hui en local) | Dans l'API ERP |
