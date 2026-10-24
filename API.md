@@ -795,6 +795,57 @@ Admin-only. Delete a voucher permanently.
 
 ---
 
+### Vouchers for the marketing module (server to server)
+
+The marketing module creates and follows the vouchers of its campaigns through
+these routes. They sit under `/franchisor/*` and take the same admin token
+(`X-Admin-Token`). The single write path stays `ws_voucher_upsert()`: the
+module never writes the ERP voucher tables itself.
+
+**`POST /franchisor/voucher`** — the console's upsert, plus three optional fields:
+
+| Field | Effect |
+|---|---|
+| `create_only` | `true` → **409** `{ error, code }` if the code already exists, instead of overwriting it |
+| `starts_at` | start date `YYYY-MM-DD` (or `YYYY-MM-DD HH:MM[:SS]`) → `valid_from`; the code is refused at checkout before it. Absent on an update = the voucher keeps its date |
+| `id_shop` | shop voucher (valid in that shop only); unknown shop → 400. Absent = brand voucher |
+| `source` | `"marketing"` → `created_by = 'marketing'` |
+| `campaign_id` | marketing campaign that follows the voucher (`voucher_campaign.mar_campaign_id`, origin `created`), set in the same transaction as the creation. Ignored on an update. 501 before migration 0135 |
+
+Response `{ ok, code, created }` (`created` false when an existing code was updated).
+
+**`POST /franchisor/voucher-campaign`** — the link between a voucher and a
+marketing campaign (migration **0135**; the marketing module keeps no table of
+its own). A voucher follows **one** campaign.
+- `{ code, campaign_id }` → attach an existing voucher (origin `attached`).
+  Idempotent: `{ ok, created: false }` the second time. Another campaign
+  already follows it → **409** `{ error, campaignId }`.
+- `{ code, campaign_id: null, from_campaign }` → detach it from that campaign
+  (409 if it follows another one). Detaching suspends nothing.
+
+**`POST /franchisor/voucher-active`** `{ code, active }` — suspend or reactivate a
+voucher without rewriting anything else. 404 if the code is unknown.
+
+**`GET /franchisor/voucher-codes`** — vouchers as data (the console's
+`/franchisor/vouchers` returns sentences). Filters: `codes=A,B`, `q=` (code,
+reason note, shop name), `shops=2,4` (issued by these shops; empty = nothing),
+`campaign=21` (followed by that marketing campaign).
+Each row: `code, type, value, minOrder, scopeProductId, scopeProductName,
+scopeMaxQty, shopId, shopName, targetKind, targetId, targetLabel (office name;
+never a private customer's identity), startsAt, expiresAt,
+usageCount, usageLimit, perCustomer, reasonKind, reasonNote, createdBy,
+marCampaignId, marCampaignOrigin, active`.
+
+**`GET /franchisor/voucher-usage?codes=A,B`** (≤ 100 codes) — what they brought:
+per code `exists, usageCount, usageLimit, orders, revenue, discount` and
+`byShop[] { shopId, shopName, orders, revenue, discount }`, read from
+`ws_orders.voucher_code`, cancelled orders excluded.
+
+Start dates need migration **0134** (the `ws_vouchers` view gains `starts_at`).
+Until it has run, the checks behave exactly as before.
+
+---
+
 ## 7. Orders — `/orders`
 
 Frontend stub: `webshop-orders-api.jsx` → `window.WSOrders`
