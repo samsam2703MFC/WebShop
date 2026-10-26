@@ -204,7 +204,9 @@ Croisement fait par la sonde le 24/10/2026 :
   - promotion #36 rattachée et INACTIVE : 1 % sur la Baguette Poivre & Sel, Halle ;
   - 5 codes ZZSONDE… tous désactivés ;
 - son encaissement #1 : boutique 4, sans transaction, montant `null`, impossible à annuler par l'API (§3) ;
-- la promotion #35 du premier essai a été supprimée.
+- la promotion #35 du premier essai a été supprimée ;
+- la campagne #10, « [ESSAI COCKPIT — à ignorer] bon du dashboard 24/10 », reste **détachée, en DRAFT**. Elle vient de
+  l'essai du bon du dashboard franchisé (§6.1), dont la promotion n° 37 a été supprimée.
 
 Après le nettoyage, la campagne vide (DRAFT, sans promotion) n'apparaissait pas dans le panel.
 
@@ -278,6 +280,15 @@ contrat dans `docs/contrat-api.md`, entrée « Le bon de réduction (24/10/2026)
 
   Rien n'est gardé en local.
 - **La liste** : « Voir les codes » (codes en clair, nom du client) et une bascule actif / hors service.
+
+**Vérifié contre l'ERP réel le 24/10/2026**, 16 vérifications sur 16 :
+- brouillon ;
+- « Voir les codes » ;
+- envoi en caisse (promotion et campagne actives et complètes) ;
+- le code accepté par `/vouchers/validate` ;
+- la bascule (hors service : code refusé ; réactivé : accepté).
+
+Détail dans le dépôt `consultant_BO`, `docs/contrat-api.md`.
 
 Ces codes passent par `/vouchers/validate` et `/redeem` comme ceux de l'essai (§2). Le webshop les lira une fois le
 point 1 branché. Appliquer une « X + Y » au panier du webshop reste à faire.
