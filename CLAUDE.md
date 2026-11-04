@@ -1,5 +1,14 @@
 # L'Atelier By — Webshop · Project Guide for Claude
 
+> **RETIRÉ DU SERVEUR (novembre 2026).** Le webshop n'est plus en service : son
+> site, son API et les back-offices franchisé / franchiseur ont été retirés de
+> `/var/www/html/webshop`, et ses tables `ws_*` / `bo_*` de `atelierby_db`
+> (sauvegardes dans `/root/backups/webshop` sur le serveur). L'app client
+> (`latelier-by-pwa`) et le site (`landing`) passent directement par l'ERP
+> (`atelierby.tfbuddy.com`) ; la boutique en ligne est celle de l'ERP
+> (`webshop.atelierby.be`). Les workflows de déploiement (`deploy.yml`,
+> `deploy-sftp.yml`) sont supprimés : **ne pas redéployer ce dépôt.**
+
 ## Stack & architecture (FINAL — full React + PHP, NO WooCommerce)
 
 > **Chosen mode of operation:** the whole site runs on the client's own server
